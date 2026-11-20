@@ -58,14 +58,19 @@ class Resources:
     """What a backend takes of the host while it runs.
 
     Attributes:
-        gpu_memory_mb: Memory on one GPU, MiB (0: no GPU).
+        gpu_memory_mb: Memory on each GPU it runs on, MiB (0: no GPU).
         memory_mb: Host memory, MiB.
         gpu: The GPU (``nvidia-smi`` index) it must run on; ``None``: any.
+        gpus: The GPUs (``nvidia-smi`` indices) it runs on, all of them at
+            once, each taking *gpu_memory_mb*; empty: one GPU (*gpu*).
+        every_gpu: It runs on every GPU, each taking *gpu_memory_mb*.
     """
 
     gpu_memory_mb: int = 0
     memory_mb: int = 0
     gpu: Optional[int] = None
+    gpus: tuple[int, ...] = ()
+    every_gpu: bool = False
 
 
 @runtime_checkable

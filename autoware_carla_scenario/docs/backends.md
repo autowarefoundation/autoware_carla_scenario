@@ -45,7 +45,7 @@ fires, with that backend's defaults, and stops it when the process exits.
 Before starting anything, the preparer adds up what the backends it is about to
 start take, as each one declares in `prepare.Resources`:
 
-- GPU memory on one GPU, in MiB;
+- GPU memory on each GPU it runs on, in MiB;
 - host memory, in MiB.
 
 It then compares that with what the host has free:
@@ -66,12 +66,27 @@ ardy: 24000 MiB of GPU memory needed, 9120 MiB free on the roomiest GPU (0)
 a backend is said to take (backends.<name>.gpu_memory_mb / memory_mb).
 ```
 
-A container set to one GPU (`gpus: device=N`) is placed first, and checked on
-that GPU. Then each of the others, the largest first, is placed on the GPU with
-the most room left, and starts on that GPU. When that leaves one without room,
-the other ways to place them are tried, and the run is refused only when none
-fits them all; the message then names the ones the first placement left out.
-One with `gpus: none` needs no GPU at all.
+The GPU memory is checked on the GPUs `docker run` gives the container:
+
+- `gpus: auto`: the GPU the preparer places it on, and it is started with
+  `--gpus device=<that GPU>`. Each of these, the largest first, is placed on
+  the GPU with the most room left. When that leaves one without room, the
+  other ways to place them are tried, and the run is refused only when none
+  fits them all; the message then names the ones the first placement left out;
+- `gpus: device=N`: GPU `N`;
+- `gpus: '"device=N,M"'` (quoted, as `docker run --gpus` takes a list): each
+  GPU listed;
+- a count, `gpus: N`: GPUs `0` to `N-1`, the ones `docker run --gpus N`
+  gives;
+- `gpus: all`: every GPU this process may use.
+
+A container on GPUs it is set to (every case but `auto`) needs its
+`gpu_memory_mb` free on each of them, and is placed before the `auto` ones. One
+with `gpus: none` needs no GPU at all. A `gpus` that does not say which GPUs
+docker gives (a GPU's UUID, other `--gpus` options) is refused for a backend
+that takes GPU memory, naming `backends.<name>.gpus` and
+`backends.<name>.gpu_memory_mb`: set `gpus` to one of the above, or
+`gpu_memory_mb: 0` to skip the check.
 
 The check is a snapshot of what is free when the backends start. It cannot see
 what others are about to take:
@@ -84,6 +99,10 @@ what others are about to take:
 - `CUDA_VISIBLE_DEVICES` is read as `nvidia-smi`'s indices or UUIDs. Where
   SLURM renumbers a job's GPUs from 0, set `gpus: device=N` to the host's index
   instead.
+- `CUDA_VISIBLE_DEVICES` does not limit what docker gives a container: with
+  `gpus: all` it still gets every GPU of the host, while only the visible ones
+  are checked. A GPU that `device=` or a count names and that is not visible
+  is refused. Under SLURM, prefer `auto` or `device=N`.
 
 ## Containers
 
@@ -140,10 +159,12 @@ pulled or container started. A key that is absent or null takes its default.
 The settings every container backend shares:
 
 - `image` is a non-empty image name, and `gpus` `auto`, `all`, `none` or what
-  `docker run --gpus` takes (`device=N`, a count). `auto` is the GPU the
-  preparer placed the backend on, and it places one only when it asks for GPU
-  memory: with `gpu_memory_mb: 0` there is no placement, and `auto` passes
-  `--gpus all`, every GPU, as `all` does (`none` gives it none);
+  `docker run --gpus` takes (`device=N`, a count of 1 or more: `gpus: 0` is
+  refused, use `none`). `auto` is the GPU the preparer placed the backend on,
+  and it places one only when it asks for GPU memory: with `gpu_memory_mb: 0`
+  there is no placement, and `auto` passes `--gpus all`, every GPU, as `all`
+  does (`none` gives it none). With `gpu_memory_mb` above 0, `gpus` must say
+  which GPUs docker gives the container ([Resources](#resources));
 - `pull` is `missing`, `always` or `never`;
 - `startup_timeout_s` (and ARDY's `timeout_s`) is a finite number of seconds
   above 0;

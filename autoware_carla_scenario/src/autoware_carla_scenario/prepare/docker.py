@@ -68,12 +68,15 @@ class DockerSettings:
         image: The image, with its tag.
         container_port: The port the service listens on inside.
         gpus: ``"auto"`` (the GPU the preparer placed it on), ``"all"``,
-            ``"none"``, or what ``docker run --gpus`` takes (``device=1``).
-            The preparer places on a GPU only a backend that asks for GPU
-            memory (``resources.gpu_memory_mb`` above 0, and the host
-            checked): ``"auto"`` with none (``gpu_memory_mb: 0``) passes
-            ``--gpus all``, every GPU, as ``"all"`` does; ``"none"`` passes
-            none.
+            ``"none"``, or what ``docker run --gpus`` takes (``device=1``,
+            ``"device=0,1"``, a count).  The preparer places on a GPU only a
+            backend that asks for GPU memory (``resources.gpu_memory_mb``
+            above 0, and the host checked): ``"auto"`` with none
+            (``gpu_memory_mb: 0``) passes ``--gpus all``, every GPU, as
+            ``"all"`` does; ``"none"`` passes none.  Any other value is
+            checked on the GPUs docker gives the container: every one for
+            ``"all"``, those listed for ``device=``, and the first *N* for a
+            count *N* (docker's ``--gpus N``).
         env: Environment variables set in the container.
         pass_env: Variables passed on from this process when it has them
             (a token, a proxy).
@@ -201,7 +204,10 @@ def read_docker_settings(
     is pulled or container started.  ``image`` is text, and ``gpus`` text or
     a count (``docker run --gpus 2``), neither blank; an absent or null one
     is its default, while ``false`` or a number of the wrong kind is refused
-    rather than handed to ``docker`` as ``"False"`` (#2143).  Every key
+    rather than handed to ``docker`` as ``"False"`` (#2143).  A ``gpus``
+    count is 1 or more (``gpus: 0`` is ``none``), and a backend that takes
+    GPU memory has a ``gpus`` that says which GPUs docker gives it, since the
+    memory is checked on each of them (#2233).  Every key
     absent or null is its default (#2158): ``pull: null`` is ``missing``,
     not refused.
 
@@ -227,6 +233,11 @@ def read_docker_settings(
             f"{setting_key(backend, 'gpus')} must be auto, all, none or what "
             f"docker run --gpus takes (device=N, a count), got {gpus_value!r}"
         )
+    if _gpu_request(gpus_value)[0] == _BAD_COUNT:
+        raise ValueError(
+            f"{setting_key(backend, 'gpus')} must be a count of 1 or more, "
+            f"got {gpus_value!r}; none is gpus: none"
+        )
     pull = settings.get("pull")
     if pull is None:
         pull = "missing"
@@ -244,6 +255,16 @@ def read_docker_settings(
     memory_value = settings.get("memory_mb")
     if memory_value is None:
         memory_value = memory_mb
+    docker_args = string_list(
+        setting_key(backend, "docker_args"), settings.get("docker_args")
+    )
+    startup = positive_seconds(setting_key(backend, "startup_timeout_s"), startup_value)
+    gpu_memory = whole_mib(setting_key(backend, "gpu_memory_mb"), gpu_memory_value)
+    host_memory = whole_mib(setting_key(backend, "memory_mb"), memory_value)
+    # The GPU memory is checked on the GPUs docker gives the container, so
+    # those must be known (#2233).
+    if gpu_memory > 0 and _gpu_request(gpus_value)[0] == _UNCHECKED:
+        raise ValueError(_unchecked_gpus(backend, gpus_value))
     return DockerSettings(
         image=image_value,
         container_port=container_port,
@@ -251,24 +272,10 @@ def read_docker_settings(
         env=dict(env or {}),
         pass_env=pass_env,
         mounts=mounts,
-        docker_args=string_list(
-            setting_key(backend, "docker_args"), settings.get("docker_args")
-        ),
+        docker_args=docker_args,
         pull=pull,
-        startup_timeout_s=positive_seconds(
-            setting_key(backend, "startup_timeout_s"),
-            startup_value,
-        ),
-        resources=Resources(
-            gpu_memory_mb=whole_mib(
-                setting_key(backend, "gpu_memory_mb"),
-                gpu_memory_value,
-            ),
-            memory_mb=whole_mib(
-                setting_key(backend, "memory_mb"),
-                memory_value,
-            ),
-        ),
+        startup_timeout_s=startup,
+        resources=Resources(gpu_memory_mb=gpu_memory, memory_mb=host_memory),
     )
 
 
@@ -299,18 +306,34 @@ class DockerBackend:
         return self.backend_name
 
     def resources(self) -> Resources:
-        """The settings' resources, for the GPU ``gpus`` gives it: none for
-        ``none``, the one of ``device=N``."""
+        """The settings' resources, on the GPUs ``gpus`` gives the container
+        (#2233): none for ``none``, the one of ``device=N``, those of
+        ``device=N,M``, the first *N* for a count *N* (as ``docker run --gpus
+        N`` gives), every one for ``all``, and the one the preparer places it
+        on for ``auto``.
+
+        Raises:
+            ValueError: If ``gpus`` is a count below 1, or names GPUs that
+                cannot be told (a UUID, other ``--gpus`` options) for a
+                backend that takes GPU memory.
+        """
         settings = self._settings
-        if settings.gpus == "none":
+        kind, devices = _gpu_request(settings.gpus)
+        if kind == _NONE:
             return replace(settings.resources, gpu_memory_mb=0)
-        device = settings.gpus.removeprefix("device=")
-        if (
-            settings.gpus.startswith("device=")
-            and device.isascii()
-            and device.isdigit()
-        ):
-            return replace(settings.resources, gpu=int(device))
+        if kind == _BAD_COUNT:
+            raise ValueError(
+                f"{setting_key(self.name, 'gpus')} must be a count of 1 or more, "
+                f"got {settings.gpus!r}; none is gpus: none"
+            )
+        if kind == _DEVICES:
+            if len(devices) == 1:
+                return replace(settings.resources, gpu=devices[0])
+            return replace(settings.resources, gpus=tuple(devices))
+        if kind == _ALL:
+            return replace(settings.resources, every_gpu=True)
+        if kind == _UNCHECKED and settings.resources.gpu_memory_mb > 0:
+            raise ValueError(_unchecked_gpus(self.name, settings.gpus))
         return settings.resources
 
     def address(self) -> str:
@@ -647,6 +670,71 @@ def _docker(argv: list[str], what: str, timeout: Optional[float] = 120.0) -> str
             f"could not {what}: {done.stderr.strip() or done.stdout.strip()}"
         )
     return done.stdout
+
+
+#: What ``docker run --gpus`` gives a container (:func:`_gpu_request`).
+_NONE = "none"
+_AUTO = "auto"
+_ALL = "all"
+_DEVICES = "devices"
+_BAD_COUNT = "bad count"
+_UNCHECKED = "unchecked"
+
+
+def _whole(text: str) -> bool:
+    """Whether *text* is a whole number, a ``-`` before its digits or not."""
+    digits = text[1:] if text.startswith("-") else text
+    return digits != "" and digits.isascii() and digits.isdigit()
+
+
+def _gpu_request(gpus: str) -> tuple[str, list[int]]:
+    """Which GPUs a ``gpus`` setting gives the container, and their indices.
+
+    ``none``, ``auto`` and ``all`` are themselves; ``device=N[,M...]``
+    (quoted or not, as ``docker run --gpus '"device=0,1"'`` takes it) is
+    those indices; a count *N* (``N`` or ``count=N``) the first *N*, as
+    docker hands ``--gpus N`` the GPUs ``0`` to ``N-1``, and ``count=all``
+    every one.  A count below 1 is :data:`_BAD_COUNT`; anything else (a
+    UUID, other ``--gpus`` options) is :data:`_UNCHECKED`: the GPUs it
+    gives cannot be told here.
+    """
+    text = gpus.strip()
+    devices: list[int] = []
+    if text == _NONE or text == _AUTO or text == _ALL:
+        return text, devices
+    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+        text = text[1:-1].strip()
+    if text.startswith("count="):
+        text = text[len("count=") :].strip()
+        if text == _ALL:
+            return _ALL, devices
+    if _whole(text):
+        count = int(text)
+        if count < 1:
+            return _BAD_COUNT, devices
+        for index in range(count):
+            devices.append(index)
+        return _DEVICES, devices
+    if text.startswith("device="):
+        for item in text[len("device=") :].split(","):
+            item = item.strip()
+            if not (item != "" and item.isascii() and item.isdigit()):
+                return _UNCHECKED, []
+            devices.append(int(item))
+        if devices:
+            return _DEVICES, devices
+    return _UNCHECKED, []
+
+
+def _unchecked_gpus(backend: str, gpus: str) -> str:
+    """The error for a ``gpus`` whose GPUs cannot be checked for the GPU
+    memory a backend takes."""
+    return (
+        f"{setting_key(backend, 'gpus')} {gpus!r} does not say which GPUs "
+        f"docker gives the container, so the {setting_key(backend, 'gpu_memory_mb')} "
+        "it takes cannot be checked on them: set gpus to auto, all, device=N "
+        "(or \"device=N,M\") or a count, or gpu_memory_mb to 0"
+    )
 
 
 def _gpu_args(gpus: str, placed: Optional[int]) -> list[str]:

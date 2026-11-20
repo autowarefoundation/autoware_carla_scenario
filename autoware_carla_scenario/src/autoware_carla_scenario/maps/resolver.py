@@ -39,7 +39,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .cache import DERIVED_SUBDIR, CachedRepo, GitMapCache, is_lfs_pointer
+from .cache import (
+    DERIVED_SUBDIR,
+    CachedRepo,
+    GitMapCache,
+    is_lfs_pointer,
+    _literal_pattern,
+)
 from .source import MapSource
 
 logger = logging.getLogger(__name__)
@@ -148,8 +154,13 @@ class ResolvedMap:
 
 
 def _include_patterns(path: str) -> tuple[str, ...]:
-    """Return the LFS include patterns covering the map directory *path*."""
-    prefix = f"{path}/" if path else ""
+    """Return the LFS include patterns covering the map directory *path*.
+
+    The directory is matched as itself (:func:`~.cache._literal_pattern`): a
+    ``,`` or a glob character in its name neither splits the list git-lfs
+    reads nor makes a pattern of it (#2233).
+    """
+    prefix = f"{_literal_pattern(path)}/" if path else ""
     return tuple(f"{prefix}{pattern}" for pattern in MAP_FILE_PATTERNS)
 
 

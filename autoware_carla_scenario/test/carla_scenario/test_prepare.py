@@ -394,6 +394,46 @@ class TestAssignGpus:
         )
         assert placed == {"a": host.gpus[0], "b": host.gpus[1], "c": host.gpus[1]}
 
+    def test_a_backend_on_several_gpus_is_checked_on_each(self) -> None:
+        """The GPUs docker gives the container are the ones checked (#2233):
+        room on another GPU does not stand in for GPU 0."""
+        host = HostResources(
+            gpus=(Gpu(0, "GPU-a", 1000), Gpu(1, "GPU-b", 50000)), memory_mb=1000
+        )
+        for need in (
+            Resources(gpu_memory_mb=24000, gpus=(0, 1)),
+            Resources(gpu_memory_mb=24000, every_gpu=True),
+        ):
+            with pytest.raises(
+                InsufficientResourcesError,
+                match=r"a: 24000 MiB of GPU memory needed, 1000 MiB free on the "
+                r"GPU it is set to \(0\)",
+            ):
+                assign_gpus([("a", need)], host)
+        with pytest.raises(InsufficientResourcesError, match="GPU 2, which is not"):
+            assign_gpus([("a", Resources(gpu_memory_mb=1, gpus=(1, 2)))], host)
+        roomy = HostResources(
+            gpus=(Gpu(0, "GPU-a", 30000), Gpu(1, "GPU-b", 30000)), memory_mb=1000
+        )
+        placed = assign_gpus(
+            [("a", Resources(gpu_memory_mb=20000, every_gpu=True))], roomy
+        )
+        assert placed == {"a": roomy.gpus[0]}
+        # Its memory is taken on each GPU: none is left for another.
+        with pytest.raises(InsufficientResourcesError, match="b: 20000 MiB"):
+            assign_gpus(
+                [
+                    ("a", Resources(gpu_memory_mb=20000, gpus=(0, 1))),
+                    ("b", Resources(gpu_memory_mb=20000)),
+                ],
+                roomy,
+            )
+        with pytest.raises(InsufficientResourcesError, match="none is visible"):
+            assign_gpus(
+                [("a", Resources(gpu_memory_mb=1, every_gpu=True))],
+                HostResources((), 1000),
+            )
+
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
@@ -462,12 +502,55 @@ class TestDockerBackend:
             ("none", Resources(memory_mb=16000)),
             ("device=1", Resources(gpu_memory_mb=24000, memory_mb=16000, gpu=1)),
             ("auto", Resources(gpu_memory_mb=24000, memory_mb=16000)),
+            # What docker run --gpus gives the container (#2233).
+            ("all", Resources(gpu_memory_mb=24000, memory_mb=16000, every_gpu=True)),
+            (
+                "count=all",
+                Resources(gpu_memory_mb=24000, memory_mb=16000, every_gpu=True),
+            ),
+            ("1", Resources(gpu_memory_mb=24000, memory_mb=16000, gpu=0)),
+            ("2", Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(0, 1))),
+            (
+                "count=3",
+                Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(0, 1, 2)),
+            ),
+            (
+                '"device=0,2"',
+                Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(0, 2)),
+            ),
+            (
+                "device=1,3",
+                Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(1, 3)),
+            ),
         ],
     )
     def test_what_a_container_takes_follows_its_gpus(
         self, gpus: str, expected: Resources
     ) -> None:
         assert ArdyBackend.from_settings({"gpus": gpus}).resources() == expected
+
+    @pytest.mark.parametrize("gpus", [0, -1, "0", "-2", "count=0", '"0"'])
+    def test_a_gpu_count_below_one_is_refused(self, gpus: object) -> None:
+        with pytest.raises(
+            ValueError, match=r"^backends\.ardy\.gpus must be a count of 1 or more"
+        ):
+            ArdyBackend.from_settings({"gpus": gpus})
+        with pytest.raises(ValueError, match=r"backends\.ardy\.gpus must be a count"):
+            ArdyBackend.from_settings({"gpus": gpus, "gpu_memory_mb": 0})
+
+    @pytest.mark.parametrize("gpus", ["device=GPU-1234", "driver=nvidia,count=2"])
+    def test_gpus_that_cannot_be_checked_are_refused_with_gpu_memory(
+        self, gpus: str
+    ) -> None:
+        with pytest.raises(ValueError) as raised:
+            ArdyBackend.from_settings({"gpus": gpus})
+        message = str(raised.value)
+        assert message.startswith(f"backends.ardy.gpus {gpus!r} does not say")
+        assert "backends.ardy.gpu_memory_mb" in message
+        # Without GPU memory nothing is checked, and docker gets it as given.
+        backend = ArdyBackend.from_settings({"gpus": gpus, "gpu_memory_mb": 0})
+        assert backend.resources().gpu_memory_mb == 0
+        assert docker_module._gpu_args(gpus, None) == ["--gpus", gpus]
 
     def test_a_missing_image_is_pulled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorded = _Docker(image_present=False)

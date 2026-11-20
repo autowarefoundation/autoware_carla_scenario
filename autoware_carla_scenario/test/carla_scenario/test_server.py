@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import socket
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import pytest
 
 from autoware_carla_scenario import CarlaServerManager
+from autoware_carla_scenario import server as server_module
 from autoware_carla_scenario.carla_install import HOME_ENV, LAUNCHER, install_dir
 
 
@@ -58,7 +59,6 @@ def test_a_closed_port_does_not_ping_without_asking_the_carla_client(
 ) -> None:
     """On arm64 the CARLA client can abort the process on a refused
     connection, so a closed port is answered before it is made."""
-    from autoware_carla_scenario import server as server_module
 
     def no_client(*_args: object) -> None:
         raise AssertionError("the CARLA client was made for a closed port")
@@ -265,3 +265,103 @@ def test_other_machines_are_not_local(host: str) -> None:
     from autoware_carla_scenario.server import _is_local_host
 
     assert not _is_local_host(host)
+
+
+# ---------------------------------------------------------------------------
+# A server is never adopted from another process (#2233)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def listener() -> Iterator[int]:
+    """A plain TCP listener on loopback, not a CARLA server; its port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        yield int(sock.getsockname()[1])
+
+
+def test_a_launched_server_that_exits_fails_though_another_answers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    """A launched CARLA that died is not taken for the server answering the
+    port: start() fails with its exit code and points to its log."""
+    launcher = tmp_path / "CarlaUnreal.sh"
+    launcher.write_text("#!/bin/sh\nexit 1\n")
+    launcher.chmod(0o755)
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(launcher))
+    manager = CarlaServerManager(
+        host="127.0.0.1", port=free_port, timeout=30.0, reuse_if_running=False
+    )
+
+    def foreign_server_answers() -> bool:
+        # Answers only once the launched process has exited, as a server
+        # already on the port would after the new one died binding it.
+        assert manager._process is not None
+        manager._process.wait()
+        return True
+
+    monkeypatch.setattr(manager, "_ping", foreign_server_answers)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert (
+        f"exited with code 1 before it became reachable at 127.0.0.1:{free_port}"
+        in (message)
+    )
+    assert str(tmp_path / "CarlaUnreal" / "Saved" / "Logs") in message
+    assert manager._process is None
+    assert not manager.reused
+
+
+def test_a_taken_port_is_not_launched_onto(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listener: int
+) -> None:
+    """Without reuse_if_running, a port another process listens on is
+    refused before anything is launched."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(
+        host="127.0.0.1", port=listener, timeout=30.0, reuse_if_running=False
+    )
+    monkeypatch.setattr(manager, "_ping", lambda: True)  # never asked
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert f"Port {listener} on 127.0.0.1 is in use by another process" in message
+    assert "reuse_if_running=True" in message
+    assert not mark.exists()
+    assert manager._process is None
+
+
+def test_a_busy_server_that_answers_late_is_reused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listener: int
+) -> None:
+    """A CARLA that misses the first ping's deadline is pinged again and
+    reused, not launched over."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(host="127.0.0.1", port=listener, timeout=30.0)
+    answers = iter([False, False, True])
+    monkeypatch.setattr(manager, "_ping", lambda: next(answers))
+    monkeypatch.setattr(server_module.time, "sleep", lambda _: None)
+    manager.start()
+    assert manager.reused
+    assert not mark.exists()
+    manager.stop()
+
+
+def test_a_port_that_never_answers_as_carla_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listener: int
+) -> None:
+    """With reuse_if_running, a process on the port that never answers as
+    CARLA is neither reused nor launched over."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    monkeypatch.setattr(CarlaServerManager, "REUSE_PING_S", 0.2)
+    manager = CarlaServerManager(host="127.0.0.1", port=listener, timeout=30.0)
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert f"Port {listener} on 127.0.0.1 is in use by a process" in message
+    assert "did not answer as a CARLA server within 0.2s" in message
+    assert not mark.exists()
+    assert not manager.reused

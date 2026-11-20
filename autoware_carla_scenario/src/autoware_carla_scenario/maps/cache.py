@@ -877,7 +877,7 @@ class GitMapCache:
         # change has nothing to pull -- nor does a repository with no LFS.
         if wanted and not self._content_present(worktree, wanted):
             self._require_lfs(worktree, source)
-            self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
+            self._git(worktree, "lfs", "pull", f"--include={_lfs_include(wanted)}")
         # Re-read again: what was recorded is still checked out, whoever
         # recorded it, since nothing here takes a directory away.
         recorded = self._read_meta(cached.root)
@@ -940,11 +940,18 @@ class GitMapCache:
 
     @staticmethod
     def _content_present(worktree: Path, wanted: Sequence[str]) -> bool:
-        """Whether every matched file holds real content rather than a pointer."""
+        """Whether every matched file holds real content rather than a pointer.
+
+        *wanted* are gitignore-style patterns, read as git-lfs reads them: a
+        ``\\`` escapes the character after it (:func:`_literal_pattern`), so
+        a map directory named ``Town[1]`` is looked for as itself rather than
+        as a character class that matches nothing, which would report its
+        pointers present and skip the pull (#2233).
+        """
         return all(
             not is_lfs_pointer(path)
             for pattern in wanted
-            for path in worktree.glob(pattern)
+            for path in worktree.glob(_glob_pattern(pattern))
         )
 
     def _git(self, cwd: Optional[Path], *args: str, capture: bool = False) -> str:
@@ -1092,6 +1099,61 @@ def _exact_tip(listing: str, ref: str) -> str:
         if direct:
             return direct
     return ""
+
+
+def _literal_pattern(path: str) -> str:
+    """A gitignore-style pattern, as ``git lfs pull --include`` reads one,
+    that matches the path *path* itself.
+
+    The characters a pattern reads as glob or escape (``\\``, ``*``, ``?``,
+    ``[``) are escaped with ``\\``.  git-lfs splits its ``--include`` list
+    at every ``,``, with no escape for one, and trims the whitespace around
+    each item, so a ``,`` and the whitespace at either end become ``?``: the
+    pattern then matches the path and only paths that differ from it in
+    those characters (#2233).
+    """
+    out: list[str] = []
+    for character in path:
+        if character in "\\*?[":
+            out.append("\\" + character)
+        elif character == ",":
+            out.append("?")
+        else:
+            out.append(character)
+    start = 0
+    while start < len(out) and out[start].isspace():
+        out[start] = "?"
+        start += 1
+    end = len(out) - 1
+    while end >= start and out[end].isspace():
+        out[end] = "?"
+        end -= 1
+    return "".join(out)
+
+
+def _lfs_include(patterns: Sequence[str]) -> str:
+    """*patterns* as one ``git lfs pull --include`` value: joined by ``,``,
+    each ``,`` inside a pattern a ``?`` (git-lfs has no escape for one)."""
+    return ",".join([pattern.replace(",", "?") for pattern in patterns])
+
+
+def _glob_pattern(pattern: str) -> str:
+    """The gitignore-style *pattern* (a ``\\`` escapes the character after
+    it) as a :meth:`pathlib.Path.glob` pattern, which has no escape: a
+    character escaped there is a one-character class here (``[[]``)."""
+    out: list[str] = []
+    escaped = False
+    for character in pattern:
+        if escaped:
+            out.append(f"[{character}]" if character in "*?[" else character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        else:
+            out.append(character)
+    if escaped:
+        out.append("\\")
+    return "".join(out)
 
 
 def _sparse_pattern(path: str) -> str:

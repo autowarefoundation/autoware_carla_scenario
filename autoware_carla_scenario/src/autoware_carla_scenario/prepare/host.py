@@ -118,12 +118,16 @@ def assign_gpus(
 ) -> dict[str, Optional[Gpu]]:
     """Place each backend on a GPU with room for it, or refuse.
 
+    A backend set to several GPUs (``Resources.gpus``) or to every one
+    (``Resources.every_gpu``) needs its GPU memory free on each of them.
+
     Args:
         needs: Each backend's name and what it takes.
         host: What the host has free (:func:`probe_host`).
 
     Returns:
-        Each backend's GPU, ``None`` for one that needs none.
+        Each backend's GPU (the first of those it is set to, for one set to
+        several), ``None`` for one that needs none.
 
     Raises:
         InsufficientResourcesError: If the host memory or a GPU's memory
@@ -139,30 +143,44 @@ def assign_gpus(
         )
     free = {gpu.index: gpu.free_mb for gpu in host.gpus}
     placed: dict[str, Optional[Gpu]] = {}
-    # The backends set to a GPU first, so one that is free to go anywhere
-    # cannot take their room.
+    # The backends set to a GPU (or to several, or every one) first, so one
+    # that is free to go anywhere cannot take their room.
     by_size = sorted(needs, key=lambda item: -item[1].gpu_memory_mb)
     loose: list[tuple[str, Resources]] = []
     for name, need in by_size:
         if need.gpu_memory_mb <= 0:
             placed[name] = None
             continue
-        pinned = need.gpu
-        if pinned is None:
-            loose.append((name, need))
+        pinned = _pinned(need, host)
+        if not pinned:
+            if need.every_gpu:
+                shortfalls.append(f"{name}: runs on every GPU, and none is visible")
+            else:
+                loose.append((name, need))
             continue
-        best = next((gpu for gpu in host.gpus if gpu.index == pinned), None)
-        if best is None:
-            shortfalls.append(f"{name}: is set to GPU {pinned}, which is not visible")
+        chosen: list[Gpu] = []
+        short = False
+        for index in pinned:
+            gpu = next((gpu for gpu in host.gpus if gpu.index == index), None)
+            if gpu is None:
+                shortfalls.append(
+                    f"{name}: is set to GPU {index}, which is not visible"
+                )
+                short = True
+                continue
+            if free[gpu.index] < need.gpu_memory_mb:
+                shortfalls.append(
+                    f"{name}: {need.gpu_memory_mb} MiB of GPU memory needed, "
+                    f"{free[gpu.index]} MiB free on the GPU it is set to ({gpu.index})"
+                )
+                short = True
+                continue
+            chosen.append(gpu)
+        if short:
             continue
-        if free[best.index] < need.gpu_memory_mb:
-            shortfalls.append(
-                f"{name}: {need.gpu_memory_mb} MiB of GPU memory needed, "
-                f"{free[best.index]} MiB free on the GPU it is set to ({best.index})"
-            )
-            continue
-        free[best.index] -= need.gpu_memory_mb
-        placed[name] = best
+        for gpu in chosen:
+            free[gpu.index] -= need.gpu_memory_mb
+        placed[name] = chosen[0]
     # Then the rest: the largest first, each onto the GPU with the most room
     # left, or, when that leaves one without room, another placement that
     # fits them all (#1121).
@@ -198,6 +216,21 @@ def assign_gpus(
             "is said to take (backends.<name>.gpu_memory_mb / memory_mb)."
         )
     return placed
+
+
+def _pinned(need: Resources, host: HostResources) -> list[int]:
+    """The GPUs *need* is set to, each needing its GPU memory: every visible
+    one for ``every_gpu``, its ``gpus``, or its ``gpu``; none for one that may
+    go on any GPU."""
+    if need.every_gpu:
+        return [gpu.index for gpu in host.gpus]
+    if need.gpus:
+        return list(need.gpus)
+    pinned: list[int] = []
+    gpu = need.gpu
+    if gpu is not None:
+        pinned.append(gpu)
+    return pinned
 
 
 def _gpus() -> tuple[Gpu, ...]:

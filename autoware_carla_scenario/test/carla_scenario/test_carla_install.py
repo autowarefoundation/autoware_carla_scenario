@@ -105,6 +105,49 @@ def test_members_escaping_the_install_are_refused(home: Path, tmp_path: Path) ->
     assert not (home / "outside").exists()
 
 
+@pytest.mark.parametrize(
+    "files, message",
+    [
+        # Two top directories would be merged into one install (#2233).
+        (
+            {f"{_TOP}/{LAUNCHER}": b"#!/bin/sh\n", "Other/VERSION": b"x"},
+            rf"two top directories, '{_TOP}' and 'Other'",
+        ),
+        # No wrapper: Linux/ would be stripped, then "has no CarlaUnreal.sh".
+        (
+            {f"{LAUNCHER}": b"#!/bin/sh\n", "VERSION": b"x"},
+            r"top directory is 'Linux', the one holding CarlaUnreal\.sh, with "
+            r"no directory around it",
+        ),
+        (
+            {"VERSION": b"x", f"{LAUNCHER}": b"#!/bin/sh\n"},
+            r"'VERSION' at its top, not in a single top directory",
+        ),
+    ],
+)
+def test_a_package_not_in_one_top_directory_is_refused(
+    home: Path, tmp_path: Path, files: dict[str, bytes], message: str
+) -> None:
+    install(_carla(tmp_path / "carla.tar.gz"))
+    other = _package(tmp_path / "other.tar.gz", files)
+    with pytest.raises(tarfile.TarError, match=message):
+        install(other)
+    assert installed_executable() is not None
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_a_dot_slash_top_directory_is_one_top_directory(tmp_path: Path) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name in ("./", f"./{_TOP}/", f"./{_TOP}/{LAUNCHER}"):
+            info = tarfile.TarInfo(name)
+            if name.endswith("/"):
+                info.type = tarfile.DIRTYPE
+            archive.addfile(info, io.BytesIO(b""))
+    carla_install._unpack(io.BytesIO(buffer.getvalue()), tmp_path / "out")
+    assert (tmp_path / "out" / LAUNCHER).is_file()
+
+
 def _linked_package(links: dict[str, tuple[bytes, str]]) -> bytes:
     """A gzipped tar of ``Top/Linux/a`` plus *links*: ``name -> (type, linkname)``."""
     buffer = io.BytesIO()
@@ -127,7 +170,7 @@ def _unpack_as(mode: str, data: bytes, destination: Path) -> None:
         return
     destination.mkdir(parents=True)
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-        archive.extractall(destination, filter=carla_install._strip_top)
+        archive.extractall(destination, filter=carla_install._StripTop())
 
 
 _MODES = pytest.mark.parametrize("mode", ["stream", "seekable"])
