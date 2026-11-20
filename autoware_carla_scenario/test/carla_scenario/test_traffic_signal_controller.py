@@ -620,6 +620,56 @@ class TestTheDeclaredSchedule:
         assert controller.current_phase is not None
         assert controller.current_phase.name == "all_red"
 
+    def test_a_long_gap_passes_every_phase_of_the_skipped_cycles(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """A whole cycle skipped entered and left every phase (#2259)."""
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("A", 10.0, (PhaseState(_NORTH, "green"),)),
+                Phase("B", 0.0, (PhaseState(_NORTH, "yellow"),)),
+                Phase("C", 10.0, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        world = _World()
+        controller.tick(world)
+        # One whole 20 s cycle, then 5 s back into A.
+        world.now = 25.0
+        controller.tick(world)
+
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "A"
+        assert controller.showed("B")
+        assert controller.showed("C")
+        # Counted for that tick only.
+        world.now = 26.0
+        controller.tick(world)
+        assert not controller.showed("B")
+        assert not controller.showed("C")
+
+    def test_a_cycle_shorter_than_a_tick_passes_its_flash_every_tick(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """Every tick of 50 ms skips a whole 40 ms cycle, flash and all (#2259)."""
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("A", 0.02, (PhaseState(_NORTH, "green"),)),
+                Phase("flash", 0.0, (PhaseState(_NORTH, "yellow"),)),
+                Phase("C", 0.02, (PhaseState(_NORTH, "red"),)),
+            ),
+        )
+        world = _World()
+        showed: list[bool] = []
+        for now in _summed_clock(200):
+            world.now = now
+            controller.tick(world)
+            showed.append(controller.showed("flash"))
+
+        # The first tick only enters the cycle; every later one is 50 ms on.
+        assert all(showed[1:])
+
 
 class TestRefusedAtConstruction:
     """A non-finite duration or delay is refused when the controller is built (#934).
@@ -642,6 +692,20 @@ class TestRefusedAtConstruction:
                 delay_seconds=delay,
                 reference=_cycle(),
             )
+
+    def test_no_phases(self) -> None:
+        # Its first tick would index into nothing (#2259).
+        with pytest.raises(ValueError, match="no phases"):
+            SignalController("x", ())
+
+    def test_a_delay_without_a_reference_is_allowed(self) -> None:
+        # build_controllers attaches the reference after construction.
+        controller = SignalController(
+            name="late",
+            phases=(Phase("green", 5.0, (PhaseState(_NORTH, "green"),)),),
+            delay_seconds=2.0,
+        )
+        assert controller.reference is None
 
     def test_a_zero_duration_passes_straight_through(self) -> None:
         assert Phase("all_red", 0.0, ()).duration_seconds == 0.0

@@ -46,6 +46,7 @@ from typing import Any, Optional
 import typesafe_carla.carla as carla
 
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
+from ..kinematics.walker_motion import world_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,13 @@ class SignalController:
     _passed: "list[int]" = field(default_factory=_no_indices, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # A cycle of no phases has nothing to show, and its first tick would
+        # index into nothing.  The document path refuses it while it is being
+        # written; this is the same refusal for a controller built in code.
+        # A delay without a reference is not refused here: build_controllers
+        # attaches the reference after construction.
+        if not self.phases:
+            raise ValueError(f"SignalController '{self.name}' has no phases")
         # A NaN delay is never over, so the controller would never start.
         if not math.isfinite(self.delay_seconds) or self.delay_seconds < 0:
             raise ValueError("delay_seconds must be finite and not negative")
@@ -220,7 +228,7 @@ class SignalController:
         for the phase the tick ends in: a phase states every signal it
         controls, so the ones passed over leave nothing behind.
         """
-        now = _simulated_now(world)
+        now = world_seconds(world)
         self._passed = []
 
         entering = self._current is None
@@ -248,7 +256,7 @@ class SignalController:
             if phase.name == phase_name:
                 # Anchored at now, not at the schedule: a jump is an explicit
                 # decision taken on this tick, and the cycle runs on from it.
-                self._enter(index, _simulated_now(world))
+                self._enter(index, world_seconds(world))
                 _apply(phase, world, self.name)
                 return True
         logger.warning(
@@ -332,8 +340,14 @@ class SignalController:
         # step; only a long gap between ticks has any, and a short cycle would
         # otherwise walk every one of them.
         elapsed = now - started
-        if elapsed >= cycle:
+        skipped = elapsed >= cycle
+        if skipped:
             started += float(int(elapsed // cycle)) * cycle
+            # A skipped cycle entered and left every phase within this tick,
+            # the one the tick began in included, so each of them counts for
+            # showed() -- a 0 s phase above all, which no tick ever shows.
+            for index in range(count):
+                self._passed.append(index)
 
         changed = False
         # Bounded rather than open: after the skip at most one cycle (and a
@@ -345,8 +359,8 @@ class SignalController:
             started += self.phases[current].duration_seconds
             # The phase the tick began in was shown on earlier ticks, unless
             # the cycle only starts now; every later one is entered and left
-            # within this tick.
-            if changed or entering:
+            # within this tick.  After a skip, every phase is passed already.
+            if (changed or entering) and not skipped:
                 self._passed.append(current)
             current = (current + 1) % count
             changed = True
@@ -425,11 +439,6 @@ def _describe(entry: PhaseState) -> str:
     if entry.group is None:
         return str(entry.lanelet2_regulatory_element_id)
     return f"{entry.lanelet2_regulatory_element_id} (group '{entry.group}')"
-
-
-def _simulated_now(world: "carla.World") -> float:
-    """Return the world's own elapsed simulated seconds."""
-    return float(world.get_snapshot().timestamp.elapsed_seconds)
 
 
 def _group_members(declared_groups: "list[Any]") -> "dict[str, tuple[int, ...]]":
