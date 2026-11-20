@@ -658,8 +658,11 @@ class ScenarioBridgeNode(Node):
                     self._routed_version = self._route_request_version
                     self._reroute_rejections = 0
                     # Unlike the startup's steps, a route change is not done
-                    # once: the next re-route needs the latch free again.
-                    self._reroute_requested = False
+                    # once: the next re-route needs the latch free again.  Only
+                    # the change's own answer frees it: a set's answer does
+                    # not free a change in flight (#2217).
+                    if latch == "_reroute_requested":
+                        self._reroute_requested = False
             elif latch == "_clear_requested":
                 # The ARRIVED route is gone: route the new mission and engage
                 # again with the startup's steps, which run once it is UNSET.
@@ -810,6 +813,11 @@ class ScenarioBridgeNode(Node):
         if not self._readiness_reported or self._mission is None:
             return
         if self._reroute_requested:
+            return
+        # A set_route_points in flight (the one after a clear) is answered
+        # first: its SET RouteState may arrive before its answer, and a change
+        # issued then would send the same route again (#2217).
+        if "_route_requested" in self._inflight:
             return
         version = self._mission.version
         if version == self._routed_version or version == self._abandoned_version:

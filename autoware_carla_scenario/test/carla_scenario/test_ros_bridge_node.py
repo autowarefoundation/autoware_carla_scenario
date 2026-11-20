@@ -624,6 +624,32 @@ def test_a_re_route_after_arrival_clears_the_route_sets_it_and_engages_again(
     assert len(_route_calls(node)) == 2
 
 
+def test_a_set_route_in_flight_after_a_clear_is_not_changed_again(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """The SET RouteState of the route set after a clear may arrive before the
+    set's answer: the watch then sends no change_route_points for the same
+    route, and the set's answer does not free a change's latch (#2217)."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    _drive_to_ready(node)
+    node._on_route_state(_route_state(ROUTE_STATE_ARRIVED))  # noqa: SLF001
+    bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0))
+    _watch_until(node, lambda: node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls)
+    node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    assert len(_route_calls(node)) == 2
+
+    node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001 - before the answer
+    _watch(node)
+    assert _change_calls(node) == []
+
+    _route_calls(node)[-1][1].answer(True)
+    _watch(node)  # the route Autoware has now
+    assert _change_calls(node) == []
+    assert len(_route_calls(node)) == 2
+
+
 def test_the_node_checks_every_route_state_it_relies_on(
     node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

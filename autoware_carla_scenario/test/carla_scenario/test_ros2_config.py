@@ -221,6 +221,9 @@ def test_a_camera_refuses_a_size_that_is_no_whole_number(key: str, value: Any) -
     match = rf"^camera 'camera': {key} must be a whole number"
     with pytest.raises(ValueError, match=match):
         Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
+    if value is None:
+        # From a mapping, null is the default (#2217).
+        return
     with pytest.raises(ValueError, match=match):
         Ros2EgoConfig.from_mapping({"cameras": [{"topic": _CAMERA_TOPIC, key: value}]})
 
@@ -394,6 +397,12 @@ def test_domain_id_keeps_a_whole_number_as_an_int(domain_id: Any) -> None:
 )
 def test_domain_id_refuses_what_is_no_ros_domain_id(domain_id: Any) -> None:
     with pytest.raises(ValueError, match=r"^domain_id must be a ROS domain id"):
+        Ros2EgoConfig(domain_id=domain_id)
+    if domain_id is None:
+        # From a mapping, null is the default (#2217).
+        assert Ros2EgoConfig.from_mapping({"domain_id": None}).domain_id == 0
+        return
+    with pytest.raises(ValueError, match=r"^domain_id must be a ROS domain id"):
         Ros2EgoConfig.from_mapping({"domain_id": domain_id})
 
 
@@ -419,7 +428,7 @@ def test_priority_keeps_a_whole_number_as_an_int(priority: Any) -> None:
     assert source.priority == 10
 
 
-@pytest.mark.parametrize("priority", ["10", True, 10.5, math.nan, None])
+@pytest.mark.parametrize("priority", ["10", True, 10.5, math.nan])
 def test_priority_refuses_what_is_no_whole_number(priority: Any) -> None:
     with pytest.raises(
         ValueError,
@@ -631,7 +640,76 @@ def test_a_good_topic_name_is_taken(name: str) -> None:
 
 def test_an_unset_state_topic_is_not_checked() -> None:
     config = Ros2EgoConfig.from_mapping(
-        {"clock_topic": None, "speed_topic": "", "turn_indicators_command_topic": None}
+        {
+            "clock_topic": None,
+            "speed_topic": None,
+            "turn_indicators_command_topic": None,
+        }
     )
     assert config.clock_topic is None
-    assert config.speed_topic == ""
+    assert config.speed_topic is None
+    assert config.turn_indicators_command_topic is None
+
+
+@pytest.mark.parametrize("value", [False, 0, ""])
+def test_a_state_topic_turned_off_but_by_null_is_refused(value: Any) -> None:
+    """#2217: only null leaves a topic unpublished; false, 0 or '' used to as
+    well, silently."""
+    with pytest.raises(ValueError, match=r"^speed_topic must be a ROS 2 topic") as e:
+        Ros2EgoConfig.from_mapping({"speed_topic": value})
+    assert repr(value) in str(e.value)
+
+
+@pytest.mark.parametrize("key", ["frame_id", "child_frame_id"])
+@pytest.mark.parametrize("value", [None, "", False, 0])
+def test_an_odometry_frame_that_is_no_name_is_refused(key: str, value: Any) -> None:
+    """#2217: a None frame failed at the first publish, once the ego had spawned."""
+    with pytest.raises(ValueError, match=rf"^{key} must be a frame name, got "):
+        Ros2EgoConfig(**{key: value})
+
+
+def test_a_null_ros2_setting_is_its_default() -> None:
+    """#2217: null is the default, as absent is, for the ego and its sources."""
+    config = Ros2EgoConfig.from_mapping(
+        {
+            "domain_id": None,
+            "on_stale": None,
+            "frame_id": None,
+            "child_frame_id": None,
+            "rear_axle_offset_m": None,
+            "sources": [
+                {
+                    "name": "vp",
+                    "kind": "steer_accel",
+                    "steering_topic": "/s",
+                    "acceleration_topic": "/a",
+                    "priority": None,
+                    "stale_s": None,
+                    "jerk_mps3": None,
+                    "speed_horizon_s": None,
+                    "steering_sign": None,
+                    "pair_window_s": None,
+                }
+            ],
+        }
+    )
+    defaults = Ros2EgoConfig()
+    assert config.domain_id == defaults.domain_id
+    assert config.on_stale == defaults.on_stale
+    assert config.frame_id == defaults.frame_id
+    assert config.child_frame_id == defaults.child_frame_id
+    assert config.rear_axle_offset_m is None
+    (source,) = config.sources
+    reference = CommandSourceConfig(
+        name="vp", kind="steer_accel", steering_topic="/s", acceleration_topic="/a"
+    )
+    assert source == reference
+
+
+def test_steer_accel_needs_two_distinct_topics() -> None:
+    with pytest.raises(
+        ValueError, match=r"steering_topic and acceleration_topic must differ"
+    ):
+        CommandSourceConfig(
+            name="vp", kind="steer_accel", steering_topic="/x", acceleration_topic="/x"
+        )

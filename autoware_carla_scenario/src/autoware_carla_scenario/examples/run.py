@@ -71,7 +71,10 @@ from autoware_carla_scenario import (
 )
 import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from autoware_carla_scenario.actions.background_traffic import parse_constraints
-from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
+from autoware_carla_scenario.autoware_stack.launcher import (
+    DEFAULT_BRIDGE_PARAMETERS,
+    AutowareLauncher,
+)
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.batch_report import write_batch_result_json
 from autoware_carla_scenario.batch_resume import (
@@ -778,8 +781,7 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
             )
         options["ros_domain_ids"] = _launcher_ros_domain_ids(settings)
         options["stop_timeout_s"] = stop_timeout_s
-        if "bridge_parameters" in options:
-            options["bridge_parameters"] = _launcher_bridge_parameters(settings)
+        options["bridge_parameters"] = _launcher_bridge_parameters(settings)
     else:
         argv = _launcher_str_list("command", settings.get("command"))
         env = _launcher_str_mapping("env", settings.get("env"))
@@ -940,21 +942,37 @@ def _launcher_str_mapping(name: str, value: object) -> dict[str, str]:
 
 def _launcher_bridge_parameters(settings: dict[str, Any]) -> dict[str, Any]:
     """``autoware.launcher.bridge_parameters`` of *settings*: a mapping of ROS
-    parameters (values of any type: ``use_sim_time: true``); null or absent is
-    none.
+    parameters (values of any type: ``auto_engage: false``) merged over the
+    default, ``{use_sim_time: true}``
+    (:data:`~autoware_carla_scenario.autoware_stack.launcher.DEFAULT_BRIDGE_PARAMETERS`),
+    for both launcher types; null or absent is the default (#2217).  Merged,
+    so a mapping that sets something else keeps the node on CARLA's clock: a
+    parameter is turned off by setting it (``use_sim_time: false``), or left
+    at the node's own default by a null.
 
     Raises:
-        ValueError: naming the key.
+        ValueError: naming the key, for a value that is no mapping, or a
+            parameter the node would refuse as it starts (a fraction for an
+            integer one, :func:`~autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args`).
     """
+    from autoware_carla_scenario.autoware_stack.bridge_node import (  # noqa: PLC0415
+        bridge_ros_args,
+    )
+
     value = settings.get("bridge_parameters")
     if value is None:
-        return {}
+        return dict(DEFAULT_BRIDGE_PARAMETERS)
     if not isinstance(value, dict):
         raise ValueError(
             "autoware.launcher.bridge_parameters must be a mapping of ROS "
             f"parameters, not {type(value).__name__} {value!r}"
         )
-    return dict(value)
+    parameters = {**DEFAULT_BRIDGE_PARAMETERS, **value}
+    try:
+        bridge_ros_args("", parameters)
+    except ValueError as exc:
+        raise ValueError(f"autoware.launcher.bridge_parameters.{exc}") from None
+    return parameters
 
 
 def _launcher_ros_domain_ids(settings: dict[str, Any]) -> tuple[int, ...]:
@@ -1018,6 +1036,7 @@ def _autoware_bridge_config(cfg: DictConfig) -> "AutowareBridgeConfig":
     from autoware_carla_scenario import AutowareBridgeConfig  # noqa: PLC0415
     from autoware_carla_scenario.utils.config import (  # noqa: PLC0415
         checked_options,
+        null_as_default,
     )
 
     autoware_cfg = cfg.get("autoware")
@@ -1030,7 +1049,10 @@ def _autoware_bridge_config(cfg: DictConfig) -> "AutowareBridgeConfig":
     except ValueError as exc:
         raise ValueError(f"autoware: {exc}") from None
     try:
-        return AutowareBridgeConfig(**bridge_options)
+        # A null setting is its default (#2217), as an absent one.
+        return AutowareBridgeConfig(
+            **null_as_default(AutowareBridgeConfig, bridge_options)
+        )
     except ValueError as exc:
         raise ValueError(f"autoware.{exc}") from None
 
@@ -1189,11 +1211,17 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         )
         from autoware_carla_scenario.utils.config import (  # noqa: PLC0415
             checked_options,
+            checked_section,
+            null_as_default,
         )
 
-        bridge_options = checked_options(AutowareBridgeConfig, bridge_dict)
+        bridge_options = checked_options(
+            AutowareBridgeConfig, checked_section("driver.bridge", bridge_dict) or {}
+        )
         try:
-            bridge_cfg = AutowareBridgeConfig(**bridge_options)
+            bridge_cfg = AutowareBridgeConfig(
+                **null_as_default(AutowareBridgeConfig, bridge_options)
+            )
         except ValueError as exc:
             raise ValueError(f"driver.bridge.{exc}") from None
         scenario_cfg = cfg.get("scenario") or {}

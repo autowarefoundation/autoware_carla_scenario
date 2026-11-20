@@ -47,7 +47,41 @@ def _strip_jsonc(text: str) -> str:
         else:
             out.append(c)
             i += 1
-    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+    return _drop_trailing_commas("".join(out))
+
+
+def _drop_trailing_commas(text: str) -> str:
+    """*text*, JSON with no comments left, without the commas that close an
+    object or an array (``[1, 2,]``).  A comma inside a string is kept: a
+    regular expression over the whole text would take ``"echo {a,}"`` for
+    one (#2217)."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_string = False
+    while i < n:
+        c = text[i]
+        if in_string:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_string = False
+        elif c == '"':
+            in_string = True
+            out.append(c)
+        elif c == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            # Kept unless an object or an array closes after it.
+            if j == n or text[j] not in "}]":
+                out.append(c)
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
 
 
 _VARIABLE = re.compile(

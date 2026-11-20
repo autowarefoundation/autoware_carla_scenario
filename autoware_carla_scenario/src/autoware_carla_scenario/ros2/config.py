@@ -123,7 +123,8 @@ class CommandSourceConfig:
         kind: One of :data:`COMMAND_KINDS`.
         topic: The command topic, for ``trajectory`` and ``control``.
         steering_topic: The steering topic, for ``steer_accel``.
-        acceleration_topic: The acceleration topic, for ``steer_accel``.
+        acceleration_topic: The acceleration topic, for ``steer_accel``; not
+            the steering topic.
         priority: Higher wins among the fresh sources.  A whole number
             (``10``, or ``10.0`` kept as ``10``; not a bool, ``10.5`` or a
             string).
@@ -177,6 +178,13 @@ class CommandSourceConfig:
                 raise ValueError(
                     f"command source {self.name!r}: steer_accel needs "
                     "steering_topic and acceleration_topic"
+                )
+            # One topic for both halves would pair each sample with itself.
+            if self.steering_topic == self.acceleration_topic:
+                raise ValueError(
+                    f"command source {self.name!r}: steering_topic and "
+                    "acceleration_topic must differ, got "
+                    f"{self.steering_topic!r} for both"
                 )
         elif not self.topic:
             raise ValueError(f"command source {self.name!r}: {self.kind} needs a topic")
@@ -262,12 +270,15 @@ class CommandSourceConfig:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "CommandSourceConfig":
         """Build from a plain mapping (e.g. a Hydra node).
 
+        A null setting is its default, as an absent one; an ``Optional``
+        one (``pair_window_s``) keeps null as its value.
+
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 @dataclass(frozen=True)
@@ -381,12 +392,14 @@ class Ros2CameraConfig:
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2CameraConfig":
         """Build from a plain mapping (e.g. a Hydra node).
 
+        A null setting is its default, as an absent one.
+
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 def _no_cameras() -> Tuple[Ros2CameraConfig, ...]:
@@ -417,7 +430,8 @@ class Ros2EgoConfig:
     Topics are ROS 2 names (``/vehicle/speed``), checked as the config is
     built (absolute or relative, ``A-Z``, ``a-z``, ``0-9``, ``_`` and ``/``; no
     ``//``, trailing ``/``, token starting with a digit, ``~`` or ``{}``);
-    ``None`` leaves that one unpublished.  Poses are published in the right-handed local frame -- CARLA's
+    ``None`` leaves that one unpublished (not ``False`` or ``""``, which are
+    refused).  Poses are published in the right-handed local frame -- CARLA's
     world with ``y`` flipped, as CARLA's own ROS 2 interface publishes it -- with
     the origin on the rear axle, Autoware's ``base_link``.
 
@@ -426,8 +440,9 @@ class Ros2EgoConfig:
             or ``7.0`` kept as ``7``; not a bool or a string) from 0 to
             :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`
             (232), the domains ROS 2 can use.
-        frame_id: ``header.frame_id`` of the published odometry.
-        child_frame_id: Its ``child_frame_id``.
+        frame_id: ``header.frame_id`` of the published odometry; a non-empty
+            string.
+        child_frame_id: Its ``child_frame_id``; a non-empty string.
         kinematic_state_topic: ``nav_msgs/msg/Odometry`` of the ego.
         steering_status_topic: ``autoware_vehicle_msgs/msg/SteeringReport``.
         speed_topic: ``std_msgs/msg/Float64``, the ground speed in m/s.
@@ -479,7 +494,16 @@ class Ros2EgoConfig:
                 f"{MAX_ROS_DOMAIN_ID}, got {self.domain_id!r}"
             )
         object.__setattr__(self, "domain_id", domain_id)
-        # Each one set; None (or "") leaves it unpublished, or unread.
+        # The odometry's frames: None would fail only at the first publish,
+        # once the ego has spawned, and "" names no frame.
+        for key, frame in (
+            ("frame_id", self.frame_id),
+            ("child_frame_id", self.child_frame_id),
+        ):
+            if not isinstance(frame, str) or not frame:
+                raise ValueError(f"{key} must be a frame name, got {frame!r}")
+        # None leaves a topic unpublished, or unread; false, 0 or "" is
+        # refused rather than read as None too (#2217).
         for key, topic in (
             ("kinematic_state_topic", self.kinematic_state_topic),
             ("steering_status_topic", self.steering_status_topic),
@@ -488,7 +512,7 @@ class Ros2EgoConfig:
             ("turn_indicators_command_topic", self.turn_indicators_command_topic),
             ("turn_indicators_report_topic", self.turn_indicators_report_topic),
         ):
-            if topic is not None and topic:
+            if topic is not None:
                 _check_topic(key, topic)
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
@@ -519,12 +543,17 @@ class Ros2EgoConfig:
         configured separately, through
         :meth:`~autoware_carla_scenario.driver.control.ControlConfig.from_mapping`.
 
+        A null setting is its default, as an absent one (``domain_id: null``
+        is domain 0, ``sources: null`` the default source), except a topic,
+        which null leaves unpublished, and ``rear_axle_offset_m``, which null
+        derives from the vehicle.
+
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        values = checked_options(cls, mapping, ignore={"control"})
+        values = null_as_default(cls, checked_options(cls, mapping, ignore={"control"}))
         sources = values.pop("sources", None)
         if sources is not None:
             values["sources"] = tuple(

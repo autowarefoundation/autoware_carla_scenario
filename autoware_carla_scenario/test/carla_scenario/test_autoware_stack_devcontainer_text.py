@@ -15,8 +15,12 @@ from autoware_carla_scenario.autoware_stack import devcontainer, devcontainer_te
 #: What devcontainer held before the split that now lives in devcontainer_text.
 _MOVED = ("_VARIABLE", "_interpolate", "_mount_target", "_strip_jsonc")
 
+#: What devcontainer still takes from devcontainer_text: the parsers it calls
+#: (``_VARIABLE`` is only _interpolate's, and no longer imported, #2217).
+_USED = ("_interpolate", "_mount_target", "_strip_jsonc")
 
-@pytest.mark.parametrize("name", _MOVED)
+
+@pytest.mark.parametrize("name", _USED)
 def test_devcontainer_re_exports_each_moved_name(name: str) -> None:
     assert getattr(devcontainer, name) is getattr(devcontainer_text, name)
 
@@ -51,6 +55,12 @@ def test_devcontainer_text_exports_exactly_the_moved_names() -> None:
         ('{"a": [1, 2,], "b": 3,}', '{"a": [1, 2], "b": 3}'),
         ('{"a": [1,\n  ],\n}', '{"a": [1\n  ]\n}'),
         ('{"a": 1, // c\n}', '{"a": 1 \n}'),
+        # #2217: a comma before } or ] inside a string is kept.
+        ('{"cmd": "echo {a,}", "b": [1,]}', '{"cmd": "echo {a,}", "b": [1]}'),
+        ('{"s": "[x, ]"}', '{"s": "[x, ]"}'),
+        ('{"q": "\\",}"}', '{"q": "\\",}"}'),
+        # A comma closing nothing is kept.
+        ("[1],", "[1],"),
         ("", ""),
     ],
 )
