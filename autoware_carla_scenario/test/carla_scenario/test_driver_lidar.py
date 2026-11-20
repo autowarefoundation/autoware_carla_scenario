@@ -100,10 +100,13 @@ def test_lidar_config_rejects_non_finite_numbers(field: str, value: float) -> No
 def test_a_dropoff_rate_that_is_no_fraction_is_refused(rate: float) -> None:
     """CARLA drops that fraction of points: 45 emptied every sweep and a
     negative rate dropped none, both silently (#1767)."""
-    match = r"^LiDAR dropoff_general_rate must be in \[0, 1\], got "
-    with pytest.raises(ValueError, match=match):
+    match = r"LiDAR dropoff_general_rate must be in \[0, 1\], got "
+    with pytest.raises(ValueError, match=f"^{match}"):
         DriverLidarConfig(dropoff_general_rate=rate)
-    with pytest.raises(ValueError, match=match):
+    # Read from the driver, the entry is named (#2228).
+    with pytest.raises(
+        ValueError, match=rf"^driver\.lidars\[0\] \('lidar_top'\): {match}"
+    ):
         DriverClientConfig.from_mapping({"lidars": [{"dropoff_general_rate": rate}]})
 
 
@@ -153,7 +156,15 @@ def test_a_count_that_is_no_whole_number_is_refused(field: str, value: Any) -> N
     """Not truncated to 64 or 1 (#1472)."""
     with pytest.raises(ValueError, match=f"^LiDAR {field} must be a whole number"):
         DriverLidarConfig(**{field: value})
-    with pytest.raises(ValueError, match=f"^LiDAR {field} must be a whole number"):
+    if value is None:
+        # From a mapping, null is the default (#2228).
+        config = DriverClientConfig.from_mapping({"lidars": [{field: value}]})
+        assert getattr(config.lidars[0], field) == getattr(DriverLidarConfig(), field)
+        return
+    with pytest.raises(
+        ValueError,
+        match=rf"^driver\.lidars\[0\] \('lidar_top'\): LiDAR {field} must be a whole",
+    ):
         DriverClientConfig.from_mapping({"lidars": [{field: value}]})
 
 
@@ -163,7 +174,9 @@ def test_a_noise_seed_that_is_no_whole_number_is_refused(seed: Any) -> None:
     noise as 1 (#1445)."""
     with pytest.raises(ValueError, match="^LiDAR noise_seed must be a whole number"):
         DriverLidarConfig(noise_seed=seed)
-    with pytest.raises(ValueError, match="^LiDAR noise_seed must be a whole number"):
+    with pytest.raises(
+        ValueError, match=r"^driver\.lidars\[0\] .*: LiDAR noise_seed must be a whole"
+    ):
         DriverClientConfig.from_mapping({"lidars": [{"noise_seed": seed}]})
 
 
@@ -330,6 +343,78 @@ def test_a_due_sweep_that_never_comes_costs_one_wait(
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
     started = time.monotonic()
     assert lidar.latest_sweep(16) is None
+    assert time.monotonic() - started >= 0.04
+
+
+def test_the_first_read_waits_for_no_sweep(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A LiDAR sweeping every other tick waited 1 s on its first read and warned
+    of a sweep skipped (#2228): nothing yet says where in its interval it is."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 5.0)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
+    with caplog.at_level("WARNING", logger=carla_lidar.__name__):
+        started = time.monotonic()
+        assert lidar.latest_sweep(101) is None
+        # The tick after is still within the interval of the first read.
+        assert lidar.latest_sweep(102) is None
+        assert time.monotonic() - started < 0.5
+    assert "skipped" not in caplog.text
+    # Once sweeps flow, a sweep is due an interval after the newest, as before.
+    lidar._receive(_measurement(103))  # noqa: SLF001
+    sweep = lidar.latest_sweep(103)
+    assert sweep is not None and sweep[0] == 103
+
+
+def test_a_sweep_missing_an_interval_after_the_first_read_still_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
+    assert lidar.latest_sweep(101) is None
+    with caplog.at_level("WARNING", logger=carla_lidar.__name__):
+        started = time.monotonic()
+        assert lidar.latest_sweep(103) is None
+        assert time.monotonic() - started >= 0.04
+    assert "no LiDAR sweep for frame 103 in time; skipped" in caplog.text
+
+
+def test_a_sweep_missing_once_sweeps_flow_still_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
+    assert lidar.latest_sweep(101) is None
+    lidar._receive(_measurement(102))  # noqa: SLF001
+    assert lidar.latest_sweep(103) is not None
+    with caplog.at_level("WARNING", logger=carla_lidar.__name__):
+        assert lidar.latest_sweep(104) is None
+    assert "no LiDAR sweep for frame 104 in time; skipped" in caplog.text
+
+
+def test_attached_again_the_first_read_waits_for_no_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """destroy() starts the sensor over: the next attach's first read is a first
+    read again, and the old actor's sweep is not taken for the new one's."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    weather = SimpleNamespace(precipitation=0.0, fog_density=0.0, fog_distance=0.0)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
+    _attached(lidar, weather)
+    lidar._receive(_measurement(10))  # noqa: SLF001
+    assert lidar.latest_sweep(10) is not None
+    assert lidar.latest_sweep(12) is None  # missed: the sensor stopped
+    lidar.destroy()
+    assert lidar._newest is None and lidar._missed == -1  # noqa: SLF001
+    _attached(lidar, weather)
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 5.0)
+    started = time.monotonic()
+    assert lidar.latest_sweep(500) is None
+    assert time.monotonic() - started < 0.5
+    # A missing sweep of the new actor is waited for, and warned of, again.
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    started = time.monotonic()
+    assert lidar.latest_sweep(502) is None
     assert time.monotonic() - started >= 0.04
 
 
@@ -507,7 +592,7 @@ def _attached(lidar: CarlaLidarSensor, weather: SimpleNamespace) -> None:
     world = SimpleNamespace(
         get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
         spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
-            listen=lambda cb: None
+            listen=lambda cb: None, stop=lambda: None, destroy=lambda: None
         ),
         get_weather=lambda: weather,
     )

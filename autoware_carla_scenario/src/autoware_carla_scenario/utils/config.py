@@ -17,9 +17,11 @@ from dataclasses import Field, fields
 from typing import Any, Mapping, Optional, Sequence
 
 __all__ = [
+    "checked_mapping_list",
     "checked_options",
     "checked_section",
     "checked_str_list",
+    "entry_id",
     "null_as_default",
 ]
 
@@ -120,6 +122,40 @@ def checked_section(key: str, value: Any) -> Optional[Mapping[str, Any]]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{key} must be a mapping, got {value!r}")
     return value
+
+
+def checked_mapping_list(key: str, value: Any) -> list[Mapping[str, Any]]:
+    """*value*, a list of sections such as ``driver.lidars``, checked: a list
+    (a tuple, an OmegaConf ``ListConfig``) of mappings.
+
+    ``false`` or a string would fail iterating, and an entry that is no
+    mapping as it is read, naming no key (#2217, #2228).  A null list is the
+    caller's to read (its default): this is not handed one.
+
+    Args:
+        key: The setting's full name, for the error.
+        value: The value to check.
+
+    Returns:
+        The entries as a new list.
+
+    Raises:
+        ValueError: naming *key*, or the entry ``key[i]`` that is no mapping.
+    """
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{key} must be a list of mappings, got {value!r}")
+    items = list(value)
+    for index, item in enumerate(items):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{key}[{index}] must be a mapping, got {item!r}")
+    return items
+
+
+def entry_id(entry: Mapping[str, Any], default: str) -> Any:
+    """The ``logical_id`` an entry of a sensor list is given, *default* when
+    it gives none (or null): what names the entry in an error."""
+    logical_id = entry.get("logical_id")
+    return default if logical_id is None else logical_id
 
 
 def _takes_null(field: Field) -> bool:

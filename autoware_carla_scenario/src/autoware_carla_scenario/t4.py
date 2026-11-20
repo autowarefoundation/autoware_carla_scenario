@@ -62,11 +62,7 @@ from .driver.observation import (
 from .ego_base_link import ego_base_link
 from .kinematics.walker_motion import WalkerVelocities, is_walker
 from .sensor.base import sensor_tick_s
-from .sensor.carla_camera import (
-    BLUEPRINT_ATTRIBUTES,
-    CarlaCameraSensorConfig,
-    override_blueprint_attribute,
-)
+from .sensor.carla_camera import CarlaCameraSensorConfig, configure_camera_blueprint
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
     DATASET_SUFFIX,
@@ -214,16 +210,11 @@ class _FrameCamera:
 
         cfg = self.config
         blueprint = world.get_blueprint_library().find(cfg.sensor_type)
-        blueprint.set_attribute("image_size_x", str(cfg.image_width))
-        blueprint.set_attribute("image_size_y", str(cfg.image_height))
-        blueprint.set_attribute("fov", str(cfg.fov))
+        # A frame every tick is the blueprint's own sensor_tick.
+        sensor_tick: Optional[float] = None
         if self._interval_ticks > 1:
-            interval_s = self._interval_ticks * FIXED_DELTA_SECONDS
-            blueprint.set_attribute("sensor_tick", str(sensor_tick_s(interval_s)))
-        for name in BLUEPRINT_ATTRIBUTES:
-            override_blueprint_attribute(
-                blueprint, name, getattr(cfg, name), cfg.sensor_type
-            )
+            sensor_tick = sensor_tick_s(self._interval_ticks * FIXED_DELTA_SECONDS)
+        configure_camera_blueprint(blueprint, cfg, sensor_tick)
         transform = _carla.Transform(
             _carla.Location(x=cfg.position_x, y=cfg.position_y, z=cfg.position_z),
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),
@@ -433,11 +424,7 @@ class T4Recording:
         models: list[tuple[list[list[float]], list[float]]] = []
         lenses = dict(self._settings.lenses)
         for logical_id, cam in self._settings.cameras:
-            intrinsic = [
-                [cam.fx, 0.0, cam.image_width / 2.0],
-                [0.0, cam.fx, cam.image_height / 2.0],
-                [0.0, 0.0, 1.0],
-            ]
+            intrinsic: list[list[float]] = cam.intrinsic_matrix.tolist()
             distortion = [0.0, 0.0, 0.0, 0.0, 0.0]
             lens = lenses.get(logical_id)
             if lens is not None:

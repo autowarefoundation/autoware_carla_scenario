@@ -6,6 +6,7 @@ replace did."""
 
 from __future__ import annotations
 
+import math
 import re
 import types
 from pathlib import Path
@@ -211,3 +212,24 @@ def test_the_chunk_line_stays_patchable_on_rerun_lidar(
     monkeypatch.setattr(rerun_lidar, "_CHUNK_LINE", re.compile(r"^Chunk<(.*)>$"))
     with pytest.raises(RuntimeError, match="cannot read the entities"):
         rerun_lidar.extract_sensors(tmp_path / "S.rrd", tmp_path / "x.sensors.rrd")
+
+
+@pytest.mark.parametrize(
+    ("width", "fov"), [(960, 120.0), (1920, 90.0), (832, 70.3), (1, 0.5), (4096, 179.0)]
+)
+def test_a_camera_mount_has_a_driver_cameras_focal_length(
+    width: int, fov: float
+) -> None:
+    """CameraMount.focal_length_px and CameraSensorConfig.fx are one formula
+    (sensor.base.focal_length_px, #2228), and give what each gave before."""
+    import numpy as np  # noqa: PLC0415
+
+    from autoware_carla_scenario.sensor.base import CameraSensorConfig  # noqa: PLC0415
+
+    mount = rerun_sensor_mount.CameraMount(width, 10, fov)
+    camera = CameraSensorConfig(image_width=width, image_height=10, fov=fov)
+    assert mount.focal_length_px() == camera.fx
+    before_mount = width / (2.0 * float(np.tan(np.radians(fov) / 2.0)))
+    before_fx = width / (2.0 * math.tan(math.radians(fov / 2.0)))
+    assert camera.fx == before_fx
+    assert mount.focal_length_px() == pytest.approx(before_mount, rel=1e-15)

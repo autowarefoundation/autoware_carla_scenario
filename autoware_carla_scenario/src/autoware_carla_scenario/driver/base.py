@@ -46,6 +46,9 @@ DRIVER_TRANSPORTS: Tuple[str, ...] = ("tcp", "unix", "direct")
 #: Policies look their inputs up by this string, so it must match what the policy expects.
 DEFAULT_CAMERA_LOGICAL_ID: str = "camera_front_wide_120fov"
 
+#: Logical id of a driver LiDAR given none (:class:`DriverLidarConfig`).
+DEFAULT_LIDAR_LOGICAL_ID: str = "lidar_top"
+
 
 def _number(key: str, value: float) -> float:
     """*value*, a config's float field as it holds it, checked and returned as
@@ -68,6 +71,19 @@ def _number(key: str, value: float) -> float:
     except TypeError:
         raise ValueError(f"{key} must be a number, got {value!r}")
     return number
+
+
+def _check_logical_id(kind: str, value: str) -> None:
+    """Refuse a sensor's *value* for ``logical_id`` unless a non-empty string.
+
+    The policy addresses the sensor by it: a camera offered under ``None``, a
+    number or ``""`` is one the reference policies never find (#2228).
+
+    Raises:
+        ValueError: naming *kind* (``camera``, ``LiDAR``) and the value.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{kind} logical_id must be a non-empty string, got {value!r}")
 
 
 #: The lens models a camera's frames may be drawn through (:class:`DriverCameraLens`).
@@ -213,6 +229,7 @@ class DriverCameraConfig:
         # ``resolution_w``/``_h``, which refuses any float, even 960.0, only
         # when the session starts, after the ego has spawned (#1472): a whole
         # number is kept as an int, anything else refused here.
+        _check_logical_id("camera", self.logical_id)
         owner = f"camera {self.logical_id!r}"
         # A float field may likewise hold a bool, which the checks below would
         # take as 1.0 (fps=true would stream at 1 fps), or a string (#1506).
@@ -271,21 +288,44 @@ class DriverCameraConfig:
                 )
 
     @classmethod
-    def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverCameraConfig":
+    def from_mapping(
+        cls, mapping: Mapping[str, Any], key: Optional[str] = None
+    ) -> "DriverCameraConfig":
         """Return a camera config built from a plain mapping (e.g. a Hydra node).
 
+        A null setting is its default, as an absent one (``logical_id: null``
+        is :data:`DEFAULT_CAMERA_LOGICAL_ID`, ``fov: null`` 120 degrees), as
+        for a ROS 2 camera; ``lens: null`` is CARLA's pinhole.
+
+        Args:
+            mapping: The camera's settings.
+            key: Where the entry sits (``driver.cameras[0]``): an error is
+                prefixed with it and the camera's logical id.
+
         Raises:
-            ValueError: If *mapping* holds a key this config does not define.
+            ValueError: If *mapping* holds a key this config does not define,
+                or a setting out of its domain.
         """
         # Imported here: the Codon check does not compile this method, and
         # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
-        from ..utils.config import checked_options as _checked  # noqa: PLC0415
+        from ..utils.config import (  # noqa: PLC0415
+            checked_options,
+            entry_id,
+            null_as_default,
+        )
 
-        values = _checked(cls, mapping)
-        lens = values.pop("lens", None)
-        if lens is not None:
-            values["lens"] = DriverCameraLens.from_mapping(lens)
-        return cls(**values)
+        try:
+            values = null_as_default(cls, checked_options(cls, mapping))
+            lens = values.pop("lens", None)
+            if lens is not None:
+                values["lens"] = DriverCameraLens.from_mapping(lens)
+            return cls(**values)
+        except ValueError as error:
+            if key is None:
+                raise
+            raise ValueError(
+                f"{key} ({entry_id(mapping, DEFAULT_CAMERA_LOGICAL_ID)!r}): {error}"
+            ) from error
 
     def to_sensor_config(self) -> CarlaCameraSensorConfig:
         """Return the CARLA sensor configuration for this camera."""
@@ -313,20 +353,47 @@ class DriverLidarConfig(CarlaLidarSensorConfig):
     sensor fields; this adds the logical id a policy addresses the sweep by.
     """
 
-    logical_id: str = "lidar_top"
+    logical_id: str = DEFAULT_LIDAR_LOGICAL_ID
+
+    def __post_init__(self) -> None:
+        _check_logical_id("LiDAR", self.logical_id)
+        super().__post_init__()
 
     @classmethod
-    def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverLidarConfig":
+    def from_mapping(
+        cls, mapping: Mapping[str, Any], key: Optional[str] = None
+    ) -> "DriverLidarConfig":
         """Return a LiDAR config built from a plain mapping (e.g. a Hydra node).
 
+        A null setting is its default, as an absent one (``logical_id: null``
+        is ``lidar_top``, ``range_m: null`` 100 m); ``noise_seed: null`` is
+        the run's seed, as it is by default.
+
+        Args:
+            mapping: The LiDAR's settings.
+            key: Where the entry sits (``driver.lidars[0]``): an error is
+                prefixed with it and the LiDAR's logical id.
+
         Raises:
-            ValueError: If *mapping* holds a key this config does not define.
+            ValueError: If *mapping* holds a key this config does not define,
+                or a setting out of its domain.
         """
         # Imported here: the Codon check does not compile this method, and
         # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
-        from ..utils.config import checked_options as _checked  # noqa: PLC0415
+        from ..utils.config import (  # noqa: PLC0415
+            checked_options,
+            entry_id,
+            null_as_default,
+        )
 
-        return cls(**_checked(cls, mapping))
+        try:
+            return cls(**null_as_default(cls, checked_options(cls, mapping)))
+        except ValueError as error:
+            if key is None:
+                raise
+            raise ValueError(
+                f"{key} ({entry_id(mapping, DEFAULT_LIDAR_LOGICAL_ID)!r}): {error}"
+            ) from error
 
 
 @dataclass(frozen=True)
@@ -618,6 +685,14 @@ class DriverClientConfig:
         object.__setattr__(
             self, "t4_scene", check_flag("driver.t4_scene", self.t4_scene)
         )
+        # Not coerced: a null address would be dialled as "None", or fail
+        # naming no key (#2228).  Left out, it is the default.
+        if not isinstance(self.address, str) or not self.address:
+            raise ValueError(
+                "driver.address must be a non-empty string (host:port, or "
+                "unix:///path/policy.sock); leave it out for the default "
+                f"localhost:50051, got {self.address!r}"
+            )
         for key, value in (
             ("timeout_s", self.timeout_s),
             ("policy_timestep_s", self.policy_timestep_s),
@@ -696,18 +771,25 @@ class DriverClientConfig:
         """
         # Imported here: the Codon check does not compile this method, and
         # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
+        from ..utils.config import checked_mapping_list  # noqa: PLC0415
         from ..utils.config import checked_options as _checked  # noqa: PLC0415
 
         values = _checked(cls, mapping, ignore={"control", "bridge"})
         cameras = values.pop("cameras", None)
         if cameras is not None:
             values["cameras"] = tuple(
-                DriverCameraConfig.from_mapping(camera) for camera in cameras
+                DriverCameraConfig.from_mapping(camera, key=f"driver.cameras[{index}]")
+                for index, camera in enumerate(
+                    checked_mapping_list("driver.cameras", cameras)
+                )
             )
         lidars = values.pop("lidars", None)
         if lidars is not None:
             values["lidars"] = tuple(
-                DriverLidarConfig.from_mapping(lidar) for lidar in lidars
+                DriverLidarConfig.from_mapping(lidar, key=f"driver.lidars[{index}]")
+                for index, lidar in enumerate(
+                    checked_mapping_list("driver.lidars", lidars)
+                )
             )
         formats = values.pop("map_formats", None)
         if formats is not None:

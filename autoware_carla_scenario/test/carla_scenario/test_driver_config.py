@@ -382,19 +382,28 @@ def test_camera_keeps_a_whole_number_size_as_an_int(key: str, value: Any) -> Non
 @pytest.mark.parametrize("value", [960.5, True, "960", None])
 def test_camera_refuses_a_size_that_is_no_whole_number(key: str, value: Any) -> None:
     """Not truncated to 960 or 1, as the config is read (#1472)."""
-    match = rf"^camera 'front': {key} must be a whole number"
-    with pytest.raises(ValueError, match=match):
+    match = rf"camera 'front': {key} must be a whole number"
+    with pytest.raises(ValueError, match=f"^{match}"):
         DriverCameraConfig(logical_id="front", **{key: value})
-    with pytest.raises(ValueError, match=match):
-        DriverClientConfig.from_mapping(
-            {"cameras": [{"logical_id": "front", key: value}]}
-        )
+    entry = {"cameras": [{"logical_id": "front", key: value}]}
+    if value is None:
+        # From a mapping, null is the default (#2228).
+        camera = DriverClientConfig.from_mapping(entry).cameras[0]
+        assert getattr(camera, key) == getattr(DriverCameraConfig(), key)
+        return
+    with pytest.raises(
+        ValueError, match=rf"^driver\.cameras\[0\] \('front'\): {match}"
+    ):
+        DriverClientConfig.from_mapping(entry)
 
 
 @pytest.mark.parametrize("key", ["image_width", "image_height"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf")])
 def test_camera_refuses_a_size_that_is_not_finite(key: str, value: Any) -> None:
-    with pytest.raises(ValueError, match=rf"^camera 'front': {key} must be finite"):
+    with pytest.raises(
+        ValueError,
+        match=rf"^driver\.cameras\[0\] \('front'\): camera 'front': {key} must be finite",
+    ):
         DriverClientConfig.from_mapping(
             {"cameras": [{"logical_id": "front", key: value}]}
         )
@@ -692,7 +701,10 @@ def test_a_carla_driver_run_checks_the_lidar_dropoff_rate(
     lidars = f"driver.lidars=[{{logical_id:top,dropoff_general_rate:{rate}}}]"
     cfg = _shipped(["ego.entity=carla_driver", lidars])
     if refused:
-        match = r"^LiDAR dropoff_general_rate must be in \[0, 1\], got "
+        match = (
+            r"^driver\.lidars\[0\] \('top'\): "
+            r"LiDAR dropoff_general_rate must be in \[0, 1\], got "
+        )
         with pytest.raises(run.RunConfigError, match=match):
             run.check_run_config(cfg)
     else:
@@ -768,3 +780,105 @@ def test_send_renderer_data_spelled_false_is_seen_by_the_t4_scene_check() -> Non
         DriverClientConfig.from_mapping(
             {"t4_scene": "true", "map_dir": "/maps", "send_renderer_data": "false"}
         )
+
+
+# ---------------------------------------------------------------------------
+# Null settings and logical ids of driver.cameras[] / driver.lidars[] (#2228)
+# ---------------------------------------------------------------------------
+
+
+def test_a_null_camera_setting_is_its_default() -> None:
+    camera = DriverCameraConfig.from_mapping(
+        {"logical_id": None, "fov": None, "image_width": None, "lens": None}
+    )
+    assert camera == DriverCameraConfig()
+
+
+def test_a_null_lidar_setting_is_its_default() -> None:
+    from autoware_carla_scenario.driver.base import DriverLidarConfig
+
+    lidar = DriverLidarConfig.from_mapping(
+        {"logical_id": None, "range_m": None, "channels": None, "noise_seed": None}
+    )
+    assert lidar == DriverLidarConfig()
+    assert lidar.logical_id == "lidar_top"
+
+
+def test_a_null_sensor_logical_id_in_the_driver_is_the_default() -> None:
+    """The policy was offered sensors addressed by None, which it never found."""
+    config = DriverClientConfig.from_mapping(
+        {"cameras": [{"logical_id": None}], "lidars": [{"logical_id": None}]}
+    )
+    assert config.cameras[0].logical_id == "camera_front_wide_120fov"
+    assert config.lidars[0].logical_id == "lidar_top"
+
+
+@pytest.mark.parametrize("logical_id", ["", 3, True, ["a"]])
+def test_a_camera_logical_id_that_is_no_name_is_refused(logical_id: Any) -> None:
+    with pytest.raises(ValueError, match="camera logical_id must be a non-empty"):
+        DriverCameraConfig(logical_id=logical_id)
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.cameras\[1\] \(.*\): camera logical_id must be a non-empty",
+    ):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front"}, {"logical_id": logical_id}]}
+        )
+
+
+@pytest.mark.parametrize("logical_id", ["", 3, True])
+def test_a_lidar_logical_id_that_is_no_name_is_refused(logical_id: Any) -> None:
+    from autoware_carla_scenario.driver.base import DriverLidarConfig
+
+    with pytest.raises(ValueError, match="LiDAR logical_id must be a non-empty"):
+        DriverLidarConfig(logical_id=logical_id)
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.lidars\[0\] \(.*\): LiDAR logical_id must be a non-empty",
+    ):
+        DriverClientConfig.from_mapping({"lidars": [{"logical_id": logical_id}]})
+
+
+def test_a_lidar_error_names_its_entry_and_logical_id() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.lidars\[1\] \('rear'\): LiDAR channels must be positive",
+    ):
+        DriverClientConfig.from_mapping(
+            {"lidars": [{"logical_id": "top"}, {"logical_id": "rear", "channels": 0}]}
+        )
+    # Given no id, the entry is named by the default it takes.
+    with pytest.raises(
+        ValueError, match=r"^driver\.lidars\[0\] \('lidar_top'\): LiDAR range_m"
+    ):
+        DriverClientConfig.from_mapping({"lidars": [{"range_m": -1.0}]})
+    with pytest.raises(
+        ValueError, match=r"^driver\.lidars\[0\] \('top'\): Unknown DriverLidarConfig"
+    ):
+        DriverClientConfig.from_mapping({"lidars": [{"logical_id": "top", "rang": 1}]})
+
+
+def test_a_camera_error_names_its_entry() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.cameras\[0\] \('front'\): camera 'front': fov must be",
+    ):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front", "fov": 180.0}]}
+        )
+
+
+@pytest.mark.parametrize("key", ["cameras", "lidars"])
+@pytest.mark.parametrize("value", [False, "lidar_top", [3]])
+def test_a_sensor_list_that_is_no_list_of_mappings_is_refused(
+    key: str, value: Any
+) -> None:
+    with pytest.raises(ValueError, match=rf"^driver\.{key}(\[0\])? must be a"):
+        DriverClientConfig.from_mapping({key: value})
+
+
+@pytest.mark.parametrize("address", [None, "", 50051])
+def test_a_driver_address_that_is_no_address_is_refused(address: Any) -> None:
+    """driver.address: null used to be taken as None, dialled as nothing."""
+    with pytest.raises(ValueError, match="^driver.address must be a non-empty string"):
+        DriverClientConfig.from_mapping({"address": address})
