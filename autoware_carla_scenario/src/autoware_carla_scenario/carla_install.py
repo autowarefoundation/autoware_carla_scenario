@@ -64,7 +64,6 @@ from .carla_install_paths import (
     _staging,
     _swap_into_place,
 )
-from .carla_install_paths import _SCHEME as _SCHEME
 from .carla_install_paths import _UNPACKED_PER_PACKED as _UNPACKED_PER_PACKED
 from .carla_install_paths import _UNWRITABLE_ERRNOS as _UNWRITABLE_ERRNOS
 from .carla_install_paths import HOME_ENV as HOME_ENV
@@ -476,8 +475,22 @@ def _require_extraction_filters() -> None:
         )
 
 
-def _strip_top(member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
-    """A tar extraction filter: drop *member*'s top directory, then the data filter.
+class _ArchiveLayoutError(tarfile.TarError):
+    """A CARLA package that is not one top directory holding the package."""
+
+
+class _StripTop:
+    """A tar extraction filter: drop each member's top directory, then the
+    data filter.
+
+    A CARLA package holds a single top directory
+    (``Carla-<version>-Linux-Shipping/``, say) with the package in it, and
+    that directory is what is dropped.  An archive with two top directories,
+    or without the wrapper directory (a file at its top, or ``Linux/`` as its
+    top directory), is refused with :class:`_ArchiveLayoutError` rather than
+    merged or stripped of the wrong directory (#2233).  A filter sees the
+    members one at a time, so an instance remembers the top directory of the
+    first; use one per archive.
 
     A hard link names its target by the target's archive path, so that path
     loses the top directory too; otherwise extraction looks for the target
@@ -491,20 +504,50 @@ def _strip_top(member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
     moves with it, so it is left alone; the data filter refuses one that is
     absolute or reaches outside the destination.
     """
-    parts = PurePosixPath(member.name).parts
-    if len(parts) < 2:
-        return None
-    linkname = member.linkname
-    if member.islnk():
-        link_parts = PurePosixPath(linkname).parts
-        if len(link_parts) < 2 or link_parts[0] != parts[0]:
-            raise tarfile.LinkOutsideDestinationError(member, linkname)
-        linkname = str(PurePosixPath(*link_parts[1:]))
-    stripped = member.replace(
-        name=str(PurePosixPath(*parts[1:])), linkname=linkname, deep=False
-    )
-    # The data filter refuses absolute paths, escapes and device files.
-    return tarfile.data_filter(stripped, path)
+
+    def __init__(self) -> None:
+        self.top: Optional[str] = None
+
+    def __call__(self, member: tarfile.TarInfo, path: str) -> Optional[tarfile.TarInfo]:
+        parts = PurePosixPath(member.name).parts
+        if not parts:
+            return None  # "./" itself
+        if len(parts) == 1 and not member.isdir():
+            raise _ArchiveLayoutError(
+                f"the archive has {member.name!r} at its top, not in a single "
+                "top directory: not a CARLA Linux package as released (one "
+                f"directory holding {LAUNCHER})"
+            )
+        if self.top is None:
+            if parts[0] == LAUNCHER.parts[0]:
+                # The launcher's own directory: the package is not wrapped,
+                # and stripping it would lose the launcher's place.
+                raise _ArchiveLayoutError(
+                    f"the archive's top directory is {parts[0]!r}, the one "
+                    f"holding {LAUNCHER.name}, with no directory around it: not "
+                    "a CARLA Linux package as released (one directory holding "
+                    f"{LAUNCHER})"
+                )
+            self.top = parts[0]
+        elif parts[0] != self.top:
+            raise _ArchiveLayoutError(
+                f"the archive has two top directories, {self.top!r} and "
+                f"{parts[0]!r}: not a CARLA Linux package as released (one "
+                f"directory holding {LAUNCHER})"
+            )
+        if len(parts) < 2:
+            return None
+        linkname = member.linkname
+        if member.islnk():
+            link_parts = PurePosixPath(linkname).parts
+            if len(link_parts) < 2 or link_parts[0] != parts[0]:
+                raise tarfile.LinkOutsideDestinationError(member, linkname)
+            linkname = str(PurePosixPath(*link_parts[1:]))
+        stripped = member.replace(
+            name=str(PurePosixPath(*parts[1:])), linkname=linkname, deep=False
+        )
+        # The data filter refuses absolute paths, escapes and device files.
+        return tarfile.data_filter(stripped, path)
 
 
 def _unpack(stream: IO[bytes], destination: Path) -> None:
@@ -514,7 +557,7 @@ def _unpack(stream: IO[bytes], destination: Path) -> None:
     # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
     with tarfile.open(fileobj=stream, mode="r|gz", bufsize=1 << 20) as archive:
         try:
-            archive.extractall(destination, filter=_strip_top)
+            archive.extractall(destination, filter=_StripTop())
         except KeyError as exc:
             # tarfile's own report of a hard link whose target is not (yet) on
             # disk nor in the archive; a TarError, so main() reports it cleanly.

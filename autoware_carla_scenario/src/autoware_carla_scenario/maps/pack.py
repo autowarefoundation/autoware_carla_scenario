@@ -289,7 +289,13 @@ class MapPack:
     packs_dir: Optional[Path] = None
 
     def __post_init__(self) -> None:
-        if not _REFERENCE.match(self.reference):
+        # GitHub allows neither "." nor ".." as an owner, repository or
+        # pack name, and a path built of one leaves the packs directory
+        # (#2233).
+        parts = self.reference.replace("@", "/").split("/")
+        if not _REFERENCE.match(self.reference) or any(
+            part in (".", "..") for part in parts
+        ):
             raise ValueError(
                 f"map.pack must be OWNER/REPO/PACK[@VERSION] or OWNER/REPO, "
                 f"got {self.reference!r}"

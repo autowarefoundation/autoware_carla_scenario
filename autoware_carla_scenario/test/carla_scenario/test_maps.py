@@ -521,6 +521,23 @@ class TestMapSource:
         with pytest.raises(MapSourceError, match="not a usable git ref"):
             MapSource(repo_url="https://example.com/o/n", ref=ref)
 
+    @pytest.mark.parametrize(
+        "path", ["maps/T\n/*", "maps\tT", "m\x00", "m\x7f", "m\rn"]
+    )
+    def test_refuses_a_path_with_a_control_character(self, path: str) -> None:
+        """A newline would add a sparse-checkout pattern of its own (#2233)."""
+        with pytest.raises(
+            MapSourceError,
+            match="not a usable map path: it contains a control character",
+        ):
+            MapSource.parse(f"git+https://example.com/o/n@main#{path}")
+        with pytest.raises(MapSourceError, match="not a usable map path"):
+            MapSource(repo_url="https://example.com/o/n", path=path)
+
+    @pytest.mark.parametrize("path", ["maps/Town[1]", "a,b", "maps/T 1", "-m"])
+    def test_keeps_a_path_with_other_characters(self, path: str) -> None:
+        assert MapSource(repo_url="https://example.com/o/n", path=path).path == path
+
     def test_refuses_a_ref_read_out_of_a_page_url(self) -> None:
         with pytest.raises(MapSourceError, match="begins with '-'"):
             MapSource.parse("https://github.com/o/n/tree/--foo=bar/maps/T")
@@ -3382,6 +3399,57 @@ class TestGitLfs:
         with pytest.raises(MapCacheError, match="install git-lfs") as caught:
             resolve_map(_uri(repo, "maps/T"), cache=cache)
         assert "not a git command" not in str(caught.value)
+
+    @pytest.mark.parametrize("directory", ["Town[1]", "T*", "T?"])
+    def test_pointers_in_a_directory_with_glob_characters_are_pulled(
+        self,
+        tmp_path: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+        directory: str,
+    ) -> None:
+        """A directory name is not read as a glob: its pointers are found and
+        pulled rather than reported present (#2233)."""
+        repo = tmp_path / "lfs"
+        (repo / "maps" / directory).mkdir(parents=True)
+        (repo / "maps" / directory / "lanelet2_map.osm").write_text(
+            "version https://git-lfs.github.com/spec/v1\n"
+            "oid sha256:" + "0" * 64 + "\nsize 1\n"
+        )
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "A map in LFS")
+        monkeypatch.setenv("PATH", _git_only_path(tmp_path))
+
+        with pytest.raises(MapCacheError, match="install git-lfs"):
+            resolve_map(_uri(repo, f"maps/{directory}"), cache=cache)
+
+    def test_a_directory_is_included_as_itself(self, tmp_path: Path) -> None:
+        """git-lfs splits --include at every ',' and reads glob characters;
+        a map directory's name is neither split nor a glob (#2233)."""
+        from autoware_carla_scenario.maps import cache as cache_module
+        from autoware_carla_scenario.maps.resolver import _include_patterns
+
+        literal = cache_module._literal_pattern
+        assert literal("maps/Town10") == "maps/Town10"
+        assert literal("maps/Town[1]") == "maps/Town\\[1]"
+        assert literal("a*b?c\\d") == "a\\*b\\?c\\\\d"
+        assert literal("a,b") == "a?b"
+        assert literal(" a b ") == "?a b?"
+        patterns = _include_patterns("maps/a,b[1]")
+        assert patterns[0] == "maps/a?b\\[1]/*.osm"
+        include = cache_module._lfs_include(patterns)
+        assert include.split(",") == list(patterns)
+        assert cache_module._lfs_include(["x,y/*.osm"]) == "x?y/*.osm"
+        # Read back as a glob, each pattern finds the directory itself.
+        for name in ("Town[1]", "a,b", "T*", "T?", "back\\slash", " lead"):
+            found = tmp_path / name
+            found.mkdir()
+            (found / "m.osm").write_text("real")
+            (tmp_path / f"{name}x").mkdir()
+            (tmp_path / f"{name}x" / "m.osm").write_text("other")
+            glob = cache_module._glob_pattern(f"{literal(name)}/*.osm")
+            assert found / "m.osm" in list(tmp_path.glob(glob)), (name, glob)
 
     def test_a_git_error_names_gits_own_line(self) -> None:
         from autoware_carla_scenario.maps.cache import _git_error_line

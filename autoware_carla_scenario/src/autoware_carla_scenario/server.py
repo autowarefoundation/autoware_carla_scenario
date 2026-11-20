@@ -221,6 +221,10 @@ class CarlaServerManager:
     """
 
     ENV_VAR: ClassVar[str] = "CARLA_EXECUTABLE"
+    #: How long :meth:`start` keeps pinging a local port that accepts a
+    #: connection but did not answer as CARLA within one ping, before it
+    #: gives up (with *reuse_if_running*): a busy CARLA is slow to answer.
+    REUSE_PING_S: ClassVar[float] = 30.0
 
     host: str
     port: int
@@ -229,6 +233,7 @@ class CarlaServerManager:
     reuse_if_running: bool
     _process: Optional[subprocess.Popen[bytes]]
     _reused: bool
+    _launcher: Optional[Path]
 
     def __init__(
         self,
@@ -261,6 +266,7 @@ class CarlaServerManager:
         self.reuse_if_running = reuse_if_running
         self._process = None
         self._reused = False  # True when we connected to an existing server
+        self._launcher = None  # The launcher start() last ran.
 
     # ------------------------------------------------------------------
     # Public API
@@ -274,8 +280,19 @@ class CarlaServerManager:
            reachable, record that we are reusing it and return immediately.
         2. If *host* is not this machine, raise: a server launched here would
            never answer at it.
-        3. Otherwise, find the launcher (:meth:`executable`), launch the
-           process, and poll until the server accepts connections.
+        3. If something else already listens on *host*:*port*, raise rather
+           than launch a server that could not bind it: with
+           *reuse_if_running* ``False``, any process accepting a connection
+           there; with it ``True``, one that keeps refusing to answer as CARLA
+           for :attr:`REUSE_PING_S` (a busy CARLA can miss one ping's 2 s
+           deadline, so it is pinged again until then, and reused once it
+           answers; a port that stops accepting connections meanwhile, as
+           one a server shutting down held, is launched on).
+        4. Otherwise, find the launcher (:meth:`executable`), launch the
+           process, and poll until the server accepts connections.  Its own
+           process is checked before each ping: once it has exited,
+           :meth:`start` fails with its exit code, even if a server then
+           answers on the port (that one is not the server it launched).
 
         A remote server is therefore always reused, so a queue never restarts
         one (:meth:`ScenarioQueue._server_down` asks only for a server it
@@ -283,7 +300,9 @@ class CarlaServerManager:
 
         Raises:
             RuntimeError: If *host* is remote and no server answers there,
-                there is no launcher (when a new process must be launched),
+                the port is taken by a process that is not a CARLA server
+                to reuse, there is no launcher (when a new process must be
+                launched), the launched process exits before it answers,
                 the executable does not exist, or the server does not become
                 reachable within *timeout* seconds.
         """
@@ -291,15 +310,7 @@ class CarlaServerManager:
         # A remote server is the one there or none: never launched here, so
         # reuse_if_running=False has nothing to launch instead of it.
         if (self.reuse_if_running or remote) and self._ping():
-            self._reused = True
-            if self.extra_args:
-                logger.warning(
-                    "Reusing the CARLA server at %s:%d: it was not started with %s; "
-                    "start it with them for them to apply",
-                    self.host,
-                    self.port,
-                    " ".join(self.extra_args),
-                )
+            self._reuse()
             return
         if remote:
             raise RuntimeError(
@@ -308,6 +319,29 @@ class CarlaServerManager:
                 "address or this machine's own name or address). Start the server "
                 "there, or check server.host and server.port."
             )
+        # A server launched onto a taken port dies on it, while the process
+        # holding it may answer the pings meant for the new one (#2233).
+        if self._tcp_connects():
+            if not self.reuse_if_running:
+                raise RuntimeError(
+                    f"Port {self.port} on {self.host} is in use by another process; "
+                    "a CARLA server launched there could not listen on it. Stop "
+                    "that process, choose another server.port, or, if it is a CARLA "
+                    "server to use, set reuse_if_running=True."
+                )
+            if self._ping_for(self.REUSE_PING_S):
+                self._reuse()
+                return
+            # A port freed while it was pinged (a server still shutting
+            # down, as a queue's restart stops one) is launched on.
+            if self._tcp_connects():
+                raise RuntimeError(
+                    f"Port {self.port} on {self.host} is in use by a process that "
+                    f"did not answer as a CARLA server within {self.REUSE_PING_S:g}s; "
+                    "a CARLA server launched there could not listen on it. Stop "
+                    "that process, wait until the CARLA server there answers, or "
+                    "choose another server.port."
+                )
 
         exe_path = self.executable()
         if exe_path is None:
@@ -320,6 +354,7 @@ class CarlaServerManager:
             )
         if not exe_path.exists():
             raise RuntimeError(f"CARLA executable not found: {exe_path}")
+        self._launcher = exe_path
 
         cmd = [str(exe_path)] + self.extra_args
         # The server listens where the client will look for it, unless told otherwise.
@@ -452,14 +487,63 @@ class CarlaServerManager:
                 return True
         return False
 
+    def _check_running(self) -> None:
+        """Raise if the process :meth:`start` launched has exited."""
+        process = self._process
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(
+                f"CARLA server exited with code {process.returncode} "
+                f"before it became reachable at {self.host}:{self.port}"
+                f"{self._log_hint()}"
+            )
+
+    def _reuse(self) -> None:
+        """Record that the server already running is reused."""
+        self._reused = True
+        if self.extra_args:
+            logger.warning(
+                "Reusing the CARLA server at %s:%d: it was not started with %s; "
+                "start it with them for them to apply",
+                self.host,
+                self.port,
+                " ".join(self.extra_args),
+            )
+
+    def _log_hint(self) -> str:
+        """Where the launched CARLA's own log is, as an error points to it
+        (its output is not kept: the launcher's goes to ``/dev/null``)."""
+        launcher = self._launcher
+        if launcher is None:
+            return ""
+        log = launcher.parent / "CarlaUnreal" / "Saved" / "Logs"
+        return f"; its log, if it wrote one, is under {log}"
+
+    def _tcp_connects(self) -> bool:
+        """Whether a plain TCP connection to *host*:*port* succeeds: some
+        process listens there, CARLA or not."""
+        try:
+            socket.create_connection((self.host, self.port), timeout=2.0).close()
+        except OSError:
+            return False
+        return True
+
+    def _ping_for(self, seconds: float) -> bool:
+        """Ping until the server answers (``True``) or *seconds* have passed,
+        or the port stops accepting connections (``False``)."""
+        deadline = time.monotonic() + seconds
+        while True:
+            if self._ping():
+                return True
+            if time.monotonic() >= deadline or not self._tcp_connects():
+                return False
+            time.sleep(1.0)
+
     def _ping(self) -> bool:
         """Try to connect to the CARLA RPC port; return True on success."""
         # A closed port is answered here, not by the CARLA client: on arm64
         # its call on a refused connection can abort the process rather than
         # raise (maps.opendrive._from_server checks the same way).
-        try:
-            socket.create_connection((self.host, self.port), timeout=2.0).close()
-        except OSError:
+        if not self._tcp_connects():
             return False
         try:
             client = carla.Client(self.host, self.port)
@@ -470,16 +554,18 @@ class CarlaServerManager:
             return False
 
     def _wait_until_ready(self) -> None:
-        """Poll until the server accepts connections or the timeout expires."""
+        """Poll until the server accepts connections or the timeout expires.
+
+        The launched process is checked before each ping, and again after
+        the one that answers: a server that answers once it has exited is
+        another process's, not the one :meth:`start` launched (#2233).
+        """
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
+            self._check_running()
             if self._ping():
+                self._check_running()
                 return
-            if self._process is not None and self._process.poll() is not None:
-                raise RuntimeError(
-                    f"CARLA server exited with code {self._process.returncode} "
-                    "before it became reachable"
-                )
             time.sleep(1.0)
         raise RuntimeError(
             f"CARLA server did not become reachable within {self.timeout}s "

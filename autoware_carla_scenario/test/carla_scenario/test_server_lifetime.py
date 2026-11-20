@@ -298,16 +298,19 @@ class _ExitingCarla(_FakeCarla):
 
     The watchdog then exits too, and the first ``poll()`` reaps it, while UE5
     still runs in its group.  The launcher waits for UE5's pid file so that a
-    test always knows which process to look for.
+    test always knows which process to look for, and then *linger* seconds:
+    start() fails once its process has exited, so a launcher that is to pass
+    it must outlast its first ping (#2233).
     """
 
-    def __init__(self, directory: Path, code: int) -> None:
+    def __init__(self, directory: Path, code: int, linger: float = 0.0) -> None:
         super().__init__(directory)
         ue5 = shlex.quote(str(self.ue5_pid))
         self.exe.write_text(
             "#!/bin/sh\n"
             f"/bin/sh -c '{_write_pid(_ARG0)} && exec sleep 600' {ue5} &\n"
             f"while [ ! -e {ue5} ]; do sleep 0.05; done\n"
+            f"sleep {linger}\n"
             f"exit {code}\n"
         )
 
@@ -334,7 +337,7 @@ def test_a_launcher_that_exits_does_not_leave_its_children_running(
 def test_stop_reaches_the_group_after_is_alive_reaped_the_launcher(
     tmp_path: Path, free_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    carla = _ExitingCarla(tmp_path, 0)
+    carla = _ExitingCarla(tmp_path, 0, linger=3.0)
     monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(carla.exe))
     monkeypatch.setattr(
         CarlaServerManager, "_ping", lambda self: carla.ue5_pid.exists()

@@ -408,7 +408,8 @@ class MapSource:
             other value must be a name ``git check-ref-format`` accepts and
             must not begin with ``-`` (see :func:`_ref_problem`).
         path: POSIX path of the map directory inside the repository.  Empty
-            means the repository root.
+            means the repository root.  It may not contain a control
+            character (a newline, a tab).
     """
 
     repo_url: str
@@ -432,6 +433,16 @@ class MapSource:
             if problem:
                 raise MapSourceError(
                     f"{self.ref!r} is not a usable git ref: {problem}."
+                )
+        # The path becomes a line of `git sparse-checkout set --stdin`
+        # (maps/cache.py), where a newline would add a pattern of its own
+        # (`/*`, the whole repository), and a file name nowhere (#2233).
+        for character in self.path:
+            code = ord(character)
+            if code < 0x20 or code == 0x7F:
+                raise MapSourceError(
+                    f"{self.path!r} is not a usable map path: it contains a "
+                    "control character."
                 )
 
     # -- parsing --------------------------------------------------------
