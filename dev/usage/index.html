@@ -6480,9 +6480,14 @@ session's page) compares two or more sessions of the same scenarios
 (<code>?s=batch/2026-10-18/16-09-52&amp;s=...</code>), the oldest the baseline:</p>
 <ul>
 <li><strong>Cases</strong> are matched by what they ran -- their sweep overrides (less
-  <code>++odd_case</code>, which names a case's position), else the ODD values they
-  were drawn at -- not by their index, so a case keeps its match when a
-  sweep's order or size changes. Cases of one session that share a key (a
+  <code>++odd_case</code>, which names a case's position, and less the overrides of
+  the session's command line: those Hydra recorded in a CLI multirun's
+  <code>multirun.yaml</code>, else those every job of a multirun session shares, such
+  as the Run panel's extra overrides, and all of a single run's), else the
+  ODD values they were drawn at -- not by their index, so two sessions that
+  differ only in an override given to all of their cases
+  (<code>autoware.planner=new</code>) are compared case by case, and a case keeps its
+  match when a sweep's order or size changes. Cases of one session that share a key (a
   sweep that draws the same ODD values twice, as one over categorical
   buckets can) are all kept: each run is listed, and a session with more
   than one run of a case shows how many of them passed (<code>1/2 passed</code>).
@@ -6680,7 +6685,7 @@ sync the environment).</p>
 <tr>
 <td><code>POST</code></td>
 <td><code>/api/run</code></td>
-<td>Start a scenario execution in the background (400 <code>{"status": "error"}</code> for a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available)</td>
+<td>Start a scenario execution in the background (400 <code>{"status": "error"}</code> for a body that is not a JSON object or names no <code>scenario</code>, a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available)</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -6719,7 +6724,8 @@ sync the environment).</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Run request body format:</strong></p>
+<p><strong>Run request body format</strong> (<code>scenario</code> is required by <code>/api/run</code>: <code>*/*</code>
+runs every scenario only when asked for):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="p">{</span>
 <a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*/*"</span><span class="p">,</span>
 <a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a><span class="w">  </span><span class="nt">"extra_overrides"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"server.host=192.168.1.100"</span><span class="p">],</span>
@@ -6742,10 +6748,22 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
 <a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="w">  </span><span class="nt">"current"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
 <a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
 <a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
-<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
-<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a><span class="p">}</span>
+<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span><span class="p">,</span>
+<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
+<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a><span class="p">}</span>
 </code></pre></div>
-<p>Where <code>status</code> is one of: <code>"running"</code>, <code>"idle"</code>, or <code>"done"</code>.</p>
+<p>Each event is a <code>data:</code> line holding one such object. <code>status</code> is one of:</p>
+<ul>
+<li><code>"running"</code> -- job <code>current</code> of <code>total</code> (<code>scenario_name</code>) has started;</li>
+<li><code>"passed"</code> or <code>"failed"</code> -- that job has ended, by its exit code (a job
+  that could not be launched, or was stopped, is <code>"failed"</code>);</li>
+<li><code>"done"</code> -- the run is over (also when it was stopped); the stream ends
+  here;</li>
+<li><code>"idle"</code> -- no run has been started since the viewer started; the stream
+  ends here.</li>
+</ul>
+<p><code>message</code> is empty but on a <code>"done"</code> of a run that failed as a whole before
+any job ran (its multirun directory could not be created), where it says why.</p>
 <hr />
 <h2 id="environment-variables_1">Environment Variables<a class="headerlink" href="#environment-variables_1" title="Permanent link">&para;</a></h2>
 <table>
@@ -6980,7 +6998,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 08:40:12 UTC"><span class="timeago" datetime="2026-11-20T08:40:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 08:40:12 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 14:21:47 UTC"><span class="timeago" datetime="2026-11-20T14:21:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 14:21:47 UTC">2026-11-20</span>
   </span>
 
     
