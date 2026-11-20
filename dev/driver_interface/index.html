@@ -2865,12 +2865,13 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">  </span><span class="nt">control</span><span class="p">:</span>
 <a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="w">    </span><span class="nt">lookahead_gain_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.6</span>
 <a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">    </span><span class="nt">wheelbase_m</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.8</span>
-<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">    </span><span class="nt">max_steer_angle_deg</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">56.0</span><span class="w">   </span><span class="c1"># CARLA 0.10: angle = 56 deg * steer**2</span>
-<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">    </span><span class="nt">steer_exponent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span>
-<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">    </span><span class="nt">yaw_rate_ki</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span><span class="w">            </span><span class="c1"># integral trim on the measured yaw rate</span>
-<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">    </span><span class="nt">longitudinal_controller</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pid</span><span class="w">  </span><span class="c1"># Autoware's autoware_pid_longitudinal_controller</span>
-<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">    </span><span class="nt">delay_compensation_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.17</span><span class="w"> </span><span class="c1"># ... and any of its parameters, by name</span>
-<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="nt">throttle_deadband</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">      </span><span class="c1"># vehicle interface: least throttle to pull away</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">    </span><span class="nt">max_steer_angle_deg</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">   </span><span class="c1"># null: 56 deg (CARLA 0.10: angle = 56 deg * steer**2)</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">    </span><span class="nt">max_steer_angle_rad</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">   </span><span class="c1"># ... or the same in radians; set one of the two</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">    </span><span class="nt">steer_exponent</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">    </span><span class="nt">yaw_rate_ki</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span><span class="w">            </span><span class="c1"># integral trim on the measured yaw rate</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">    </span><span class="nt">longitudinal_controller</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pid</span><span class="w">  </span><span class="c1"># Autoware's autoware_pid_longitudinal_controller</span>
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="nt">delay_compensation_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.17</span><span class="w"> </span><span class="c1"># ... and any of its parameters, by name</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">    </span><span class="nt">throttle_deadband</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">      </span><span class="c1"># vehicle interface: least throttle to pull away</span>
 </code></pre></div>
 <p>Every number in <code>driver</code> must be a number: an int or a float, never a boolean
 or a string. Hydra reads <code>driver.policy_timestep_s=true</code> as a boolean, which
@@ -2892,11 +2893,29 @@ null) is refused as the config is read, naming the key
 (<code>driver.send_ground_truth must be true or false, got 'ture'</code>).
 <code>driver.address</code> must be a non-empty string (<code>host:port</code>, or
 <code>unix:///path/policy.sock</code>): <code>null</code> is refused too, naming the key, rather
-than dialled as <code>None</code>; leave it out for the default <code>localhost:50051</code>.</p>
+than dialled as <code>None</code>; leave it out for the default <code>localhost:50051</code>.
+<code>driver.policy</code> and <code>driver.map_dir</code> are each a non-empty string or <code>null</code>
+(no policy served, no map written): an empty or blank string, <code>false</code> or a
+number is refused as the config is read, naming the key
+(<code>driver.policy must be a non-empty string, or null, got ''</code>).
+<code>driver.map_formats</code> is a list of format names (<code>[lanelet2, opendrive]</code>),
+each one of those <a href="#the-map-as-files">the map set</a> is written in: a bare
+string (<code>driver.map_formats=lanelet2</code>, which would be read as its letters)
+and an unknown name are refused as the config is read, naming the key
+(<code>driver.map_formats[0] must be one of [...], got 'lanelet3'</code>), and so is
+<code>t4</code> without <code>driver.t4_scene</code>, which alone writes that format.</p>
 <p>The same holds for <code>driver.control</code> (and <code>ros2.control</code>): each gain and limit
 is a finite int or float (an int is read as a float), each <code>enable_*</code> switch a
 boolean and <code>velocity_smoothing_window</code> a whole number, and a <code>*_deg</code> angle
-must be a number too. What the controller divides by -- <code>wheelbase_m</code>,
+must be a number too. A <code>null</code> setting is its default, as an absent one.
+Each angle is set in degrees (<code>max_steer_angle_deg</code>,
+<code>yaw_rate_trim_limit_deg</code>) or in radians (<code>max_steer_angle_rad</code>,
+<code>yaw_rate_trim_limit_rad</code>), not both: setting both is refused, naming the two
+keys (<code>driver.control.max_steer_angle_deg and max_steer_angle_rad set the same
+angle, ...; set one of them to null</code>), since neither may silently win. <code>conf/driver/default.yaml</code> leaves both
+of the full lock's null, so <code>driver.control.max_steer_angle_rad=0.6</code> and
+<code>driver.control.max_steer_angle_deg=35</code> each work as an override.
+What the controller divides by -- <code>wheelbase_m</code>,
 <code>max_steer_angle_deg</code> (or <code>_rad</code>), <code>steer_exponent</code>, <code>min_lookahead_m</code> and
 <code>velocity_lookahead_time</code> -- must be positive, and <code>max_lookahead_m</code> at least
 <code>min_lookahead_m</code>. A value out of these bounds is refused before the run
@@ -3613,7 +3632,7 @@ drift from the <code>.proto</code> files (<code>compile_protos.py --check</code>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 09:37:16 UTC"><span class="timeago" datetime="2026-11-20T09:37:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 09:37:16 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 15:51:58 UTC"><span class="timeago" datetime="2026-11-20T15:51:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 15:51:58 UTC">2026-11-20</span>
   </span>
 
     

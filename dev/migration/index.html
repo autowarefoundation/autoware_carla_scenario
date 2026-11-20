@@ -2147,6 +2147,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#the-drivers-steering-angles-default-to-null" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The driver's steering angles default to null
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-t4-datasets-lidar-intensity-is-on-the-0-255-scale" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2314,6 +2325,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#the-drivers-steering-angles-default-to-null" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The driver's steering angles default to null
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-t4-datasets-lidar-intensity-is-on-the-0-255-scale" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2467,6 +2489,25 @@
 
 
 <h1 id="migrating">Migrating<a class="headerlink" href="#migrating" title="Permanent link">&para;</a></h1>
+<h2 id="the-drivers-steering-angles-default-to-null">The driver's steering angles default to null<a class="headerlink" href="#the-drivers-steering-angles-default-to-null" title="Permanent link">&para;</a></h2>
+<p><code>DriverControlSpec.max_steer_angle_deg</code> and <code>yaw_rate_trim_limit_deg</code> now
+default to <code>None</code> instead of <code>56.0</code> and <code>25.0</code>, and the spec has their radian
+twins, <code>max_steer_angle_rad</code> and <code>yaw_rate_trim_limit_rad</code>, also <code>None</code>
+(<a href="../driver_interface/">Driver interface</a>). Null is the controller's default,
+so a run steers as before; but the degrees used to win silently over a
+<code>driver.control.max_steer_angle_rad</code> override, and one angle set both ways is
+now refused. Code reading the spec's <code>max_steer_angle_deg</code> for a number reads
+the effective angle from the controller's config instead:
+<code>ControlConfig.from_mapping(dataclasses.asdict(spec)).max_steer_angle_rad</code>. A
+config group of your own that sets <code>max_steer_angle_deg</code> keeps working, unless
+it also sets <code>max_steer_angle_rad</code>.</p>
+<p>The same release refuses as the config is read what used to fail later or
+pass silently (#2241): a null <code>driver.control</code> (or <code>ros2.control</code>) setting is
+now its default rather than an error; <code>driver.policy</code> and <code>driver.map_dir</code>
+must be a non-empty string or null; <code>driver.map_formats</code> must be a list of
+known format names, with <code>t4</code> only beside <code>driver.t4_scene</code>; and a HILS
+device's <code>url</code> must be non-blank text, its <code>codec</code> neither empty nor a bare
+<code>NAME:</code> (<a href="../hils/">HILS</a>).</p>
 <h2 id="a-t4-datasets-lidar-intensity-is-on-the-0-255-scale">A T4 dataset's LiDAR intensity is on the 0-255 scale<a class="headerlink" href="#a-t4-datasets-lidar-intensity-is-on-the-0-255-scale" title="Permanent link">&para;</a></h2>
 <p>A run's T4 dataset (<code>t4.enabled</code>) wrote its sweeps' intensity on CARLA's
 <code>[0, 1]</code> scale, which T4's readers take for a nearly black cloud. It is now
@@ -2640,7 +2681,7 @@ are written into the trajectory log.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 13:36:32 UTC"><span class="timeago" datetime="2026-11-20T13:36:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 13:36:32 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 15:51:58 UTC"><span class="timeago" datetime="2026-11-20T15:51:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 15:51:58 UTC">2026-11-20</span>
   </span>
 
     
