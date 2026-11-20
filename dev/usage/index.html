@@ -4032,7 +4032,8 @@ Python version, and the viewer's Run form reads it the same way.</p>
   (<code>server.world_reset</code>): the world is reset right before every attempt that
   follows a run -- the next case's, or a retry's -- so the weather or frozen
   traffic lights the failed attempt set do not carry into it</li>
-<li>A reset that raises is the failure of the attempt it comes before: that
+<li>A reset that fails -- the map load timing out, say -- raises (#2243), and
+  is the failure of the attempt it comes before: that
   attempt is retried, or the case is reported as <code>[ERROR]</code>, and the batch
   goes on. The case that ran before the reset keeps its verdict, and is not
   run again (#1941). Between cases the world is reset first, and
@@ -5827,8 +5828,9 @@ an <code>AndCondition</code> of two <code>StickyCondition</code>s, which joins i
 messages with <code>AND</code> -- or <code>Scenario completed successfully</code> when
 <code>is_done()</code> ended the run. When a fail condition ends the run, it is that
 condition's message.</p>
-<p><code>condition_statuses</code> has one entry per registered condition, pass conditions
-first, each labelled <code>pass[i](label)</code> or <code>fail[i](label)</code>: whether it was
+<p><code>condition_statuses</code> has one entry per registered condition (none when the
+ego gave up before the tick loop began, as no condition was checked), pass
+conditions first, each labelled <code>pass[i](label)</code> or <code>fail[i](label)</code>: whether it was
 satisfied when the run ended, its message (<code>not triggered</code> for a fail
 condition that was not, <code>not yet satisfied</code> for a pass condition), its class,
 its role, and its <code>details</code> (an <code>AndCondition</code>'s are its children's statuses,
@@ -6998,7 +7000,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 14:21:47 UTC"><span class="timeago" datetime="2026-11-20T14:21:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 14:21:47 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 16:07:17 UTC"><span class="timeago" datetime="2026-11-20T16:07:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 16:07:17 UTC">2026-11-20</span>
   </span>
 
     
