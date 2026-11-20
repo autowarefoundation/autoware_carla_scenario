@@ -2889,7 +2889,10 @@ their spellings as text in any case (<code>"false"</code>, <code>"no"</code>, <c
 other switches are (<a href="../usage/#the-switches">The switches</a>). So a quoted
 <code>driver.t4_scene='false'</code> is false, not true; anything else (<code>ture</code>, <code>2</code>,
 null) is refused as the config is read, naming the key
-(<code>driver.send_ground_truth must be true or false, got 'ture'</code>).</p>
+(<code>driver.send_ground_truth must be true or false, got 'ture'</code>).
+<code>driver.address</code> must be a non-empty string (<code>host:port</code>, or
+<code>unix:///path/policy.sock</code>): <code>null</code> is refused too, naming the key, rather
+than dialled as <code>None</code>; leave it out for the default <code>localhost:50051</code>.</p>
 <p>The same holds for <code>driver.control</code> (and <code>ros2.control</code>): each gain and limit
 is a finite int or float (an int is read as a float), each <code>enable_*</code> switch a
 boolean and <code>velocity_smoothing_window</code> a whole number, and a <code>*_deg</code> angle
@@ -2899,12 +2902,20 @@ must be a number too. What the controller divides by -- <code>wheelbase_m</code>
 <code>min_lookahead_m</code>. A value out of these bounds is refused before the run
 starts, naming its key (<code>driver.control.steer_exponent must be positive, got
 0.0</code>), not once the ego first steers.</p>
-<p>Each <code>driver.cameras</code> entry needs its own <code>logical_id</code>; two cameras under one id
-are refused. Its <code>image_width</code> and <code>image_height</code> must be positive whole
+<p>Each <code>driver.cameras</code> entry needs its own <code>logical_id</code>, a non-empty string;
+two cameras under one id are refused. Its <code>image_width</code> and <code>image_height</code> must be positive whole
 numbers, its <code>fps</code> positive and finite, its <code>fov</code> in (0, 180) degrees -- CARLA
 renders the pinhole of the horizontal <code>fov</code> -- and its mount (<code>position_x/y/z</code>,
 <code>roll</code>, <code>pitch</code>, <code>yaw</code>) finite. A camera out of these bounds is refused as the
 config is read, not when it attaches after the ego spawned.</p>
+<p>A <code>null</code> setting of a <code>driver.cameras</code> or <code>driver.lidars</code> entry is its default,
+as an absent one, the way a ROS 2 camera's is: <code>logical_id: null</code> is
+<code>camera_front_wide_120fov</code> (a LiDAR's <code>lidar_top</code>), <code>fov: null</code> 120 degrees,
+<code>range_m: null</code> 100 m; <code>lens: null</code> is CARLA's pinhole and a LiDAR's
+<code>noise_seed: null</code> the run's seed, as by default. An entry refused names
+itself by its place in the list and its logical id
+(<code>driver.lidars[1] ('lidar_rear'): LiDAR channels must be positive</code>), and
+<code>driver.cameras</code> and <code>driver.lidars</code> must each be a list of mappings.</p>
 <p>A whole number is an integral value: <code>960</code>, or <code>960.0</code> (or <code>9.6e2</code>), which is
 kept as the int <code>960</code>, so the policy's <code>CameraSpec</code> resolution (an integer
 protobuf field, which refuses any float) is given <code>960</code> and CARLA
@@ -3228,7 +3239,12 @@ a camera) that sweeps once per policy step (<code>policy_timestep_s</code>), and
 sends that sweep, already converted into the rig frame. The sweep may come from an
 earlier simulation tick of the step than the one the step is sent on; it is stamped
 with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
-within a second is left out rather than replaced by an older one.</p>
+within a second is left out rather than replaced by an older one. CARLA first sweeps
+a whole interval after the LiDAR is attached (its <code>sensor_tick</code> counts from the spawn),
+so the first read waits only for a sweep that can have been taken by then, as a
+camera's first read does: with a sweep every tick, that tick's; with a longer
+<code>policy_timestep_s</code>, none (the first step may then send no sweep, and no warning is
+logged for it) (#2228).</p>
 <p>A policy does not see that transport: the servicer records each sweep before <code>drive</code> as
 a <code>LidarFrame</code> in <code>session.frame_history</code>, beside the camera frames, and announces it
 through <code>on_frame</code> -- the one path every sensor takes. <code>frame_history_length</code> applies to
@@ -3238,7 +3254,7 @@ both, and <code>session.latest_frame("lidar_top").as_array()</code> unpacks the 
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> channels</span><span class="p">:</span><span class="w"> </span><span class="nv">64</span><span class="p p-Indicator">,</span><span class="nt"> range_m</span><span class="p">:</span><span class="w"> </span><span class="nv">100.0</span><span class="p p-Indicator">,</span><span class="nt"> position_z</span><span class="p">:</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">}</span>
 </code></pre></div>
-<p>LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
+<p>LiDAR logical ids must be unique non-empty strings, and every number a LiDAR takes must be finite:
 <code>channels</code> and <code>points_per_second</code> positive whole numbers (<code>64</code>, or <code>64.0</code>
 and <code>1.2e6</code>, which YAML reads as floats, kept as the ints <code>64</code> and <code>1200000</code>
 for CARLA; not <code>64.5</code>), <code>range_m</code> positive, <code>lower_fov_deg</code> below
@@ -3597,7 +3613,7 @@ drift from the <code>.proto</code> files (<code>compile_protos.py --check</code>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 21:14:14 UTC"><span class="timeago" datetime="2026-11-11T21:14:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 21:14:14 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 09:37:16 UTC"><span class="timeago" datetime="2026-11-20T09:37:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 09:37:16 UTC">2026-11-20</span>
   </span>
 
     
