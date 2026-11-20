@@ -675,12 +675,57 @@ def test_an_ungrouped_jobs_output_leaves_no_file(
 
 def test_a_job_that_prints_nothing_leaves_no_raw_log(tmp_path: Path) -> None:
     # The scenario page then shows the job's run.log instead.
-    log = tmp_path / runner.RAW_OUTPUT_LOG
+    job = tmp_path / "0"
+    (job / ".hydra").mkdir(parents=True)  # what Hydra wrote
+    log = job / runner.RAW_OUTPUT_LOG
     assert runner._run_job(["true"], None, log) == 0
     runner._settle_log(log, temporary=False)
     assert not log.exists()
-    (tmp_path / "run.log").write_text("logged\n", encoding="utf-8")
-    assert runner._read_raw_log(tmp_path) == "logged\n"
+    assert job.is_dir()  # Hydra's, kept
+    (job / "run.log").write_text("logged\n", encoding="utf-8")
+    assert runner._read_raw_log(job) == "logged\n"
+
+
+def test_a_job_that_never_ran_leaves_no_job_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The run is stopped before its first job starts: the directory made for
+    # its log is not left behind, to be listed as a case with no result.
+    monkeypatch.setattr(runner, "_stopping", True)
+    monkeypatch.setattr(runner, "_stop_requested", lambda: False)
+    base = tmp_path / "base"
+    base.mkdir()
+    runner._run_worker([["scenario=a"], ["scenario=b"]], base, [], True)
+    [session] = (base / "multirun").glob("*/*")
+    assert list(session.iterdir()) == []
+
+
+def test_a_job_that_could_not_be_launched_leaves_no_job_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))  # no uv
+    base = tmp_path / "base"
+    base.mkdir()
+    runner._run_worker([["scenario=a"]], base, [], True)
+    [session] = (base / "multirun").glob("*/*")
+    assert list(session.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("a" * 100 + "\nlast line\n", "last line\n"),
+        # One line longer than the tail: its end, rather than nothing.
+        ("b" * 100, "b" * 16),
+        # Cut mid-character: the partial character is replaced, then dropped
+        # with the partial line it starts.
+        ("é" * 60 + "\nend\n", "end\n"),
+    ],
+)
+def test_the_tail_of_a_long_log(tmp_path: Path, text: str, shown: str) -> None:
+    log = tmp_path / "log"
+    log.write_text(text, encoding="utf-8")
+    assert runner._tail(log, 16).endswith("...\n" + shown)
 
 
 def test_a_raw_log_that_is_a_symlink_is_not_read(tmp_path: Path) -> None:

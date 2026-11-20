@@ -139,19 +139,51 @@ def _multirun_task(directory: Path) -> list[str] | None:
     return [str(o) for o in task] if isinstance(task, list) else None
 
 
+def _as_jobs_receive(overrides: list[str]) -> set[str]:
+    """Each of *overrides*, as the command line gave it, and as a job of the
+    multirun received it: Hydra's basic sweeper hands each job a fixed
+    override re-written from its parsed value (``x=[1, 2]`` as ``x=[1,2]``,
+    ``w= 3`` as ``w=3``), where this package's sweeper passes it on as given.
+    A sweep (``ego.speed=10,20``, ``range(...)``, ``choice(...)``,
+    ``glob(...)``) is only kept as given, which no job's value equals; so is
+    an override Hydra's parser cannot read."""
+    forms = set(overrides)
+    try:
+        from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+            OverridesParser,
+        )
+
+        parser = OverridesParser.create()
+    except Exception:  # noqa: BLE001 -- Hydra cannot be imported
+        return forms
+    for override in overrides:
+        try:
+            parsed = parser.parse_override(override)
+            if not parsed.is_sweep_override():
+                value = parsed.get_value_element_as_str()
+                forms.add(f"{parsed.get_key_element()}={value}")
+        except Exception:  # noqa: BLE001, S112 -- OverrideParseException, ...
+            continue
+    return forms
+
+
 def session_overrides(directory: Path, jobs: list[list[str]]) -> set[str]:
     """The overrides of a multirun or single session's command line, which
     every case of it ran with and so are not what tells its cases apart:
-    those its ``multirun.yaml`` records (:func:`_multirun_task`), else those
-    every one of its jobs' overrides (*jobs*) holds -- for a session of one
-    job (a single run), all of them."""
+    those its ``multirun.yaml`` records (:func:`_multirun_task`, each also
+    as its jobs received it, :func:`_as_jobs_receive`), else those every one
+    of its jobs' overrides (*jobs*) holds -- for a session of one job (a
+    single run), all of them.  A job whose overrides could not be read (an
+    empty list: no ``.hydra/overrides.yaml``) is left out of that, rather
+    than leave no override shared."""
     recorded = _multirun_task(directory)
     if recorded is not None:
-        return set(recorded)
-    if not jobs:
+        return _as_jobs_receive(recorded)
+    read = [overrides for overrides in jobs if overrides]
+    if not read:
         return set()
-    shared = set(jobs[0])
-    for overrides in jobs[1:]:
+    shared = set(read[0])
+    for overrides in read[1:]:
         shared &= set(overrides)
     return shared
 

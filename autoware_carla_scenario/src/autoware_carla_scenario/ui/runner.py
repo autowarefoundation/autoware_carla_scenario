@@ -48,8 +48,8 @@ _WARNING_TAIL_BYTES = 4 * 1024
 
 def _tail(log_path: Path, max_bytes: int) -> str:
     """The text of *log_path*, or its last *max_bytes* bytes (less the
-    partial line they start in) after a note that it was truncated; bytes
-    that are not UTF-8 are replaced.
+    partial line they start in, when a newline follows it) after a note that
+    it was truncated; bytes that are not UTF-8 are replaced.
 
     Raises:
         OSError: The file cannot be read.
@@ -59,8 +59,12 @@ def _tail(log_path: Path, max_bytes: int) -> str:
         return log_path.read_text(encoding="utf-8", errors="replace")
     with log_path.open(encoding="utf-8", errors="replace") as f:
         f.seek(size - max_bytes)
-        f.readline()  # discard partial first line
         tail = f.read()
+    # Less the partial line it starts in, unless that is all of it: the end
+    # of one line longer than max_bytes is shown rather than nothing.
+    newline = tail.find("\n")
+    if 0 <= newline < len(tail) - 1:
+        tail = tail[newline + 1 :]
     return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
 
 
@@ -497,12 +501,24 @@ def _output_tail(log: Path) -> str:
 def _settle_log(log: Path, temporary: bool) -> None:
     """Remove a job's output file once the job is over: a temporary one
     always, a job directory's ``raw_output.log`` when the job wrote nothing
-    to it (so the scenario page shows ``run.log`` instead)."""
+    to it (so the scenario page shows ``run.log`` instead).
+
+    The job directory, made for the log before the job started, is removed
+    too when nothing else is in it -- a job that was never launched (the run
+    was stopped first, or ``uv`` could not be started) and wrote nothing --
+    so that the viewer does not list it as a case that left no result.  One
+    that Hydra wrote to (``.hydra/``) is not empty, and is kept."""
     try:
         if temporary or log.stat().st_size == 0:
             log.unlink(missing_ok=True)
     except OSError:
         logger.warning("Failed to tidy the job output file %s", log)
+        return
+    if not temporary:
+        try:
+            log.parent.rmdir()  # only while empty
+        except OSError:
+            pass
 
 
 def _reserve_multirun_dir(base: Path, now: datetime) -> str:
