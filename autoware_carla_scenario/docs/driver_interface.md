@@ -162,7 +162,8 @@ driver:
   control:
     lookahead_gain_s: 0.6
     wheelbase_m: 2.8
-    max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
+    max_steer_angle_deg: null   # null: 56 deg (CARLA 0.10: angle = 56 deg * steer**2)
+    max_steer_angle_rad: null   # ... or the same in radians; set one of the two
     steer_exponent: 2.0
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     longitudinal_controller: pid  # Autoware's autoware_pid_longitudinal_controller
@@ -192,11 +193,29 @@ null) is refused as the config is read, naming the key
 `driver.address` must be a non-empty string (`host:port`, or
 `unix:///path/policy.sock`): `null` is refused too, naming the key, rather
 than dialled as `None`; leave it out for the default `localhost:50051`.
+`driver.policy` and `driver.map_dir` are each a non-empty string or `null`
+(no policy served, no map written): an empty or blank string, `false` or a
+number is refused as the config is read, naming the key
+(`driver.policy must be a non-empty string, or null, got ''`).
+`driver.map_formats` is a list of format names (`[lanelet2, opendrive]`),
+each one of those [the map set](#the-map-as-files) is written in: a bare
+string (`driver.map_formats=lanelet2`, which would be read as its letters)
+and an unknown name are refused as the config is read, naming the key
+(`driver.map_formats[0] must be one of [...], got 'lanelet3'`), and so is
+`t4` without `driver.t4_scene`, which alone writes that format.
 
 The same holds for `driver.control` (and `ros2.control`): each gain and limit
 is a finite int or float (an int is read as a float), each `enable_*` switch a
 boolean and `velocity_smoothing_window` a whole number, and a `*_deg` angle
-must be a number too. What the controller divides by -- `wheelbase_m`,
+must be a number too. A `null` setting is its default, as an absent one.
+Each angle is set in degrees (`max_steer_angle_deg`,
+`yaw_rate_trim_limit_deg`) or in radians (`max_steer_angle_rad`,
+`yaw_rate_trim_limit_rad`), not both: setting both is refused, naming the two
+keys (`driver.control.max_steer_angle_deg and max_steer_angle_rad set the same
+angle, ...; set one of them to null`), since neither may silently win. `conf/driver/default.yaml` leaves both
+of the full lock's null, so `driver.control.max_steer_angle_rad=0.6` and
+`driver.control.max_steer_angle_deg=35` each work as an override.
+What the controller divides by -- `wheelbase_m`,
 `max_steer_angle_deg` (or `_rad`), `steer_exponent`, `min_lookahead_m` and
 `velocity_lookahead_time` -- must be positive, and `max_lookahead_m` at least
 `min_lookahead_m`. A value out of these bounds is refused before the run

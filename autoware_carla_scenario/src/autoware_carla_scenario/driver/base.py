@@ -26,6 +26,7 @@ from ..seed import check_seed, check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from .geometry import Pose, Trajectory
+from .hdmap_files import MAP_FORMATS
 
 
 __all__ = [
@@ -693,6 +694,19 @@ class DriverClientConfig:
                 "unix:///path/policy.sock); leave it out for the default "
                 f"localhost:50051, got {self.address!r}"
             )
+        # Null keeps its meaning (no policy served, no map written); an
+        # empty string or false is no name: policy '' failed at session
+        # start, map_dir '' wrote the map set into the working directory and
+        # map_dir false reached the export (#2241).
+        for key, optional in (("policy", self.policy), ("map_dir", self.map_dir)):
+            if optional is not None and (
+                not isinstance(optional, str) or not optional.strip()
+            ):
+                raise ValueError(
+                    f"driver.{key} must be a non-empty string, or null, "
+                    f"got {optional!r}"
+                )
+        self._check_map_formats()
         for key, value in (
             ("timeout_s", self.timeout_s),
             ("policy_timestep_s", self.policy_timestep_s),
@@ -714,6 +728,29 @@ class DriverClientConfig:
         if not 1 <= quality <= 100:
             raise ValueError(f"driver.image_quality must be 1-100, got {quality}")
         object.__setattr__(self, "image_quality", quality)
+
+    def _check_map_formats(self) -> None:
+        """Refuse a :attr:`map_formats` the map set cannot be written in, as
+        the config is read rather than at scenario start, where the export
+        named no ``driver.`` key (#2241).
+
+        Each format is a name of :data:`~.hdmap_files.MAP_FORMATS`; ``t4``,
+        the run's Lanelet2 map as the T4Scenes reference it, is never
+        converted, so it needs :attr:`t4_scene`, which writes it.
+        """
+        for index, name in enumerate(self.map_formats):
+            if not isinstance(name, str) or name not in MAP_FORMATS:
+                raise ValueError(
+                    f"driver.map_formats[{index}] must be one of "
+                    f"{sorted(MAP_FORMATS)}, got {name!r}"
+                )
+        if "t4" in self.map_formats and not self.t4_scene:
+            raise ValueError(
+                "driver.map_formats names t4, the run's Lanelet2 map as the "
+                "T4Scenes reference it, which only driver.t4_scene writes; set "
+                "driver.t4_scene=true, or leave t4 out, got "
+                f"{list(self.map_formats)!r}"
+            )
 
     def _check_numbers(self) -> None:
         """Refuse the numbers a NaN or an infinity would silently break.
@@ -772,6 +809,7 @@ class DriverClientConfig:
         # Imported here: the Codon check does not compile this method, and
         # utils.config reads a dataclass's fields from its class (docs/typecheck.md).
         from ..utils.config import checked_mapping_list  # noqa: PLC0415
+        from ..utils.config import checked_str_list  # noqa: PLC0415
         from ..utils.config import checked_options as _checked  # noqa: PLC0415
 
         values = _checked(cls, mapping, ignore={"control", "bridge"})
@@ -791,9 +829,13 @@ class DriverClientConfig:
                     checked_mapping_list("driver.lidars", lidars)
                 )
             )
+        # A list of strings: a bare string would be read as its characters
+        # (driver.map_formats=lanelet2 as l, a, n, ...; #2241).
         formats = values.pop("map_formats", None)
         if formats is not None:
-            values["map_formats"] = tuple(formats)
+            values["map_formats"] = tuple(
+                checked_str_list("driver.map_formats", formats)
+            )
         return cls(**values)
 
 

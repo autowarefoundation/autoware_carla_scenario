@@ -1,5 +1,27 @@
 # Migrating
 
+## The driver's steering angles default to null
+
+`DriverControlSpec.max_steer_angle_deg` and `yaw_rate_trim_limit_deg` now
+default to `None` instead of `56.0` and `25.0`, and the spec has their radian
+twins, `max_steer_angle_rad` and `yaw_rate_trim_limit_rad`, also `None`
+([Driver interface](driver_interface.md)). Null is the controller's default,
+so a run steers as before; but the degrees used to win silently over a
+`driver.control.max_steer_angle_rad` override, and one angle set both ways is
+now refused. Code reading the spec's `max_steer_angle_deg` for a number reads
+the effective angle from the controller's config instead:
+`ControlConfig.from_mapping(dataclasses.asdict(spec)).max_steer_angle_rad`. A
+config group of your own that sets `max_steer_angle_deg` keeps working, unless
+it also sets `max_steer_angle_rad`.
+
+The same release refuses as the config is read what used to fail later or
+pass silently (#2241): a null `driver.control` (or `ros2.control`) setting is
+now its default rather than an error; `driver.policy` and `driver.map_dir`
+must be a non-empty string or null; `driver.map_formats` must be a list of
+known format names, with `t4` only beside `driver.t4_scene`; and a HILS
+device's `url` must be non-blank text, its `codec` neither empty nor a bare
+`NAME:` ([HILS](hils.md)).
+
 ## A T4 dataset's LiDAR intensity is on the 0-255 scale
 
 A run's T4 dataset (`t4.enabled`) wrote its sweeps' intensity on CARLA's

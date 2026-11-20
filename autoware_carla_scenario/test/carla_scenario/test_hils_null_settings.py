@@ -191,3 +191,43 @@ def test_a_negative_sumo_speed_stands_the_walker_still(speed: float) -> None:
     assert walker.control.speed == pytest.approx(walker_control_speed(1.0))
     SumoTrafficBackend._walk(backend, walker, pose, speed)  # type: ignore[arg-type]
     assert walker.control.speed == 0.0
+
+
+# -- #2241: an empty codec or url ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("codec", "message"),
+    [
+        ("", r"expected a codec name .*, got ''$"),
+        ("  ", r"expected a codec name .*, got '  '$"),
+        (":vehicle.dbc", r"expected a codec name .*, got ':vehicle\.dbc'$"),
+        ("dbc:", r"expected an argument after the colon .*, got 'dbc:'$"),
+        ("lidar: ", r"expected an argument after the colon .*, got 'lidar: '$"),
+    ],
+)
+def test_an_empty_codec_is_refused_naming_its_key(codec: str, message: str) -> None:
+    document = {"devices": {"vehicle_can": {"url": "mem://x", "codec": codec}}}
+    with pytest.raises(
+        HilsConfigError, match=rf"^devices\.vehicle_can\.codec: {message}"
+    ):
+        parse_config(document)
+
+
+@pytest.mark.parametrize(
+    ("url", "shown"),
+    [("", "''"), ("  ", "'  '"), (False, "the bool False"), (0, "the int 0")],
+)
+def test_an_empty_url_is_refused_naming_its_key_and_value(url: Any, shown: str) -> None:
+    document = {"devices": {"d": {"url": url}}}
+    with pytest.raises(HilsConfigError, match=r"^devices\.d\.url: ") as error:
+        parse_config(document)
+    assert shown in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "document", [{"devices": {"d": {}}}, {"devices": {"d": {"url": None}}}]
+)
+def test_a_device_without_a_url_is_refused(document: Any) -> None:
+    with pytest.raises(HilsConfigError, match=r"^devices\.d\.url: a device has a url$"):
+        parse_config(document)

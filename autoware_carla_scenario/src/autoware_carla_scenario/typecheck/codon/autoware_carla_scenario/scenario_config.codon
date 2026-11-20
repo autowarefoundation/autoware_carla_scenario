@@ -111,11 +111,13 @@ class DriverControlSpec:
     min_lookahead_m: float = 4.0
     max_lookahead_m: float = 20.0
     wheelbase_m: float = 2.8
-    max_steer_angle_deg: float = 56.0
+    max_steer_angle_deg: Optional[float] = None
+    max_steer_angle_rad: Optional[float] = None
     steer_exponent: float = 2.0
     max_steer_rate: float = 4.0
     yaw_rate_ki: float = 3.0
-    yaw_rate_trim_limit_deg: float = 25.0
+    yaw_rate_trim_limit_deg: Optional[float] = None
+    yaw_rate_trim_limit_rad: Optional[float] = None
     yaw_rate_min_speed_mps: float = 1.0
     longitudinal_controller: str = "pid"
     velocity_smoothing_window: int = 8

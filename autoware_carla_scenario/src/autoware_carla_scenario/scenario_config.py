@@ -451,19 +451,25 @@ class DriverControlSpec:
     Mirrors :class:`~autoware_carla_scenario.driver.control.ControlConfig`; see that
     class for the meaning of each field (the ``pid`` longitudinal controller's carry
     the names of Autoware's ``autoware_pid_longitudinal_controller`` parameters).
-    ``max_steer_angle_deg`` and ``yaw_rate_trim_limit_deg`` are expressed in degrees
-    here for readability and converted on the way in.
+    The angles are set in degrees (``max_steer_angle_deg``,
+    ``yaw_rate_trim_limit_deg``), which read better, or in radians
+    (``max_steer_angle_rad``, ``yaw_rate_trim_limit_rad``), not both: one
+    angle set both ways is refused.  Each is ``None`` here, the controller's
+    default (56 and 25 degrees), so that an override of either one works
+    (#2241).
     """
 
     lookahead_gain_s: float = 0.6
     min_lookahead_m: float = 4.0
     max_lookahead_m: float = 20.0
     wheelbase_m: float = 2.8
-    max_steer_angle_deg: float = 56.0
+    max_steer_angle_deg: Optional[float] = None
+    max_steer_angle_rad: Optional[float] = None
     steer_exponent: float = 2.0
     max_steer_rate: float = 4.0
     yaw_rate_ki: float = 3.0
-    yaw_rate_trim_limit_deg: float = 25.0
+    yaw_rate_trim_limit_deg: Optional[float] = None
+    yaw_rate_trim_limit_rad: Optional[float] = None
     yaw_rate_min_speed_mps: float = 1.0
     longitudinal_controller: str = "pid"
     velocity_smoothing_window: int = 8
