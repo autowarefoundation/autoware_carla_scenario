@@ -252,3 +252,86 @@ def test_stems_are_written_in_every_entry_pending_ones_too(tmp_path: Path) -> No
     # Without stems, none is written.
     plain = write_batch_result_json(["a"], [_Result({"passed": True})], tmp_path / "p")
     assert "stem" not in json.loads(plain.read_text())[0]
+
+
+# ---------------------------------------------------------------------------
+# The summary's name, the check of a stem it names and a member's layout: one
+# of each, shared by batch_resume, gate.unrecorded and gate.errored (#2231)
+# ---------------------------------------------------------------------------
+
+
+def test_the_summary_has_one_name(tmp_path: Path) -> None:
+    from autoware_carla_scenario import batch_report, batch_resume
+    from autoware_carla_scenario.gate import evaluate, unrecorded
+
+    assert batch_report.BATCH_RESULTS == "batch_results.json"
+    for module in (batch_resume, unrecorded, evaluate):
+        assert module.BATCH_RESULTS is batch_report.BATCH_RESULTS
+    written = write_batch_result_json(["a"], [_Result({"passed": True})], tmp_path)
+    assert written == tmp_path / batch_report.BATCH_RESULTS
+
+
+@pytest.mark.parametrize(
+    ("stem", "plain"),
+    [
+        ("run", True),
+        ("Run-1", True),
+        ("ünï", True),
+        (".hidden", True),
+        ("...", True),
+        ("", False),
+        (".", False),
+        ("..", False),
+        ("a/b", False),
+        ("/abs", False),
+        ("trailing/", False),
+        ("a\\b", False),
+        ("a\0b", False),
+    ],
+)
+def test_a_plain_stem_names_a_file_of_its_own(stem: str, plain: bool) -> None:
+    from autoware_carla_scenario.batch_report import is_plain_stem
+
+    assert is_plain_stem(stem) is plain
+
+
+_MEMBERS: list[Any] = [
+    "text",
+    'ünï\n"q"',
+    0,
+    -1.5,
+    True,
+    None,
+    [],
+    {},
+    [1, [2, {"a": [3]}]],
+    {"k": {"n": [None, "x"]}},
+]
+
+
+@pytest.mark.parametrize("value", _MEMBERS)
+def test_a_member_is_laid_out_as_json_dumps_lays_it_out(value: Any) -> None:
+    from autoware_carla_scenario.batch_report import json_member
+
+    single = json.dumps({"key": value}, indent=2, ensure_ascii=False)
+    other = json.dumps({"other": 1}, indent=2, ensure_ascii=False)
+    # At the top: the document is the object (gate.errored's marker).
+    assert "{\n" + ",\n".join([json_member(single), json_member(other)]) + "\n}" == (
+        json.dumps({"key": value, "other": 1}, indent=2, ensure_ascii=False)
+    )
+    # An entry of an array (a batch's summary), and one level deeper still.
+    entry = "  {\n" + json_member(single, 1) + "\n  }"
+    assert "[\n" + entry + "\n]" == json.dumps(
+        [{"key": value}], indent=2, ensure_ascii=False
+    )
+    deeper = "    {\n" + json_member(single, 2) + "\n    }"
+    assert "[\n  [\n" + deeper + "\n  ]\n]" == json.dumps(
+        [[{"key": value}]], indent=2, ensure_ascii=False
+    )
+
+
+def test_the_marker_lays_out_its_members_with_the_shared_layout() -> None:
+    from autoware_carla_scenario import batch_report
+    from autoware_carla_scenario.gate import errored
+
+    assert errored._member is batch_report.json_member

@@ -104,7 +104,14 @@ recorded (no `segment_lanelets`) is told apart by its map and lanelets alone,
 and is the same case as a record of those lanelets with a split. A run that
 was not expanded counts the matches it searched itself (those the ego cannot
 be placed on included, which an expansion skips). A record with no count (a run told nothing) makes the
-criterion fail: the share cannot be known.
+criterion fail: the share cannot be known, whatever the other records on its
+map state. Records on one map that state different counts (an edited route or
+map, or the runs of two expansions mixed) are judged against the largest, the
+smallest share the counts allow, and the report warns:
+
+```text
+- warning: the runs on Town state 2 different case counts (4, 6); the case coverage takes the largest, 6
+```
 
 A route sweep that also draws from the ODD (`sweep.odd_sample`) does not take
 its matches in turn when the map decides some of the ODD's attributes, as
@@ -318,7 +325,8 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   it**: `scenario-gate` judges the jobs that ran as the whole sweep. Use the
   lanelet sweeper, or a batch, for runs a gate is to judge.
 
-- A summary, manifest or sweep plan that cannot be read refuses the set too, and
+- A summary, manifest or sweep plan that cannot be read (a summary that is
+  not a JSON array of objects included) refuses the set too, and
   `--allow-unrecorded` does not change that: what it left without a record
   cannot be told. Its line says so:
 

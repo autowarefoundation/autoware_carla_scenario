@@ -58,6 +58,7 @@ from .criteria import (
     ConsistencyResult,
     CriterionChange,
     CriterionResult,
+    _case_count_warnings,
     _case_coverage,
     _criterion,
     _outcomes,
@@ -455,6 +456,7 @@ def judge(
         )
     if gate.min_case_coverage is not None:
         value, detail = _case_coverage(records)
+        warnings.extend(_case_count_warnings(records))
         out.append(
             _criterion("min_case_coverage", value, ">=", gate.min_case_coverage, detail)
         )

@@ -21,6 +21,11 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+# The summary's name and the check of a stem it names: batch_report's, which
+# writes it (BATCH_RESULTS re-exported under the name it had here).
+from ..batch_report import BATCH_RESULTS as BATCH_RESULTS
+from ..batch_report import is_plain_stem
+
 # The suffix of a run's result, beside its gate record: run_outputs's (#2198).
 from ..run_outputs import RESULT_SUFFIX as _RESULT_SUFFIX
 from .errored import CASE_ERRORED, find_case_errored, read_case_errored
@@ -30,9 +35,6 @@ from .sweep_plan import find_sweep_plans, read_sweep_plan
 __all__ = [
     "BATCH_RESULTS",
 ]
-
-#: The summary a batch writes beside its runs' outputs (``batch_report``).
-BATCH_RESULTS = "batch_results.json"
 
 #: How many of a batch's unrecorded cases the refusal names.
 _NAMED = 5
@@ -48,16 +50,15 @@ def _batch_dirs(path: Path) -> list[Path]:
 
 def _recorded_at_stem(directory: Path, entry: dict[str, Any]) -> bool:
     """Whether a gate record is at the stem *entry* names in *directory*: a
-    file stem of its own (no separator), as a batch writes it since #1957."""
+    file stem of its own (``batch_report.is_plain_stem()``), as a batch
+    writes it since #1957."""
     stem = entry.get("stem")
     # `stem` is the str json.loads() read, so str(stem) is that str itself:
     # Codon holds it as a JSONValue, which compares with no str.
     if not isinstance(stem, str):
         return False
     name = str(stem)
-    if name in ("", ".", "..") or "/" in name:
-        return False
-    if "\\" in name or "\0" in name:
+    if not is_plain_stem(name):
         return False
     return (directory / f"{name}{GATE_RECORD_SUFFIX}").is_file()
 
@@ -75,8 +76,8 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     #1957) and has a gate record there is not counted: its run wrote one
     before it raised, and that record is judged, as a SLURM batch's is.  A
     pending case is counted whatever is at its stem: the batch never
-    finished it.  An entry that is no JSON object raises AttributeError (its
-    ``get()``)."""
+    finished it.  A summary with an entry that is no JSON object cannot be
+    read, as ``batch_resume.read_resumed_batch()`` refuses it too."""
     path = directory / BATCH_RESULTS
     # Each part of the result held in a local of its type, which Codon then
     # gives the tuple (an Optional of no str, the str of none).
@@ -87,26 +88,27 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     except (OSError, RecursionError, ValueError) as exc:
         unreadable = f"{path}: the batch summary cannot be read ({exc})"
         return unrecorded, 0, unreadable
-    if not isinstance(entries, list):
-        unreadable = f"{path}: not a batch summary (not a JSON array)"
+    if not isinstance(entries, list) or not all(
+        isinstance(entry, dict) for entry in entries
+    ):
+        unreadable = f"{path}: not a batch summary (not a JSON array of objects)"
         return unrecorded, 0, unreadable
     # `x is True` is written `isinstance(x, bool) and bool(x)`, the same test
     # (bool has no subclass, and True is its one true instance: 1 and 1.0
     # are no bool), which Codon compiles for a JSON value; and
     # `str(x or i)` is written out, as Codon has no value of either type.
     for i, entry in enumerate(entries):
-        if isinstance(entry, dict):
-            # An object counts when it errored with no record at its stem,
-            # or is pending; anything else counts (and raises below).
-            error = entry.get("error")
-            if not (
-                isinstance(error, bool)
-                and bool(error)
-                and not _recorded_at_stem(directory, entry)
-            ):
-                pending = entry.get("pending")
-                if not (isinstance(pending, bool) and bool(pending)):
-                    continue
+        # An entry counts when it errored with no record at its stem, or is
+        # pending.
+        error = entry.get("error")
+        if not (
+            isinstance(error, bool)
+            and bool(error)
+            and not _recorded_at_stem(directory, entry)
+        ):
+            pending = entry.get("pending")
+            if not (isinstance(pending, bool) and bool(pending)):
+                continue
         scenario = entry.get("scenario")
         unrecorded.append(str(scenario) if scenario else str(i))
     return unrecorded, len(entries), unreadable

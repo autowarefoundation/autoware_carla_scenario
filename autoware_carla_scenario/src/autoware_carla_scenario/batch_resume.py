@@ -33,6 +33,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# The summary's name and the check of a stem it names: batch_report's, which
+# writes it (BATCH_RESULTS re-exported under the name it had here).
+from .batch_report import BATCH_RESULTS as BATCH_RESULTS
+from .batch_report import is_plain_stem
 from .failure import Failure
 
 __all__ = [
@@ -44,9 +48,6 @@ __all__ = [
     "read_resumed_batch",
 ]
 
-#: A local batch's summary, which ``--resume-into`` reads and rewrites.
-BATCH_RESULTS = "batch_results.json"
-
 
 class ResumeIntoError(ValueError):
     """``--resume-into DIR`` names a directory the batch cannot resume into;
@@ -54,17 +55,6 @@ class ResumeIntoError(ValueError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
-
-
-def _plain_name(stem: str) -> bool:
-    """Whether the string *stem* is a file stem in its directory: non-empty,
-    and naming no other directory (no separator, not ``.`` or ``..``)."""
-    return (
-        stem not in ("", ".", "..")
-        and "/" not in stem
-        and "\\" not in stem
-        and "\0" not in stem
-    )
 
 
 @dataclass(frozen=True)
@@ -213,7 +203,10 @@ def read_resumed_batch(
                 "from the others', and nothing is removed; resume it into a "
                 "new directory (without --resume-into)"
             )
-        if not (isinstance(stem, str) and _plain_name(str(stem))) or str(stem) in seen:
+        if (
+            not (isinstance(stem, str) and is_plain_stem(str(stem)))
+            or str(stem) in seen
+        ):
             raise ResumeIntoError(
                 f"{path}: case {i + 1} ({labels[i]}) names the file stem "
                 f"{stem!r}, which is not a file name of its own in the directory"
