@@ -160,7 +160,8 @@ Python version, and the viewer's Run form reads it the same way.
   (`server.world_reset`): the world is reset right before every attempt that
   follows a run -- the next case's, or a retry's -- so the weather or frozen
   traffic lights the failed attempt set do not carry into it
-- A reset that raises is the failure of the attempt it comes before: that
+- A reset that fails -- the map load timing out, say -- raises (#2243), and
+  is the failure of the attempt it comes before: that
   attempt is retried, or the case is reported as `[ERROR]`, and the batch
   goes on. The case that ran before the reset keeps its verdict, and is not
   run again (#1941). Between cases the world is reset first, and

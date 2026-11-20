@@ -1534,7 +1534,7 @@ class ScenarioRunner:
         self._soft_resets += 1
         return True
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         """Reset the world, so the next scenario starts on a clean one.
 
         With ``world_reset="reload"`` (the default) the map is loaded again:
@@ -1542,10 +1542,21 @@ class ScenarioRunner:
         and the server's current map otherwise.  With ``world_reset="soft"``
         the world is put back as it was loaded, without a load, when it can
         be (:meth:`_soft_reset`), and the map is loaded otherwise.
+
+        A soft reset that fails falls back on the load.  A load that fails is
+        logged, and the world may keep what the last run left in it (its
+        weather, re-timed traffic lights, actors).  Then, with *strict*, the
+        load's error is raised: a :class:`~autoware_carla_scenario.scenario_queue.ScenarioQueue`
+        resets the world this way before each attempt, so that a world it
+        could not reset is that attempt's failure (retried, or erroring the
+        case) rather than the world the next case runs on (#2243).  Without
+        it (the default; :meth:`restore_world`, and a run's own reset in
+        :meth:`run_scenario`), nothing is raised.  Either way, the next reset
+        loads the map, however the runner resets.
         """
         if self._world_reset == RESET_SOFT and self._soft_reset(scenario_name):
             return
-        self._reload_world(scenario_name)
+        self._reload_world(scenario_name, strict)
 
     def restore_world(self, scenario_name: str = "") -> None:
         """Hand the world back to the server's other clients after the last run.
@@ -1598,8 +1609,9 @@ class ScenarioRunner:
                 exc_info=True,
             )
 
-    def _reload_world(self, scenario_name: str) -> None:
-        """Load the map again (see :meth:`reset_world`)."""
+    def _reload_world(self, scenario_name: str, strict: bool = False) -> None:
+        """Load the map again (see :meth:`reset_world`); raise the load's
+        error, once logged, when *strict*."""
         # Reload the world to guarantee a completely clean state (all
         # actors, sensors, physics state, settings and weather are reset).
         # This is more reliable than destroying actors individually, which
@@ -1647,6 +1659,11 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            if strict:
+                # The caller (a queue, before an attempt) must not run on
+                # this world: the attempt fails, and the next one -- after a
+                # restart, if the server is down -- resets it again.
+                raise
 
     def run_scenario(
         self,
@@ -2387,13 +2404,18 @@ class ScenarioRunner:
                         )
                         break
 
-                # If the loop exited via is_done() with no result, treat as passed
+                # If the loop exited via is_done() with no result, treat as
+                # passed, with each registered condition's status, as on the
+                # other paths (#2243).
                 if result is None:
                     elapsed = clock.simulated
                     result = ScenarioResult(
                         passed=True,
                         message="Scenario completed successfully",
                         elapsed_seconds=elapsed,
+                        condition_statuses=_condition_statuses(
+                            scenario, world, elapsed, scenario_name
+                        ),
                     )
 
                 if TYPE_CHECKING:

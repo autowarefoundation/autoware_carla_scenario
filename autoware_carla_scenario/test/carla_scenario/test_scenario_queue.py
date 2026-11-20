@@ -92,7 +92,7 @@ class _RecordingRunner:
         self.results.append(result)
         return result
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         pass
 
 
@@ -117,7 +117,7 @@ class _SecondCaseRaises:
             raise self.error
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         self.events.append("reset")
 
 
@@ -143,7 +143,7 @@ class _RaisesThenRuns:
             raise RuntimeError("RPC timed out")
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         self.events.append(("reset", scenario_name))
         if self.reset_failures > 0:
             self.reset_failures -= 1
@@ -181,7 +181,7 @@ class _ResetsAtItsEnd:
             self.reset_world(type(scenario).__name__)
         return result
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         fails = self.reset_outcomes.pop(0) if self.reset_outcomes else False
         if fails:
             self.events.append("reset failed")
@@ -392,7 +392,7 @@ class TestScenarioQueueUnit:
         mock_runner.reset_world.assert_not_called()
         queue.run_all()
 
-        mock_runner.reset_world.assert_called_once_with("_NullScenario")
+        mock_runner.reset_world.assert_called_once_with("_NullScenario", strict=True)
 
     def test_a_releasing_run_lets_go_of_each_scenario_once_it_has_run(
         self,
@@ -1178,7 +1178,7 @@ class _FirstAttemptFailsMidRun:
         (self.output_dir / f"{stem}_result.json").write_text(f"{attempt}\n")
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         pass
 
 
@@ -1326,7 +1326,7 @@ class _CrashingRunner:
             self.server.alive = False
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         self.events.append("reset")
 
 
@@ -1481,6 +1481,44 @@ def test_a_failed_restart_ends_a_run_that_does_not_continue_on_error(
     with pytest.raises(RuntimeError, match="failed after 1 attempt") as info:
         queue.run_all()
     assert "CARLA did not come up" in str(info.value.__cause__)
+
+
+def test_a_server_that_dies_in_the_reset_is_restarted_by_the_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The queue resets strictly (#2243): a load that fails because the
+    server died in it fails the attempt, and the retry finds the server dead
+    and restarts it, rather than running on the world the case before left."""
+    queue, server, events, runners = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=None, cases=2, retries=1
+    )
+    stricts: list[bool] = []
+
+    def dies_in_the_load(scenario_name: str = "", *, strict: bool = False) -> None:
+        stricts.append(strict)
+        events.append("reset")
+        server.alive = False
+        raise RuntimeError("time-out of 10000ms while waiting for the simulator")
+
+    runners[0].reset_world = dies_in_the_load  # type: ignore[method-assign]
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert queue.errored_indices() == []
+    assert stricts == [True]
+    assert events == [
+        "is_alive",
+        "run 0",
+        "is_alive",
+        "reset",
+        "is_alive",
+        "stop",
+        "start",
+        "runner",
+        "load_map",
+        "run 1",
+    ]
 
 
 @pytest.mark.parametrize("given", [True, False], ids=["given", "reused"])
