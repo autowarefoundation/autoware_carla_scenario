@@ -4978,8 +4978,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 342 of the package's 472
-modules (72%; about 105,700 of
-177,700 lines) are <code>CHECKED</code>: the kinematics, the
+modules (72%; about 105,800 of
+178,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6465,8 +6465,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>200 functions and methods of those modules are <code>UNCALLED</code>
-(60 of them protected helpers, see <em>What is
+<p>201 functions and methods of those modules are <code>UNCALLED</code>
+(61 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6478,7 +6478,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 200 UNCALLED functions and methods, and why</summary>
+<summary>The 201 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6545,9 +6545,10 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>environment.RunEnvironment.id</code>: reads the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express through pins; the hash is the checked _environment_id()'s; the checked scenario_runner reads it through environment.codon (MODELLED_IMPORTS)</li>
 <li><code>environment.RunEnvironment.lock</code>: takes a scenario of any class (<code>Any</code>) and reads the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express with _package_pin(); the lock's text is the checked _lock_text()'s</li>
 <li><code>environment.RunEnvironment.pins</code>: reads the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express with _package_pin()</li>
-<li><code>environment.RunEnvironment.scenario_package</code>: takes a scenario of any class (<code>Any</code>: its class's module names the package) and returns one of the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express; which distributions provide the package is the checked _distribution_names()'s</li>
+<li><code>environment.RunEnvironment.scenario_package</code>: takes a scenario of any class (<code>Any</code>: its class's module names the package) and returns one of the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express; which distributions provide the package is the checked _distribution_names()'s, and which editable or local checkout holds the module's file (#2226) the checked _deepest_directory()'s</li>
 <li><code>environment.RunEnvironment.summary</code>: takes a scenario of any class (<code>Any</code>) and builds the summary, a <code>dict[str, Any]</code> of mixed value types, from the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express</li>
 <li><code>environment.RunEnvironment.to_dict</code>: takes a scenario of any class (<code>Any</code>) and builds the environment file's document, a <code>dict[str, Any]</code> of mixed value types, from the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express</li>
+<li><code>environment._module_file</code>: reads the module a scenario's class comes from out of <code>sys.modules</code>, and its <code>__file__</code> with <code>getattr</code> on a module object, neither of which the sys shim or Codon has; which checkout holds that file is the checked _deepest_directory()'s</li>
 <li><code>environment._package_pin</code>: reads a distribution as RunEnvironment holds it (<code>dict[str, Any]</code>), which Codon cannot express; the requirement it pins to is the checked environment_pin.pin()'s</li>
 <li><code>environment._pin_source</code>: reads a source as the environment file records it (<code>dict[str, Any]</code>, of any JSON type), which Codon cannot express; the requirement it pins to is the checked environment_pin.pin()'s</li>
 <li><code>environment._record</code>: reads a source's members (_source_members()) back into the record the environment file writes, a <code>dict[str, Any]</code> of values of any JSON type, which Codon cannot express</li>
