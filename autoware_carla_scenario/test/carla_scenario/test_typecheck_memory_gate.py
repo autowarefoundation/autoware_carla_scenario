@@ -16,6 +16,7 @@ import os
 import stat
 import threading
 import time
+import types
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -1197,28 +1198,75 @@ def test_after_a_timeout_builds_in_the_gate_s_own_directory_are_all_gated(
 
 
 def test_builds_waiting_out_a_stuck_lock_together_all_take_the_fresh_one(
-    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+    default_gate: Path,
+    fallbacks: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Made 0o600 in place by an earlier gate while someone held it open: the
     # build that removes it, and every other one that waited as long, are
     # gated with the fresh lock -- one at a time.
+    #
+    # The stuck lock is waited out on the gate's clock, so LOCK_TIMEOUT_S is
+    # short; but every wait after it -- for the fresh lock as the six pass it
+    # around, for the directory's lock under which the stuck one is removed
+    # -- is one the claim says ends because the lock is taken, not because
+    # time runs out.  On a loaded runner those waits are wall-clock windows
+    # a stall overruns: CI once saw a build wait over _REPLACE_WAIT_S for the
+    # directory's lock while the build removing the stuck one was stalled
+    # inside it, so it gave the directory up and fell back (#2257).  So once
+    # a build has waited the stuck lock out and goes to remove it, the gate's
+    # clock runs 100 times slower: no stall a runner makes outlasts the
+    # windows then (50 s for the fresh lock), while a build that waited for
+    # a lock no one passes on still fails the test, not gated at the join.
     monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.5)
-    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.05)
-    # As in the other crowd tests: the six pass the fresh lock among
-    # themselves within LOCK_TIMEOUT_S, which the default 0.05 s poll eats
-    # into by up to one interval per hand-over on a loaded runner (#2257).
+    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.001)
     monkeypatch.setattr(memory_gate, "_LOCK_POLL_S", 0.002)
+    real_monotonic = time.monotonic
+    slowed_at: list[float] = []
+
+    def monotonic() -> float:
+        now = real_monotonic()
+        if not slowed_at:
+            return now
+        return slowed_at[0] + (now - slowed_at[0]) / 100
+
+    monkeypatch.setattr(
+        memory_gate,
+        "time",
+        types.SimpleNamespace(monotonic=monotonic, sleep=time.sleep),
+    )
+    real_drop_lock = memory_gate._drop_lock
+    slowing = threading.Lock()
+
+    def drop_lock(*args, **kwargs):  # type: ignore[no-untyped-def]
+        with slowing:
+            if not slowed_at:
+                slowed_at.append(real_monotonic())
+        real_drop_lock(*args, **kwargs)
+
+    monkeypatch.setattr(memory_gate, "_drop_lock", drop_lock)
+    real_unlink = os.unlink
+    removed = [0]
+
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+        if path == "gate.lock":
+            removed[0] += 1
+
+    monkeypatch.setattr(os, "unlink", unlink)
     default_gate.mkdir(mode=0o700)
     fd = _hold_lock(default_gate / "gate.lock")
     try:
         crowd = _Crowd(default_gate, inside_s=0.005)
-        began = time.monotonic()
-        crowd.run(6, crowd.build)
-        assert time.monotonic() - began < 0.5 * (1 + memory_gate._DEADLINE_RESETS)
+        with caplog.at_level(logging.WARNING, logger=memory_gate.__name__):
+            crowd.run(6, crowd.build)
     finally:
         os.close(fd)
     assert crowd.gated == [True] * 6
     assert crowd.most == 1
+    assert removed == [1]  # the stuck lock, once; never the fresh one
+    assert not caplog.records  # none timed out, gave up or ran ungated
     assert not fallbacks.exists()
 
 
