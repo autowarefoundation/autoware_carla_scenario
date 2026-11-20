@@ -936,7 +936,7 @@ def tso_optimize(
             base += 4 * n_tc
         if q.bounds:
             _, _, dsl, below, above = over(X)
-            for k in np.flatnonzero(dsl != 0.0):
+            for k in map(int, np.flatnonzero(dsl != 0.0)):
                 v, d = X[k + 1, 3], X[k + 1, 4]
                 dh = (2 * v * np.tan(d) / L) * S[k + 1][3] + (
                     v * v / (L * np.cos(d) ** 2)
