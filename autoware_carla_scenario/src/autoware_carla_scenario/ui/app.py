@@ -396,10 +396,16 @@ def _recording_context(
         return None
     made = recordings.recording_path(files.trajectory)
     case = _case_path(session_type, date, time, index)
+    converter = recordings.converter_available()
     return {
         "trajectory": str(files.trajectory.resolve()),
         "rrd": str(made.resolve()) if made.is_file() else None,
-        "converter": recordings.converter_available(),
+        "converter": converter,
+        # Whether ``rrd_url`` can answer with a file: one is made already (and
+        # no older than the log), or the converter can make it.  Otherwise the
+        # route answers 503, so the page offers no download link.
+        "downloadable": converter
+        or recordings.existing_recording(files.trajectory) is not None,
         "install_hint": recordings.INSTALL_HINT,
         "make_url": f"/api/recording/{case}",
         "rrd_url": f"/recording/{case}.rrd",

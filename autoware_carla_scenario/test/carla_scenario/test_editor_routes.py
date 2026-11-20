@@ -2594,6 +2594,62 @@ process.stdout.write(JSON.stringify(result));
 """
 
 
+class TestAFailedRequestIsShown:
+    """htmx swaps no error response, so the page says why a request failed (#2215).
+
+    The error pages mark their heading and message for ``editor.js``, which
+    reads them out of the response as text and shows them as a notice.
+    """
+
+    _SCRIPT = Path(editor_app.__file__).parent / "static" / "editor.js"
+
+    @staticmethod
+    def _marked(page: str, attribute: str) -> str:
+        match = re.search(rf"<[^>]*\s{attribute}[\s>][^<]*", page)
+        assert match is not None, f"no element marked {attribute}"
+        return html.unescape(match.group(0).split(">", 1)[1]).strip()
+
+    def test_a_missing_draft_s_page_marks_its_message(self, client: TestClient) -> None:
+        response = client.post(
+            "/draft/no-such-draft/save", headers={"HX-Request": "true"}
+        )
+        assert response.status_code == 404
+        assert self._marked(response.text, "data-error-heading") == "Not found"
+        assert "no-such-draft" in self._marked(response.text, "data-error-message")
+
+    def test_a_storage_error_s_page_marks_its_message(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _refuse_writes(monkeypatch)
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        assert response.status_code == 500
+        assert self._marked(response.text, "data-error-heading") == "Cannot save drafts"
+        message = self._marked(response.text, "data-error-message")
+        assert str(tmp_path / "drafts") in message
+        assert "Permission denied" in message
+
+    def test_the_script_listens_for_failed_requests(self) -> None:
+        script = self._SCRIPT.read_text(encoding="utf-8")
+        assert "addEventListener('htmx:responseError', showRequestError)" in script
+        assert "addEventListener('htmx:sendError', showRequestError)" in script
+        section = script.split("* Failed requests", 1)[1].split(
+            "function refresh()", 1
+        )[0]
+        # It reads the error page's marked elements, as text.
+        assert "[data-error-heading]" in section
+        assert "[data-error-message]" in section
+        assert "textContent" in section
+        assert "innerHTML" not in section
+        assert "insertAdjacentHTML" not in section
+        # A failed export is shown where the export's answer goes.
+        assert "'export-result'" in section
+        assert "window.editorRequestError = requestError" in section
+
+
 class TestKeyboardNavigation:
     """Arrow keys walk the canvas, and only the canvas.
 

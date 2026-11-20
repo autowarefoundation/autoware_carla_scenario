@@ -593,6 +593,37 @@ def test_without_the_converter_the_page_says_what_to_install(
     assert "autoware-carla-scenario-rerun" in made.json()["install_hint"]
 
 
+def test_without_the_converter_or_a_recording_there_is_no_download_link(
+    client: TestClient, no_converter: None
+) -> None:
+    # The link would lead to the route's 503 answer.
+    page = client.get(f"/session/{SESSION}/4")
+    assert page.status_code == 200
+    assert "Download .rrd" not in page.text
+    assert f"/recording/{SESSION}/4.rrd" not in page.text
+
+
+def test_the_download_link_is_offered_when_it_can_answer(
+    client: TestClient, no_converter: None, tmp_path: Path
+) -> None:
+    # A recording made already needs no converter to be downloaded.
+    log = tmp_path / "outputs" / "2026-10-18" / "16-09-52" / "Case-3.trajectory.jsonl"
+    rrd = recordings.recording_path(log)
+    rrd.write_bytes(b"made by the run")
+    os.utime(log, (time.time() - 60, time.time() - 60))
+    page = client.get(f"/session/{SESSION}/4")
+    assert f'href="/recording/{SESSION}/4.rrd"' in page.text
+    assert "Download .rrd" in page.text
+    assert client.get(f"/recording/{SESSION}/4.rrd").content == b"made by the run"
+
+
+def test_with_the_converter_the_download_link_is_offered(
+    client: TestClient, converter: _FakeConverter
+) -> None:
+    page = client.get(f"/session/{SESSION}/4")
+    assert f'href="/recording/{SESSION}/4.rrd"' in page.text
+
+
 def test_a_recording_is_made_and_served(
     client: TestClient, converter: _FakeConverter, tmp_path: Path
 ) -> None:

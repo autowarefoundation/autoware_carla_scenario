@@ -29,7 +29,10 @@
     </div>
 
     {% if draft_id %}
-      {# Filled by a "Use in this scenario" button whose map could not be used. #}
+      {# Filled by a "Use in this scenario" button whose map could not be used:
+         with the route's text/plain reason (a 422), else the message of the
+         error page it answered (`editorRequestError` in editor.js), never the
+         page's source. #}
       <div class="ed-panel-body" id="map-use-error" hidden>
         <div class="ed-notice ed-notice-bad" role="alert">
           {{ ic.icon('alert', 15) }}
@@ -68,7 +71,8 @@
                     hx-vals='{"uri": {{ entry.uri|tojson }}}'
                     hx-target="body" hx-swap="none"
                     data-href="/draft/{{ draft_id|urlencode }}"
-                    hx-on::after-request="if (event.detail.successful) { window.location = this.dataset.href } else { const box = document.getElementById('map-use-error'); box.querySelector('[data-map-use-message]').textContent = event.detail.xhr.responseText || 'The server could not be reached.'; box.hidden = false }">
+                    data-handles-errors
+                    hx-on::after-request="if (event.detail.successful) { window.location = this.dataset.href } else { const box = document.getElementById('map-use-error'); box.querySelector('[data-map-use-message]').textContent = window.editorRequestError(event.detail.xhr).message; box.hidden = false }">
               {{ ic.icon('check', 13) }} Use in this scenario
             </button>
           {% else %}

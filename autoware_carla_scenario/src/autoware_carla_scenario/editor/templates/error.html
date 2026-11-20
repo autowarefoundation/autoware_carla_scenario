@@ -7,8 +7,11 @@
     <div style="color:var(--ink-faint); display:flex; justify-content:center; margin-bottom:12px">
       {{ ic.icon('alert', 28) }}
     </div>
-    <h2 class="ed-heading">{{ heading }}</h2>
-    <p class="ed-help" style="margin-bottom:20px">{{ message }}</p>
+    {# `data-error-*` is what editor.js reads when an htmx request answers
+       with this page: htmx does not swap an error response, so the script
+       shows the heading and message in the page the request came from. #}
+    <h2 class="ed-heading" data-error-heading>{{ heading }}</h2>
+    <p class="ed-help" style="margin-bottom:20px" data-error-message>{{ message }}</p>
     <a href="/" class="ed-btn-primary">Back to drafts</a>
   </div>
 </div>
