@@ -3742,8 +3742,11 @@ through the OpenSCENARIO storyboard element states held in <code>ActionState</co
 <li><strong>Standby.</strong> The trigger <code>BaseCondition</code> is evaluated via
    <code>condition.check(world, elapsed)</code>. A non-<code>None</code> result fires the action:
    <code>execute(world)</code> runs and the action enters <code>startTransition</code>.</li>
-<li><strong>Running.</strong> The trigger is not re-evaluated, so one run cannot begin on top
-   of another. Two independent questions are then asked every tick, in this
+<li><strong>Running.</strong> The trigger cannot fire, so one run cannot begin on top
+   of another. A repeating action (<code>once=False</code>) still checks it every tick
+   and drops the result, so a stateful trigger (<code>PersistentCondition</code>,
+   <code>StickyCondition</code>) sees every tick, as the children of <code>And</code> / <code>Or</code> do.
+   Two independent questions are then asked every tick, in this
    order:</li>
 </ol>
 <p><strong>Does <code>execute</code> repeat?</strong> — <code>reissues_while_running</code>. This is a fact about
@@ -3776,7 +3779,10 @@ through the OpenSCENARIO storyboard element states held in <code>ActionState</co
 <p><strong>When does the run end?</strong> — <code>until</code>, a <code>BaseCondition</code>. This is the same
    kind of object the trigger is written in, so the two ends of a run read
    together. No <code>until</code> means there was nothing to wait for, and the run is
-   over on the tick after the one it was commanded on.</p>
+   over on the tick after the one it was commanded on. <code>until</code> is reset
+   (<code>BaseCondition.reset()</code>) as each run of a repeating action after its
+   first begins, before <code>execute</code>, so a run never ends on a latch or a hold
+   timed in an earlier run. (The runner resets it before the first run.)</p>
 <p>Keeping the two apart is what lets both shapes exist. <code>LaneChangeAction</code>
    hands work to the simulator and watches for it to land — the traffic
    backend's lane change (TrafficManager <code>force_lane_change</code>, SUMO
@@ -4785,7 +4791,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 19, 2026 17:04:42 UTC"><span class="timeago" datetime="2026-11-19T17:04:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 19, 2026 17:04:42 UTC">2026-11-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 04:00:52 UTC"><span class="timeago" datetime="2026-11-20T04:00:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 04:00:52 UTC">2026-11-20</span>
   </span>
 
     
