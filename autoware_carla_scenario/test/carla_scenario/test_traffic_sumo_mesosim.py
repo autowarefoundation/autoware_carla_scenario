@@ -377,6 +377,21 @@ def test_the_roads_place_a_vehicle_at_its_lanes_height() -> None:
     assert MesoRoads(_Net(_Edge("level", [level], 10.0))).has_elevation
 
 
+def test_a_height_between_points_of_no_length() -> None:
+    """Two points in the same place (a step in the road) take the height of
+    the later one, and an offset past the shape its last point's."""
+    from autoware_carla_scenario.traffic.sumo.mesosim import _height_at
+
+    shape = [(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (20.0, 0.0)]
+    heights = [0.0, 1.0, 3.0, 3.0]
+    assert _height_at(shape, heights, 5.0) == pytest.approx(0.5)
+    assert _height_at(shape, heights, 10.0) == pytest.approx(1.0)
+    assert _height_at(shape, heights, 15.0) == pytest.approx(3.0)
+    assert _height_at(shape, heights, 25.0) == pytest.approx(3.0)
+    assert _height_at([(0.0, 0.0)], [2.0], 0.0) == pytest.approx(2.0)
+    assert _height_at([], [], 1.0) == 0.0
+
+
 def test_a_network_without_elevation_says_so(grid: Path) -> None:
     import sumolib
 

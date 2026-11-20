@@ -1119,9 +1119,11 @@ written to `<output_dir>/<stem>.sumo/sumo_meso.log`; its junctions run SUMO's
 own signal programs, since CARLA's lights are matched to SUMO's only by the
 `sumo` backend. `engine: queue` is the in-process queue model
 (`headway_s`, `jam_spacing_m`), which holds nobody at a junction here, having
-no signals to read; it needs sumolib and SUMO's network of the map, but not
-the `sumo` binary, which only `engine: sumo` looks up (in `$SUMO_HOME` or the
-`eclipse-sumo` package, else on `PATH`).
+no signals to read; it needs sumolib and SUMO's network of the map
+(`net_path`, or the world's OpenDRIVE converted with roadgen and `netconvert`),
+but not the `sumo` binary, which only `engine: sumo` looks up. Either binary
+is the one in `$SUMO_HOME` or the `eclipse-sumo` package, else the one on
+`PATH`.
 
 `describe()` adds `mesoscopic` -- the engine, the radii and the changes of
 level so far -- and `fidelity_census()` counts the vehicles the
@@ -1622,11 +1624,12 @@ uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \
 | `headway_s`, `jam_spacing_m` | `1.5`, `7.5` | `engine: queue`: the queue model's capacity per lane, and the road a queued vehicle takes up |
 | `junction_control` | `true` | hold a mesoscopic vehicle at a SUMO signal unless it is green (`G`, `g`) or switched off (`o`, `O`) on some lane of its move: red, red-yellow, yellow and a right turn on red (`s`) hold it. Under `engine: sumo`, SUMO's `--meso-junction-control`, with the microscopic SUMO's signal states |
 
-An option left out, or null, is its default; a value out of range is refused
-by its full key, showing it as written: `micro_radius_m: 0` is
+An option left out, or null, is its default. `false`, `0` and `''` are
+values like any other: a number refuses `false` and `''` as not numbers and
+`0` where it must be positive, and a switch reads `false` and `0` as off and
+refuses `''` ([the switches](usage.md#the-switches)). A value refused is named
+by its full key and shown as written: `micro_radius_m: 0` is
 `traffic.options.mesoscopic.micro_radius_m must be positive and finite (got 0)`.
-`false`, `0` and `''` are values like any other, refused where out of range
-or not a number.
 
 **When a vehicle changes level** is the radii's decision, with two options
 that refine it:
@@ -1680,8 +1683,9 @@ A vehicle leaves only from a normal edge, never from inside a junction, and
 comes back with its route, its type, length, width and top speed, and a speed
 it was told to keep. A scenario's vehicle comes back at the height of its
 lane in SUMO's network, which keeps the OpenDRIVE's elevation; on a network
-without any (all its heights 0), at the height of CARLA's nearest driving
-lane, so it is not put at z = 0 on a map whose roads are not. A scenario's vehicle that is mesoscopic takes
+without any (all its heights 0), at the height of the driving lane CARLA
+finds nearest to where SUMO has it, so it is not put at z = 0 on a map whose
+roads are not. A scenario's vehicle that is mesoscopic takes
 `set_desired_speed` and `turn_at_junction` in the mesoscopic model; it cannot change
 lanes there, and says so. `scenario_vehicles` is off by default because such a
 vehicle has no actor while it is far: a scenario that reads it -- a condition

@@ -561,6 +561,23 @@ def test_on_a_network_without_elevation_the_height_is_carlas(
     assert backend.background_vehicles(None)["v"][2] is None
 
 
+@pytest.mark.parametrize("answer", ["none", "error"])
+def test_where_carla_has_no_lane_the_height_stays_the_networks(
+    monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    """CARLA finding no driving lane, or the map not answering, leaves the
+    network's height rather than failing the spawn."""
+    backend, carla_map = _placing_backend(monkeypatch, 0.0, False)
+
+    def get_waypoint(location: Any, **kwargs: Any) -> Any:
+        if answer == "error":
+            raise RuntimeError("the map is gone")
+        return None
+
+    monkeypatch.setattr(carla_map, "get_waypoint", get_waypoint)
+    assert backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1)).z == 0.0
+
+
 @pytest.mark.parametrize(("has_elevation", "z"), [(True, 3.1), (False, 7.5)])
 def test_a_scenario_vehicle_back_from_the_mesoscopic_model_spawns_on_its_road(
     monkeypatch: pytest.MonkeyPatch, has_elevation: bool, z: float
