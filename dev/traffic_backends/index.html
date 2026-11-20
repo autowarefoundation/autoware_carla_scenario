@@ -3951,12 +3951,19 @@ are drawn from the run's seed.</p>
 <p><strong>How it comes back.</strong> On the nearest driving lane to where the model has
 it (the model has no lanes: its rightmost lane a car may use), facing along
 it, as the same blueprint with the same <code>role_name</code> (its handle), at the
-model's speed, on autopilot again and capped at its speed as before. A spot
+model's speed, on autopilot again and capped at its speed as before. The
+model has its bounding box's centre, as SUMO places a vehicle; it is spawned
+at the origin that puts its box there, by the box offset it had when it left
+(about a metre behind the centre for a car), so it does not come back a
+metre ahead each time it changes level. The lane is looked up at the height
+of SUMO's lane there -- a network converted from OpenDRIVE keeps the roads'
+elevation -- so a stacked or elevated road gives the right level. A spot
 CARLA refuses (taken) leaves it out until the next decision.
-<code>background_vehicles()</code> reports every background vehicle wherever it is --
-one out of CARLA where the model has it, with no height -- and
-<code>background_actors()</code> only those in CARLA; <code>remove_background()</code> takes one
-out of either.</p>
+<code>background_vehicles()</code> reports every background vehicle wherever it is, by
+its origin, as the TrafficManager's are -- one out of CARLA where the model
+has it, at its lane's height where SUMO's network has one and with no height
+otherwise -- and <code>background_actors()</code> only those in CARLA;
+<code>remove_background()</code> takes one out of either.</p>
 <table>
 <thead>
 <tr>
@@ -3994,7 +4001,11 @@ written to <code>&lt;output_dir&gt;/&lt;stem&gt;.sumo/sumo_meso.log</code>; its 
 own signal programs, since CARLA's lights are matched to SUMO's only by the
 <code>sumo</code> backend. <code>engine: queue</code> is the in-process queue model
 (<code>headway_s</code>, <code>jam_spacing_m</code>), which holds nobody at a junction here, having
-no signals to read.</p>
+no signals to read; it needs sumolib and SUMO's network of the map
+(<code>net_path</code>, or the world's OpenDRIVE converted with roadgen and <code>netconvert</code>),
+but not the <code>sumo</code> binary, which only <code>engine: sumo</code> looks up. Either binary
+is the one in <code>$SUMO_HOME</code> or the <code>eclipse-sumo</code> package, else the one on
+<code>PATH</code>.</p>
 <p><code>describe()</code> adds <code>mesoscopic</code> -- the engine, the radii and the changes of
 level so far -- and <code>fidelity_census()</code> counts the vehicles the
 TrafficManager drives as microscopic and the model's as mesoscopic.</p>
@@ -4574,6 +4585,12 @@ TrafficManager backend keeps every vehicle in CARLA
 </tr>
 </tbody>
 </table>
+<p>An option left out, or null, is its default. <code>false</code>, <code>0</code> and <code>''</code> are
+values like any other: a number refuses <code>false</code> and <code>''</code> as not numbers and
+<code>0</code> where it must be positive, and a switch reads <code>false</code> and <code>0</code> as off and
+refuses <code>''</code> (<a href="../usage/#the-switches">the switches</a>). A value refused is named
+by its full key and shown as written: <code>micro_radius_m: 0</code> is
+<code>traffic.options.mesoscopic.micro_radius_m must be positive and finite (got 0)</code>.</p>
 <p><strong>When a vehicle changes level</strong> is the radii's decision, with two options
 that refine it:</p>
 <ul>
@@ -4622,7 +4639,11 @@ done around it:</p>
 </ul>
 <p>A vehicle leaves only from a normal edge, never from inside a junction, and
 comes back with its route, its type, length, width and top speed, and a speed
-it was told to keep. A scenario's vehicle that is mesoscopic takes
+it was told to keep. A scenario's vehicle comes back at the height of its
+lane in SUMO's network, which keeps the OpenDRIVE's elevation; on a network
+without any (all its heights 0), at the height of the driving lane CARLA
+finds nearest to where SUMO has it, so it is not put at z = 0 on a map whose
+roads are not. A scenario's vehicle that is mesoscopic takes
 <code>set_desired_speed</code> and <code>turn_at_junction</code> in the mesoscopic model; it cannot change
 lanes there, and says so. <code>scenario_vehicles</code> is off by default because such a
 vehicle has no actor while it is far: a scenario that reads it -- a condition
@@ -4731,7 +4752,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 19, 2026 20:00:01 UTC"><span class="timeago" datetime="2026-11-19T20:00:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 19, 2026 20:00:01 UTC">2026-11-19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 05:49:42 UTC"><span class="timeago" datetime="2026-11-20T05:49:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 05:49:42 UTC">2026-11-20</span>
   </span>
 
     
