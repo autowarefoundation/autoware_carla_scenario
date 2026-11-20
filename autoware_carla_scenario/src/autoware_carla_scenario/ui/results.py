@@ -35,7 +35,15 @@ from typing import Any
 
 from .case_paths import _job_indices as _job_indices
 from .case_paths import _override_label as _override_label
-from .cases import CaseFiles, batch_entries, case_files, job_dir, session_dir
+from .case_paths import own_file
+from .cases import (
+    CaseFiles,
+    batch_entries,
+    case_files,
+    job_dir,
+    session_dir,
+    session_overrides,
+)
 
 # A JSON document, a verdict, a duration and a run's overrides, read as
 # ui.scanner reads them; the names stay importable from here.
@@ -82,6 +90,13 @@ __all__ = [
     "cases_in_cell",
     "skipped_coverage",
 ]
+
+
+def _own_json(path: Path) -> Any:
+    """A case's JSON file, read unless it is a symbolic link
+    (:func:`~.case_paths.own_file`), which may name a file outside the
+    viewer's base: ``None`` then, as for a file that is not there."""
+    return _read_json(path) if own_file(path) else None
 
 
 def _strings(value: Any) -> list[str]:
@@ -154,8 +169,9 @@ class CaseResult:
     @property
     def key(self) -> str:
         """What the case ran, to match it in another session: its overrides
-        (less the positional ones and Hydra's own), else the ODD values it was drawn at, else
-        its label."""
+        (beyond the session's command line, :func:`load_results`; less the
+        positional ones and Hydra's own), else the ODD values it was drawn
+        at, else its label."""
         by_overrides = override_key(self.scenario, self.overrides)
         if by_overrides is not None:
             return by_overrides
@@ -379,7 +395,13 @@ def load_results(
     base: Path, session_type: str, date: str, time: str, *, metrics: bool = True
 ) -> list[CaseResult]:
     """Every case of a session, with its files, case and (with *metrics*) the
-    metrics of its trajectory log."""
+    metrics of its trajectory log.
+
+    A multirun or single session's case keeps the overrides it ran with
+    beyond the session's command line (:func:`~.cases.session_overrides`:
+    those a CLI multirun's ``multirun.yaml`` records, else those every job
+    shares), so that its :attr:`CaseResult.key` is its sweep's overrides. A
+    case file that is a symbolic link is not read (:func:`_own_json`)."""
     directory = session_dir(base, session_type, date, time)
     if directory is None or not directory.is_dir():
         return []
@@ -408,17 +430,24 @@ def load_results(
                     message=str(entry.get("message") or ""),
                     overrides=_strings(entry.get("overrides")),
                     files=files,
-                    coverage=_read_json(files.coverage) if files else None,
+                    coverage=_own_json(files.coverage) if files else None,
                     pending=bool(entry.get("pending")),
                 )
             )
     else:
+        jobs: list[tuple[int, list[str]]] = []
         for index in _job_indices(directory, session_type):
-            files = case_files(base, session_type, date, time, index)
             job = _job(base, directory, session_type, date, time, index)
-            result = _read_json(files.result) if files else None
+            jobs.append((index, _hydra_overrides(job) if job is not None else []))
+        # A case is told apart from the others by its sweep's overrides, not
+        # by the session's command line (the Run panel's extra overrides, a
+        # CLI multirun's fixed ones): two sessions that differ only there
+        # are compared case by case.
+        shared = session_overrides(directory, [o for _, o in jobs])
+        for index, overrides in jobs:
+            files = case_files(base, session_type, date, time, index)
+            result = _own_json(files.result) if files else None
             result = result if isinstance(result, dict) else {}
-            overrides = _hydra_overrides(job) if job is not None else []
             label = _override_label(overrides) or (files.stem if files else "unknown")
             out.append(
                 CaseResult(
@@ -428,15 +457,19 @@ def load_results(
                     errored=files is None or not result,
                     elapsed_seconds=_seconds(result.get("elapsed_seconds")),
                     message=str(result.get("message") or ""),
-                    overrides=[o for o in overrides if not o.startswith("scenario=")],
+                    overrides=[
+                        o
+                        for o in overrides
+                        if not o.startswith("scenario=") and o not in shared
+                    ],
                     files=files,
-                    coverage=_read_json(files.coverage) if files else None,
+                    coverage=_own_json(files.coverage) if files else None,
                 )
             )
     for case in out:
         if case.elapsed_seconds is not None:
             case.metrics["elapsed_s"] = round(float(case.elapsed_seconds), 2)
-        if metrics and case.files is not None and case.files.trajectory.is_file():
+        if metrics and case.files is not None and own_file(case.files.trajectory):
             case.metrics.update(case_metrics(case.files.trajectory))
     return out
 

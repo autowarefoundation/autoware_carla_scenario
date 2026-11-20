@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -12,9 +11,17 @@ from ..registry import get_conf_dirs, load_scenario_plugins
 from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
-from .case_paths import MAX_INDEX, _stat, result_path, session_order
+from .case_paths import (
+    MAX_INDEX,
+    _stat,
+    job_index,
+    own_file,
+    result_path,
+    session_order,
+)
 from .cases import _hydra_overrides as _read_overrides
 from .cases import _passed as _passed
+from .cases import _read_json
 from .cases import _seconds as _seconds
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
@@ -64,7 +71,7 @@ def _jobs_stamp(directory: Path) -> tuple[Any, ...]:
     try:
         with os.scandir(directory) as found:
             jobs = sorted(
-                (e for e in found if e.name.isascii() and e.name.isdigit()),
+                (e for e in found if job_index(e.name) is not None),
                 key=lambda e: e.name,
             )
             return (
@@ -145,11 +152,12 @@ def _read_result_json(path: Path) -> dict[str, Any] | None:
 
     ``None`` too when the file is not a JSON object: a result cut off
     mid-character (not UTF-8, a ``ValueError``) or of another type must not
-    break the scan of every other session.
+    break the scan of every other session. Read as ``ui.cases`` reads every
+    JSON document (:func:`~.cases._read_json`): a document that is JSON
+    ``null`` is one that cannot be read here.
     """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    data = _read_json(path)
+    if data is None:
         logger.warning("Failed to read result JSON: %s", path)
         return None
     if not isinstance(data, dict):
@@ -210,7 +218,7 @@ def _scan_multirun_session(
     if entries is None:
         return None
     job_dirs = sorted(
-        (d for d in entries if d.is_dir() and d.name.isascii() and d.name.isdigit()),
+        (d for d in entries if job_index(d.name) is not None and d.is_dir()),
         key=lambda d: int(d.name),
     )
     if not job_dirs:
@@ -365,9 +373,7 @@ def load_session(
             # Not cached: it is read again once it can be.
             return items
         indices = sorted(
-            int(d.name)
-            for d in entries
-            if d.is_dir() and d.name.isascii() and d.name.isdigit()
+            int(d.name) for d in entries if job_index(d.name) is not None and d.is_dir()
         )
         for index in indices:
             job = cases.job_dir(base_path, date, time, index)
@@ -621,7 +627,7 @@ def load_scenario(
     # batch's cases share a directory, each under a stem of its own.
     trajectory_path: str | None = None
     files = case_files(base_path, session_type, date, time, index)
-    if files is not None and files.trajectory.is_file():
+    if files is not None and own_file(files.trajectory):
         trajectory_path = str(files.trajectory.resolve())
 
     result = ScenarioResultView(

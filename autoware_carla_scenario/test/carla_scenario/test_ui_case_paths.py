@@ -58,6 +58,7 @@ def test_cases_still_exports_every_name() -> None:
         "job_dir",
         "match_batch_stems",
         "session_dir",
+        "session_overrides",
         "stem_order",
     ]
     for name in cases.__all__:
