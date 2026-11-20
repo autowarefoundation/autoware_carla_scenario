@@ -823,6 +823,13 @@ What `test_typecheck_model.py` compares, model by model:
   `find_actor_in_world`.
 - **`kinematics.codon`**: beside its exports, `normalize_angle_deg`, and
   `frame_of` and `FrameMismatchError` as `coordinate.codon` declares them.
+  Each class declares the arithmetic operators Python defines, each with
+  Python's result for that operand (`AbsoluteVelocity - AbsoluteVelocity ->
+  RelativeVelocity`, #2259); an operator whose operand is a class defined
+  further down the model (`AbsoluteVelocity + RelativeVelocity`) takes it
+  untyped, dispatches on `isinstance()` and refuses any other operand with a
+  `compile_error`. `test_typecheck_model.py` compares the operators and their
+  results with Python's.
 - **`coordinate.codon`**: `AnyPose`, the Union alias, by its members' names,
   in order, for a scenario's own annotations (no model function takes it: a
   Union parameter crashes Codon 0.19, so each is generic or overloaded).
