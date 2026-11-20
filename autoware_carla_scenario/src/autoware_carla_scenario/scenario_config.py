@@ -708,8 +708,8 @@ class SweepConfig:
     #: this duration (e.g. CARLA hangs), it is forcefully interrupted and
     #: the sweep continues with the next lanelet.  0 disables the timeout;
     #: ``null`` means the default (120).  Whole seconds, at most 2**31 - 1: a
-    #: fraction, a negative value, NaN, infinity or a larger value is refused
-    #: (exit 2) before any case runs.
+    #: fraction, a negative value, NaN, infinity, a larger value or text
+    #: (``'900'``) is refused (exit 2) before any case runs.
     job_timeout_seconds: int = 120
 
     #: 1-indexed job number to resume from.  Jobs before this index are

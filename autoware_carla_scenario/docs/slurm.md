@@ -170,7 +170,7 @@ An outcome is stale when the last submission that gave the case was to run
 it again and its task stopped (`failed` or `cancelled`) before it reached the
 case: the task removes a case's outcome only right before it runs the case,
 so the one there names an earlier submission. `collect` reports it as `ERROR`
-saying so, and `status` counts it as without a result (#2247).
+saying so, and `status` and the viewer count it as without a result (#2247).
 `resubmit` submits again the cases with no outcome, no verdict or a stale
 one and those that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
 failed, `--cases a,b` names them (labels or indices; a case named twice runs

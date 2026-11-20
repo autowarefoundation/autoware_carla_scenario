@@ -31,8 +31,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..slurm.collect import stale_reason
 from ..slurm.manifest import (
     BatchLayout,
+    CaseOutcome,
     Manifest,
     SubmissionRecord,
     TaskStatus,
@@ -464,6 +466,14 @@ def _case_states(
     for case in manifest.listed_cases():
         index = case.index()
         record = layout.read_result(index)
+        if record is not None:
+            # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+            outcome: CaseOutcome = record
+            if stale_reason(layout, index, outcome) is not None:
+                # An earlier submission's outcome, which the last one to give
+                # the case stopped before replacing (#2247): shown as without
+                # one, where its task is, as `status` counts it.
+                record = None
         label_json = case.value_json("label")
         stem_json = case.value_json("stem")
         overrides_json = case.value_json("case_overrides")

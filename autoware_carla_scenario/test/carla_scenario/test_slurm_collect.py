@@ -992,10 +992,20 @@ def test_an_outcome_a_resubmission_did_not_replace_is_stale(
     assert unfinished_cases(layout) == ([1] if stale else [])
     assert collect(layout) == (1 if stale else 0)
     out = capsys.readouterr().out
+    # The viewer shows a stale outcome as `status` counts it: without one.
+    from autoware_carla_scenario.ui import slurm_launch
+
+    shown = slurm_launch._case_states(layout, layout.read_manifest(), {0: {}, 1: {}})
     if not stale:
         assert reason is None
         assert "stale" not in out
+        assert shown[1].state == "passed"
         return
+    assert shown[1].state == "missing"
+    assert json.loads(shown[1].message_json) == (
+        f"no result: task 0 of job 71 {state}: boom"
+    )
+    assert shown[0].state == "passed"
     assert reason == (
         f"submission 1 was to run the case again, but task 0 of job 71 {state} "
         "before it reached the case (boom): this outcome is an earlier "
@@ -1015,3 +1025,37 @@ def test_an_outcome_a_resubmission_did_not_replace_is_stale(
     assert "  1 with a result (1 passed, 0 errored), 1 without\n" in status
     assert "1 of those without have a stale result" in status
     assert status.split("\n")[2].endswith(": s#2")
+
+
+def test_a_stale_outcome_past_a_later_submission_that_left_the_case_alone(
+    tmp_path: Path,
+) -> None:
+    """#2247: the submission that last gave the case, not the batch's last,
+    decides; a later one that did not give it changes nothing."""
+    from autoware_carla_scenario.slurm.collect import stale_reason
+
+    layout = _layout(tmp_path, cases=2)
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1]]})
+    write_json(layout.task(0, 0), {"state": "done"})
+    write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [[1]]})
+    write_json(layout.task(1, 0), {"state": "failed"})
+    write_json(layout.submission(2), {"index": 2, "job_id": "72", "chunks": [[0]]})
+    write_json(layout.task(2, 0), {"state": "done"})
+    write_json(layout.result(0), _passed(2))
+    write_json(layout.result(1), _passed(0))
+
+    first = layout.read_result(0)
+    second = layout.read_result(1)
+    assert first is not None and second is not None
+    assert stale_reason(layout, 0, first) is None
+    assert stale_reason(layout, 1, second) == (
+        "submission 1 was to run the case again, but task 0 of job 71 failed "
+        "before it reached the case: this outcome is an earlier submission's"
+    )
+    assert unfinished_cases(layout) == [1]
+    # An outcome submission 1 recorded names a submission after the one that
+    # last gave the case: current, though a later submission exists.
+    write_json(layout.result(1), _passed(1))
+    second = layout.read_result(1)
+    assert second is not None
+    assert stale_reason(layout, 1, second) is None

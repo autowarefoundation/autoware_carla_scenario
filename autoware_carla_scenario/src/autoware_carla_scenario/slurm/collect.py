@@ -176,12 +176,31 @@ def stale_reason(layout: BatchLayout, case: int, record: CaseOutcome) -> str | N
             break
     if named < 0 or named == submissions[-1]:
         return None
-    where = _last_submission_of(layout, case)
-    if where is None:
-        return None
-    index, task, submission = where
-    if index <= named:
-        return None
+    # The last submission after the one named that gave the case, if any:
+    # only the records of those later submissions are read, not every
+    # earlier one's (a large batch's first holds all its cases), as
+    # _last_submission_of would for every case a resubmission left alone.
+    for index in reversed(submissions):
+        if index <= named:
+            break
+        read = layout.submission_record(index)
+        if read is None:
+            continue
+        # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+        submission: SubmissionRecord = read
+        gave = submission.task_of(case)
+        if gave is not None:
+            task: int = gave
+            return _stopped_before(layout, index, task, submission)
+    return None
+
+
+def _stopped_before(
+    layout: BatchLayout, index: int, task: int, submission: SubmissionRecord
+) -> str | None:
+    """Why a case's earlier outcome is stale, given task *task* of
+    submission *index* was to run the case again: if that task stopped
+    (:data:`_STOPPED_TASK_STATES`) before it reached the case."""
     status = layout.read_task(index, task)
     if status is None or not status.state_in(_STOPPED_TASK_STATES):
         return None
