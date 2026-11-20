@@ -547,6 +547,57 @@ class TestJudge:
         assert verdict.criteria[-1].value is None
         assert not verdict.passed
 
+    @pytest.mark.parametrize("missing", [0, -1])
+    def test_a_record_with_no_count_fails_the_case_coverage_beside_counted_ones(
+        self, missing: int
+    ) -> None:
+        # #2231: folded with max(), the count-less record was absorbed by the
+        # counted one on its map, and the gate passed.
+        gate = {"min_case_coverage": 0.1}
+        verdict = judge(
+            [
+                _record(gate=gate, case_count=2),
+                _record(gate=gate, lanelets=(7, 8, 9), case_count=missing),
+                _record(gate=gate, lanelets=(4,), case_count=1, map_name="Other"),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value is None
+        assert not case.passed
+        assert case.detail == "the case count on Town is not known"
+        assert not verdict.passed
+        assert verdict.warnings == []
+
+    def test_differing_case_counts_on_a_map_take_the_largest_and_warn(
+        self,
+    ) -> None:
+        gate = {"min_case_coverage": 0.5}
+        verdict = judge(
+            [
+                _record(gate=gate, case_count=4),
+                _record(gate=gate, lanelets=(7, 8, 9), case_count=6),
+                _record(gate=gate, lanelets=(5,), case_count=4),
+                _record(gate=gate, lanelets=(4,), case_count=1, map_name="Other"),
+                _record(gate=gate, lanelets=(2,), case_count=3, map_name="Third"),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value == pytest.approx(5 / 10)
+        assert case.passed
+        assert case.detail == "5 of 10 case(s) on 3 map(s)"
+        assert verdict.warnings == [
+            "the runs on Town state 2 different case counts (4, 6); the case "
+            "coverage takes the largest, 6"
+        ]
+
+    def test_differing_case_counts_do_not_warn_without_the_criterion(
+        self,
+    ) -> None:
+        verdict = judge(
+            [_record(case_count=4), _record(lanelets=(7, 8, 9), case_count=6)]
+        )
+        assert verdict.warnings == []
+
     def test_trajectory_spread(self) -> None:
         gate = {"max_lateral_spread_m": 0.3, "max_speed_spread_mps": 2.0}
         verdict = judge(
@@ -1215,6 +1266,26 @@ class TestUnrecordedCases:
         (err,) = capsys.readouterr().err.strip().splitlines()
         assert "--allow-unrecorded does not apply" in err
         assert "Run them again" not in err
+
+    @pytest.mark.parametrize(
+        "entries", [[1, None], [{"scenario": "a"}, 1], ["x"], [[]], {"a": 1}, 1]
+    )
+    @pytest.mark.parametrize("allow", [False, True])
+    def test_a_summary_that_is_no_array_of_objects_is_refused(
+        self, tmp_path: Path, capsys: Any, entries: Any, allow: bool
+    ) -> None:
+        # #2231: an entry that is no object raised AttributeError out of
+        # main(); the summary cannot be read, as batch_resume refuses it.
+        self._three_passed(tmp_path)
+        summary = tmp_path / "batch_results.json"
+        summary.write_text(json.dumps(entries))
+        argv = [str(tmp_path), *(["--allow-unrecorded"] if allow else [])]
+        assert main(argv) == EXIT_ERROR
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        (err,) = captured.err.strip().splitlines()
+        assert f"{summary}: not a batch summary (not a JSON array of objects)" in err
+        assert "--allow-unrecorded does not apply" in err
 
     def test_an_unreadable_summary_is_refused_with_allow_unrecorded(
         self, tmp_path: Path, capsys: Any

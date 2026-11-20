@@ -206,14 +206,23 @@ def _criterion(
 
 
 def _case_coverage(records: Sequence[GateRecord]) -> tuple[Optional[float], str]:
-    """The share of the cases that ran, over every map the runs were on."""
+    """The share of the cases that ran, over every map the runs were on.
+
+    Unknown (``None``, which fails the criterion) when any record has no case
+    count (``case_count`` of 0 or less: its run told nothing), whatever the
+    other records on its map state (#2231).  Of the counts the records on a
+    map state, the largest is taken: the share is then the smallest the
+    counts allow.  :func:`_case_count_warnings` says when they differ."""
     counts: dict[str, int] = {}
+    unknown_maps: set[str] = set()
     run: dict[str, set[tuple[str, tuple[int, ...], tuple[int, ...]]]] = {}
     for record in records:
         case = record.case
+        if case.case_count <= 0:
+            unknown_maps.add(case.map)
         counts[case.map] = max(counts.get(case.map, 0), case.case_count)
         run.setdefault(case.map, set()).add(case.key)
-    unknown = sorted(name or "?" for name, count in counts.items() if count <= 0)
+    unknown = sorted(name or "?" for name in unknown_maps)
     if unknown:
         return None, f"the case count on {', '.join(unknown)} is not known"
     # A record without a split (written before it was recorded) is the same
@@ -234,6 +243,29 @@ def _case_coverage(records: Sequence[GateRecord]) -> tuple[Optional[float], str]
     # Typed: Codon types a returned tuple by its values, not the annotation.
     share: Optional[float] = covered / total
     return share, f"{covered} of {total} case(s) on {maps} map(s)"
+
+
+def _case_count_warnings(records: Sequence[GateRecord]) -> list[str]:
+    """One warning per map whose records state different case counts (each
+    above 0): the runs did not search the same cases -- an edited route or
+    map, or runs of two expansions mixed -- and :func:`_case_coverage` takes
+    the largest."""
+    stated: dict[str, set[int]] = {}
+    for record in records:
+        case = record.case
+        if case.case_count > 0:
+            stated.setdefault(case.map, set()).add(case.case_count)
+    warnings: list[str] = []
+    for name in sorted(stated):
+        counts = stated[name]
+        if len(counts) > 1:
+            shown = ", ".join(str(count) for count in sorted(counts))
+            warnings.append(
+                f"the runs on {name or '?'} state {len(counts)} different case "
+                f"counts ({shown}); the case coverage takes the largest, "
+                f"{max(counts)}"
+            )
+    return warnings
 
 
 def _where(at: Optional[tuple[int, float]]) -> str:

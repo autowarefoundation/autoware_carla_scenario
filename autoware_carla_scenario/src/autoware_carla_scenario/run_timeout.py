@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Optional
 
 from .value_text import shown
 
@@ -27,18 +27,26 @@ __all__ = [
 DEFAULT_RUN_TIMEOUT_SECONDS: float = 60.0
 
 
-def check_run_timeout(seconds: float) -> float:
+def check_run_timeout(seconds: float, written: Optional[str] = None) -> float:
     """*seconds* as ``scenario.timeout_seconds``, which must be positive and finite.
 
     Hydra reads ``scenario.timeout_seconds=nan`` (or ``inf``) as a float, and
     a NaN timeout never fires: the run would have no time bound at all.
 
+    *written* is the value as the config wrote it (its ``repr()``, as
+    :func:`~autoware_carla_scenario.value_text.shown` gives it), which the
+    message shows; *seconds*' own ``repr()`` without one.  A caller that
+    converted the value (:func:`run_timeout_seconds`, of an int) passes it,
+    so that ``timeout_seconds: 0`` is refused as ``got 0``, not ``got 0.0``
+    (#2231).
+
     Raises:
         ValueError: naming the key, when it is not positive and finite.
     """
     if not math.isfinite(seconds) or seconds <= 0:
+        shown_value = repr(seconds) if written is None else written
         raise ValueError(
-            f"scenario.timeout_seconds must be positive and finite, got {seconds}"
+            f"scenario.timeout_seconds must be positive and finite, got {shown_value}"
         )
     return seconds
 
@@ -86,4 +94,4 @@ def run_timeout_seconds(cfg: Mapping[str, Any]) -> float:
         raise ValueError(
             f"scenario.timeout_seconds must be positive and finite, got {shown(value)}"
         ) from None
-    return check_run_timeout(seconds)
+    return check_run_timeout(seconds, shown(value))

@@ -15,6 +15,11 @@ markers and plans, and summary entries whose flags are ``true``, ``1``,
 ``1.0``, ``"true"`` or ``false`` (only ``true`` is ``is True``), whose
 names are false values of every JSON type, and whose stems are any JSON
 value or a path that is no file name of its own.
+
+One change is pinned in the oracle: a summary holding an entry that is no
+JSON object raised ``AttributeError`` out of ``scenario-gate``; it cannot be
+read (``not a JSON array of objects``), as ``batch_resume`` refuses it
+(#2231).
 """
 
 from __future__ import annotations
@@ -79,13 +84,14 @@ def _old_summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
         entries = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, RecursionError, ValueError) as exc:
         return f"{path}: the batch summary cannot be read ({exc})"
-    if not isinstance(entries, list):
-        return f"{path}: not a batch summary (not a JSON array)"
+    # #2231: a summary with an entry that is no object cannot be read, as
+    # batch_resume.read_resumed_batch() refuses it (it raised AttributeError).
+    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        return f"{path}: not a batch summary (not a JSON array of objects)"
     unrecorded = [
         str(entry.get("scenario") or i)
         for i, entry in enumerate(entries)
-        if not isinstance(entry, dict)
-        or (entry.get("error") is True and not _old_recorded_at_stem(directory, entry))
+        if (entry.get("error") is True and not _old_recorded_at_stem(directory, entry))
         or entry.get("pending") is True
     ]
     return unrecorded, len(entries)
@@ -439,11 +445,13 @@ def test_every_summary_entry_is_read_as_before(tmp_path: Path) -> None:
         entries.append({"error": True, "scenario": name})
         entries.append({"pending": True, "scenario": name})
     (directory / BATCH_RESULTS).write_text(json.dumps(entries), encoding="utf-8")
-    # An entry that is no object raises AttributeError (its `.get()`), as it
-    # did.
+    # An entry that is no object makes the summary unreadable (#2231): it
+    # raised AttributeError (its `.get()`).
     _same(_old_summary_unrecorded, evaluate._summary_unrecorded, directory)
-    with pytest.raises(AttributeError):
-        evaluate._summary_unrecorded(directory)
+    assert evaluate._summary_unrecorded(directory) == (
+        f"{directory / BATCH_RESULTS}: not a batch summary (not a JSON array of "
+        "objects)"
+    )
     _same(_old_scan_batches, evaluate._scan_batches, tmp_path)
     objects = [e for e in entries if isinstance(e, dict)]
     (directory / BATCH_RESULTS).write_text(json.dumps(objects), encoding="utf-8")

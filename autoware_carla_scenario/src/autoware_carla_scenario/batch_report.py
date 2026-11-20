@@ -20,7 +20,54 @@ from typing import Any, Collection, Mapping, Protocol, Sequence  # noqa: UP035
 from .atomic_file import write_text_atomically
 from .failure import Failure
 
-__all__ = ["print_summary", "write_batch_result_json"]
+__all__ = [
+    "BATCH_RESULTS",
+    "is_plain_stem",
+    "json_member",
+    "print_summary",
+    "write_batch_result_json",
+]
+
+#: The summary a local batch writes beside its runs' outputs
+#: (:func:`write_batch_result_json`), and the one name of it:
+#: ``batch_resume`` reads and rewrites it, and ``gate.unrecorded`` reads it.
+BATCH_RESULTS = "batch_results.json"
+
+
+def is_plain_stem(stem: str) -> bool:
+    """Whether the string *stem*, a summary entry's ``stem``, is a file stem
+    in the batch's directory: non-empty, and naming no other directory (no
+    separator, not ``.`` or ``..``).  ``batch_resume`` refuses a summary
+    naming any other, and ``gate.unrecorded`` looks for no gate record at
+    one."""
+    return (
+        stem not in ("", ".", "..")
+        and "/" not in stem
+        and "\\" not in stem
+        and "\0" not in stem
+    )
+
+
+def json_member(single: str, depth: int = 0) -> str:
+    """The one member of *single*, ``json.dumps({key: value}, indent=2,
+    ensure_ascii=False)``, as ``json.dumps(..., indent=2,
+    ensure_ascii=False)`` lays it out in an object *depth* levels into the
+    document (``0``: the document is the object): the text between its
+    braces (``"{\\n"`` and ``"\\n}"``), each line indented two spaces per
+    level.
+
+    A document is laid out a member at a time where its values are of mixed
+    types, which one dict of them all could not be in Codon (the library
+    check, docs/typecheck.md): a batch's summary here, a job's
+    ``case_errored.json`` in :mod:`~autoware_carla_scenario.gate.errored`.
+    *single* is made by the caller: the library check cannot call a function
+    with a value of any type.
+    """
+    inner = single[2:-2]
+    if depth <= 0:
+        return inner
+    indent = "  " * depth
+    return "\n".join(indent + line for line in inner.split("\n"))
 
 
 # The Protocols' bodies are typed stubs, not `...`, for the library check:
@@ -95,16 +142,9 @@ def _category(result: _Result) -> str | None:
 
 
 def _member(member_json: str) -> str:
-    """A member of an entry, laid out at an entry's depth.
-
-    *member_json* is ``json.dumps({key: value}, indent=2,
-    ensure_ascii=False)``, a dict of the one member (made by the caller:
-    the library check cannot call a function with a value of any type).  The
-    result is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
-    gives for the member: its lines between the braces, indented one level
-    further.
-    """
-    return "\n".join("  " + line for line in member_json.split("\n")[1:-1])
+    """A member of an entry, laid out at an entry's depth (one level into
+    the summary's array): :func:`json_member` of *member_json*."""
+    return json_member(member_json, 1)
 
 
 #: The message of a pending entry (:func:`write_batch_result_json`).
@@ -188,7 +228,7 @@ def write_batch_result_json(
     if rerun_errors is not None:
         failed_recordings = dict(rerun_errors)
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "batch_results.json"
+    json_path = output_dir / BATCH_RESULTS
     entries: list[str] = []
     for i, (name, result) in enumerate(zip(names, results)):
         # The entry was the dict merge {"scenario": name, "overrides": ...,
