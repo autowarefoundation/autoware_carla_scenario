@@ -2529,7 +2529,10 @@ after the few the ego has just passed -- and the goal (<code>t4_scene_goal</code
 reading scenes is thus shown what one reading the egodriver observations is. Its map is written once into the map set as the <code>t4</code>
 format (<code>&lt;map_dir&gt;/&lt;map_id&gt;/t4_map.pb</code>, a <code>MapResource</code>), which the scene
 references. Every other observation is sent as before: a policy that does not
-read scenes is unchanged.</p>
+read scenes is unchanged. The scenes are built by a trajectory recorder of
+their own: if it fails (logged), the history stops there, and the policy is
+sent no scene from then on -- as before the first tick -- rather than the
+frozen history as now; that is logged once, and the run goes on.</p>
 <h2 id="after-a-run">After a run<a class="headerlink" href="#after-a-run" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Every log under a run's output directory, written beside each log</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-t4scene<span class="w"> </span>outputs/2026-10-29/10-00-00
@@ -2568,7 +2571,14 @@ its file and line number (<a href="../trajectory_log/#what-a-reader-has-to-handl
 </table>
 <p>The contract carries no map bytes in a scene, so the map is a file of its
 own; a scene without one (<code>--no-map</code>, or a log whose map is not on this
-machine any more) has no <code>map</code> and no <code>traffic_lights</code>.</p>
+machine any more) has no <code>map</code> and no <code>traffic_lights</code>, and writing it
+removes the <code>{stem}.t4scene.map.pb</code> an earlier export left, which it does not
+name.</p>
+<p>Each file is written in one rename (a scratch file beside it, renamed over
+it), so a run killed while it writes leaves no truncated message -- one that
+would often still parse, as a shorter scene. The scene goes last, after its
+map, and an earlier export's scene is removed first: a <code>.t4scene.pb</code> on disk
+always has the map it names beside it.</p>
 <h2 id="what-goes-where">What goes where<a class="headerlink" href="#what-goes-where" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2729,7 +2739,7 @@ copy the file again and regenerate.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 18, 2026 02:43:45 UTC"><span class="timeago" datetime="2026-11-18T02:43:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 18, 2026 02:43:45 UTC">2026-11-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 13:36:32 UTC"><span class="timeago" datetime="2026-11-20T13:36:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 13:36:32 UTC">2026-11-20</span>
   </span>
 
     
