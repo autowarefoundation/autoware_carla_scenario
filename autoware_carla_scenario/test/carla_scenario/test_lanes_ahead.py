@@ -44,7 +44,9 @@ from autoware_carla_scenario.coordinate import (
     Lanelet2Pose,
     MapManager,
     OpenDrivePose,
+    lane_beside,
     lanelets_ahead,
+    lanelets_beside,
     on_lanelet,
     to_carla_world,
 )
@@ -143,6 +145,84 @@ class TestLaneletsAhead:
 
     def test_from_the_lane_beside(self, loaded: None) -> None:
         assert lanelets_ahead(B1, 300.0) == [B1, B2]
+
+
+# ---------------------------------------------------------------------------
+# lanelets_beside
+# ---------------------------------------------------------------------------
+
+#: Three lanes side by side, sharing their boundaries (so the routing graph
+#: links them): a dashed line between the middle and the left one (a lane
+#: change allowed: ``left`` / ``right``), a solid one between the middle and
+#: the right one (none allowed: ``adjacentLeft`` / ``adjacentRight``)::
+#:
+#:     y 10.5  ===== solid =====
+#:             LEFT
+#:     y  7.0  - - - dashed - - -
+#:             MIDDLE
+#:     y  3.5  ===== solid =====
+#:             RIGHT
+#:     y  0.0  ===== solid =====
+RIGHT, MIDDLE, LEFT, ALONE = 31, 32, 33, 34
+
+
+@pytest.fixture
+def three_lanes() -> Iterator[None]:
+    def boundary(y: float, subtype: str, x0: float = 0.0) -> LineString3d:
+        return LineString3d(
+            next(_ids),
+            [_point(x0, y), _point(x0 + 50.0, y)],
+            AttributeMap({"type": "line_thin", "subtype": subtype}),
+        )
+
+    y0, y35 = boundary(0.0, "solid"), boundary(3.5, "solid")
+    y7, y105 = boundary(7.0, "dashed"), boundary(10.5, "solid")
+    lanelet_map = LaneletMap()
+    for lanelet_id, left, right in (
+        (RIGHT, y35, y0),
+        (MIDDLE, y7, y35),
+        (LEFT, y105, y7),
+        # Far from the others, sharing no boundary.
+        (ALONE, boundary(3.5, "solid", 500.0), boundary(0.0, "solid", 500.0)),
+    ):
+        lanelet_map.add(Lanelet(lanelet_id, left, right, AttributeMap(_LANE)))
+    rules = lanelet2.traffic_rules.create(
+        lanelet2.traffic_rules.Locations.Germany,
+        lanelet2.traffic_rules.Participants.Vehicle,
+    )
+    saved = MapManager._instance
+    MapManager.reset()
+    manager = MapManager.get_instance()
+    manager._lanelet_map = lanelet_map
+    manager._routing_graph = lanelet2.routing.RoutingGraph(lanelet_map, rules)
+    yield
+    MapManager._instance = saved
+
+
+class TestLaneletsBeside:
+    """Both sides, a lane change allowed across the line or not (#2253)."""
+
+    def test_both_kinds_of_neighbour_routing_ones_first(
+        self, three_lanes: None
+    ) -> None:
+        # left, then adjacentRight: left, right, adjacentLeft, adjacentRight.
+        assert lanelets_beside(MIDDLE) == [LEFT, RIGHT]
+
+    def test_a_neighbour_behind_a_solid_line(self, three_lanes: None) -> None:
+        assert lanelets_beside(RIGHT) == [MIDDLE]
+
+    def test_a_neighbour_across_a_dashed_line(self, three_lanes: None) -> None:
+        assert lanelets_beside(LEFT) == [MIDDLE]
+
+    def test_none_beside_is_empty(self, three_lanes: None) -> None:
+        assert lanelets_beside(ALONE) == []
+
+    def test_it_agrees_with_lane_beside(self, three_lanes: None) -> None:
+        for lanelet_id in (RIGHT, MIDDLE, LEFT, ALONE):
+            sides = [lane_beside(lanelet_id, side) for side in ("left", "right")]
+            assert sorted(lanelets_beside(lanelet_id)) == sorted(
+                side for side in sides if side is not None
+            )
 
 
 # ---------------------------------------------------------------------------

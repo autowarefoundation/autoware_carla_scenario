@@ -7,7 +7,9 @@
 scenario:
   name: reach_goal
   goal_lanelet_ids: [460, 265]
-  timeout_seconds: 8.0
+  # Through the junction ahead (every light is set green) and onto the
+  # lane beyond it from 5 km/h, as intersection_passing/straight allows.
+  timeout_seconds: 15.0
 
 ego:
   initial_speed_kmh: 5.0

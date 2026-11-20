@@ -72,6 +72,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.coordinate import (
     MapManager,
+    lanelets_beside,
     lanes_ahead_before_junction as lanes_ahead_before_junction,
 )
 from autoware_carla_scenario.failure import FailureCategory
@@ -137,28 +138,6 @@ def left_lanes_ahead(
     )
 
 
-def _beside(lanelet_id: int) -> list[int]:
-    """The lanelets beside *lanelet_id*, either side, a lane change allowed
-    across the line between or not (the routing graph's neighbours)."""
-    mm = MapManager.get_instance()
-    graph = mm.routing_graph
-    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
-    found: list[int] = []
-    left = graph.left(lanelet)
-    if left is not None:
-        found.append(int(left.id))
-    right = graph.right(lanelet)
-    if right is not None:
-        found.append(int(right.id))
-    adjacent_left = graph.adjacentLeft(lanelet)
-    if adjacent_left is not None:
-        found.append(int(adjacent_left.id))
-    adjacent_right = graph.adjacentRight(lanelet)
-    if adjacent_right is not None:
-        found.append(int(adjacent_right.id))
-    return found
-
-
 def _length(lanelet_id: int) -> float:
     """The length of *lanelet_id*'s centerline (m), as :func:`lanelets_ahead`
     measures it."""
@@ -212,7 +191,7 @@ def ego_lanes_ahead(lanelet_id: int, distance_m: float) -> list[int]:
     beside_ends: dict[int, float] = {}
     for lanelet in own:
         ends_at = begins[lanelet] + _length(lanelet)
-        for neighbour in _beside(lanelet):
+        for neighbour in lanelets_beside(lanelet):
             if neighbour in own:
                 continue
             if neighbour not in beside_ends or beside_ends[neighbour] < ends_at:

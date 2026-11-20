@@ -385,6 +385,34 @@ def lane_beside(lanelet_id: int, direction: str) -> Optional[int]:
     return int(beside.id)
 
 
+def lanelets_beside(lanelet_id: int) -> list[int]:
+    """The lanelets beside *lanelet_id*, either side, a lane change allowed
+    across the line between or not (the routing graph's neighbours).
+
+    Its ``left``, ``right``, ``adjacentLeft`` and ``adjacentRight``, in that
+    order, those it has; empty where it has none.
+
+    Requires :class:`MapManager` to be initialised.
+    """
+    mm = MapManager.get_instance()
+    graph = mm.routing_graph
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    found: list[int] = []
+    left = graph.left(lanelet)
+    if left is not None:
+        found.append(int(left.id))
+    right = graph.right(lanelet)
+    if right is not None:
+        found.append(int(right.id))
+    adjacent_left = graph.adjacentLeft(lanelet)
+    if adjacent_left is not None:
+        found.append(int(adjacent_left.id))
+    adjacent_right = graph.adjacentRight(lanelet)
+    if adjacent_right is not None:
+        found.append(int(adjacent_right.id))
+    return found
+
+
 #: How far ahead (m) :func:`lane_change_target_lanelets` looks for the
 #: lanelets that also count as the lane beside;
 #: :func:`lanes_ahead_before_junction` stops at the next junction well before.
