@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
-<!-- Version warning for outdated documentation (only shown when using mike versioning) -->
+{#- Material's recipe for mike's outdated-version banner. Material renders this
+    block whenever `extra.version.provider: mike` is set, keeps it hidden, and
+    unhides it only on a version other than the default alias (`latest`); the
+    banner's content therefore must not depend on a template variable -- mike
+    is not an mkdocs plugin here, and there is no `version` in the context. -#}
 {% block outdated %}
-  {% if version is defined and version.title %}
-    You are viewing documentation for version <strong>{{ version.title }}</strong>.
-    <a href="{{ '../' ~ base_url }}">
-      <strong>Click here to view the latest version.</strong>
-    </a>
-  {% endif %}
+  You're not viewing the latest version.
+  <a href="{{ '../' ~ base_url }}">
+    <strong>Click here to go to latest.</strong>
+  </a>
 {% endblock %}

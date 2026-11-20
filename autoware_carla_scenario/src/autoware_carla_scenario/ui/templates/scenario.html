@@ -129,11 +129,13 @@
   <div class="flex items-center justify-between mb-2">
     <h2 class="text-lg font-semibold text-gray-700">Recording</h2>
     <div class="flex items-center gap-3 text-sm">
+      {% if recording.downloadable %}
       <a href="{{ recording.rrd_url }}" class="text-blue-600 hover:text-blue-800" download>Download .rrd</a>
+      {% endif %}
       <span class="text-xs text-gray-400">Rerun {{ recording.viewer.version }}{% if recording.viewer.source == "cdn" %} (web viewer from the CDN){% endif %}</span>
     </div>
   </div>
-  {% if recording.rrd or recording.converter %}
+  {% if recording.downloadable %}
     {% if recording.viewer.base_url %}
     <div id="rerun-viewer" class="w-full h-[640px] bg-gray-900 rounded-lg shadow overflow-hidden"></div>
     {% endif %}
@@ -219,7 +221,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
-{% if recording and (recording.rrd or recording.converter) %}
+{% if recording and recording.downloadable %}
 <script type="module">
   import { mountRerun } from '/static/rerun.js';
   mountRerun(document.getElementById('rerun-viewer'), {

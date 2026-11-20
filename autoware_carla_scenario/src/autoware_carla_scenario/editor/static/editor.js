@@ -771,6 +771,136 @@
     if (panel) panel.classList.toggle('hidden');
   };
 
+  /* ---------------------------------------------------------------------
+   * Failed requests
+   *
+   * htmx 2 swaps no 4xx/5xx response, so the error pages the server renders
+   * (a draft deleted in another tab, a drafts directory that refuses writes)
+   * would otherwise never be seen: the click does nothing and the field keeps
+   * the typed value as if it were stored. The reason is read out of the
+   * response -- never put into the page as HTML -- and shown as a notice.
+   * ------------------------------------------------------------------- */
+
+  var REQUEST_ERROR_ATTR = 'data-request-error';
+
+  /* {title, message} of a failed request, from what the server answered:
+   * the error page's `data-error-*` elements, a text/plain reason, or a JSON
+   * `detail`; a generic sentence for anything else. */
+  function requestError(xhr) {
+    if (!xhr || !xhr.status) {
+      return { title: 'Request failed', message: 'The server could not be reached.' };
+    }
+    var generic = {
+      title: 'Request failed',
+      message: 'The server answered HTTP ' + xhr.status + '.',
+    };
+    var type = (xhr.getResponseHeader('Content-Type') || '').toLowerCase();
+    var text = String(xhr.responseText || '');
+    if (type.indexOf('text/plain') === 0) {
+      return text.trim() ? { title: generic.title, message: text.trim() } : generic;
+    }
+    if (type.indexOf('application/json') === 0) {
+      try {
+        var detail = JSON.parse(text).detail;
+        if (typeof detail === 'string' && detail) {
+          return { title: generic.title, message: detail };
+        }
+      } catch (e) { /* not JSON after all */ }
+      return generic;
+    }
+    if (type.indexOf('text/html') === 0 && window.DOMParser) {
+      // An inert document: nothing in it runs, and only its text is read.
+      var doc = new window.DOMParser().parseFromString(text, 'text/html');
+      var heading = doc.querySelector('[data-error-heading]');
+      var message = doc.querySelector('[data-error-message]');
+      var said = message && message.textContent.trim();
+      if (said) {
+        return {
+          title: (heading && heading.textContent.trim()) || generic.title,
+          message: said,
+        };
+      }
+    }
+    return generic;
+  }
+  window.editorRequestError = requestError;
+
+  /* The verb of the request an htmx event is about, lower case ('get' when
+   * htmx did not say). */
+  function requestVerb(detail) {
+    var config = detail && detail.requestConfig;
+    return String((config && config.verb) || 'get').toLowerCase();
+  }
+
+  function errorNotice(title, message, verb) {
+    var notice = document.createElement('div');
+    notice.className = 'ed-notice ed-notice-bad';
+    notice.setAttribute('role', 'alert');
+    // Which kind of request failed: see clearRequestError.
+    notice.setAttribute(REQUEST_ERROR_ATTR, verb || 'get');
+    notice.style.marginBottom = '12px';
+    var body = document.createElement('div');
+    var head = document.createElement('div');
+    head.className = 'ed-notice-title';
+    head.textContent = title;
+    var text = document.createElement('span');
+    text.textContent = message;
+    body.appendChild(head);
+    body.appendChild(text);
+    notice.appendChild(body);
+    return notice;
+  }
+
+  function showRequestError(event) {
+    var detail = event.detail || {};
+    var elt = detail.elt;
+    // An element that shows its own failures (the map library's button).
+    if (elt && elt.closest && elt.closest('[data-handles-errors]')) return;
+    var error = requestError(detail.xhr);
+    var target = detail.target;
+    if (target && target.id === 'export-result') {
+      // As the server's own "Export failed" answer looks; htmx has already
+      // taken the spinner down.
+      target.replaceChildren(errorNotice('Export failed — nothing to download',
+        error.title + ': ' + error.message, requestVerb(detail)));
+      return;
+    }
+    var notice = errorNotice(error.title, error.message, requestVerb(detail));
+    var status = document.getElementById('status');
+    if (status) {
+      status.replaceChildren(notice);
+    } else {
+      var shell = document.querySelector('main') || document.body;
+      var old = shell.querySelector(':scope > [' + REQUEST_ERROR_ATTR + ']');
+      if (old) old.remove();
+      shell.insertBefore(notice, shell.firstChild);
+    }
+    if (notice.scrollIntoView) notice.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* A request that went through takes the last failure's notice down: what it
+   * said ("not saved") is no longer the state of the draft. Only a write
+   * proves that of a failed write, though: with a drafts directory that
+   * refuses writes, reads (opening a node in the inspector) still succeed,
+   * and must not take down the notice that edits are not being stored. */
+  function clearRequestError(event) {
+    if (!event.detail || !event.detail.successful) return;
+    var wrote = requestVerb(event.detail) !== 'get';
+    var notices = document.querySelectorAll('[' + REQUEST_ERROR_ATTR + ']');
+    for (var i = 0; i < notices.length; i++) {
+      if (notices[i].closest('#export-result')) continue;
+      if (wrote || notices[i].getAttribute(REQUEST_ERROR_ATTR) === 'get') {
+        notices[i].remove();
+      }
+    }
+  }
+
+  document.body.addEventListener('htmx:responseError', showRequestError);
+  document.body.addEventListener('htmx:sendError', showRequestError);
+  document.body.addEventListener('htmx:afterRequest', clearRequestError);
+
+  /* --------------------------------------------------------------------- */
+
   function refresh() {
     // Before mounting: a swap has just detached whatever was there, and the
     // replacements are about to allocate their own.

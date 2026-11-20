@@ -314,16 +314,33 @@
       };
     }
 
-    // Update the command preview (debounced calls go through debouncedPreview)
+    // Update the command preview (debounced calls go through debouncedPreview).
+    // Responses can come back out of order, so each request takes a number and
+    // only the latest one may write the preview: an older answer arriving last
+    // would otherwise show a command the options no longer describe.
+    let cmdPreviewRequest = 0;
     function updateCmdPreview() {
       const opts = collectRunOptions();
+      const request = ++cmdPreviewRequest;
       fetch('/api/run/preview', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(opts)
-      }).then(r => r.json()).then(data => {
+      }).then(r => {
+        // A refused body is answered 400 with the reason as the command's
+        // comment ({"command": "# ..."}), which is shown as any command is.
+        return r.json().catch(() => ({})).then(data => {
+          if (typeof data.command !== 'string') throw new Error('HTTP ' + r.status);
+          return data;
+        });
+      }).then(data => {
+        if (request !== cmdPreviewRequest) return;
         const el = document.getElementById('cmd-preview');
         if (el) el.textContent = data.command;
+      }).catch(err => {
+        if (request !== cmdPreviewRequest) return;
+        const el = document.getElementById('cmd-preview');
+        if (el) el.textContent = 'Command preview unavailable (' + err.message + ')';
       });
     }
 

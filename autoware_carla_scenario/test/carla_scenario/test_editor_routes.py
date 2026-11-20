@@ -2594,6 +2594,262 @@ process.stdout.write(JSON.stringify(result));
 """
 
 
+_FAILED_REQUESTS_HARNESS = r"""
+'use strict';
+const source = require('fs').readFileSync(process.argv[process.argv.length - 1], 'utf8');
+const start = source.indexOf('  var REQUEST_ERROR_ATTR');
+const end = source.indexOf('  function refresh()');
+if (start < 0 || end < 0 || end < start) throw new Error('failed-requests block not found');
+
+class El {
+  constructor(tag, attrs) {
+    this.tag = tag; this.attrs = Object.assign({}, attrs || {}); this.children = [];
+    this.parent = null; this.style = {}; this._text = '';
+  }
+  get id() { return this.attrs.id || ''; }
+  set className(v) { this.attrs.class = v; }
+  get className() { return this.attrs.class || ''; }
+  set innerHTML(v) { throw new Error('innerHTML written'); }
+  insertAdjacentHTML() { throw new Error('insertAdjacentHTML called'); }
+  get textContent() { return this._text + this.children.map((c) => c.textContent).join(' '); }
+  set textContent(v) { this.children = []; this._text = String(v); }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  appendChild(c) { c.remove(); c.parent = this; this.children.push(c); return c; }
+  insertBefore(c, ref) {
+    c.remove(); c.parent = this;
+    const i = ref ? this.children.indexOf(ref) : -1;
+    if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
+    return c;
+  }
+  replaceChildren(...cs) { this.children.forEach((c) => { c.parent = null; }); this.children = []; this._text = ''; cs.forEach((c) => this.appendChild(c)); }
+  remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; } }
+  matches(sel) {
+    let m;
+    if ((m = /^#([\w-]+)$/.exec(sel))) return this.id === m[1];
+    if ((m = /^\[([\w-]+)\]$/.exec(sel))) return m[1] in this.attrs;
+    if (sel === 'main') return this.tag === 'main';
+    throw new Error('selector not modelled: ' + sel);
+  }
+  closest(sel) { for (let n = this; n; n = n.parent) if (n.matches(sel)) return n; return null; }
+  descendants() { return this.children.flatMap((c) => [c, ...c.descendants()]); }
+  querySelectorAll(sel) {
+    const m = /^:scope > (.*)$/.exec(sel);
+    if (m) return this.children.filter((c) => c.matches(m[1]));
+    return this.descendants().filter((c) => c.matches(sel));
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+  scrollIntoView() {}
+}
+
+const listeners = {};
+let body;
+const doc = {
+  createElement: (tag) => new El(tag),
+  getElementById: (id) => body.descendants().find((n) => n.id === id) || null,
+  querySelector: (sel) => body.querySelector(sel),
+  querySelectorAll: (sel) => body.querySelectorAll(sel),
+};
+Object.defineProperty(doc, 'body', { get: () => body });
+
+// Enough of DOMParser for an error page: the text of the first element
+// carrying the attribute, tags stripped -- as textContent would be.
+class DOMParser {
+  parseFromString(text) {
+    return {
+      querySelector(sel) {
+        const attr = /^\[([\w-]+)\]$/.exec(sel)[1];
+        const m = new RegExp('<(\\w+)[^>]*\\s' + attr + '[\\s>][^>]*?>?([\\s\\S]*?)</\\1>').exec(text);
+        return m ? { textContent: m[2].replace(/<[^>]*>/g, '') } : null;
+      },
+    };
+  }
+}
+const win = { DOMParser };
+
+function fresh(withStatus) {
+  body = new El('body');
+  const main = body.appendChild(new El('main'));
+  if (withStatus) main.appendChild(new El('div', { id: 'status' }));
+  const exp = main.appendChild(new El('div', { id: 'export-result' }));
+  const button = main.appendChild(new El('button'));
+  const mapButton = main.appendChild(new El('button', { 'data-handles-errors': '' }));
+  return { main, exp, button, mapButton };
+}
+fresh(true);
+const realBodyAdd = (type, fn) => { listeners[type] = fn; };
+Object.defineProperty(El.prototype, 'addEventListener', { value: function (t, f) { realBodyAdd(t, f); } });
+new Function('document', 'window', source.slice(start, end))(doc, win);
+
+function xhr(status, type, text) {
+  return { status, responseText: text, getResponseHeader: (h) => (h === 'Content-Type' ? type : null) };
+}
+function fire(type, detail) { listeners[type]({ detail }); }
+function notices() {
+  return body.querySelectorAll('[data-request-error]').map((n) => ({
+    where: n.parent.id || n.parent.tag, verb: n.getAttribute('data-request-error'), text: n.textContent.trim(),
+  }));
+}
+const page = '<h2 class="ed-heading" data-error-heading>Cannot save drafts</h2>' +
+  '<p class="ed-help" data-error-message>No write to /d: <b>Permission</b> denied</p><script>x()</script>';
+const out = {};
+let dom = fresh(true);
+fire('htmx:responseError', { elt: dom.button, target: dom.button, xhr: xhr(500, 'text/html; charset=utf-8', page), requestConfig: { verb: 'post' } });
+out.storage = notices();
+fire('htmx:afterRequest', { elt: dom.button, successful: true, requestConfig: { verb: 'get' } });
+out.afterRead = notices();
+fire('htmx:afterRequest', { elt: dom.button, successful: false, requestConfig: { verb: 'post' } });
+out.afterFailedWrite = notices();
+fire('htmx:afterRequest', { elt: dom.button, successful: true, requestConfig: { verb: 'post' } });
+out.afterWrite = notices();
+fire('htmx:sendError', { elt: dom.button, target: dom.button, xhr: xhr(0, null, ''), requestConfig: { verb: 'get' } });
+out.unreachable = notices();
+fire('htmx:afterRequest', { elt: dom.button, successful: true, requestConfig: { verb: 'get' } });
+out.unreachableAfterRead = notices();
+fire('htmx:responseError', { elt: dom.button, target: dom.exp, xhr: xhr(500, 'text/plain', 'disk full'), requestConfig: { verb: 'post' } });
+fire('htmx:afterRequest', { elt: dom.button, successful: true, requestConfig: { verb: 'post' } });
+out.exportFailed = notices();
+dom = fresh(true);
+fire('htmx:responseError', { elt: dom.mapButton, target: body, xhr: xhr(404, 'text/html', page), requestConfig: { verb: 'post' } });
+out.handlesErrors = notices();
+dom = fresh(false);
+fire('htmx:responseError', { elt: dom.button, target: body, xhr: xhr(503, 'application/json', '{"detail": "busy"}'), requestConfig: { verb: 'post' } });
+fire('htmx:responseError', { elt: dom.button, target: body, xhr: xhr(503, 'application/json', 'nope'), requestConfig: { verb: 'post' } });
+out.noStatus = notices();
+out.reasons = [
+  xhr(422, 'text/plain; charset=utf-8', ' Not a map \n'),
+  xhr(404, 'text/html', '<p>no marks</p>'),
+  xhr(422, 'application/json', '{"detail": [{"msg": "x"}]}'),
+  null,
+].map((x) => win.editorRequestError(x));
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+class TestAFailedRequestIsShown:
+    """htmx swaps no error response, so the page says why a request failed (#2215).
+
+    The error pages mark their heading and message for ``editor.js``, which
+    reads them out of the response as text and shows them as a notice.
+    """
+
+    _SCRIPT = Path(editor_app.__file__).parent / "static" / "editor.js"
+
+    @staticmethod
+    def _marked(page: str, attribute: str) -> str:
+        match = re.search(rf"<[^>]*\s{attribute}[\s>][^<]*", page)
+        assert match is not None, f"no element marked {attribute}"
+        return html.unescape(match.group(0).split(">", 1)[1]).strip()
+
+    def test_a_missing_draft_s_page_marks_its_message(self, client: TestClient) -> None:
+        response = client.post(
+            "/draft/no-such-draft/save", headers={"HX-Request": "true"}
+        )
+        assert response.status_code == 404
+        assert self._marked(response.text, "data-error-heading") == "Not found"
+        assert "no-such-draft" in self._marked(response.text, "data-error-message")
+
+    def test_a_storage_error_s_page_marks_its_message(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _refuse_writes(monkeypatch)
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        assert response.status_code == 500
+        assert self._marked(response.text, "data-error-heading") == "Cannot save drafts"
+        message = self._marked(response.text, "data-error-message")
+        assert str(tmp_path / "drafts") in message
+        assert "Permission denied" in message
+
+    def test_the_script_listens_for_failed_requests(self) -> None:
+        script = self._SCRIPT.read_text(encoding="utf-8")
+        assert "addEventListener('htmx:responseError', showRequestError)" in script
+        assert "addEventListener('htmx:sendError', showRequestError)" in script
+        section = script.split("* Failed requests", 1)[1].split(
+            "function refresh()", 1
+        )[0]
+        # It reads the error page's marked elements, as text.
+        assert "[data-error-heading]" in section
+        assert "[data-error-message]" in section
+        assert "textContent" in section
+        assert "innerHTML" not in section
+        assert "insertAdjacentHTML" not in section
+        # A failed export is shown where the export's answer goes.
+        assert "'export-result'" in section
+        assert "window.editorRequestError = requestError" in section
+
+    def test_the_script_shows_and_clears_failures(self) -> None:
+        """Run the failed-requests code against a stub DOM.
+
+        The stub's elements throw on ``innerHTML``, so a reason put into the
+        page as markup fails the run, as a selector the stub does not model
+        does.
+        """
+        import json
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is not installed")
+        run = subprocess.run(
+            [node, "-e", _FAILED_REQUESTS_HARNESS, str(self._SCRIPT)],
+            capture_output=True,
+            text=True,
+            timeout=_HANG_S,
+            check=True,
+        )
+        result = json.loads(run.stdout)
+        storage = {
+            "where": "status",
+            "verb": "post",
+            "text": "Cannot save drafts No write to /d: Permission denied",
+        }
+        # The error page's heading and message, as text, in the status line.
+        assert result["storage"] == [storage]
+        # A read going through says nothing about a refused write; a failed
+        # write neither; a write going through does.
+        assert result["afterRead"] == [storage]
+        assert result["afterFailedWrite"] == [storage]
+        assert result["afterWrite"] == []
+        # An unreachable server; a failed read is taken down by a read.
+        assert result["unreachable"] == [
+            {
+                "where": "status",
+                "verb": "get",
+                "text": "Request failed The server could not be reached.",
+            }
+        ]
+        assert result["unreachableAfterRead"] == []
+        # A failed export is shown where the export's answer goes, and stays.
+        assert result["exportFailed"] == [
+            {
+                "where": "export-result",
+                "verb": "post",
+                "text": "Export failed \u2014 nothing to download Request failed: disk full",
+            }
+        ]
+        # The map library's button shows its own failures.
+        assert result["handlesErrors"] == []
+        # Without a status line, one notice at the top of the page, the last.
+        assert result["noStatus"] == [
+            {
+                "where": "main",
+                "verb": "post",
+                "text": "Request failed The server answered HTTP 503.",
+            }
+        ]
+        assert [r["message"] for r in result["reasons"]] == [
+            "Not a map",
+            "The server answered HTTP 404.",
+            "The server answered HTTP 422.",
+            "The server could not be reached.",
+        ]
+
+
 class TestKeyboardNavigation:
     """Arrow keys walk the canvas, and only the canvas.
 

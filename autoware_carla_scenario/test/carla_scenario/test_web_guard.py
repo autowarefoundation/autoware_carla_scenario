@@ -534,6 +534,11 @@ def test_a_stored_draft_is_kept_out_of_inline_script(
     )
     assert "getElementById('map-use-error')" in handler.group(1)
     assert "textContent" in handler.group(1) and "innerHTML" not in handler.group(1)
+    # The reason is the route's text/plain answer or an error page's message,
+    # never the response's source (#2215), and the global notice stays out.
+    assert "window.editorRequestError(event.detail.xhr).message" in handler.group(1)
+    assert "responseText" not in handler.group(1)
+    assert "data-handles-errors" in page
     assert 'id="map-use-error" hidden' in page
     assert f'<input type="hidden" name="draft" value="{draft_id}">' in page
     # No inline handler carries the id itself.
