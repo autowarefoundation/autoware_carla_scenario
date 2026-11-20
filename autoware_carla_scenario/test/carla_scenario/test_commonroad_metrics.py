@@ -2264,3 +2264,31 @@ def test_a_timeout_longer_than_poll_waits_at_once_is_fine(
     world = _following(opendrive)
     series = evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
     assert series[CRIME_TTC_S].values == [1.0]
+
+
+@pytest.mark.parametrize("block", [None, {}])
+def test_an_absent_or_null_metrics_block_is_the_default(block: Any) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import metrics_heavy
+
+    assert metrics_heavy(OmegaConf.create({})) is None
+    assert metrics_heavy(OmegaConf.create({"metrics": block})) is None
+
+
+@pytest.mark.parametrize(
+    ("block", "shown"),
+    [(False, "False"), (0, "0"), ("", "''"), (3, "3"), ([1], "[1]")],
+)
+def test_a_metrics_block_that_is_not_a_mapping_is_refused(
+    block: Any, shown: str
+) -> None:
+    """``metrics: false`` is not read as unset, nor ``metrics: 3`` raise an
+    AttributeError that names neither ``metrics`` nor the value (#2224)."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import metrics_heavy
+
+    with pytest.raises(ValueError, match=r"^metrics must be a mapping, got ") as info:
+        metrics_heavy(OmegaConf.create({"metrics": block}))
+    assert str(info.value).endswith(shown)

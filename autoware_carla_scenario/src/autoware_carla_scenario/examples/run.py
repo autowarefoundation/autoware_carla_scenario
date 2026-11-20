@@ -1950,11 +1950,20 @@ def metrics_heavy(cfg: DictConfig) -> bool | None:
     off, a typo refused, #1761); ``None`` when it is unset or null, which
     leaves the decision to ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS``.
 
+    A ``metrics`` block that is absent or null is the default (nothing
+    set); one that is not a mapping (``false``, ``0``, ``''``, a list) is
+    refused rather than read as unset.
+
     Raises:
-        ValueError: naming ``metrics.heavy``, for a value that is not a
-            switch.
+        ValueError: naming ``metrics``, for a block that is not a mapping, or
+            ``metrics.heavy``, for a value that is not a switch.
     """
-    value = (cfg.get("metrics") or {}).get("heavy")
+    block = cfg.get("metrics")
+    if block is None:
+        return None
+    if not isinstance(block, (DictConfig, Mapping)):
+        raise ValueError(f"metrics must be a mapping, got {shown(block)}")
+    value = block.get("heavy")
     if value is None:
         return None
     return check_flag("metrics.heavy", value)

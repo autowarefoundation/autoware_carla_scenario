@@ -11,7 +11,8 @@ CARLA map is still loaded, :func:`evaluate_metrics` replays those frames:
   live world (:func:`~autoware_carla_scenario.metrics.read_metric`), on a
   stand-in world (:class:`ReplayWorld`) that answers with the recorded actors
   and the run's map -- every tick, in order, so the weaving metrics see the
-  run as it went;
+  run as it went -- a metric that raises in every frame failing the
+  evaluation (:class:`MetricEvaluationError`);
 * CriMe's and CommonRoad-Reach's (:data:`~autoware_carla_scenario.metrics.COMMONROAD_METRICS`)
   by the CommonRoad workers, every
   :attr:`~autoware_carla_scenario.commonroad.CommonRoadSettings.period_s` of
@@ -39,11 +40,10 @@ from .metric_frames import (
     _finite,
     sampled,
 )
+from . import metrics as _metrics
 from .metrics import (
     BUILT_IN_METRICS,
     COMMONROAD_METRICS,
-    read_metric,
-    reset_ego_motion,
     set_importance_sampling_weight,
     track_ego_motion,
 )
@@ -52,10 +52,18 @@ __all__ = [
     "ActorFrame",
     "Frame",
     "FrameRecorder",
+    "MetricEvaluationError",
     "MetricSeries",
     "ReplayWorld",
     "evaluate_metrics",
 ]
+
+
+class MetricEvaluationError(RuntimeError):
+    """A metric raised in every frame it was evaluated in, so read nothing:
+    a fail condition on it would otherwise pass the run without having
+    judged anything."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -168,16 +176,86 @@ class ReplayWorld:
 # ---------------------------------------------------------------------------
 
 
+def _replay(
+    frames: list[Frame],
+    world: ReplayWorld,
+    carla_map: Any,
+    keys: list[str],
+    series: dict[str, MetricSeries],
+) -> None:
+    """Read the world metrics *keys* in every one of *frames*, in order, on
+    *world* replaying them on *carla_map*, into *series*.
+
+    The ego's motion and the weight read are the replay's own, and what the
+    module held before is put back after: the live run's state survives it.
+
+    Raises:
+        MetricEvaluationError: A key raised in every frame.
+    """
+    failed: dict[str, int] = {}
+    first_error: dict[str, str] = {}
+    held_motion = _metrics._MOTION[0]  # noqa: SLF001
+    held_weight = _metrics._RUN["weight"]  # noqa: SLF001
+    try:
+        _metrics._MOTION[0] = _metrics._Motion()  # noqa: SLF001
+        _metrics._use_map(world, carla_map)  # type: ignore[arg-type]  # noqa: SLF001
+        for frame in frames:
+            world.show(frame)
+            set_importance_sampling_weight(frame.weight)
+            track_ego_motion(world, frame.t)  # type: ignore[arg-type]
+            for key in keys:
+                value: Optional[float] = None
+                try:
+                    value = BUILT_IN_METRICS[key].read(world)  # type: ignore[arg-type]
+                except Exception as error:  # noqa: BLE001 - counted, logged once
+                    failed[key] = failed.get(key, 0) + 1
+                    if key not in first_error:
+                        first_error[key] = f"{type(error).__name__}: {error}"
+                        logger.warning(
+                            "Metric %s reads nothing at %.3fs: it raised",
+                            key,
+                            frame.t,
+                            exc_info=error,
+                        )
+                series[key].times.append(frame.t)
+                series[key].values.append(_finite(value))
+    finally:
+        _metrics._MOTION[0] = held_motion  # noqa: SLF001
+        _metrics._RUN["weight"] = held_weight  # noqa: SLF001
+        # Nor is the replay's world and map kept: a live world read next
+        # reads its own (and the recorded frames are let go).
+        _metrics._hold(None)  # type: ignore[arg-type]  # noqa: SLF001
+    # A metric that raised in every frame read nothing at all: a fail
+    # condition on it would pass the run without having judged it.
+    always = [key for key in keys if frames and failed.get(key, 0) == len(frames)]
+    if always:
+        raise MetricEvaluationError(
+            "the metrics "
+            + ", ".join(f"{key} (failed: {first_error[key]})" for key in always)
+            + f" failed in every frame evaluated ({len(frames)}), so read nothing"
+        )
+
+
 def evaluate_metrics(
     frames: list[Frame],
     carla_map: Any,
     keys: list[str],
 ) -> dict[str, MetricSeries]:
     """The metrics *keys* over the recorded *frames*, on the run's
-    *carla_map*.
+    *carla_map* (the map-based ones on it, whichever map
+    :class:`~autoware_carla_scenario.coordinate.map_manager.MapManager`
+    holds).
+
+    A frame a metric raises in reads nothing (``None``), as one with nothing
+    to read does; the first exception of each metric is logged.  The ego's
+    motion and the weight the replay reads are its own: what the module
+    holds of the live run (its progress,
+    :func:`~autoware_carla_scenario.metrics.ego_progress`) is left as it is.
 
     Raises:
         ValueError: A key is not a built-in metric's.
+        MetricEvaluationError: A metric that is not a CommonRoad one raised in
+            every frame evaluated.
         ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A
             CommonRoad metric is asked for and its workers cannot be started
             or do not know it, one of them fails (exits, answers out of
@@ -195,18 +273,7 @@ def evaluate_metrics(
     world = ReplayWorld(carla_map)
 
     if world_keys:
-        reset_ego_motion()
-        try:
-            for frame in frames:
-                world.show(frame)
-                set_importance_sampling_weight(frame.weight)
-                track_ego_motion(world, frame.t)  # type: ignore[arg-type]
-                for key in world_keys:
-                    series[key].times.append(frame.t)
-                    series[key].values.append(_finite(read_metric(key, world)))  # type: ignore[arg-type]
-        finally:
-            reset_ego_motion()
-            set_importance_sampling_weight(None)
+        _replay(frames, world, carla_map, world_keys, series)
 
     if commonroad_keys:
         from .commonroad.session import (  # noqa: PLC0415
