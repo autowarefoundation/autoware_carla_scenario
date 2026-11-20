@@ -270,7 +270,7 @@ After the loop: MetricConditions are judged on the recorded frames.
 - **Pass conditions** are checked first. The **first** condition to return a non-`None` `ScenarioResult` terminates the loop with a pass.
 - **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure. A `MetricCondition` is not checked in the loop: it is judged on the recorded frames once the run is over, and can still fail a run the loop passed.
 - An **ego termination** request (e.g. the driver policy signalled one) is checked after the conditions, so a pass or fail on the same tick still decides the outcome; on its own it is not a pass.
-- If the loop exits via `is_done()` returning `True` with no result, the scenario is treated as **passed**. Every path records one `condition_statuses` entry per registered condition.
+- If the loop exits via `is_done()` returning `True` with no result, the scenario is treated as **passed**. Every path that reaches the tick loop records one `condition_statuses` entry per registered condition; an ego that asks to terminate before it (its stack never became ready) records none, since no condition was ever checked.
 
 ### The initialization phase
 

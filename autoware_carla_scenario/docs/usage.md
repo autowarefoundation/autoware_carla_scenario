@@ -1408,8 +1408,9 @@ messages with ` AND ` -- or `Scenario completed successfully` when
 `is_done()` ended the run. When a fail condition ends the run, it is that
 condition's message.
 
-`condition_statuses` has one entry per registered condition, pass conditions
-first, each labelled `pass[i](label)` or `fail[i](label)`: whether it was
+`condition_statuses` has one entry per registered condition (none when the
+ego gave up before the tick loop began, as no condition was checked), pass
+conditions first, each labelled `pass[i](label)` or `fail[i](label)`: whether it was
 satisfied when the run ended, its message (`not triggered` for a fail
 condition that was not, `not yet satisfied` for a pass condition), its class,
 its role, and its `details` (an `AndCondition`'s are its children's statuses,
