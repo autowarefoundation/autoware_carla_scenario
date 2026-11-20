@@ -144,9 +144,14 @@ def sumo_home() -> Path:
 
 
 def _binary(name: str) -> str:
-    path = sumo_home() / "bin" / name
-    if path.is_file():
-        return str(path)
+    """SUMO's binary *name*: in :func:`sumo_home`'s ``bin``, else on ``PATH``
+    (a SUMO installed without its tools, or without ``$SUMO_HOME``)."""
+    try:
+        path = sumo_home() / "bin" / name
+        if path.is_file():
+            return str(path)
+    except TrafficBackendUnavailable:
+        pass
     found = shutil.which(name)
     if found is None:
         raise TrafficBackendUnavailable(f"SUMO's {name} was not found: {_INSTALL}")

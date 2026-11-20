@@ -302,3 +302,101 @@ def test_the_engine_is_sumos_by_default_and_checked() -> None:
         MesoscopicConfig(segment_length_m=0.0)
     with pytest.raises(ValueError, match="segment_length_m must be positive"):
         MesoscopicConfig.from_mapping({"segment_length_m": True})
+
+
+class _Lane:
+    """A sumolib lane, as far as MesoRoads reads one."""
+
+    def __init__(self, shape: list[tuple[float, float, float]]) -> None:
+        self.shape = shape
+
+    def allows(self, vclass: str) -> bool:
+        return True
+
+    def getShape3D(self) -> list[tuple[float, float, float]]:
+        return self.shape
+
+
+class _Edge:
+    def __init__(self, edge_id: str, lanes: list[_Lane], length: float) -> None:
+        self.edge_id = edge_id
+        self.lanes = lanes
+        self.length = length
+
+    def getFunction(self) -> str:
+        return ""
+
+    def allows(self, vclass: str) -> bool:
+        return True
+
+    def getLanes(self) -> list[_Lane]:
+        return self.lanes
+
+    def getID(self) -> str:
+        return self.edge_id
+
+    def getLength(self) -> float:
+        return self.length
+
+    def getSpeed(self) -> float:
+        return 13.9
+
+    def getOutgoing(self) -> dict[str, list[object]]:
+        return {}
+
+
+class _Net:
+    def __init__(self, *edges: _Edge) -> None:
+        self.edges = list(edges)
+
+    def getEdges(self) -> list[_Edge]:
+        return self.edges
+
+
+def test_the_roads_place_a_vehicle_at_its_lanes_height() -> None:
+    """A network from OpenDRIVE keeps the roads' elevation; a vehicle put
+    back from the mesoscopic model was put at z = 0 (#2221)."""
+    from autoware_carla_scenario.traffic.sumo.mesosim import MesoRoads
+
+    # A ramp: 0 m up to 10 m over its first 100 m, then level for 100 m.
+    ramp = _Lane([(0.0, -1.6, 0.0), (100.0, -1.6, 10.0), (200.0, -1.6, 10.0)])
+    roads = MesoRoads(_Net(_Edge("ramp", [ramp], 200.0)))
+    assert roads.has_elevation
+    assert roads.pose("ramp", 0.0).z == pytest.approx(0.0)
+    assert roads.pose("ramp", 25.0).z == pytest.approx(2.5)
+    assert roads.pose("ramp", 50.0).z == pytest.approx(5.0)
+    assert roads.pose("ramp", 150.0).z == pytest.approx(10.0)
+    pose = roads.pose("ramp", 50.0)
+    assert (pose.x, pose.y) == pytest.approx((50.0, -1.6))
+    assert pose.heading_deg == pytest.approx(90.0)
+    # Past either end: the end's height.
+    assert roads.pose("ramp", 500.0).z == pytest.approx(10.0, abs=1e-3)
+    assert roads.pose("ramp", -5.0).z == pytest.approx(0.0)
+    # A lane on a level other than 0 counts as elevation too.
+    level = _Lane([(0.0, 0.0, 4.0), (10.0, 0.0, 4.0)])
+    assert MesoRoads(_Net(_Edge("level", [level], 10.0))).has_elevation
+
+
+def test_a_height_between_points_of_no_length() -> None:
+    """Two points in the same place (a step in the road) take the height of
+    the later one, and an offset past the shape its last point's."""
+    from autoware_carla_scenario.traffic.sumo.mesosim import _height_at
+
+    shape = [(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (20.0, 0.0)]
+    heights = [0.0, 1.0, 3.0, 3.0]
+    assert _height_at(shape, heights, 5.0) == pytest.approx(0.5)
+    assert _height_at(shape, heights, 10.0) == pytest.approx(1.0)
+    assert _height_at(shape, heights, 15.0) == pytest.approx(3.0)
+    assert _height_at(shape, heights, 25.0) == pytest.approx(3.0)
+    assert _height_at([(0.0, 0.0)], [2.0], 0.0) == pytest.approx(2.0)
+    assert _height_at([], [], 1.0) == 0.0
+
+
+def test_a_network_without_elevation_says_so(grid: Path) -> None:
+    import sumolib
+
+    from autoware_carla_scenario.traffic.sumo.mesosim import MesoRoads
+
+    roads = MesoRoads(sumolib.net.readNet(str(grid)))
+    assert not roads.has_elevation
+    assert roads.pose("A0B0", 50.0).z == 0.0

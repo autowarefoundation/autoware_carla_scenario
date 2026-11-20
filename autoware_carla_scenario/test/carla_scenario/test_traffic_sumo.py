@@ -481,6 +481,121 @@ def test_a_vehicle_not_held_takes_its_speed_into_the_queue_model() -> None:
     assert backend._meso_held == {}
 
 
+class _Roads:
+    """MesoRoads, as far as placing a mesoscopic vehicle uses it: every
+    place at (110, -5.25), facing east, *z* m up."""
+
+    def __init__(self, z: float, has_elevation: bool) -> None:
+        self.z = z
+        self.has_elevation = has_elevation
+
+    def pose(self, edge: str, offset: float) -> Pose2D:
+        return Pose2D(110.0, -5.25, self.z, 90.0)
+
+
+class _Map:
+    """A CARLA map whose driving lane is everywhere 7.5 m up."""
+
+    def __init__(self) -> None:
+        self.asked: list[Any] = []
+
+    def get_waypoint(self, location: Any, **kwargs: Any) -> Any:
+        self.asked.append((location, kwargs))
+        return SimpleNamespace(
+            transform=SimpleNamespace(location=SimpleNamespace(z=7.5))
+        )
+
+
+def _placing_backend(
+    monkeypatch: pytest.MonkeyPatch, z: float, has_elevation: bool
+) -> tuple[Any, _Map]:
+    from autoware_carla_scenario.traffic.sumo import backend as backend_module
+
+    backend, _vehicles, meso, _world = _fogged_backend()
+    meso.max_speed["v"] = 20.0
+    backend._meso_roads = _Roads(z, has_elevation)  # type: ignore[assignment]
+    carla_map = _Map()
+    monkeypatch.setattr(backend_module, "run_carla_map", lambda world: carla_map)
+    return backend, carla_map
+
+
+def _as_background(backend: Any) -> None:
+    """Make "v", in the queue model, one of *backend*'s background vehicles."""
+    backend._background = {"v"}
+    backend._running = True
+    backend._traci.vehicle.getIDList = lambda: []
+    backend._traci.simulation.getPendingVehicles = lambda: []
+    backend._traci.simulation.getTime = lambda: 0.0
+    backend._background_unstepped = set()
+    backend._background_requested = {}
+
+
+def test_a_mesoscopic_vehicle_is_placed_at_its_lanes_height(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scenario vehicle back from the mesoscopic model was spawned at
+    z = 0 + lift: up to 13.8 m off the road on the fixture map (#2221)."""
+    backend, carla_map = _placing_backend(monkeypatch, -13.8, True)
+    pose = backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1))
+    # The box centre, half the length behind the front bumper, on its lane.
+    assert (pose.x, pose.y) == pytest.approx((110.0 - 2.25, 5.25))
+    assert pose.z == pytest.approx(-13.8)
+    assert carla_map.asked == []  # the network's height, not CARLA's
+    # Reported with its height too.
+    _as_background(backend)
+    assert backend.background_vehicles(None)["v"][2] == pytest.approx(-13.8)
+
+
+def test_on_a_network_without_elevation_the_height_is_carlas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, carla_map = _placing_backend(monkeypatch, 0.0, False)
+    pose = backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1))
+    assert pose.z == pytest.approx(7.5)
+    ((location, kwargs),) = carla_map.asked
+    assert (location.x, location.y) == pytest.approx((110.0 - 2.25, 5.25))
+    assert kwargs["project_to_road"] is True
+    # Without a world to ask (a report), the network's: no height.
+    assert backend._meso_carla_pose("v", 0.0).z == 0.0
+    _as_background(backend)
+    assert backend.background_vehicles(None)["v"][2] is None
+
+
+@pytest.mark.parametrize("answer", ["none", "error"])
+def test_where_carla_has_no_lane_the_height_stays_the_networks(
+    monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    """CARLA finding no driving lane, or the map not answering, leaves the
+    network's height rather than failing the spawn."""
+    backend, carla_map = _placing_backend(monkeypatch, 0.0, False)
+
+    def get_waypoint(location: Any, **kwargs: Any) -> Any:
+        if answer == "error":
+            raise RuntimeError("the map is gone")
+        return None
+
+    monkeypatch.setattr(carla_map, "get_waypoint", get_waypoint)
+    assert backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1)).z == 0.0
+
+
+@pytest.mark.parametrize(("has_elevation", "z"), [(True, 3.1), (False, 7.5)])
+def test_a_scenario_vehicle_back_from_the_mesoscopic_model_spawns_on_its_road(
+    monkeypatch: pytest.MonkeyPatch, has_elevation: bool, z: float
+) -> None:
+    backend, _carla_map = _placing_backend(monkeypatch, 3.1, has_elevation)
+    backend._meso_entities["v"] = SimpleNamespace(role_name="npc")
+    spawned: list[Pose2D] = []
+
+    def spawn(world: Any, blueprint: str, role_name: str, pose: Pose2D) -> Any:
+        spawned.append(pose)
+        return None  # no room: it stays mesoscopic
+
+    backend._spawn_actor = spawn
+    assert not backend._to_microscopic(SimpleNamespace(id=1), "v", 1.0)
+    (pose,) = spawned
+    assert pose.z == pytest.approx(z)
+
+
 def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
     from autoware_carla_scenario.traffic.parameters import (
         TrafficParameterError,
@@ -712,8 +827,9 @@ class _FakeWorld:
         return _Actors(self.actors)
 
     def get_map(self) -> Any:
-        """A map no actor stands on: no road ahead to search for a dead end."""
-        return SimpleNamespace(get_waypoint=lambda location: None)
+        """A map no actor stands on: no road ahead to search for a dead end,
+        and no lane to give a height where SUMO's network has none."""
+        return SimpleNamespace(get_waypoint=lambda location, **kwargs: None)
 
     def get_blueprint_library(self) -> _Library:
         self.library_fetches += 1

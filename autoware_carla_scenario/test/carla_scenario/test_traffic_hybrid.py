@@ -551,3 +551,136 @@ def test_a_missing_network_is_refused(tmp_path: Path) -> None:
     backend = build_backend("hybrid", {"net_path": str(tmp_path / "none.net.xml")})
     with pytest.raises(TrafficBackendUnavailable, match="does not exist"):
         backend.prepare(TrafficContext(client=_Client(), fixed_delta_seconds=STEP))  # type: ignore[arg-type]
+
+
+@needs_sumo
+def test_a_vehicle_comes_back_at_its_origin_not_its_box_centre(
+    make: Any, engine: str
+) -> None:
+    """The model has a vehicle's box centre; spawned there, it came back a
+    box offset (about a metre) ahead each time it changed level, and
+    ``background_vehicles()`` gave its centre while out of CARLA but its
+    origin in it (#2221)."""
+    run = make(engine=engine, micro_radius_m=60.0, meso_radius_m=80.0)
+    backend, world = run.backend, run.world
+    ego = world.place(0.0, -400.0, _NORTH)  # far from everything
+    backend.start(world, skip_actor_ids={ego.id})
+    handle = run.spawn(150.0, 4.8, _EAST, speed_kmh=5.0)
+    actor = backend.background_actors(world)[handle]
+    actor.bounding_box.location = carla.Location(1.2, 0.0, 0.0)
+    now = backend._now()
+    assert backend._to_mesoscopic(world, handle, now)
+    x, y, z = backend.background_vehicles(world)[handle]
+    # Its origin, as one in CARLA is reported; the grid has no elevation.
+    assert (x, y) == pytest.approx((150.0, 4.8), abs=1e-3)
+    assert z is None
+    assert backend._to_microscopic(world, handle, now)
+    back = backend.background_actors(world)[handle]
+    assert back is not actor
+    location = back.transform.location
+    assert (location.x, location.y) == pytest.approx((150.0, 4.8), abs=1e-3)
+
+
+@needs_sumo
+def test_the_lane_is_looked_up_at_the_height_of_the_road(
+    make: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At z = 0, CARLA's lane lookup could pick the wrong level of a stacked
+    road (#2221)."""
+    import autoware_carla_scenario.traffic.traffic_manager as tm_module
+    from autoware_carla_scenario.traffic.sumo.geometry import Pose2D
+
+    run = make(engine="queue", micro_radius_m=60.0, meso_radius_m=80.0)
+    backend, world = run.backend, run.world
+    ego = world.place(0.0, -400.0, _NORTH)
+    backend.start(world, skip_actor_ids={ego.id})
+    handle = run.spawn(150.0, 4.8, _EAST, speed_kmh=5.0)
+    now = backend._now()
+    assert backend._to_mesoscopic(world, handle, now)
+    roads = backend._roads
+    monkeypatch.setattr(roads, "has_elevation", True)
+    flat_pose = roads.pose
+
+    def raised(edge: str, offset: float) -> Pose2D:
+        pose = flat_pose(edge, offset)
+        return Pose2D(pose.x, pose.y, 12.5, pose.heading_deg)
+
+    monkeypatch.setattr(roads, "pose", raised)
+    assert backend.background_vehicles(world)[handle][2] == pytest.approx(12.5)
+    asked: list[Any] = []
+
+    def on_lane(world: Any, transform: Any) -> Any:
+        asked.append(transform)
+        return _on_lane(world, transform)
+
+    monkeypatch.setattr(tm_module, "_background_lane", on_lane)
+    assert backend._to_microscopic(world, handle, now)
+    (transform,) = asked
+    assert transform.location.z == pytest.approx(12.5)
+
+
+def test_the_queue_engine_needs_no_sumo_binary(
+    grid: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``prepare`` looked up SUMO's installation for ``engine: queue``,
+    which never starts SUMO (#2221)."""
+    from autoware_carla_scenario.traffic import TrafficBackendUnavailable
+    from autoware_carla_scenario.traffic.sumo import hybrid as hybrid_module
+
+    asked: list[str] = []
+
+    def no_sumo(name: str) -> str:
+        asked.append(name)
+        raise TrafficBackendUnavailable("SUMO is not installed")
+
+    monkeypatch.setattr(hybrid_module, "_binary", no_sumo)
+    context = TrafficContext(
+        client=_Client(),  # type: ignore[arg-type]
+        world=_World(),  # type: ignore[arg-type]
+        fixed_delta_seconds=STEP,
+        random_seed=3,
+        output_dir=tmp_path,
+        file_stem="Hybrid",
+    )
+    queue = build_backend(
+        "hybrid", {"net_path": str(grid), "mesoscopic": {"engine": "queue"}}
+    )
+    try:
+        queue.prepare(context)
+        assert asked == []
+    finally:
+        queue.close()
+    sumo = build_backend(
+        "hybrid", {"net_path": str(grid), "mesoscopic": {"engine": "sumo"}}
+    )
+    try:
+        with pytest.raises(TrafficBackendUnavailable, match="not installed"):
+            sumo.prepare(context)
+        assert asked == ["sumo"]
+    finally:
+        sumo.close()
+
+
+def test_a_sumo_binary_is_found_on_the_path_without_a_sumo_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic import TrafficBackendUnavailable
+    from autoware_carla_scenario.traffic.sumo import network
+
+    def no_home() -> Path:
+        raise TrafficBackendUnavailable("SUMO is not installed")
+
+    monkeypatch.setattr(network, "sumo_home", no_home)
+    monkeypatch.setattr(
+        network.shutil, "which", lambda name: str(tmp_path / "bin" / name)
+    )
+    assert network._binary("sumo") == str(tmp_path / "bin" / "sumo")
+    monkeypatch.setattr(network.shutil, "which", lambda name: None)
+    with pytest.raises(TrafficBackendUnavailable, match="SUMO's sumo was not found"):
+        network._binary("sumo")
+    # In SUMO's home first, where it is.
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    (home / "bin" / "sumo").write_text("")
+    monkeypatch.setattr(network, "sumo_home", lambda: home)
+    assert network._binary("sumo") == str(home / "bin" / "sumo")

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Optional, Union
 
-from ...utils.clearance import actor_box_centre
+from ...utils.clearance import _offset_of, actor_box_centre
 from ..base import SimulationFidelity, TrafficBackendUnavailable, TrafficContext
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
@@ -41,13 +41,13 @@ from ..parameters import VEHICLE_PARAMETER_BACKENDS, VehicleParameters
 from ..traffic_manager import TrafficManagerBackend
 from .backend import world_opendrive
 from .config import check_text, resolve_cache_dir
-from .geometry import Pose2D, carla_to_sumo, sumo_to_carla
+from .geometry import Pose2D, box_centre_to_origin, carla_to_sumo, sumo_to_carla
 from .mesosim import (
     MesoRoads,
     SumoMesoscopicTraffic,
     build_mesoscopic_model,
 )
-from .network import build_network, sumo_home
+from .network import _binary, build_network
 from .options import _net_offset, run_output_dir
 
 if TYPE_CHECKING:
@@ -149,6 +149,10 @@ class _Parked:
     blueprint: str
     #: The speed it was capped at, km/h (its spawn speed), if any.
     speed_kmh: Optional[float]
+    #: Its bounding box's offset from its origin, forward and to the right
+    #: (m, CARLA's ``bounding_box.location``): where the model has its box
+    #: centre, this says where its origin -- what CARLA spawns -- goes.
+    box_offset: tuple[float, float] = (0.0, 0.0)
 
 
 class HybridTrafficBackend(TrafficManagerBackend):
@@ -226,7 +230,11 @@ class HybridTrafficBackend(TrafficManagerBackend):
         # Routes from a stream of their own: the same seed, the same routes.
         self._route_rng = random.Random(context.random_seed + 2)
         out = run_output_dir(context)
+        # SUMO itself only for its mesoscopic model: the queue model needs
+        # sumolib and the network, not a SUMO installation.
+        binary = ""
         if config.engine == "sumo":
+            binary = _binary("sumo")
             out.mkdir(parents=True, exist_ok=True)
         # No signals: CARLA's lights are matched to SUMO's only by the sumo
         # backend, so SUMO's mesoscopic model runs its own programs and the
@@ -235,7 +243,7 @@ class HybridTrafficBackend(TrafficManagerBackend):
             config,
             self._roads.links,
             net_file=net_file,
-            binary=str(sumo_home() / "bin" / "sumo"),
+            binary=binary,
             step_length=self._step_s,
             seed=context.random_seed,
             log_file=out / "sumo_meso.log",
@@ -326,15 +334,19 @@ class HybridTrafficBackend(TrafficManagerBackend):
     def background_vehicles(
         self, world: "carla.World"
     ) -> dict[str, tuple[float, float, Optional[float]]]:
-        """Every background vehicle, in CARLA or not: one out of it where the
-        mesoscopic model has it, with no height."""
+        """Every background vehicle, in CARLA or not, at its origin, as the
+        TrafficManager gives one in CARLA: one out of it where the mesoscopic
+        model has it, at its lane's height where SUMO's network has one and
+        with none otherwise."""
         out = super().background_vehicles(world)
-        if self._meso is not None:
+        if self._meso is not None and self._roads is not None:
             now = self._now()
+            elevated = self._roads.has_elevation
             for handle in self._meso:
                 if handle in self._parked:
-                    pose = self._carla_pose(handle, now)
-                    out[handle] = (pose.x, pose.y, None)
+                    pose = self._carla_origin(handle, now)
+                    z = pose.z if elevated else None
+                    out[handle] = (pose.x, pose.y, z)
         return out
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
@@ -402,7 +414,8 @@ class HybridTrafficBackend(TrafficManagerBackend):
         for handle in meso:
             if handle not in self._parked:
                 continue
-            pose = self._carla_pose(handle, now)
+            # Its origin, as the vehicles in CARLA are placed by theirs.
+            pose = self._carla_origin(handle, now)
             vx = vy = 0.0
             if ahead:
                 speed = meso.speed(handle, now)
@@ -433,6 +446,7 @@ class HybridTrafficBackend(TrafficManagerBackend):
             x, y = actor_box_centre(actor, transform)
             length = max(2.0 * float(actor.bounding_box.extent.x), 1.0)
             blueprint = str(actor.type_id)
+            box_offset = _offset_of(actor)
         except RuntimeError:
             return False
         pose = carla_to_sumo(
@@ -457,7 +471,7 @@ class HybridTrafficBackend(TrafficManagerBackend):
         except ValueError as exc:
             logger.debug("hybrid: %s stays in CARLA: %s", handle, exc)
             return False
-        self._parked[handle] = _Parked(blueprint, speed_kmh)
+        self._parked[handle] = _Parked(blueprint, speed_kmh, box_offset)
         # Out of CARLA as any background vehicle leaves it.
         super().remove_background(world, handle)
         self._level_changes[0] += 1
@@ -473,12 +487,16 @@ class HybridTrafficBackend(TrafficManagerBackend):
         parked = self._parked.get(handle)
         if meso is None or parked is None or handle not in meso:
             return False
-        centre = self._carla_pose(handle, now)
+        # Its origin, not its box centre: spawned at the centre, it would
+        # come back a box offset (about a metre) ahead of where the model
+        # has it, every time it changes level.  At its lane's height, so the
+        # lane lookup picks the level it is on where roads are stacked.
+        origin = self._carla_origin(handle, now)
         spawned = self._spawn_background_actor(
             world,
             carla.Transform(
-                carla.Location(centre.x, centre.y, 0.0),
-                carla.Rotation(0.0, centre.heading_deg, 0.0),
+                carla.Location(origin.x, origin.y, origin.z),
+                carla.Rotation(0.0, origin.heading_deg, 0.0),
             ),
             parked.blueprint,
             parked.speed_kmh,
@@ -501,4 +519,13 @@ class HybridTrafficBackend(TrafficManagerBackend):
             self._roads.pose(edge, offset),
             self._meso.vehicle(handle).length,
             self._offset,
+        )
+
+    def _carla_origin(self, handle: str, now: float) -> Pose2D:
+        """Where *handle*'s origin -- what a CARLA transform holds -- is, its
+        box centred where the mesoscopic model has it (:meth:`_carla_pose`):
+        by the box offset it had when it left CARLA, as the ``sumo``
+        backend's background vehicles are (``_background_origin``)."""
+        return box_centre_to_origin(
+            self._carla_pose(handle, now), self._parked[handle].box_offset
         )
