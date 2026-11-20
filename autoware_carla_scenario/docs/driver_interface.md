@@ -505,10 +505,12 @@ a camera) that sweeps once per policy step (`policy_timestep_s`), and each polic
 sends that sweep, already converted into the rig frame. The sweep may come from an
 earlier simulation tick of the step than the one the step is sent on; it is stamped
 with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
-within a second is left out rather than replaced by an older one. The first policy
-step waits for none: where in its interval the LiDAR is, nothing yet says, so the
-first sweep is due a policy step later, as a camera's first frame is (the first
-step may send no sweep, and no warning is logged for it).
+within a second is left out rather than replaced by an older one. CARLA first sweeps
+a whole interval after the LiDAR is attached (its `sensor_tick` counts from the spawn),
+so the first read waits only for a sweep that can have been taken by then, as a
+camera's first read does: with a sweep every tick, that tick's; with a longer
+`policy_timestep_s`, none (the first step may then send no sweep, and no warning is
+logged for it) (#2228).
 
 A policy does not see that transport: the servicer records each sweep before `drive` as
 a `LidarFrame` in `session.frame_history`, beside the camera frames, and announces it

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -346,24 +347,61 @@ def test_a_due_sweep_that_never_comes_costs_one_wait(
     assert time.monotonic() - started >= 0.04
 
 
-def test_the_first_read_waits_for_no_sweep(
+def test_the_first_read_waits_for_no_sweep_carla_cannot_have_taken(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A LiDAR sweeping every other tick waited 1 s on its first read and warned
-    of a sweep skipped (#2228): nothing yet says where in its interval it is."""
+    of a sweep skipped (#2228): attached on frame 100, CARLA first sweeps on
+    102, an interval later, so the first read, on 101, has nothing due."""
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 5.0)
     lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.1)
     with caplog.at_level("WARNING", logger=carla_lidar.__name__):
         started = time.monotonic()
         assert lidar.latest_sweep(101) is None
-        # The tick after is still within the interval of the first read.
-        assert lidar.latest_sweep(102) is None
         assert time.monotonic() - started < 0.5
     assert "skipped" not in caplog.text
+    # The first sweep, on 102, is due: waited for while it is on its way.
+    timer = threading.Timer(0.05, lidar._receive, (_measurement(102),))  # noqa: SLF001
+    timer.start()
+    try:
+        sweep = lidar.latest_sweep(102)
+    finally:
+        timer.join()
+    assert sweep is not None and sweep[0] == 102
     # Once sweeps flow, a sweep is due an interval after the newest, as before.
-    lidar._receive(_measurement(103))  # noqa: SLF001
-    sweep = lidar.latest_sweep(103)
-    assert sweep is not None and sweep[0] == 103
+    lidar._receive(_measurement(104))  # noqa: SLF001
+    sweep = lidar.latest_sweep(104)
+    assert sweep is not None and sweep[0] == 104
+
+
+def test_a_lidar_sweeping_every_tick_waits_for_its_first_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a sweep every tick, CARLA sweeps on the tick after the attach, the
+    first read's: that sweep is waited for, as before #2228, not answered None
+    (the ROS 2 LiDAR, the T4 recorder, a driver stepping every tick)."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 5.0)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    assert lidar.sweep_interval_ticks == 1
+    timer = threading.Timer(0.05, lidar._receive, (_measurement(101),))  # noqa: SLF001
+    timer.start()
+    try:
+        sweep = lidar.latest_sweep(101)
+    finally:
+        timer.join()
+    assert sweep is not None and sweep[0] == 101
+
+
+def test_a_first_sweep_due_that_never_comes_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    with caplog.at_level("WARNING", logger=carla_lidar.__name__):
+        started = time.monotonic()
+        assert lidar.latest_sweep(101) is None
+        assert time.monotonic() - started >= 0.04
+    assert "no LiDAR sweep for frame 101 in time; skipped" in caplog.text
 
 
 def test_a_sweep_missing_an_interval_after_the_first_read_still_warns(

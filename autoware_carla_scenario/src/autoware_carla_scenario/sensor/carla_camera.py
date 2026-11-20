@@ -335,7 +335,8 @@ class CarlaCameraSensor(CameraSensorBase):
         #: The newest frame :meth:`latest_image` has taken from the queue.
         self._newest = None
         #: The simulator frame the next frame is counted from: the newest one's,
-        #: or the frame a frame due did not come by; -1 before the first call.
+        #: the frame a frame due did not come by, or the tick before the first
+        #: call, taken as the attach; -1 before the first call.
         self._anchor = -1
 
     # ------------------------------------------------------------------
@@ -443,11 +444,14 @@ class CarlaCameraSensor(CameraSensorBase):
         Otherwise it answers at once with the newest frame queued, which may
         be from an earlier tick: its own frame says which.  ``None`` when
         nothing rendered within the last interval arrived -- an older frame
-        would be a stale one.  The first call does not wait: where in its
-        interval the camera is, nothing yet says.
+        would be a stale one.  The first call is taken as on the tick after
+        the attach, which the first frame is counted from: CARLA first renders
+        an interval after the attach (``sensor_tick`` counts from the spawn),
+        so a camera rendering every tick waits for that tick's frame, and one
+        rendering less often waits for none (#2228).
         """
         if self._anchor < 0:
-            self._anchor = frame
+            self._anchor = frame - 1
         deadline = time.monotonic() + _FRAME_TIMEOUT
         self._take_queued()
         while self._anchor + self._interval_ticks <= frame:

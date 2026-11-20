@@ -371,3 +371,43 @@ def test_the_shared_blueprint_setup_is_what_attach_set() -> None:
     ]
     # attach() hands it the camera's own fps.
     assert _attach(config) == dict(_calls(config, 0.099999))
+
+
+@pytest.mark.parametrize(("fps", "interval_ticks"), [(20.0, 1), (10.0, 2)])
+def test_the_first_read_waits_only_for_a_frame_carla_can_have_rendered(
+    monkeypatch: pytest.MonkeyPatch, fps: float, interval_ticks: int
+) -> None:
+    """Attached on frame 100, CARLA first renders an interval later (#2228):
+    on 101, the first read's tick, with a frame every tick -- waited for -- and
+    on 102 with a frame every other tick, which the first read does not wait
+    for."""
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 5.0)
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=fps)
+    )
+    assert sensor.frame_interval_ticks == interval_ticks
+    first = 100 + interval_ticks
+    if interval_ticks > 1:
+        started = time.monotonic()
+        assert sensor.latest_image(101) is None
+        assert time.monotonic() - started < 0.5
+    timer = threading.Timer(0.05, sensor._on_sensor_data, (_rendered(first, 1),))
+    timer.start()
+    try:
+        latest = sensor.latest_image(first)
+    finally:
+        timer.join()
+    assert latest is not None
+    assert latest[0] == first
+
+
+def test_a_first_frame_due_that_never_comes_costs_one_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 0.05)
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=20.0)
+    )
+    started = time.monotonic()
+    assert sensor.latest_image(101) is None
+    assert time.monotonic() - started >= 0.04
