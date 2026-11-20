@@ -618,6 +618,15 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_heading`. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
+None of these keys copies the document: an exported package runs its document
+as it is when the run starts -- edited after the export, or another one named by
+`<PKG>_DOCUMENT_PATH` -- and only an override replaces what it says. The
+`scenario.spawn_overrides.<entity>` keys, `scenario.param_overrides.<node id>`
+and `scenario.timeout_seconds` are written as `null`, and the `ego.*` keys,
+which the runner reads before the scenario is built, as
+`${scenario_document:<scenario id>,<path>}`: the value at that path of the
+document the package registered (`ego.spawn.lanelet_id`, say), read when the
+key is.
 A run checks what such an override sets: only `null` keeps the document's value,
 `lanelet_id` must be a whole number (`2` or `2.0`, not `2.7`, a boolean or a
 blank) and `s` a finite number (not a boolean or a blank), and an entity's or a
@@ -685,21 +694,22 @@ needs before one can start: Autoware localizes at the spawn, plans a route to
 the goal, and only then engages. The framework asks the same of a hand-written
 scenario — `BaseScenario.require_goal()`, asked by `register_route_to_goal` and
 by `ScenarioRunner` once `setup()` returns — so the editor stores the goal on the
-ego and exports it as the framework's own keys:
+ego and exports it as the framework's own keys, each reading the document
+(for a scenario `cut_in`):
 
 ```yaml
 ego:
-  spawn_lanelet_id: 183
-  spawn_s: 0.0
-  spawn_t: 0.0
-  spawn_heading: 0.0
-  entity: autoware
-  goal_lanelet_id: 265
-  goal_s: 12.5
+  spawn_lanelet_id: ${scenario_document:cut_in,ego.spawn.lanelet_id}
+  spawn_s: ${scenario_document:cut_in,ego.spawn.s.value}
+  spawn_t: ${scenario_document:cut_in,ego.spawn.t}
+  spawn_heading: ${scenario_document:cut_in,ego.spawn.heading}
+  entity: ${scenario_document:cut_in,ego.driven_by}
+  goal_lanelet_id: ${scenario_document:cut_in,ego.goal.lanelet_id}
+  goal_s: ${scenario_document:cut_in,ego.goal.s}
 ```
 
-The goal keys are written only when a goal is set, leaving the `ego` group's own
-`null` in place otherwise.
+An ego with no goal reads as `null`, the `ego` group's own; a run sets any of
+them with the usual override (`ego.goal_lanelet_id=265`).
 
 The **Set Goal** card still exists, for changing a destination mid-run or for a
 vehicle that is not the ego. One owned by the ego and left in the initialization
@@ -917,7 +927,7 @@ neither `cc` nor a build step. Only if that prebuilt package does not match
 the installation -- a `typesafe-carla-toolchain` other than the one the wheel
 was built with, say -- does the first `import typesafe_carla.carla`, the first
 scenario run, build it with the Codon compiler from the toolchain wheel (15 to
-30 minutes, about 14 GB of RAM, `cc`, but no network) into
+50 minutes, about 14 GB of RAM, `cc`, but no network) into
 `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` moves it);
 `typesafe-codon pycarla` does that ahead of time, and reports that there is
 nothing to build when the prebuilt package applies.

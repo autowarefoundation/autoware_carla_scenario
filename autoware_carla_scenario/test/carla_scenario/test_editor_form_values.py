@@ -9,6 +9,11 @@ same: return the same value, of the same types, or raise the same exception
 with the same message, for whatever a form or a document can post -- digit
 grouping (``1_000``), Unicode digits and spaces, signs, integers too long for
 ``int()``, empty items, every separator and random text built from them.
+
+One change is deliberate (#2235): an interpolation is kept only where the
+validator accepts one, the exact ``${map.no_3d_model_lanelet_ids}`` of an
+``int_list_or_ref`` field, and refused everywhere else
+(:func:`_expected_int_list`).
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from autoware_carla_scenario.authoring.registry import (
     FieldKind,
     FieldSpec,
 )
+from autoware_carla_scenario.authoring.hydra_config import MAP_EXCLUSION_REF
 from autoware_carla_scenario.editor import forms
 
 # -- the oracles: editor/forms.py as it was ------------------------------------
@@ -101,6 +107,17 @@ def _old_parse_records(
     if op:
         forms._apply_row_op(spec, rows, op)
     return rows
+
+
+def _expected_int_list(raw: Any, reference: str | None = None) -> Any:
+    """:func:`_old_parse_int_list`, but for the interpolations the old one
+    kept verbatim: only *reference*, exactly, is kept now (#2235)."""
+    text = raw.strip() if isinstance(raw, str) else None
+    if text is not None and text != reference and REFERENCE_PATTERN.match(text):
+        if reference is not None:
+            raise ValueError(f"must be whole numbers or {reference}, got {text!r}")
+        raise ValueError(f"must be whole numbers, got {text!r}")
+    return _old_parse_int_list(raw)
 
 
 # -- the comparison -------------------------------------------------------------
@@ -264,13 +281,13 @@ def test_one_item_parses_as_before(part: str) -> None:
 def test_every_text_parses_as_before() -> None:
     for text in _ALL_TEXTS:
         assert _outcome(forms.parse_int_list, text) == _outcome(
-            _old_parse_int_list, text
+            _expected_int_list, text
         ), text
 
 
 @pytest.mark.parametrize("raw", _NON_TEXT, ids=repr)
 def test_every_non_text_value_parses_as_before(raw: Any) -> None:
-    assert _outcome(forms.parse_int_list, raw) == _outcome(_old_parse_int_list, raw)
+    assert _outcome(forms.parse_int_list, raw) == _outcome(_expected_int_list, raw)
 
 
 def test_lists_of_random_items_parse_as_before() -> None:
@@ -281,15 +298,16 @@ def test_lists_of_random_items_parse_as_before() -> None:
         if rng.random() < 0.3:
             raw = tuple(raw)
         assert _outcome(forms.parse_int_list, raw) == _outcome(
-            _old_parse_int_list, raw
+            _expected_int_list, raw
         ), raw
 
 
 @pytest.mark.parametrize("kind", ["int_list", "lanelet_list", "int_list_or_ref"])
 def test_a_list_field_parses_as_before(kind: FieldKind) -> None:
     spec = FieldSpec("ids", "Ids", kind, (), required=False)
-    for text in (*_TEXTS, *_random_texts(7, 100)):
-        expected = _outcome(_old_parse_int_list, text.strip())
+    reference = MAP_EXCLUSION_REF if kind == "int_list_or_ref" else None
+    for text in (*_TEXTS, MAP_EXCLUSION_REF, *_random_texts(7, 100)):
+        expected = _outcome(_expected_int_list, text.strip(), reference)
         got = _outcome(lambda t: forms.parse_value(spec, t, present=True), text)
         if text.strip():
             assert got == expected, text
@@ -371,3 +389,28 @@ def test_the_checked_split_is_the_old_one(text: str) -> None:
         ]
 
     assert _outcome(form_values.parse_int_text, text) == _outcome(old_split, text)
+
+
+class TestReferences:
+    """An interpolation only where the validator takes one (#2235)."""
+
+    def test_the_exclusion_list_is_kept_for_a_field_that_takes_it(self) -> None:
+        spec = FieldSpec("ids", "Ids", "int_list_or_ref", (), required=False)
+        assert (
+            forms.parse_value(spec, f" {MAP_EXCLUSION_REF} ", present=True)
+            == MAP_EXCLUSION_REF
+        )
+
+    @pytest.mark.parametrize(
+        "text", ["${map.other}", "${ map.no_3d_model_lanelet_ids }", "${a}"]
+    )
+    def test_another_reference_is_refused_there(self, text: str) -> None:
+        spec = FieldSpec("ids", "Ids", "int_list_or_ref", (), required=False)
+        with pytest.raises(ValueError, match="whole numbers or"):
+            forms.parse_value(spec, text, present=True)
+
+    @pytest.mark.parametrize("kind", ["int_list", "lanelet_list"])
+    def test_no_reference_is_taken_by_a_plain_list(self, kind: FieldKind) -> None:
+        spec = FieldSpec("ids", "Ids", kind, (), required=False)
+        with pytest.raises(ValueError, match="must be whole numbers"):
+            forms.parse_value(spec, MAP_EXCLUSION_REF, present=True)

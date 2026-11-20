@@ -19,6 +19,7 @@ from ..trajectory.authoring import (
     parse_route_vertices,
     parse_vertices,
 )
+from ..authoring.hydra_config import MAP_EXCLUSION_REF
 from ..authoring.registry import (
     INT_KINDS,
     INT_LIST_KINDS,
@@ -92,19 +93,29 @@ def _parse_bool(raw: Any) -> bool:
     return flag
 
 
-def parse_int_list(raw: Any) -> Any:
-    """Return *raw* as a list of ints, or verbatim when it is an interpolation.
+def parse_int_list(raw: Any, *, reference: str | None = None) -> Any:
+    """Return *raw* as a list of ints, or *reference* when *raw* is exactly it.
+
+    An interpolation is kept only when the field takes one -- *reference*, the
+    one the validator accepts there (``${map.no_3d_model_lanelet_ids}`` for an
+    ``int_list_or_ref`` field) -- so a form is refused what the document would
+    be refused for, beside the field, rather than stored and left to fail.
 
     Raises:
-        ValueError: If an item is not a whole number, naming that item.
+        ValueError: If an item is not a whole number, naming that item, or
+            *raw* is an interpolation other than *reference*.
     """
     if isinstance(raw, (list, tuple)):
         return [_parse_list_int(str(v).strip()) for v in raw if str(v).strip()]
     text = str(raw or "").strip()
     if not text:
         return []
-    if REFERENCE_PATTERN.match(text):
+    if reference is not None and text == reference:
         return text
+    if REFERENCE_PATTERN.match(text):
+        if reference is not None:
+            raise ValueError(f"must be whole numbers or {reference}, got {text!r}")
+        raise ValueError(f"must be whole numbers, got {text!r}")
     return _parse_int_text(text)
 
 
@@ -144,7 +155,9 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
         if not math.isfinite(number):
             raise ValueError(f"must be a finite number, got {raw!r}")
         return number
-    if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
+    if spec.kind == "int_list_or_ref":
+        return parse_int_list(text, reference=MAP_EXCLUSION_REF)
+    if spec.kind in INT_LIST_KINDS:
         return parse_int_list(text)
     if spec.kind == "trajectory":
         return [list(row) for row in parse_vertices(text)]

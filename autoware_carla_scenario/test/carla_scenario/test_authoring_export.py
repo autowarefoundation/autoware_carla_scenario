@@ -13,6 +13,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 import jinja2
@@ -63,6 +64,8 @@ from autoware_carla_scenario.authoring.wheelhouse import (
     build_wheelhouse,
     supported_pythons,
 )
+
+from ._exported_config import resolved_config
 
 
 #: Options that keep an export offline: no lock, so no sync, no tests and no
@@ -121,9 +124,10 @@ class TestHydraConfig:
         npc = document.entity("npc1")
         assert npc is not None
         assert spawn_lanelet_key(npc) == "scenario.spawn_overrides.npc1.lanelet_id"
+        # Declared, and null: the document's, unless an override sets them.
         assert config["scenario"]["spawn_overrides"]["npc1"] == {
-            "lanelet_id": npc.spawn.lanelet_id,
-            "s": npc.spawn.s.value,
+            "lanelet_id": None,
+            "s": None,
         }
 
     def test_sweep_section_matches_the_sweepers_yaml_shape(self) -> None:
@@ -159,7 +163,7 @@ class TestHydraConfig:
 
     def test_the_egos_goal_uses_the_frameworks_own_keys(self) -> None:
         """The goal reaches the runner the way the spawn does: as ego.* keys."""
-        config = build_scenario_config(_document_with_goal(265, 12.5))
+        config = resolved_config(_document_with_goal(265, 12.5))
 
         assert config["ego"]["goal_lanelet_id"] == 265
         assert config["ego"]["goal_s"] == 12.5
@@ -171,21 +175,21 @@ class TestHydraConfig:
         assert ego is not None
         ego.driven_by = "autoware"
 
-        assert build_scenario_config(document)["ego"]["entity"] == "autoware"
-        assert build_scenario_config(new_document())["ego"]["entity"] == "autopilot"
+        assert resolved_config(document)["ego"]["entity"] == "autoware"
+        assert resolved_config(new_document())["ego"]["entity"] == "autopilot"
 
     def test_the_starter_carries_its_goal_into_the_config(self) -> None:
-        config = build_scenario_config(new_document())
+        config = resolved_config(new_document())
         assert config["ego"]["goal_lanelet_id"] > 0
 
-    def test_an_ego_with_no_goal_writes_no_goal_keys(self) -> None:
+    def test_an_ego_with_no_goal_reads_no_goal(self) -> None:
         # A document whose ego has no goal is a validation error, but the
-        # renderer states only what the document says: an emitted key would
-        # shadow the ego group's own null with a lanelet nobody chose.
-        config = build_scenario_config(_document_with_goal(None))
+        # export states only what the document says: the ego group's own
+        # null, not a lanelet nobody chose.
+        config = resolved_config(_document_with_goal(None))
 
-        assert "goal_lanelet_id" not in config["ego"]
-        assert "goal_s" not in config["ego"]
+        assert config["ego"]["goal_lanelet_id"] is None
+        assert config["ego"]["goal_s"] is None
 
     def test_empty_map_fields_are_left_to_the_map_group(self) -> None:
         """An empty exclusion list must fall through, not shadow the group's."""
@@ -841,6 +845,179 @@ class TestExportedMapGroup:
         assert cfg.map.lanelet2_path
 
 
+@pytest.fixture
+def installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[Path, Path]]:
+    """The starter exported and registered as an installed package's
+    ``register()`` does (its builder, its document and its conf dir), with
+    ``MY_CUT_IN_SCENARIO_DOCUMENT_PATH`` pointing it at an edited copy of
+    the document: ``(package, edited document)``.
+    """
+    from autoware_carla_scenario import registry
+    from autoware_carla_scenario.authoring.persistence import save_document
+
+    package = export_package(new_document(), tmp_path / "out", **OFFLINE).root
+    edited = new_document()
+    npc = edited.entity("npc1")
+    ego = edited.ego
+    assert npc is not None and ego is not None and ego.goal is not None
+    npc.spawn.lanelet_id = 200
+    npc.spawn.s.value = 5.0
+    edited.timeout_seconds = 90.0
+    ego.spawn.lanelet_id = 184
+    ego.spawn.s.value = 7.5
+    ego.goal.lanelet_id = 265
+    ego.goal.s = 12.5
+    ego.initial_speed_kmh = 20.0
+    edited_path = save_document(edited, tmp_path / "edited.yaml")
+    monkeypatch.setenv("MY_CUT_IN_SCENARIO_DOCUMENT_PATH", str(edited_path))
+
+    def forget() -> None:
+        for name in [m for m in sys.modules if m.split(".")[0] == "my_cut_in_scenario"]:
+            del sys.modules[name]
+
+    forget()
+    monkeypatch.syspath_prepend(str(package / "src"))
+    import my_cut_in_scenario  # type: ignore[import-not-found]
+
+    before = (
+        registry.get_scenario_builder("my_cut_in"),
+        registry._SCENARIO_DOCUMENTS.get("my_cut_in"),
+    )
+    my_cut_in_scenario.register()
+    try:
+        yield package, edited_path
+    finally:
+        registry.unregister_conf_dir(my_cut_in_scenario.CONF_DIR)
+        registry._SCENARIO_REGISTRY.pop("my_cut_in", None)
+        registry._SCENARIO_DOCUMENTS.pop("my_cut_in", None)
+        if before[0] is not None:
+            registry._SCENARIO_REGISTRY["my_cut_in"] = before[0]
+        if before[1] is not None:
+            registry._SCENARIO_DOCUMENTS["my_cut_in"] = before[1]
+        forget()
+
+
+class TestTheDocumentDecides:
+    """An exported package runs its document as it is when the run starts
+    (#2235): one edited after the export, or another one its
+    ``<PKG>_DOCUMENT_PATH`` names, and a Hydra override still wins."""
+
+    @staticmethod
+    def _built(cfg: Any) -> Any:
+        from autoware_carla_scenario.examples.run import _to_dict, build_ego_and_spawn
+        from autoware_carla_scenario.registry import get_scenario_builder
+
+        builder = get_scenario_builder("my_cut_in")
+        assert builder is not None
+        ego, spawn_pose, ground_projection = build_ego_and_spawn(cfg)
+        return builder(ego, _to_dict(cfg.scenario), spawn_pose, ground_projection)
+
+    def test_the_exported_config_copies_nothing_of_the_document(
+        self, package: Path
+    ) -> None:
+        text = (
+            package / "src/my_cut_in_scenario/conf/scenario/my_cut_in.yaml"
+        ).read_text()
+        config = yaml.safe_load(text)
+        assert config["scenario"]["timeout_seconds"] is None
+        assert config["scenario"]["spawn_overrides"] == {
+            "npc1": {"lanelet_id": None, "s": None}
+        }
+        assert config["ego"]["spawn_lanelet_id"] == (
+            "${scenario_document:my_cut_in,ego.spawn.lanelet_id}"
+        )
+        assert config["ego"]["goal_lanelet_id"] == (
+            "${scenario_document:my_cut_in,ego.goal.lanelet_id}"
+        )
+
+    def test_an_edited_document_is_the_one_run(
+        self, installed: tuple[Path, Path]
+    ) -> None:
+        package, _ = installed
+        cfg = _compose_exported(package, "map=nishishinjuku")
+        assert (cfg.ego.spawn_lanelet_id, cfg.ego.spawn_s) == (184, 7.5)
+        assert (cfg.ego.goal_lanelet_id, cfg.ego.goal_s) == (265, 12.5)
+        assert cfg.ego.initial_speed_kmh == 20.0
+
+        scenario = self._built(cfg)
+        npc = scenario.document.entity("npc1")
+        assert (npc.spawn.lanelet_id, npc.spawn.s.value) == (200, 5.0)
+        assert scenario.timeout_seconds == 90.0
+        assert scenario._spawn_pose.lanelet_id == 184
+        assert scenario._spawn_pose.s == 7.5
+        assert scenario.goal_pose.lanelet_id == 265
+        assert scenario.goal_pose.s == 12.5
+
+    def test_a_hydra_override_still_wins(self, installed: tuple[Path, Path]) -> None:
+        package, _ = installed
+        cfg = _compose_exported(
+            package,
+            "map=nishishinjuku",
+            "scenario.timeout_seconds=15",
+            "scenario.spawn_overrides.npc1.lanelet_id=999",
+            "scenario.spawn_overrides.npc1.s=3.5",
+            "ego.spawn_lanelet_id=183",
+            "ego.spawn_s=1.0",
+            "ego.goal_lanelet_id=266",
+            "ego.goal_s=2.0",
+        )
+        scenario = self._built(cfg)
+        npc = scenario.document.entity("npc1")
+        assert (npc.spawn.lanelet_id, npc.spawn.s.value) == (999, 3.5)
+        assert scenario.timeout_seconds == 15.0
+        assert (scenario._spawn_pose.lanelet_id, scenario._spawn_pose.s) == (183, 1.0)
+        assert (scenario.goal_pose.lanelet_id, scenario.goal_pose.s) == (266, 2.0)
+
+    def test_a_document_without_a_goal_reads_null(
+        self, installed: tuple[Path, Path]
+    ) -> None:
+        from autoware_carla_scenario.authoring.persistence import (
+            load_document,
+            save_document,
+        )
+
+        package, edited_path = installed
+        document = load_document(edited_path)
+        assert document.ego is not None
+        document.ego.goal = None
+        save_document(document, edited_path)
+        cfg = _compose_exported(package, "map=nishishinjuku")
+        assert cfg.ego.goal_lanelet_id is None
+        assert cfg.ego.goal_s is None
+
+    def test_a_blank_document_path_variable_is_unset(
+        self, installed: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blank means unset (#2235): the shipped document, not a path named
+        by the blank."""
+        import my_cut_in_scenario  # type: ignore[import-not-found]
+        from my_cut_in_scenario import scenario  # type: ignore[import-not-found]
+
+        _, edited_path = installed
+        assert scenario.document_path() == edited_path
+        monkeypatch.setenv("MY_CUT_IN_SCENARIO_DOCUMENT_PATH", "  ")
+        assert scenario.document_path() == my_cut_in_scenario.DOCUMENT_PATH
+        monkeypatch.setenv("MY_CUT_IN_SCENARIO_DOCUMENT_PATH", f" {edited_path} ")
+        assert scenario.document_path() == edited_path
+
+    def test_an_unregistered_document_is_named(
+        self, package: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from omegaconf.errors import InterpolationResolutionError
+
+        from autoware_carla_scenario import registry
+
+        registry._register_scenario_document_resolver()
+        monkeypatch.delitem(registry._SCENARIO_DOCUMENTS, "my_cut_in", raising=False)
+        cfg = _compose_exported(package, "map=nishishinjuku")
+        with pytest.raises(
+            InterpolationResolutionError, match="registered no document"
+        ):
+            _ = cfg.ego.spawn_lanelet_id
+
+
 def _group_exclusions(group: str) -> list[int]:
     """The ``no_3d_model_lanelet_ids`` the framework's *group* file lists."""
     data = yaml.safe_load((_FRAMEWORK_CONF / "map" / f"{group}.yaml").read_text())
@@ -1076,8 +1253,15 @@ class TestRunOnTheDocumentsMap:
 
         scenario_registry.register_scenario_document("my_cut_in", load)
         cfg = _compose_exported(package, "map=my_cut_in_map")
+        check_batch_configs([cfg], ["a"])
+        once = len(loads)
+        assert once >= 1
+        # The map check shares one load across the batch, and the ego keys
+        # (${scenario_document:...}) are read once per composed config.
+        loads.clear()
+        cfg = _compose_exported(package, "map=my_cut_in_map")
         check_batch_configs([cfg, cfg, cfg], ["a", "b", "c"])
-        assert loads == ["my_cut_in"]
+        assert len(loads) == once
 
     @pytest.mark.parametrize(
         "spelling",

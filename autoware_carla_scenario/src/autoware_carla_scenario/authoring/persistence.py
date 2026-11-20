@@ -105,8 +105,12 @@ _DRAFT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def default_draft_dir() -> Path:
-    """Return the directory drafts are stored in."""
-    env = os.environ.get(DRAFT_DIR_ENV)
+    """Return the directory drafts are stored in.
+
+    ``$SCENARIO_EDITOR_DRAFTS`` when it is set and not blank (a blank one is
+    unset), else ``./scenario_drafts``.
+    """
+    env = (os.environ.get(DRAFT_DIR_ENV) or "").strip()
     if env:
         return Path(env).expanduser().resolve()
     return (Path.cwd() / "scenario_drafts").resolve()
@@ -154,10 +158,15 @@ def load_document(path: str | Path) -> ScenarioDocument:
 
 
 def save_document(document: ScenarioDocument, path: str | Path) -> Path:
-    """Write *document* to *path* as YAML, creating parent directories."""
+    """Write *document* to *path* as YAML, creating parent directories.
+
+    In one rename (:func:`~autoware_carla_scenario.atomic_file.write_text_atomically`),
+    as a draft is saved: a reader sees the old document or the new one, whole,
+    and a write that fails leaves the old one in place.
+    """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(dump_document_yaml(document), encoding="utf-8")
+    write_text_atomically(file_path, dump_document_yaml(document))
     return file_path
 
 
