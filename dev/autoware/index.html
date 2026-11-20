@@ -2481,7 +2481,11 @@ given:</p>
   <code>install/</code>, so a workspace built in VS Code runs here, and the reverse.</li>
 <li>What the stack needs is installed into an image of its own, made from
   the dev container's and tagged <code>autoware-carla-scenario-deps:&lt;digest&gt;</code>:
-  the <code>scenario_bridge</code> node's <code>python3-grpcio</code> and <code>python3-protobuf</code>,
+  the <code>scenario_bridge</code> node's <code>python3-grpcio</code> and <code>python3-protobuf</code>
+  -- and, when that protobuf is too old for the node's generated code
+  (Ubuntu 22.04's 3.12; it needs 3.20 or later), <code>protobuf&gt;=4.25.0,&lt;8</code>
+  from pip, into Autoware's Python venv when the image has one, checked once
+  rosdep has run --
   and the workspace's dependencies (<code>rosdep install --from-paths src</code>).
   A dev container gets the dependencies a branch added since its image
   was built by someone running <code>rosdep install</code> in it; a fresh container
@@ -2638,7 +2642,15 @@ in rclpy), or set <code>autoware.liveness_timeout_s=0</code>.</p>
 <code>liveness_timeout_s</code>, <code>base_link_offset_m</code>) and <code>launcher</code>. Any other key is
 refused when the ego is built, with an error naming it:
 <code>+autoware.boot_timout_s=30</code> fails the run rather than leaving the default
-timeout in place.</p>
+timeout in place. The values are checked too, naming the key and showing the
+value: a null setting is its default, as an absent one is; <code>address</code> is a
+non-empty <code>host:port</code>; <code>ready_timeout_ticks</code> a positive whole number (<code>1200</code>,
+or <code>1200.0</code>, kept as the int); and the seconds and <code>base_link_offset_m</code> are
+numbers, an int or a float. A boolean or a quoted number is refused rather
+than read as 0, 1 or the number: <code>autoware.liveness_timeout_s=false</code> does not
+turn the liveness check off (<code>0</code> does), and <code>ready_timeout_ticks: "1200"</code> no
+longer fails minutes into the run. <code>driver.bridge</code> takes the same settings and
+is checked the same way.</p>
 <p><code>timeout_s</code> is still accepted but deprecated: it never had an effect, and
 setting it only logs a warning. The <code>scenario_bridge</code> node's RPC timeouts are
 its own ROS parameters, <code>rpc_timeout_s</code> (5 s, <code>ReportReadiness</code>) and
@@ -2743,7 +2755,7 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <tr>
 <td><code>bridge_parameters</code></td>
 <td><code>{use_sim_time: true}</code></td>
-<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, <code>route_watch_period_s</code>, <code>reroute_max_attempts</code>, <code>rpc_timeout_s</code>, <code>mission_poll_timeout_s</code>, ... <code>route_watch_period_s</code> and <code>mission_poll_timeout_s</code> must suit <code>autoware.liveness_timeout_s</code> (<a href="#a-local-workspace-in-its-dev-container">above</a>). A null leaves a parameter at the node's default, and a whole number for a seconds parameter is passed as a float, as the node declares it</td>
+<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, <code>route_watch_period_s</code>, <code>reroute_max_attempts</code>, <code>rpc_timeout_s</code>, <code>mission_poll_timeout_s</code>, ... <code>route_watch_period_s</code> and <code>mission_poll_timeout_s</code> must suit <code>autoware.liveness_timeout_s</code> (<a href="#a-local-workspace-in-its-dev-container">above</a>). For both launcher types, the mapping is merged over the default, and null or absent is the default: <code>{auto_engage: false}</code> keeps <code>use_sim_time: true</code>, which <code>use_sim_time: false</code> turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (<code>reroute_max_attempts: 10.0</code>) as the int, as the node declares them; a fraction for an integer one, or a boolean for a number, is refused</td>
 </tr>
 <tr>
 <td><code>colcon_args</code></td>
@@ -2854,7 +2866,10 @@ beside the launch in Autoware's ROS 2 environment:</p>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="s1">'autoware.launcher.command=[bash,-c,"source ~/autoware/install/setup.bash &amp;&amp; ({scenario_bridge} &amp;) &amp;&amp; exec ros2 launch autoware_launch e2e_simulator.launch.xml scenario_mode:=true ..."]'</span>
 </code></pre></div>
 <p>The node runs on the ROS 2 distribution's own <code>python3</code>, which needs
-<code>python3-grpcio</code> and <code>python3-protobuf</code>. It imports nothing of the framework
+<code>python3-grpcio</code> and <code>python3-protobuf</code> 3.20 or later: Ubuntu 24.04's
+<code>python3-protobuf</code> will do, but 22.04's (3.12, ROS 2 Humble's) cannot import
+the node's generated code, so install a newer one over it there
+(<code>pip install 'protobuf&gt;=4.25.0,&lt;8'</code>). It imports nothing of the framework
 but <code>autoware_carla_scenario.autoware_bridge</code>: <code>{scenario_bridge}</code> puts a
 directory on <code>PYTHONPATH</code> that holds that package alone
 (<code>~/.cache/autoware_carla_scenario/ros_bridge/</code>).</p>
@@ -2999,7 +3014,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 18, 2026 04:48:22 UTC"><span class="timeago" datetime="2026-11-18T04:48:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 18, 2026 04:48:22 UTC">2026-11-18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 03:05:20 UTC"><span class="timeago" datetime="2026-11-20T03:05:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 03:05:20 UTC">2026-11-20</span>
   </span>
 
     
