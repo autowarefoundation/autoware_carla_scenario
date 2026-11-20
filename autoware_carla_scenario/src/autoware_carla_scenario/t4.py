@@ -63,7 +63,6 @@ from .kinematics.walker_motion import WalkerVelocities, is_walker
 from .sensor.base import sensor_tick_s
 from .sensor.carla_camera import CarlaCameraSensorConfig, configure_camera_blueprint
 from .sensor.carla_lidar import CarlaLidarSensor
-from .t4_scene.frames import xyz as _xyz
 from .t4_settings import (
     DATASET_SUFFIX,
     INTENSITY_SCALE,
@@ -75,7 +74,6 @@ from .t4_settings import (
     opencv_of_ftheta,
     t4_lidar_points,
 )
-from .trajectory_recorder import map_frame_offset
 from .utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
@@ -220,6 +218,10 @@ def _wxyz(quat_xyzw: Any) -> tuple[float, float, float, float]:
 def _map_offset() -> tuple[float, float, float]:
     """The loaded Lanelet2 map's MGRS and elevation offsets, or zeros: the
     trajectory log's (:func:`~autoware_carla_scenario.trajectory_recorder.map_frame_offset`)."""
+    # Inside: trajectory_recorder (the map manager, orjson) is more than an
+    # entity importing t4 for the driver offer needs.
+    from .trajectory_recorder import map_frame_offset  # noqa: PLC0415
+
     offset = map_frame_offset()
     return (0.0, 0.0, 0.0) if offset is None else offset
 
@@ -471,6 +473,11 @@ class T4Recording:
         """Declare the channels: the LiDARs' cloud in the ego's frame, and each
         camera's optical frame on the ego with its model (*camera_models*, of
         :meth:`_camera_models`)."""
+        # Inside: the t4_scene package loads its converter (protobuf,
+        # Lanelet2), which an entity importing t4 for the driver offer does
+        # not need; a recording that starts does not mind.
+        from .t4_scene.frames import xyz as _xyz  # noqa: PLC0415
+
         if self._settings.lidars:
             self._writer.add_sensor(
                 LIDAR_CHANNEL, "lidar", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)

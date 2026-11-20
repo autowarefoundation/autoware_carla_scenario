@@ -147,7 +147,8 @@ def _rear_axle(actor: Any) -> Optional[float]:
     else ``driver.rear_axle_offset_m`` of the run's T4 dataset, else from its
     wheels or its box), so the two put ``base_link`` in one place; ``None``
     when none can be read."""
-    # Inside: t4 imports this module (map_frame_offset).
+    # Inside: t4 imports this module (map_frame_offset, inside too), and
+    # loads its sensors and CARLA, which a log without an ego never needs.
     from .t4 import ego_rear_axle  # noqa: PLC0415
 
     try:

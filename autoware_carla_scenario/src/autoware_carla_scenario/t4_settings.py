@@ -25,7 +25,6 @@ from .constants import tick_multiple
 from .driver.base import DriverCameraLens, DriverClientConfig
 from .sensor.carla_camera import CarlaCameraSensorConfig
 from .sensor.carla_lidar import CarlaLidarSensorConfig
-from .t4_scene.grid import checked_max_distance
 
 __all__ = [
     "DATASET_SUFFIX",
@@ -75,6 +74,13 @@ def _checked_max_distance(value: Optional[float]) -> Optional[float]:
     infinity is what null says, and a bool or a string is not a distance
     (:func:`~autoware_carla_scenario.t4_scene.grid.checked_max_distance`,
     the T4Scenes' rule, naming the key)."""
+    if value is None:
+        return None
+    # Inside: importing t4_scene.grid runs the t4_scene package, which loads
+    # its converter (protobuf, Lanelet2), more than the settings need, and
+    # this module is imported by every run that may write a dataset (t4).
+    from .t4_scene.grid import checked_max_distance  # noqa: PLC0415
+
     return checked_max_distance(value, "t4.max_distance_m", "null")
 
 
