@@ -293,17 +293,15 @@ class BridgeHandshake:
         )
 
         # The goal is snapped as the Lanelet2 pose it was written as, not as its
-        # OpenDRIVE projection: the snap takes its heading from the frame it is
-        # given, and only the Lanelet2 frame carries the lanelet's direction of
-        # travel. On a left-hand-traffic map converted from Lanelet2 the road's
-        # reference line runs the other way, so a goal snapped as an OpenDRIVE
-        # pose faces back down its lane; Autoware's mission planner then
-        # measures the goal against its lanelet's angle, finds ~180 degrees
-        # against a 45 degree threshold, and answers "Goal is not valid!" --
-        # every route request comes back "The planned route is empty" and the
-        # scenario never becomes ready. The OpenDRIVE round trip would also move
-        # the position (see snap_to_carla_road), and the goal needs no OpenDRIVE
-        # metadata.
+        # OpenDRIVE projection: the Lanelet2 map is the one Autoware plans on, so
+        # the goal's position and heading follow it (see snap_to_carla_road),
+        # and the goal needs no OpenDRIVE metadata. The OpenDRIVE snap used to
+        # take its position and yaw from the CARLA lane centre instead (#2221):
+        # on a left-hand-traffic map converted from Lanelet2, whose reference
+        # line runs the other way, such a goal faced back down its lane, and
+        # Autoware's mission planner answered "Goal is not valid!" (~180
+        # degrees against its 45 degree threshold) -- every route request came
+        # back "The planned route is empty" and the scenario never became ready.
         projection = ground_projection or GroundProjectionConfig()
 
         def _snap(pose: "Lanelet2Pose", what: str) -> "CarlaWorldPose":

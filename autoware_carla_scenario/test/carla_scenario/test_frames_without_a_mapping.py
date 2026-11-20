@@ -19,7 +19,7 @@ import pytest
 import autoware_lanelet2_extension_python.projection  # noqa: F401
 import lanelet2.core
 
-from autoware_carla_scenario.coordinate import transform
+from autoware_carla_scenario.coordinate import stacked, transform
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose
 
 _LANE_WIDTH = 3.0
@@ -222,3 +222,31 @@ class TestASideWithNoLanes:
         road = _Road(lane_offset=0.0)
         road.lane_sections = []
         assert transform._find_lane_at_t(road, 5.0, 0.2) == 0
+
+
+class TestTheChoiceRule:
+    """:func:`stacked.choose_lanelet` and :func:`stacked.height_at` on their own."""
+
+    def test_no_candidate_is_an_error(self) -> None:
+        with pytest.raises(ValueError, match="no lanelet"):
+            stacked.choose_lanelet([])
+
+    def test_the_level_then_the_heading_then_the_height_then_the_id(self) -> None:
+        # Index 0 turns least but is on another level (10 m off).
+        candidates = [(10.0, 0.0, 1), (0.2, 0.3, 5), (0.9, 0.3, 4), (0.0, 0.3, 9)]
+        assert stacked.choose_lanelet(candidates) == 3
+        # Same heading and height: the lowest id.
+        assert stacked.choose_lanelet([(0.0, 0.1, 7), (0.0, 0.1, 3)]) == 1
+        # Exactly the tolerance off the nearest still counts as its level.
+        assert stacked.choose_lanelet([(0.0, 0.5, 1), (1.0, 0.1, 2)]) == 1
+        assert stacked.choose_lanelet([(0.0, 0.5, 1), (1.01, 0.1, 2)]) == 0
+
+    def test_the_height_is_interpolated_and_clamped(self) -> None:
+        ramp = [(0.0, 0.0, 0.0), (10.0, 0.0, 2.0), (10.0, 0.0, 2.0), (20.0, 0.0, 2.0)]
+        assert stacked.height_at(ramp, -5.0) == 0.0
+        assert stacked.height_at(ramp, 5.0) == pytest.approx(1.0)
+        # A repeated vertex (a span of no length) is stepped over.
+        assert stacked.height_at(ramp, 15.0) == pytest.approx(2.0)
+        assert stacked.height_at(ramp, 50.0) == 2.0
+        assert stacked.height_at([(3.0, 4.0, 7.0)], 1.0) == 7.0
+        assert stacked.height_at([(0.0, 0.0, 1.0), (0.0, 0.0, 5.0)], 1.0) == 5.0

@@ -510,6 +510,10 @@ def to_lanelet2(pose: Union[OpenDrivePose, CarlaWorldPose]) -> Lanelet2Pose:
     is read on the nearest lanelet: ``s`` is the arc length to the foot of the
     perpendicular on its centerline (not the nearest centerline vertex), and
     ``t`` and ``heading`` are measured against the segment that foot lies on.
+    Where several lanelets are as near -- overlapping in a junction, meeting
+    at a seam, or stacked over one another -- the pose's elevation picks the
+    level and its heading the lanelet on it
+    (:func:`.stacked.choose_lanelet`).
     """
     if isinstance(pose, CarlaWorldPose):
         return _carla_to_lanelet2(pose)
