@@ -401,3 +401,29 @@ def test_a_driver_ego_with_cameras_only_needs_no_renderer_data() -> None:
         {"driver": {"cameras": [camera]}},
     )
     run.check_run_config(cfg)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "autoware_carla_scenario.t4_settings",
+        "autoware_carla_scenario.t4",
+        "autoware_carla_scenario.entity.carla_driver_entity",
+    ],
+)
+def test_importing_the_settings_loads_no_t4scene_converter(module: str) -> None:
+    """The settings and t4 share the T4Scenes' distance check and point
+    helpers (#2237) without importing the t4_scene package, whose converter
+    (protobuf messages, Lanelet2) a driver entity or a config check never
+    needs: t4 imports it only where a recording starts."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    code = (
+        f"import sys, {module}; "
+        "print('autoware_carla_scenario.t4_scene' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"

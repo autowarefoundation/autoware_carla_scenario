@@ -40,6 +40,7 @@ import numpy as np
 import numpy.typing as npt
 import orjson
 
+from ..atomic_file import write_bytes_atomically
 from ..constants import FIXED_DELTA_SECONDS
 from ..perception_fault import PerceivedCategory, PerceptionFault, t4_label
 from ..rerun import TRAJECTORY_SUFFIX
@@ -55,6 +56,7 @@ from .frames import checked_rear_axle_offset as checked_rear_axle_offset
 from .frames import map_angles, map_positions
 from .frames import quaternions as _quaternions
 from .frames import rotations as _rotations
+from .frames import xyz as _xyz
 from .grid import (
     checked_max_distance,
     indicator_at,
@@ -328,10 +330,6 @@ def _read_log(path: Path, step_frames: int) -> _Log:
     if log.first_frame < 0:
         raise ValueError(f"{path} has no tick: there is nothing to convert")
     return log
-
-
-def _xyz(values: Sequence[float]) -> tuple[float, float, float]:
-    return (float(values[0]), float(values[1]), float(values[2]))
 
 
 @dataclass(frozen=True)
@@ -1038,6 +1036,13 @@ def write_t4_scene(
     """Convert *log_path* and write ``{stem}.t4scene.pb`` and, with a map,
     ``{stem}.t4scene.map.pb`` beside it (or in *output_dir*).
 
+    Each file is written in one rename (:func:`write_bytes_atomically`): a
+    run killed while it writes leaves no truncated message, which would
+    often still parse.  The scene goes last, and a scene of an earlier export
+    is removed first, so a scene on disk always has the map it names beside
+    it; an export without a map removes the map an earlier one wrote, which
+    the new scene does not name.
+
     *options* are :func:`trajectory_log_to_t4_scene`'s.
 
     Returns:
@@ -1049,9 +1054,15 @@ def write_t4_scene(
     directory.mkdir(parents=True, exist_ok=True)
     stem = export.scene.scene_metadata.scene_id
     scene_path = directory / f"{stem}{SCENE_SUFFIX}"
-    scene_path.write_bytes(export.scene.SerializeToString(deterministic=True))
-    map_path: Optional[Path] = None
-    if export.map_resource is not None:
-        map_path = directory / f"{stem}{MAP_SUFFIX}"
-        map_path.write_bytes(export.map_resource.SerializeToString(deterministic=True))
-    return scene_path, map_path
+    scene_path.unlink(missing_ok=True)
+    map_path = directory / f"{stem}{MAP_SUFFIX}"
+    if export.map_resource is None:
+        map_path.unlink(missing_ok=True)
+    else:
+        write_bytes_atomically(
+            map_path, export.map_resource.SerializeToString(deterministic=True)
+        )
+    write_bytes_atomically(
+        scene_path, export.scene.SerializeToString(deterministic=True)
+    )
+    return scene_path, None if export.map_resource is None else map_path

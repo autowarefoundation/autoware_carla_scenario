@@ -142,23 +142,17 @@ RECORDED_KINDS = ("vehicle.", "walker.")
 
 def _rear_axle(actor: Any) -> Optional[float]:
     """Where the run takes an ego's rear axle to be, along its x axis from its
-    origin: the ``base_link`` the running ego set (``ego_base_link``: a driver
-    entity's rig origin, a ROS 2 ego's odometry, a bridged stack's
-    ``base_link``), else the rig origin a driver entity offered, else from its
-    wheels or its box (``driver.observation.rear_axle_offset``, as the T4
-    dataset takes it); ``None`` when none can be read."""
-    from .driver.observation import rear_axle_offset  # noqa: PLC0415
-    from .ego_base_link import ego_base_link  # noqa: PLC0415
-    from .t4 import offered_rear_axle  # noqa: PLC0415
+    origin, by the T4 dataset's rule (:func:`~autoware_carla_scenario.t4.ego_rear_axle`:
+    a driver entity's rig origin, else the ``base_link`` the running ego set,
+    else ``driver.rear_axle_offset_m`` of the run's T4 dataset, else from its
+    wheels or its box), so the two put ``base_link`` in one place; ``None``
+    when none can be read."""
+    # Inside: t4 imports this module (map_frame_offset, inside too), and
+    # loads its sensors and CARLA, which a log without an ego never needs.
+    from .t4 import ego_rear_axle  # noqa: PLC0415
 
-    run_offset = ego_base_link()
-    if run_offset is not None:
-        return run_offset
-    offered = offered_rear_axle()
-    if offered is not None:
-        return offered
     try:
-        return rear_axle_offset(actor)
+        return ego_rear_axle(actor)
     except Exception:  # noqa: BLE001 - the log goes on without it
         logger.debug(
             "No rear axle for actor %s", getattr(actor, "id", "?"), exc_info=True
@@ -266,15 +260,26 @@ def _projector_info(lanelet2_path: Optional[Path]) -> Optional[dict[str, Any]]:
     return info if isinstance(info, dict) else None
 
 
-def _map_offsets() -> tuple[Optional[list[float]], Optional[float]]:
-    """The loaded Lanelet2 map's MGRS offset and elevation offset, if any."""
+def map_frame_offset() -> Optional[tuple[float, float, float]]:
+    """The loaded Lanelet2 map's MGRS offset and elevation offset, ``(x, y,
+    z)``, which carry CARLA's frame (``y`` flipped) into the map frame;
+    ``None`` without a Lanelet2 map.  The T4 dataset's too (``t4``)."""
     mm = MapManager.get_instance()
     try:
         ox, oy = mm.mgrs_offset
         z_offset = mm.z_offset
     except RuntimeError:  # no Lanelet2 map loaded
+        return None
+    return (float(ox), float(oy), float(z_offset))
+
+
+def _map_offsets() -> tuple[Optional[list[float]], Optional[float]]:
+    """The loaded Lanelet2 map's MGRS offset and elevation offset, if any, as
+    the map record keeps them (:func:`map_frame_offset`, to the millimetre)."""
+    offset = map_frame_offset()
+    if offset is None:
         return None, None
-    return [_r(ox), _r(oy)], _r(z_offset)
+    return [_r(offset[0]), _r(offset[1])], _r(offset[2])
 
 
 def _metadata(what: str, read: Any, default: Any = None) -> Any:
@@ -969,4 +974,5 @@ __all__ = [
     "SCHEMA_PATH",
     "SCHEMA_VERSION",
     "TrajectoryRecorder",
+    "map_frame_offset",
 ]

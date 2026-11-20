@@ -29,13 +29,14 @@ import logging
 import math
 import tarfile
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional
 
 from google.protobuf import json_format
 from google.protobuf.message import DecodeError
 
+from ..atomic_file import write_chunks_atomically
 from ..kinematics.angle import normalize_angle_rad
 from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
 from ..t4_scene.grid import files_under
@@ -508,6 +509,15 @@ def shard_name(index: int, count: int) -> str:
     return f"{SHARD_PREFIX}-{index:05d}-of-{count:05d}"
 
 
+def _shard_chunks(head: bytes, scenarios: Sequence[Any]) -> Iterator[bytes]:
+    """A shard's bytes: the metadata's *head*, then each of *scenarios* as a
+    submission of its own, which concatenate into one message."""
+    yield head
+    for scenario in scenarios:
+        one = pb.SimAgentsChallengeSubmission(scenario_rollouts=[scenario])
+        yield one.SerializeToString(deterministic=True)
+
+
 def write_submission(
     submission: pb.SimAgentsChallengeSubmission,
     output_dir: Path | str,
@@ -557,11 +567,11 @@ def write_submission(
         start = index * count // shards
         stop = (index + 1) * count // shards
         path = directory / shard_name(index, shards)
-        with path.open("wb") as stream:
-            stream.write(head)
-            for scenario in submission.scenario_rollouts[start:stop]:
-                one = pb.SimAgentsChallengeSubmission(scenario_rollouts=[scenario])
-                stream.write(one.SerializeToString(deterministic=True))
+        # In one rename: a run killed mid-shard leaves no truncated shard,
+        # which would parse as a submission short of scenarios.
+        write_chunks_atomically(
+            path, _shard_chunks(head, submission.scenario_rollouts[start:stop])
+        )
         paths.append(path)
     if tar:
         archive = directory / TARBALL_NAME

@@ -8,13 +8,17 @@ map-frame roll, pitch and yaw.
 protected names (``_FLIP_Y``, ``_rotations``, ``_quaternions``) and its
 ``_MapFrame`` calls :func:`map_positions` and :func:`map_angles`.
 :func:`checked_rear_axle_offset`, the check of where the ego's ``base_link``
-is, lives here too (#1697), and t4_scene.convert re-exports it.  This module
-is pure numpy and ``math``, so Codon checks it (#1665).
+is, lives here too (#1697), and t4_scene.convert re-exports it, and so does
+:func:`xyz`, which the T4 dataset (``t4``) shares.  This module is pure numpy
+and ``math``, so Codon checks it (#1665).
 """
 
 from __future__ import annotations
 
 import math
+
+# typing's, not collections.abc's: Codon has no collections.abc.
+from typing import Sequence  # noqa: UP035
 
 import numpy as np
 
@@ -25,10 +29,16 @@ __all__ = [
     "map_positions",
     "quaternions",
     "rotations",
+    "xyz",
 ]
 
 #: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
 FLIP_Y = np.array([1.0, -1.0, 1.0])
+
+
+def xyz(values: Sequence[float]) -> tuple[float, float, float]:
+    """The first three of *values* as floats."""
+    return (float(values[0]), float(values[1]), float(values[2]))
 
 
 def map_positions(

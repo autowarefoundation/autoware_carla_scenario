@@ -43,6 +43,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ..perception_fault import perception_faults
+from ..t4_settings import t4_lidar_points
 from ..trajectory_recorder import TrajectoryRecorder
 from ._proto import t4_scene_pb2 as pb
 from .convert import (
@@ -183,6 +184,9 @@ class LiveT4Scene:
         self._map: Optional[_Map] = None
         self._map_read = False
         self._map_path: Optional[Path] = None
+        #: Whether the recorder stopped (an error closed it): the history is
+        #: frozen at its last row, and no scene is made from it any more.
+        self._stopped = False
 
     # -- recording ------------------------------------------------------------
 
@@ -194,8 +198,19 @@ class LiveT4Scene:
         self, world: Any, elapsed: float, extras: Optional[EgoExtras] = None
     ) -> None:
         """Take the tick the world was just stepped to, and what the policy is
-        told of the ego then; keep only the rows a scene can still read."""
+        told of the ego then; keep only the rows a scene can still read.
+
+        Once the recorder has stopped -- an error it logged closed it -- the
+        tick is not taken: the log's last row is an older tick's, whose
+        extras this tick's would overwrite.  :meth:`scene` is ``None`` from
+        then on (:attr:`stopped`).
+        """
+        if self._stopped:
+            return
         self._recorder.record(world, elapsed)
+        if not self._recorder.active:
+            self._stop()
+            return
         log = self._log
         if log.last_frame < 0:
             return
@@ -216,6 +231,20 @@ class LiveT4Scene:
         log.forget_before(oldest)
         for frame in [f for f in self._extras if f < oldest]:
             del self._extras[frame]
+
+    @property
+    def stopped(self) -> bool:
+        """Whether the recorder stopped, so no scene is made any more."""
+        return self._stopped
+
+    def _stop(self) -> None:
+        """The recorder stopped: say so once, and make no scene from the
+        history it froze."""
+        self._stopped = True
+        logger.warning(
+            "Live T4Scenes stopped: their trajectory recorder failed (logged "
+            "above); the driver policy is sent no scene for the rest of the run"
+        )
 
     def use_map(self, lanelet2_path: Path) -> None:
         """Put the scenes on the Lanelet2 map *lanelet2_path*, in the run's
@@ -271,7 +300,10 @@ class LiveT4Scene:
         goal_pose: Optional[Sequence[float]] = None,
     ) -> Optional[pb.T4Scene]:
         """The scene of the rows so far, the current one last; ``None`` before
-        the first tick.
+        the first tick, and once the recorder has stopped (:attr:`stopped`):
+        its history is frozen, and would be shown as now.  The driver entity
+        sends the policy no scene then, as before the first tick, and the run
+        goes on.
 
         Args:
             stem: The scene's id.
@@ -287,6 +319,8 @@ class LiveT4Scene:
                 current row's pose.
             goal_pose: ``(x, y, yaw)`` in the map frame.
         """
+        if self._stopped:
+            return None
         frames = self.frames()
         if not frames:
             return None
@@ -470,9 +504,10 @@ def _manager_map() -> Optional[_Map]:
 
 def _t4_points(points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """``[N, 4]`` rig-frame x, y, z, intensity in ``[0, 1]`` as T4's ``[N, 5]``:
-    intensity on the 0-255 scale, the fifth (source-defined) column zero."""
-    raw = np.asarray(points, dtype=np.float32).reshape(-1, 4)
-    out = np.zeros((len(raw), 5), dtype=np.float32)
-    out[:, :3] = raw[:, :3]
-    out[:, 3] = raw[:, 3] * 255.0
+    intensity on the 0-255 scale, as the T4 dataset's sweeps
+    (:func:`~autoware_carla_scenario.t4_settings.t4_lidar_points`), the fifth
+    (source-defined) column zero."""
+    scaled = t4_lidar_points(points)
+    out = np.zeros((len(scaled), 5), dtype=np.float32)
+    out[:, :4] = scaled
     return out

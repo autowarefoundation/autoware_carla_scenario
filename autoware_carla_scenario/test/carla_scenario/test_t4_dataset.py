@@ -40,8 +40,10 @@ writer_module = pytest.importorskip("autoware_carla_scenario_t4")
 @pytest.fixture(autouse=True)
 def _no_driver_sensors_offered(monkeypatch: pytest.MonkeyPatch) -> None:
     """The offer of a driver entity's sensors is process-global: no test starts
-    with one left by an earlier test in the same worker."""
+    with one left by an earlier test in the same worker, nor with a recording
+    one left active (the trajectory log reads its rear-axle override)."""
     monkeypatch.setattr(t4, "_driver_rear_axle", None)
+    monkeypatch.setattr(t4, "_active", None)
 
 
 # ---------------------------------------------------------------------------
@@ -134,12 +136,13 @@ def test_settings_refuse_a_max_distance_that_is_not_positive_and_finite(
 
 @pytest.mark.parametrize(
     ("distance", "shown"),
-    [("", "''"), ("100", "'100'"), (True, "True"), (0.0, "0.0"), (-1, "-1.0")],
+    [("", "''"), ("100", "'100'"), (True, "True"), (0.0, "0.0"), (-1, "-1")],
 )
 def test_a_refused_max_distance_is_shown_as_written(
     distance: object, shown: str
 ) -> None:
-    # With repr: '' would read "..., not " and '100' "... not 100" (#2208).
+    # With repr: '' would read "..., not " and '100' "... not 100" (#2208);
+    # an int as given, as t4scene.max_distance_m shows it (one check, #2237).
     with pytest.raises(ValueError) as refused:
         T4Settings.from_driver(_driver(), {"max_distance_m": distance})
     assert str(refused.value) == (
@@ -1190,6 +1193,154 @@ def _jpeg() -> bytes:
     ok, encoded = cv2.imencode(".jpg", np.zeros((48, 64, 3), dtype=np.uint8))
     assert ok
     return encoded.tobytes()
+
+
+def _sweeps(root: Path) -> list[np.ndarray]:
+    """Every sweep of the dataset, oldest first: T4's ``float32`` ``(x, y, z,
+    intensity, ring)`` per point."""
+    lidar = sorted(
+        (s for s in _table(root, "sample_data") if s["fileformat"] != "jpg"),
+        key=lambda s: s["timestamp"],
+    )
+    return [
+        np.fromfile(root / "0" / s["filename"], dtype=np.float32).reshape(-1, 5)
+        for s in lidar
+    ]
+
+
+def test_the_recorders_own_sweeps_are_on_t4s_intensity_scale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CARLA's intensity (0-1) is written on T4's 0-255 scale, as the T4Scenes
+    write it (#2237): 0.9 is 229.5, not a nearly black 0.9."""
+    root, _ = _record(tmp_path, monkeypatch)
+    sweeps = _sweeps(root)
+    assert len(sweeps) == 5
+    for sweep in sweeps:
+        np.testing.assert_allclose(
+            sorted(sweep[:, 3]),
+            sorted(
+                np.array([0.9, 0.8, 0.1], np.float32) * np.float32(t4.INTENSITY_SCALE)
+            ),
+            rtol=1e-6,
+        )
+
+
+def test_a_fed_sweep_is_on_t4s_intensity_scale_and_left_as_fed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep a driver policy is sent is scaled once, into the dataset: the
+    policy's own array keeps CARLA's 0-1."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    fed: list[np.ndarray] = []
+    for frame in range(101, 105):
+        world.frame = frame
+        if frame % 2 == 1:
+            points = np.array([[11.25, -3.5, 0.7, 0.5]], dtype=np.float32)
+            fed.append(points)
+            recording.feed_lidar(frame, points)
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert [float(sweep[0, 3]) for sweep in _sweeps(root)] == [127.5, 127.5]
+    assert all(float(points[0, 3]) == 0.5 for points in fed)
+
+
+def test_t4_lidar_points_scale_a_copy() -> None:
+    points = np.array([[1.0, 2.0, 3.0, 0.5]], dtype=np.float32)
+    out = t4.t4_lidar_points(points)
+    assert out.dtype == np.float32 and out.shape == (1, 4)
+    assert out.tolist() == [[1.0, 2.0, 3.0, 127.5]]
+    assert points[0, 3] == 0.5
+
+
+def test_a_camera_slower_than_the_policy_writes_no_empty_samples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A camera every 4 ticks and a policy every 2: every other step hands the
+    policy the frame written already, which is dropped -- and with nothing
+    else fed, that step is no sample (no pose-and-boxes-only key frame), and
+    the next frame is still written (#2237)."""
+    world = _World()
+    jpeg = _jpeg()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world, _driver(lidars=()))
+    finally:
+        t4.withdraw_driver_sensors()
+    rendered = -1
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        for frame in range(100, 113):
+            world.frame = frame
+            if frame % 4 == 1:  # the camera's ticks: 101, 105, 109
+                rendered = frame
+            if frame % 2 == 1 and rendered >= 0:  # the policy's steps
+                recording.feed_camera_jpeg(frame, "cam_front", jpeg, taken_on=rendered)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    assert [t - samples[0] for t in samples] == [0, 200_000, 400_000]
+    assert _jpg_timestamps(root) == samples
+    assert "nothing fed on frame 103 can be written" in caplog.text
+
+
+def test_the_dataset_and_the_trajectory_log_agree_on_the_rear_axle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``driver.rear_axle_offset_m`` set and no ego saying where its
+    base_link is, the trajectory log's ``rear_axle`` (so the T4Scenes') is the
+    dataset's, not one derived from the box (#2237)."""
+    from autoware_carla_scenario import ego_base_link
+    from autoware_carla_scenario.trajectory_recorder import _rear_axle
+
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", None)
+    world = _World()
+    derived = rear_axle_offset(world.ego)  # type: ignore[arg-type]
+    assert derived != -1.7
+    assert _rear_axle(world.ego) == derived
+    recording = _start(tmp_path, monkeypatch, world, _driver(rear_axle_offset_m=-1.7))
+    try:
+        assert t4.active_recording() is recording
+        assert _rear_axle(world.ego) == -1.7
+        assert t4.ego_rear_axle(world.ego) == -1.7
+        for frame in range(101, 103):
+            world.frame = frame
+            if frame % 2 == 1:
+                world.sense()
+            recording.record(world)  # type: ignore[arg-type]
+    finally:
+        root = recording.close()
+    assert root is not None
+    np.testing.assert_allclose(
+        _table(root, "ego_pose")[0]["translation"][0],
+        world.ego_x(101) - 1.7 + OFFSETS[0],
+        atol=1e-9,
+    )
+    # The run over, the log derives it again.
+    assert _rear_axle(world.ego) == derived
+
+
+def test_the_rear_axle_rule_puts_the_driver_offer_and_the_egos_base_link_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario import ego_base_link
+
+    world = _World()
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", -0.9)
+    assert t4.ego_rear_axle(world.ego, -1.7) == -0.9
+    t4.offer_driver_sensors(-1.25)
+    try:
+        assert t4.ego_rear_axle(world.ego, -1.7) == -1.25
+    finally:
+        t4.withdraw_driver_sensors()
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", None)
+    assert t4.ego_rear_axle(world.ego, -1.7) == -1.7
 
 
 def test_a_t4_camera_skips_an_attribute_the_server_lacks_with_a_warning(

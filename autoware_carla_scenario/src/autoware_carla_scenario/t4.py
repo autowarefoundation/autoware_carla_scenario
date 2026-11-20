@@ -53,7 +53,6 @@ import numpy as np
 from carla_driver_interface.geometry import body_to_optical
 
 from .constants import FIXED_DELTA_SECONDS
-from .coordinate.map_manager import MapManager
 from .driver.observation import (
     lidar_points_to_rig,
     rear_axle_offset,
@@ -66,12 +65,14 @@ from .sensor.carla_camera import CarlaCameraSensorConfig, configure_camera_bluep
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
     DATASET_SUFFIX,
+    INTENSITY_SCALE,
     LIDAR_CHANNEL,
     T4Settings,
     camera_channel,
     category_of,
     dataset_path,
     opencv_of_ftheta,
+    t4_lidar_points,
 )
 from .utils.clearance import HIDDEN_BELOW_M
 
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DATASET_SUFFIX",
     "INSTALL_HINT",
+    "INTENSITY_SCALE",
     "LIDAR_CHANNEL",
     "T4Recorder",
     "T4Recording",
@@ -90,10 +92,12 @@ __all__ = [
     "camera_channel",
     "category_of",
     "dataset_path",
+    "ego_rear_axle",
     "opencv_of_ftheta",
     "offer_driver_sensors",
     "offered_rear_axle",
     "require_writer",
+    "t4_lidar_points",
     "withdraw_driver_sensors",
 ]
 
@@ -168,16 +172,42 @@ def withdraw_driver_sensors() -> None:
         _driver_rear_axle = None
 
 
+def ego_rear_axle(actor: Any, override: Optional[float] = None) -> float:
+    """Where the run takes the ego *actor*'s rear axle (its ``base_link``) to
+    be, along its x axis from its origin -- the one rule the T4 dataset and
+    the trajectory log (its ``rear_axle`` record, so the T4Scenes) share, so
+    the two put ``base_link`` in one place:
+
+    1. the rig origin a driver entity offered (:func:`offer_driver_sensors`),
+       the frame of the sweeps it feeds;
+    2. else the ``base_link`` the running ego set
+       (:func:`~autoware_carla_scenario.ego_base_link.ego_base_link`: a ROS 2
+       ego's odometry, a bridged stack's ``base_link``);
+    3. else *override* -- ``driver.rear_axle_offset_m``
+       (:attr:`T4Settings.rear_axle_offset_m`) -- and, without one, the
+       override of the T4 dataset the run is writing
+       (:func:`active_recording`), so a log beside a dataset agrees with it;
+    4. else from the vehicle's wheels or its box
+       (:func:`~autoware_carla_scenario.driver.observation.rear_axle_offset`).
+    """
+    with _lock:
+        offered = _driver_rear_axle
+        recording = _active
+    if offered is not None:
+        return offered
+    run_base_link = ego_base_link()
+    if run_base_link is not None:
+        return run_base_link
+    if override is None and recording is not None:
+        override = recording._rear_axle_override
+    return rear_axle_offset(actor, override)
+
+
 def _attribute(actor: Any, name: str) -> str:
     try:
         return str(actor.attributes.get(name, ""))
     except Exception:  # noqa: BLE001 - a missing attribute is an empty one
         return ""
-
-
-def _xyz(values: Any) -> tuple[float, float, float]:
-    """The first three of *values* (a sequence or an array) as floats."""
-    return (float(values[0]), float(values[1]), float(values[2]))
 
 
 def _wxyz(quat_xyzw: Any) -> tuple[float, float, float, float]:
@@ -186,13 +216,14 @@ def _wxyz(quat_xyzw: Any) -> tuple[float, float, float, float]:
 
 
 def _map_offset() -> tuple[float, float, float]:
-    """The loaded Lanelet2 map's MGRS and elevation offsets, or zeros."""
-    mm = MapManager.get_instance()
-    try:
-        ox, oy = mm.mgrs_offset
-        return (float(ox), float(oy), float(mm.z_offset))
-    except RuntimeError:  # no Lanelet2 map loaded
-        return (0.0, 0.0, 0.0)
+    """The loaded Lanelet2 map's MGRS and elevation offsets, or zeros: the
+    trajectory log's (:func:`~autoware_carla_scenario.trajectory_recorder.map_frame_offset`)."""
+    # Inside: trajectory_recorder (the map manager, orjson) is more than an
+    # entity importing t4 for the driver offer needs.
+    from .trajectory_recorder import map_frame_offset  # noqa: PLC0415
+
+    offset = map_frame_offset()
+    return (0.0, 0.0, 0.0) if offset is None else offset
 
 
 class _FrameCamera:
@@ -325,15 +356,10 @@ class T4Recording:
         with _lock:
             driver_rear_axle = _driver_rear_axle
         self.fed_by_driver = driver_rear_axle is not None
-        run_base_link = ego_base_link()
-        if driver_rear_axle is not None:
-            self._rear_axle = driver_rear_axle
-        elif run_base_link is not None:
-            # Where the running ego (a ROS 2 or a bridged stack's) has its
-            # base_link, rather than the driver config's offset.
-            self._rear_axle = run_base_link
-        else:
-            self._rear_axle = rear_axle_offset(ego, settings.rear_axle_offset_m)
+        #: ``driver.rear_axle_offset_m``, which the trajectory log takes too
+        #: while this dataset is the run's (:func:`ego_rear_axle`).
+        self._rear_axle_override = settings.rear_axle_offset_m
+        self._rear_axle = ego_rear_axle(ego, settings.rear_axle_offset_m)
 
         # Before the writer makes the dataset's directory: a lens with no
         # OpenCV model is refused with nothing on disk (#1686).
@@ -447,6 +473,11 @@ class T4Recording:
         """Declare the channels: the LiDARs' cloud in the ego's frame, and each
         camera's optical frame on the ego with its model (*camera_models*, of
         :meth:`_camera_models`)."""
+        # Inside: the t4_scene package loads its converter (protobuf,
+        # Lanelet2), which an entity importing t4 for the driver offer does
+        # not need; a recording that starts does not mind.
+        from .t4_scene.frames import xyz as _xyz  # noqa: PLC0415
+
         if self._settings.lidars:
             self._writer.add_sensor(
                 LIDAR_CHANNEL, "lidar", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)
@@ -467,7 +498,7 @@ class T4Recording:
             self._writer.add_sensor(
                 camera_channel(logical_id),
                 "camera",
-                _xyz(optical.position),
+                _xyz(optical.position.tolist()),
                 _wxyz(optical.quat_xyzw),
                 camera_intrinsic=intrinsic,
                 camera_distortion=distortion,
@@ -623,7 +654,9 @@ class T4Recording:
         were taken on, as :meth:`_record` does the recorder's own LiDARs'.
 
         The key frame is the oldest fed sweep's; without a sweep, the oldest
-        camera frame's, and *frame* without either.  A sweep taken later joins
+        camera frame's (*frame* when none has a snapshot).  When everything
+        fed is dropped, nothing is written, and the frame written last stays
+        the last.  A sweep taken later joins
         nothing, as a LiDAR's on another tick of the interval does not.  A
         camera frame rendered on another tick than the key frame's goes on the
         key frame all the same, the step's sample: the writer stamps a sample's
@@ -647,6 +680,16 @@ class T4Recording:
             for taken_on, logical_id, jpeg in fed[2]
             if self._is_new(taken_on, frame, f"a {logical_id} frame")
         ]
+        if not sweeps and not images:
+            # Everything fed was dropped (a camera slower than the policy
+            # hands it the frame written already): a sample without sensor
+            # data is no key frame, as the recorder's own sensors never make
+            # one.  The next step's frame may still be written.
+            logger.debug(
+                "T4 dataset: nothing fed on frame %d can be written; no key frame",
+                frame,
+            )
+            return
         if sweeps:
             key_frame = min(taken_on for taken_on, _ in sweeps)
         else:
@@ -745,7 +788,9 @@ class T4Recording:
         try:
             self._annotate(world, snapshot)
             for cloud in points:
-                writer.add_lidar(LIDAR_CHANNEL, cloud)
+                # CARLA's intensity is 0-1, T4's 0-255: scaled here, where
+                # the recorder's own sweeps and the fed ones both pass, once.
+                writer.add_lidar(LIDAR_CHANNEL, t4_lidar_points(cloud))
             for logical_id, jpeg in jpegs:
                 resolution = self._resolutions.get(logical_id)
                 if resolution is not None:

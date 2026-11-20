@@ -5,15 +5,15 @@ OpenCV model of an F-theta camera.
 writer it imports at run time, on threads of its own; this is the part of it
 that needs neither: the settings (:class:`T4Settings`), where the dataset
 goes (:func:`dataset_path`), a camera's channel (:func:`camera_channel`), an
-actor's category (:func:`category_of`) and the fit of OpenCV's rational
-camera model to an F-theta lens (:func:`opencv_of_ftheta`).  ``t4``
+actor's category (:func:`category_of`), a sweep's points on T4's intensity
+scale (:func:`t4_lidar_points`) and the fit of OpenCV's rational camera model
+to an F-theta lens (:func:`opencv_of_ftheta`).  ``t4``
 re-exports every name, and the library check compiles this module
 (docs/typecheck.md, #731).
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,12 +28,14 @@ from .sensor.carla_lidar import CarlaLidarSensorConfig
 
 __all__ = [
     "DATASET_SUFFIX",
+    "INTENSITY_SCALE",
     "LIDAR_CHANNEL",
     "T4Settings",
     "camera_channel",
     "category_of",
     "dataset_path",
     "opencv_of_ftheta",
+    "t4_lidar_points",
 ]
 
 #: What a run's dataset is named: ``{stem}.t4``, its one version ``0`` inside.
@@ -41,6 +43,9 @@ DATASET_SUFFIX = ".t4"
 #: The channel every LiDAR's sweep goes into, in the ego's frame (T4's own
 #: name for a concatenated cloud).
 LIDAR_CHANNEL = "LIDAR_CONCAT"
+#: A T4 sweep's intensity is on the 0-255 scale (as Autoware's point clouds'
+#: and the T4Scenes' are); CARLA's ray-cast LiDAR reports it in ``[0, 1]``.
+INTENSITY_SCALE = 255.0
 #: A vehicle blueprint's ``base_type`` -> its T4 category.
 _VEHICLE_CATEGORIES = {
     "car": "car",
@@ -63,11 +68,36 @@ def camera_channel(logical_id: str) -> str:
     return logical_id.upper()
 
 
-def _bad_max_distance(value: float) -> str:
-    """Why ``t4.max_distance_m`` = *value* is refused: 0, a negative distance
-    or NaN would annotate no road user, infinity is what null says, and a
-    bool is not a distance (t4_scene.grid.checked_max_distance's rule)."""
-    return f"t4.max_distance_m must be positive and finite (null for no limit), not {value!r}"
+def _checked_max_distance(value: Optional[float]) -> Optional[float]:
+    """``t4.max_distance_m`` = *value* as a float, or ``None`` (every road
+    user): 0, a negative distance or NaN would annotate no road user,
+    infinity is what null says, and a bool or a string is not a distance
+    (:func:`~autoware_carla_scenario.t4_scene.grid.checked_max_distance`,
+    the T4Scenes' rule, naming the key)."""
+    if value is None:
+        return None
+    # Inside: importing t4_scene.grid runs the t4_scene package, which loads
+    # its converter (protobuf, Lanelet2), more than the settings need, and
+    # this module is imported by every run that may write a dataset (t4).
+    from .t4_scene.grid import checked_max_distance  # noqa: PLC0415
+
+    return checked_max_distance(value, "t4.max_distance_m", "null")
+
+
+def t4_lidar_points(
+    points: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    """``[N, 4]`` x, y, z and CARLA's intensity in ``[0, 1]`` as a T4 sweep's
+    first four columns: float32, intensity on T4's 0-255 scale
+    (:data:`INTENSITY_SCALE`).  A new array: *points* (the sweep a driver
+    policy is sent too) is left as it is.
+
+    The T4 dataset (``t4``) writes its sweeps with it and the live T4Scenes
+    (``t4_scene.live``) theirs, so the two scale alike, and once.
+    """
+    out = np.asarray(points, dtype=np.float32).reshape(-1, 4).copy()
+    out[:, 3] = out[:, 3] * np.float32(INTENSITY_SCALE)
+    return out
 
 
 @dataclass(frozen=True)
@@ -104,9 +134,7 @@ class T4Settings:
                 "t4: a dataset needs a sensor: set driver.lidars or driver.cameras"
             )
         self.interval_ticks  # noqa: B018 - validates timestep_s
-        distance = self.max_distance_m
-        if distance is not None and not (math.isfinite(distance) and distance > 0.0):
-            raise ValueError(_bad_max_distance(distance))
+        _checked_max_distance(self.max_distance_m)
         if not 1 <= self.jpeg_quality <= 100:
             raise ValueError("driver.image_quality must be 1-100")
         # A bool is an int to Python and a float would be cut to one
@@ -146,17 +174,10 @@ class T4Settings:
         config section (``max_distance_m``, ``workers``)."""
         values: dict[str, Any] = {}
         if "max_distance_m" in config:
-            distance = config["max_distance_m"]
             # float() would read true as 1 m and parse a string; neither is a
             # distance, and anything else it cannot read is refused naming
             # the key rather than with its own message.
-            not_a_number = isinstance(distance, (bool, str))
-            if not_a_number:
-                raise ValueError(_bad_max_distance(distance))
-            try:
-                values["max_distance_m"] = None if distance is None else float(distance)
-            except TypeError:
-                raise ValueError(_bad_max_distance(distance)) from None
+            values["max_distance_m"] = _checked_max_distance(config["max_distance_m"])
         if config.get("workers") is not None:
             # As given: __post_init__ refuses a bool or a float, which int()
             # would turn into a count nobody asked for.
