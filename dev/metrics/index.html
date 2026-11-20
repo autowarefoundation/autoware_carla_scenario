@@ -2491,7 +2491,7 @@ value with the aggregation in the last column (<code>Metric.aggregation</code>).
 <tr>
 <td><code>lateral_reversals</code></td>
 <td>count</td>
-<td>Not AlpaSim's: how many times so far the ego's drift across its lane turned back by more than 0.1 m (<a href="#weaving">Weaving</a>)</td>
+<td>Not AlpaSim's: how many times so far the ego's drift across its lane turned back by 0.1 m or more (<a href="#weaving">Weaving</a>)</td>
 <td>last</td>
 </tr>
 <tr>
@@ -2503,7 +2503,7 @@ value with the aggregation in the last column (<code>Metric.aggregation</code>).
 <tr>
 <td><code>steering_reversals</code></td>
 <td>count</td>
-<td>Not AlpaSim's: how many times so far the steering applied to the ego turned back by more than 0.05 of full lock (<a href="#weaving">Weaving</a>)</td>
+<td>Not AlpaSim's: how many times so far the steering applied to the ego turned back by 0.05 of full lock or more (<a href="#weaving">Weaving</a>)</td>
 <td>last</td>
 </tr>
 <tr>
@@ -2577,17 +2577,20 @@ the ego drives on, not the road under or over it.</p>
 <h3 id="weaving">Weaving<a class="headerlink" href="#weaving" title="Permanent link">&para;</a></h3>
 <p>Three metrics read how the ego weaves from side to side, and a fourth how
 often its turn indicators changed. Unlike the others they read the run so far,
-not one frame: the runner hands the ego's motion to
-<code>autoware_carla_scenario.metrics</code> every tick (<code>track_ego_motion</code>), and they read
-what it has gathered.</p>
+not one frame: the replay of the run's recorded frames
+(<a href="#how-metrics-are-computed">How metrics are computed</a>) hands the ego's motion
+to <code>autoware_carla_scenario.metrics</code> every frame, in order
+(<code>track_ego_motion</code>), and they read what it has gathered. The live run does
+none of this work: it tracks only how far the ego has got (<code>ego_progress()</code>,
+which tells a run out of time apart), which the replay leaves as it is.</p>
 <p>The ego's drift is how far it has moved across its lanes since the run began:
 its velocity across the lane under its centre, summed over time. The lane's
 heading is taken anew every frame, so following a bend is not a drift, and
 moving to the next lane is a drift of a lane's width with no jump at the lane
 line. Off the driving lanes the drift holds until the ego is back on one.</p>
 <ul>
-<li><code>lateral_reversals</code> counts the times the drift turned back by more than
-  0.1 m: it went right, then came back left by 0.1 m or more. This is the
+<li><code>lateral_reversals</code> counts the times the drift turned back by 0.1 m or
+  more: it went right, then came back left by 0.1 m or more. This is the
   reversal count of driver-workload studies (Markkula and Engström, 2006). A
   lane change is one drift, however long, and adds nothing; a weave adds two a
   cycle. Under 0.1 m it is the noise of holding a lane.</li>
@@ -2600,8 +2603,8 @@ line. Off the driving lanes the drift holds until the ego is back on one.</p>
 <li>In a junction, whose lanes overlap, the drift holds, as it does off the
   driving lanes; a lane the other way is crossed the ego's way.</li>
 <li><code>steering_reversals</code> counts the times the steering applied to the ego
-  (<code>get_control().steer</code>, <code>1</code> the vehicle's full lock) turned back by more
-  than 0.05, about 3.5 degrees at the wheels of a car that locks at 70. It sees
+  (<code>get_control().steer</code>, <code>1</code> the vehicle's full lock) turned back by 0.05
+  or more, about 3.5 degrees at the wheels of a car that locks at 70. It sees
   the controller's weaving before the vehicle shows it. Closed loop, a driver
   policy's controller moves its steer by a few hundredths while it holds a
   lane or a bend, which the gap leaves out; sawing through a turn is a tenth
@@ -2865,6 +2868,9 @@ alike) decides in this order:</p>
    <code>false</code>, <code>off</code> or <code>no</code>;</li>
 <li>otherwise on.</li>
 </ol>
+<p>A <code>metrics</code> block that is absent or <code>null</code> sets nothing; one that is not a
+mapping (<code>metrics: false</code>, <code>0</code>, <code>''</code>, a list) is refused, naming <code>metrics</code>
+and the value, rather than read as unset.</p>
 <p>The shipped <code>config.yaml</code> leaves <code>metrics.heavy</code> <code>null</code>, so the environment
 variable decides unless the command line or a scenario's config says
 otherwise. The command leaves your variable as it is and writes what it
@@ -3014,7 +3020,10 @@ it must hold), and so does <code>register_pass_condition</code>. A run that pass
 failed later than the metric did, fails on the metric: the earliest wins, its
 failure records the condition, when and what it found. Every metric
 condition's status in the result says what it found: <code>ng_seconds</code>, when it
-first went NG (<code>first_ng_at</code>) and its most critical value (<code>worst</code>). In the
+first went NG (<code>first_ng_at</code>) and its most critical value (<code>worst</code>; <code>null</code>
+when it is not finite, a CriMe BTN of infinity say: the result files are
+strict JSON, which has no <code>NaN</code> or <code>Infinity</code>, and any value of a result that
+is not finite is written as <code>null</code>). In the
 <a href="../scenario_editor/">Scenario Editor</a> it is the <strong>Metric</strong> card, under World,
 with its <strong>Max NG seconds</strong>.</p>
 <p>A run a metric condition fails is a failure of what the metric reads
@@ -3034,14 +3043,23 @@ the simulation never waits on a metric. When the run is over, while its CARLA
 map is still loaded, the frames are replayed: AlpaSim's metrics and the run's
 own every tick, in order, by the code that reads them off a live world, on a
 stand-in world answering with the recorded actors and the run's map; the
-CommonRoad metrics every 0.1 s, by the workers at once. Then each metric
+CommonRoad metrics every 0.1 s, by the workers at once. A metric that raises
+in a frame reads nothing there, the first exception logged with a warning;
+one that raises in every frame evaluated (a map whose <code>get_waypoint</code> raises,
+say) fails the run with <code>MetricEvaluationError</code>
+(<code>autoware_carla_scenario.metric_batch</code>), as a CommonRoad metric failing in
+every frame does with <code>CommonRoadWorkerError</code> (below): a fail condition on it
+would otherwise pass without having judged anything. Then each metric
 condition judges its metric's series. The metrics, and each metric condition's NG frames,
 go into the run's trajectory log (<code>metric</code> and <code>condition</code> records) and so
 into its Rerun recording (<a href="../usage/#metrics-in-the-recording">Metrics in the recording</a>).</p>
 <p>To read an AlpaSim metric off a live world yourself -- in a probe, a test --
 <code>read_metric(key, world)</code> returns its value in the frame, or <code>None</code>; a
-CommonRoad metric reads nothing there. <code>evaluate_metrics(frames, carla_map,
-keys)</code> computes any of them over recorded frames.</p>
+CommonRoad metric reads nothing there, nor do the ones that read the run so
+far (<a href="#weaving">Weaving</a>, and <code>importance_sampling_weight</code>), which only the
+replay of the recorded frames gathers. <code>evaluate_metrics(frames, carla_map,
+keys)</code> computes any of them over recorded frames, on <code>carla_map</code>, whichever
+map the run's <code>MapManager</code> holds.</p>
 <h3 id="off-the-road-as-a-fail-condition">Off the road as a fail condition<a class="headerlink" href="#off-the-road-as-a-fail-condition" title="Permanent link">&para;</a></h3>
 <p><code>offroad</code> is a measurement, and a strict one: it reads <code>1</code> as soon as any one
 corner of the ego's box is on no driving lane. A corner over a gap between a
@@ -3100,7 +3118,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 00:02:30 UTC"><span class="timeago" datetime="2026-11-20T00:02:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 00:02:30 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 07:22:55 UTC"><span class="timeago" datetime="2026-11-20T07:22:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 07:22:55 UTC">2026-11-20</span>
   </span>
 
     
