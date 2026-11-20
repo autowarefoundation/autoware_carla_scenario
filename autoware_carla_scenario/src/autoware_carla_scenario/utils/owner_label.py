@@ -39,10 +39,21 @@ def process_alive(pid: int) -> bool:
 def owner_alive(owner: str) -> Optional[bool]:
     """Whether the process the owner label *owner* names still runs; None
     when that cannot be told (no label, a malformed one -- a pid that is not
-    ASCII digits --, another host's)."""
+    ASCII digits, is 0 or is too large for a pid --, another host's).
+
+    Pid 0 is no process: ``os.kill(0, 0)`` signals the caller's own process
+    group, which would read as alive."""
     host, _, pid = owner.rpartition(":")
     if not host or not (pid.isascii() and pid.isdigit()):
         return None
     if host != socket.gethostname():
         return None
-    return process_alive(int(pid))
+    number = int(pid)
+    if number <= 0:
+        return None
+    try:
+        return process_alive(number)
+    except OverflowError:
+        # Larger than a pid_t holds: no process, and no reason to abort the
+        # leftover-container cleanup that asks.
+        return None

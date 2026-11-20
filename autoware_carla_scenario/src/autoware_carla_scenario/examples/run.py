@@ -3748,8 +3748,12 @@ def _rules_locations(spec: Any) -> Any:
     from hydra.utils import to_absolute_path  # noqa: PLC0415
 
     def where(location: Any) -> Any:
-        if not isinstance(location, str) or location.startswith(
-            ("https://", "http://")
+        # A blank one as it is too, for check_weather_rules to refuse
+        # (to_absolute_path would make it the run's directory).
+        if (
+            not isinstance(location, str)
+            or not location.strip()
+            or location.startswith(("https://", "http://"))
         ):
             return location
         return to_absolute_path(location)

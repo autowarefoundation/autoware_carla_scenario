@@ -38,7 +38,6 @@ from .weather_rules import weather_at
 __all__ = [
     "DEFAULT_DECEL",
     "DEFAULT_REACTION_S",
-    "at_quantile",
     "driver_quantile",
     "forget_visibility",
     "set_world_visibility",
@@ -51,14 +50,6 @@ __all__ = [
 #: SUMO's passenger car's ``decel`` and ``tau``.
 DEFAULT_DECEL: float = 4.5
 DEFAULT_REACTION_S: float = 1.0
-
-
-def at_quantile(low: float, high: float, quantile: float) -> float:
-    """The point *quantile* (clamped to 0-1) of the way from *low* to *high*:
-    the quantile of a uniform distribution.  The weather rules' quantities
-    take theirs from their own distributions."""
-    q = min(max(float(quantile), 0.0), 1.0)
-    return low + q * (high - low)
 
 
 def sight_speed(visibility_m: float, decel: float, reaction_s: float) -> float:

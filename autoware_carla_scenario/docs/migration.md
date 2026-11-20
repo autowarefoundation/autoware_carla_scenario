@@ -1,5 +1,20 @@
 # Migrating
 
+## `visibility.at_quantile` is gone
+
+The helper was exported but nothing read it: the weather rules' quantities
+take their quantiles from their own distributions
+([Weather rules](odd.md#weather-rules)). Code importing `at_quantile` writes
+its own; it was `low + q * (high - low)`, with `q` the quantile clamped to
+`[0, 1]` (#2251).
+
+The same release refuses, as the config is read, what used to fail later
+(#2251): a blank weather-rules path (`environment.rules`, its `default` or a
+`vehicles` entry) is refused naming the key, rather than read as the
+directory the run started in; and `PerceptionFaultInjectionAction` refuses
+the ego under any of its role names (`ego` or `hero`, in any case), not only
+`Ego`.
+
 ## The driver's steering angles default to null
 
 `DriverControlSpec.max_steer_angle_deg` and `yaw_rate_trim_limit_deg` now
