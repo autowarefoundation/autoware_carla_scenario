@@ -1205,6 +1205,69 @@ def test_a_dropped_progress_stream_falls_back_to_polling(
     assert json.loads(done.stdout) == expected
 
 
+#: Runs base.html's updateCmdPreview against a stubbed fetch whose answers are
+#: released by hand, in any order.
+_PREVIEW_HARNESS = """
+const preview = {textContent: 'initial'};
+globalThis.document = {getElementById: (id) => (id === 'cmd-preview' ? preview : null)};
+function collectRunOptions() { return {}; }
+const pending = [];
+globalThis.fetch = () => new Promise((resolve) => pending.push(resolve));
+function answer(status, body) {
+  return {ok: status < 400, status,
+    json: async () => (typeof body === 'string' ? JSON.parse(body) : body)};
+}
+const settle = () => new Promise((r) => setImmediate(r));
+__SCRIPT__
+(async () => {
+  const seen = {};
+  updateCmdPreview();
+  updateCmdPreview();
+  pending[1](answer(200, {command: 'newer'}));
+  await settle();
+  pending[0](answer(200, {command: 'older'}));
+  await settle();
+  seen.outOfOrder = preview.textContent;
+  updateCmdPreview();
+  pending[2](answer(400, {command: '# no such scenario'}));
+  await settle();
+  seen.refused = preview.textContent;
+  updateCmdPreview();
+  pending[3](answer(502, '<html>Bad Gateway</html>'));
+  await settle();
+  seen.notJson = preview.textContent;
+  console.log(JSON.stringify(seen));
+})();
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_command_preview_shows_the_latest_answer(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Out-of-order answers leave the newest command; a 400's reason is shown
+    as the command's comment, and a non-JSON answer is no unhandled rejection
+    (#2215)."""
+    page = client.get("/").text
+    start = page.index("    let cmdPreviewRequest = 0;")
+    end = page.index("\n    }\n", page.index("function updateCmdPreview(")) + 7
+    script = _PREVIEW_HARNESS.replace("__SCRIPT__", page[start:end])
+    harness = tmp_path / "preview.js"
+    harness.write_text(script, encoding="utf-8")
+    done = subprocess.run(
+        ["node", "--unhandled-rejections=strict", str(harness)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {
+        "outOfOrder": "newer",
+        "refused": "# no such scenario",
+        "notJson": "Command preview unavailable (HTTP 502)",
+    }
+
+
 def test_the_session_page_links_its_odd_and_comparison(
     client: TestClient, tmp_path: Path
 ) -> None:

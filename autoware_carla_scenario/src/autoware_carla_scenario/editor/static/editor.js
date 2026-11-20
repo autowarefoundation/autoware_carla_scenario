@@ -825,11 +825,19 @@
   }
   window.editorRequestError = requestError;
 
-  function errorNotice(title, message) {
+  /* The verb of the request an htmx event is about, lower case ('get' when
+   * htmx did not say). */
+  function requestVerb(detail) {
+    var config = detail && detail.requestConfig;
+    return String((config && config.verb) || 'get').toLowerCase();
+  }
+
+  function errorNotice(title, message, verb) {
     var notice = document.createElement('div');
     notice.className = 'ed-notice ed-notice-bad';
     notice.setAttribute('role', 'alert');
-    notice.setAttribute(REQUEST_ERROR_ATTR, '');
+    // Which kind of request failed: see clearRequestError.
+    notice.setAttribute(REQUEST_ERROR_ATTR, verb || 'get');
     notice.style.marginBottom = '12px';
     var body = document.createElement('div');
     var head = document.createElement('div');
@@ -854,10 +862,10 @@
       // As the server's own "Export failed" answer looks; htmx has already
       // taken the spinner down.
       target.replaceChildren(errorNotice('Export failed — nothing to download',
-        error.title + ': ' + error.message));
+        error.title + ': ' + error.message, requestVerb(detail)));
       return;
     }
-    var notice = errorNotice(error.title, error.message);
+    var notice = errorNotice(error.title, error.message, requestVerb(detail));
     var status = document.getElementById('status');
     if (status) {
       status.replaceChildren(notice);
@@ -871,12 +879,19 @@
   }
 
   /* A request that went through takes the last failure's notice down: what it
-   * said ("not saved") is no longer the state of the draft. */
+   * said ("not saved") is no longer the state of the draft. Only a write
+   * proves that of a failed write, though: with a drafts directory that
+   * refuses writes, reads (opening a node in the inspector) still succeed,
+   * and must not take down the notice that edits are not being stored. */
   function clearRequestError(event) {
     if (!event.detail || !event.detail.successful) return;
+    var wrote = requestVerb(event.detail) !== 'get';
     var notices = document.querySelectorAll('[' + REQUEST_ERROR_ATTR + ']');
     for (var i = 0; i < notices.length; i++) {
-      if (!notices[i].closest('#export-result')) notices[i].remove();
+      if (notices[i].closest('#export-result')) continue;
+      if (wrote || notices[i].getAttribute(REQUEST_ERROR_ATTR) === 'get') {
+        notices[i].remove();
+      }
     }
   }
 

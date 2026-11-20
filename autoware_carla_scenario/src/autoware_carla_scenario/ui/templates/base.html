@@ -327,8 +327,12 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(opts)
       }).then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
+        // A refused body is answered 400 with the reason as the command's
+        // comment ({"command": "# ..."}), which is shown as any command is.
+        return r.json().catch(() => ({})).then(data => {
+          if (typeof data.command !== 'string') throw new Error('HTTP ' + r.status);
+          return data;
+        });
       }).then(data => {
         if (request !== cmdPreviewRequest) return;
         const el = document.getElementById('cmd-preview');

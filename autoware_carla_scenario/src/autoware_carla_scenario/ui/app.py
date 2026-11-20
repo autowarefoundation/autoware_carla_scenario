@@ -401,9 +401,12 @@ def _recording_context(
         "trajectory": str(files.trajectory.resolve()),
         "rrd": str(made.resolve()) if made.is_file() else None,
         "converter": converter,
-        # Whether ``rrd_url`` can answer with a file: one is made already (and
-        # no older than the log), or the converter can make it.  Otherwise the
-        # route answers 503, so the page offers no download link.
+        # Whether ``rrd_url`` and ``make_url`` can answer with a file: one is
+        # made already (and no older than the log, beside it or in the cache),
+        # or the converter can make it.  Otherwise both answer 503, so the page
+        # offers neither the download link nor the viewer, and says what to
+        # install instead.  (``rrd`` is not that test: a recording beside the
+        # log may be older than it, and one kept in the cache is not there.)
         "downloadable": converter
         or recordings.existing_recording(files.trajectory) is not None,
         "install_hint": recordings.INSTALL_HINT,
