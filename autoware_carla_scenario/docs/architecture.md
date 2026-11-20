@@ -627,8 +627,11 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
 1. **Standby.** The trigger `BaseCondition` is evaluated via
    `condition.check(world, elapsed)`. A non-`None` result fires the action:
    `execute(world)` runs and the action enters `startTransition`.
-2. **Running.** The trigger is not re-evaluated, so one run cannot begin on top
-   of another. Two independent questions are then asked every tick, in this
+2. **Running.** The trigger cannot fire, so one run cannot begin on top
+   of another. A repeating action (`once=False`) still checks it every tick
+   and drops the result, so a stateful trigger (`PersistentCondition`,
+   `StickyCondition`) sees every tick, as the children of `And` / `Or` do.
+   Two independent questions are then asked every tick, in this
    order:
 
    **Does `execute` repeat?** — `reissues_while_running`. This is a fact about
@@ -646,7 +649,10 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    **When does the run end?** — `until`, a `BaseCondition`. This is the same
    kind of object the trigger is written in, so the two ends of a run read
    together. No `until` means there was nothing to wait for, and the run is
-   over on the tick after the one it was commanded on.
+   over on the tick after the one it was commanded on. `until` is reset
+   (`BaseCondition.reset()`) as each run begins, before `execute`, so a run of
+   a repeating action never ends on a latch or a hold timed in an earlier
+   run.
 
    Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
    hands work to the simulator and watches for it to land — the traffic

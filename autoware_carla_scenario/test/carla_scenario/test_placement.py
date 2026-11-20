@@ -287,7 +287,9 @@ class _ProbeWorld:
         *,
         synchronous: bool = True,
         known: bool = True,
+        world_id: int = 1,
     ) -> None:
+        self.id = world_id
         self.refusals = refusals
         self.actors = actors or []
         self.heights: list[float] = []
@@ -349,6 +351,21 @@ def test_the_bumpers_are_measured_once_per_blueprint() -> None:
     assert (first.front, first.rear) == pytest.approx((2.5, 2.3))
     assert world.heights == [500.0]
     assert [p.destroyed for p in world.probes] == [True]
+
+
+@pytest.mark.usefixtures("_no_bumpers_known")
+def test_the_bumpers_are_measured_once_per_world() -> None:
+    # #2219: keyed by blueprint alone, one world's (one server's) box was
+    # served to every other for the rest of the process.
+    first: Any = _ProbeWorld(world_id=1)
+    other: Any = _ProbeWorld(world_id=2)
+
+    vehicle_bumpers(first, "vehicle.lincoln.mkz")
+    vehicle_bumpers(other, "vehicle.lincoln.mkz")
+    vehicle_bumpers(first, "vehicle.lincoln.mkz")
+
+    assert first.heights == [500.0]
+    assert other.heights == [500.0]
 
 
 @pytest.mark.usefixtures("_no_bumpers_known")

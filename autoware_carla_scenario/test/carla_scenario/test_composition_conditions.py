@@ -754,6 +754,45 @@ class TestAStopMarginReachesAsFarAsItReaches:
             (4, 0.0, 2.0),
         ]
 
+    def test_a_ring_of_lanelets_reached_from_both_ends_ends(self) -> None:
+        # #2219: lanelet 1 (4 m) and 2 (5 m) form a ring; the margin runs off
+        # both ends of 1 into 2.  One visited set for both directions left
+        # the second stretch out.
+        lengths = {1: 4.0, 2: 5.0}
+        links = {1: [2], 2: [1]}
+        stretches: list[tuple[int, float, float]] = []
+
+        def record(entity, lanelet_id, lo, hi, *, label):  # type: ignore[no-untyped-def]
+            stretches.append((lanelet_id, lo, hi))
+            return EntityLanePositionCondition(
+                entity, OpenDrivePose(road_id="0", lane_id=-1, s=0.0), label=label
+            )
+
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_lanelet_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_find_linked_lanelets",
+                side_effect=lambda lid, d: links[lid],
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_make_lanelet_segment_condition",
+                side_effect=record,
+            ),
+        ):
+            TemporaryStopCondition(
+                "ego",
+                stop_positions=[Lanelet2Pose(lanelet_id=1, s=2.0)],
+                s_margin=10.0,
+                label="stop",
+            )
+        assert stretches == [(1, 0.0, 4.0), (2, 0.0, 5.0), (2, 0.0, 5.0)]
+
 
 class TestAStopMarginReachesAcrossShortRoads:
     """A margin longer than the next road carries on into the roads beyond it.

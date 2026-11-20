@@ -148,7 +148,12 @@ def test_a_goal_route_stops_its_vehicle_at_the_goal(
     action = RoutingAction(
         "npc1", Lanelet2Pose(_LANELET, 60.0), speed=speed, stop_at_goal=True
     )
-    world = object()
+    # Says how long its tick was, which the pacer's smoothing reads.
+    world = SimpleNamespace(
+        get_snapshot=lambda: SimpleNamespace(
+            timestamp=SimpleNamespace(delta_seconds=_DT)
+        )
+    )
     elapsed = 0.0
     for s in range(10, 46, 5):
         point = to_carla_world(Lanelet2Pose(_LANELET, float(s)))

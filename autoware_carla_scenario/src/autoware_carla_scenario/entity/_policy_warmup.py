@@ -42,6 +42,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, FrozenSet, List, Mapping, Tuple
 
+from ..kinematics.angle import normalize_angle_deg
 from ..utils.powertrain import ChaosPowertrain
 from ..utils.vehicles import release_vehicle
 
@@ -56,10 +57,6 @@ _PATH_STEP_M: float = 0.5
 
 #: The share of its distance off the path a vehicle is aimed to close each tick.
 _PULL: float = 0.5
-
-
-def _wrap_deg(angle: float) -> float:
-    return (angle + 180.0) % 360.0 - 180.0
 
 
 class _LanePath:
@@ -90,7 +87,7 @@ class _LanePath:
             start.location.y - centre.y
         ) * math.sin(right)
         height = start.location.z - centre.z
-        heading = _wrap_deg(start.rotation.yaw - lane_yaw)
+        heading = normalize_angle_deg(start.rotation.yaw - lane_yaw)
         self._samples: List[Tuple[float, "carla.Transform"]] = [(0.0, start)]
         travelled = 0.0
         while travelled < length_m:
@@ -106,7 +103,8 @@ class _LanePath:
                 break
             yaw = waypoint.transform.rotation.yaw
             waypoint = min(
-                behind, key=lambda w: abs(_wrap_deg(w.transform.rotation.yaw - yaw))
+                behind,
+                key=lambda w: abs(normalize_angle_deg(w.transform.rotation.yaw - yaw)),
             )
             travelled += _PATH_STEP_M
             at = waypoint.transform
@@ -151,7 +149,8 @@ class _LanePath:
             ),
             carla.Rotation(
                 pitch=a.rotation.pitch + t * (b.rotation.pitch - a.rotation.pitch),
-                yaw=a.rotation.yaw + t * _wrap_deg(b.rotation.yaw - a.rotation.yaw),
+                yaw=a.rotation.yaw
+                + t * normalize_angle_deg(b.rotation.yaw - a.rotation.yaw),
                 roll=a.rotation.roll + t * (b.rotation.roll - a.rotation.roll),
             ),
         )
@@ -244,7 +243,7 @@ class _CarriedVehicle:
                 / self._step_s,
                 z=self.actor.get_velocity().z,
             )
-            turn = _wrap_deg(target.rotation.yaw - here.rotation.yaw)
+            turn = normalize_angle_deg(target.rotation.yaw - here.rotation.yaw)
         else:  # arrived: carry on at the speed the scenario starts it at
             yaw = math.radians(self.start.rotation.yaw)
             velocity = carla.Vector3D(
@@ -403,7 +402,7 @@ class PolicyWarmup:
 
         here = self._ego.path.at(self._ego.back_m(self._tick))
         ahead = self._ego.path.at(self._ego.back_m(self._tick + 1))
-        gap = _wrap_deg(ahead.rotation.yaw - here.rotation.yaw)
+        gap = normalize_angle_deg(ahead.rotation.yaw - here.rotation.yaw)
         return carla.Vector3D(x=0.0, y=0.0, z=gap / self._step_s)
 
     def acceleration(self) -> "carla.Vector3D":

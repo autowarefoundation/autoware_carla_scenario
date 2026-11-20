@@ -14,7 +14,7 @@ both.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions.base import BaseAction, TickTiming
@@ -291,3 +291,100 @@ class TestUntilIsIndependentOfOnce:
         # Nothing runs after the run ended: the count stopped at the tick
         # `until` fired.
         assert action.executed == 3
+
+
+# ---------------------------------------------------------------------------
+# Stateful trigger and until conditions across runs (#2219)
+# ---------------------------------------------------------------------------
+
+
+class _Flag(BaseCondition):
+    """Holds while :attr:`on` is set."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__(label=label)
+        self.on = False
+
+    def check(self, world: object, elapsed: float) -> Optional[ScenarioResult]:
+        if not self.on:
+            return None
+        return ScenarioResult(passed=True, message="on", elapsed_seconds=elapsed)
+
+
+class _Repeating(BaseAction):
+    """A repeating action that does nothing but note when it fired."""
+
+    def __init__(self, condition: BaseCondition, until: BaseCondition) -> None:
+        super().__init__(
+            label="repeating", condition=condition, once=False, until=until
+        )
+        self.fired: list[float] = []
+        self._now = 0.0
+
+    def tick(self, world: object, elapsed: float) -> None:  # type: ignore[override]
+        self._now = elapsed
+        super().tick(world, elapsed)  # type: ignore[arg-type]
+
+    def execute(self, world: object) -> None:  # type: ignore[override]
+        self.fired.append(self._now)
+
+
+def _run_two(
+    until_of: Callable[[BaseCondition], BaseCondition], hold_again: bool
+) -> list[float]:
+    """Fire at 0.1 s and 4.0 s (0.1 s ticks); the until's child holds over
+    1.0-3.0 s and, with *hold_again*, from 4.1 s.  When each run ended."""
+    trigger = _Flag("trigger")
+    child = _Flag("child")
+    action = _Repeating(trigger, until_of(child))
+    ends: list[float] = []
+    for i in range(80):
+        t = round(i * 0.1, 10)
+        trigger.on = i in (1, 40)
+        child.on = 10 <= i < 30 or (hold_again and i >= 41)
+        action.tick(None, t)
+        if action.state is ActionState.END_TRANSITION:
+            ends.append(t)
+    assert action.fired == [0.1, 4.0]
+    return ends
+
+
+def test_a_persistent_until_times_each_run_afresh() -> None:
+    from autoware_carla_scenario.conditions.persistent import PersistentCondition
+
+    ends = _run_two(lambda c: PersistentCondition(c, 1.0, label="held"), True)
+    # Run 1: held 1.0 s from 1.0 s.  Run 2: held 1.0 s from 4.1 s -- not
+    # ended at 4.1 s on a hold that began in run 1 and broke at 3.0 s.
+    assert ends == [2.0, 5.1]
+
+
+def test_a_sticky_until_does_not_end_the_next_run_on_its_old_latch() -> None:
+    from autoware_carla_scenario.conditions.sticky import StickyCondition
+
+    ends = _run_two(lambda c: StickyCondition(c, label="latched"), False)
+    # Run 2's child never holds: run 2 never ends.
+    assert ends == [1.0]
+
+
+def test_a_persistent_trigger_sees_the_ticks_of_a_run() -> None:
+    from autoware_carla_scenario.conditions.persistent import PersistentCondition
+
+    raw = _Flag("raw")
+    done = _Flag("done")
+    action = _Repeating(PersistentCondition(raw, 1.0, label="held"), done)
+    for i in range(60):
+        t = round(i * 0.1, 10)
+        raw.on = i <= 12 or i >= 15  # breaks over 1.3-1.4 s, in the run
+        done.on = i == 20  # the first run ends at 2.0 s
+        action.tick(None, t)
+    # Held again from 1.5 s: fires 1.0 s later, not on the hold from 0 s it
+    # never saw break.
+    assert action.fired == [1.0, 2.5]
+
+
+def test_a_once_action_does_not_check_its_trigger_while_it_runs() -> None:
+    trigger = _AfterNChecks(1)
+    action = _CountingAction(until=_AfterNChecks(3), condition=trigger)
+    for tick in range(6):
+        action.tick(None, tick * 0.1)  # type: ignore[arg-type]
+    assert trigger.checks == 1

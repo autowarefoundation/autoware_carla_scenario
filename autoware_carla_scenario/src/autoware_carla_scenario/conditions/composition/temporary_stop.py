@@ -284,7 +284,9 @@ class TemporaryStopCondition(CompositionCondition):
         runs past its start is taken from the end of the lanelets before it,
         and what runs past its end from the start of the lanelets after it
         (the routing graph's previous and following lanelets, as far as the
-        margin reaches).
+        margin reaches).  Each direction keeps its own visited set, as the
+        road path does, so a short ring of lanelets reached from both ends
+        gets both stretches.
         """
         length = cls._get_lanelet_length(pose.lanelet_id)
         s_min = pose.s - s_margin
@@ -306,18 +308,24 @@ class TemporaryStopCondition(CompositionCondition):
             min(length, s_max),
             length,
         )
-        visited = {pose.lanelet_id}
         if s_min < 0:
+            visited_before: set[int] = {pose.lanelet_id}
             conditions += cls._spill_onto_lanelets(
-                entity_name, pose.lanelet_id, -s_min, "previous", visited, label=label
+                entity_name,
+                pose.lanelet_id,
+                -s_min,
+                "previous",
+                visited_before,
+                label=label,
             )
         if s_max > length:
+            visited_after: set[int] = {pose.lanelet_id}
             conditions += cls._spill_onto_lanelets(
                 entity_name,
                 pose.lanelet_id,
                 s_max - length,
                 "following",
-                visited,
+                visited_after,
                 label=label,
             )
         return conditions

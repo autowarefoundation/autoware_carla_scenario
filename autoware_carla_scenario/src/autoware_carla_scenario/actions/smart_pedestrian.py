@@ -38,6 +38,7 @@ from ..pedestrian.poser import WalkerPoser
 from ..pedestrian.skeleton import Vector, directions_from_joints
 from ..prepare.declare import need_prepare
 from ..prepare.pool import running_backend
+from ..kinematics.walker_motion import world_seconds
 from ..seed import check_seed, resolve_seed
 from .base import BaseAction, TickTiming
 
@@ -298,7 +299,7 @@ class SmartPedestrianControllerAction(BaseAction):
             ],
         )
         self._frames = client.step(self._session, -1)
-        self._started_at = _now(world)
+        self._started_at = world_seconds(world)
         ends = [waypoints[-1].frame / info.fps] if waypoints else []
         ends += [key.time_s for key in self._keyframes]
         if self._duration_s is not None:
@@ -316,7 +317,7 @@ class SmartPedestrianControllerAction(BaseAction):
         )
 
     def _step(self, world: carla.World) -> None:
-        elapsed = _now(world) - self._started_at
+        elapsed = world_seconds(world) - self._started_at
         # The tolerance absorbs the clock's summing error: 20 ticks of 0.05 s
         # can read 0.9999999999999998 s (ElapsedTimeCondition).
         if self._end_s is not None and elapsed >= self._end_s - 1e-9:
@@ -501,11 +502,6 @@ def _timed_waypoints(
             RootWaypoint(frame=int(round(distance / speed_ms * fps)), x=cx, y=cy)
         )
     return timed
-
-
-def _now(world: carla.World) -> float:
-    """The simulated time, in seconds."""
-    return float(world.get_snapshot().timestamp.elapsed_seconds)
 
 
 class _MotionEnded(BaseCondition):
