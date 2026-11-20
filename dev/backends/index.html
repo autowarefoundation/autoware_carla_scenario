@@ -2350,7 +2350,7 @@ fires, with that backend's defaults, and stops it when the process exits.</p>
 <p>Before starting anything, the preparer adds up what the backends it is about to
 start take, as each one declares in <code>prepare.Resources</code>:</p>
 <ul>
-<li>GPU memory on one GPU, in MiB;</li>
+<li>GPU memory on each GPU it runs on, in MiB;</li>
 <li>host memory, in MiB.</li>
 </ul>
 <p>It then compares that with what the host has free:</p>
@@ -2368,12 +2368,27 @@ free:</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>(needed: ardy (24000 MiB GPU, 16000 MiB host)). Free the memory, or lower what
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>a backend is said to take (backends.&lt;name&gt;.gpu_memory_mb / memory_mb).
 </code></pre></div>
-<p>A container set to one GPU (<code>gpus: device=N</code>) is placed first, and checked on
-that GPU. Then each of the others, the largest first, is placed on the GPU with
-the most room left, and starts on that GPU. When that leaves one without room,
-the other ways to place them are tried, and the run is refused only when none
-fits them all; the message then names the ones the first placement left out.
-One with <code>gpus: none</code> needs no GPU at all.</p>
+<p>The GPU memory is checked on the GPUs <code>docker run</code> gives the container:</p>
+<ul>
+<li><code>gpus: auto</code>: the GPU the preparer places it on, and it is started with
+  <code>--gpus device=&lt;that GPU&gt;</code>. Each of these, the largest first, is placed on
+  the GPU with the most room left. When that leaves one without room, the
+  other ways to place them are tried, and the run is refused only when none
+  fits them all; the message then names the ones the first placement left out;</li>
+<li><code>gpus: device=N</code>: GPU <code>N</code>;</li>
+<li><code>gpus: '"device=N,M"'</code> (quoted, as <code>docker run --gpus</code> takes a list): each
+  GPU listed;</li>
+<li>a count, <code>gpus: N</code>: GPUs <code>0</code> to <code>N-1</code>, the ones <code>docker run --gpus N</code>
+  gives;</li>
+<li><code>gpus: all</code>: every GPU this process may use.</li>
+</ul>
+<p>A container on GPUs it is set to (every case but <code>auto</code>) needs its
+<code>gpu_memory_mb</code> free on each of them, and is placed before the <code>auto</code> ones. One
+with <code>gpus: none</code> needs no GPU at all. A <code>gpus</code> that does not say which GPUs
+docker gives (a GPU's UUID, other <code>--gpus</code> options) is refused for a backend
+that takes GPU memory, naming <code>backends.&lt;name&gt;.gpus</code> and
+<code>backends.&lt;name&gt;.gpu_memory_mb</code>: set <code>gpus</code> to one of the above, or
+<code>gpu_memory_mb: 0</code> to skip the check.</p>
 <p>The check is a snapshot of what is free when the backends start. It cannot see
 what others are about to take:</p>
 <ul>
@@ -2385,6 +2400,10 @@ what others are about to take:</p>
 <li><code>CUDA_VISIBLE_DEVICES</code> is read as <code>nvidia-smi</code>'s indices or UUIDs. Where
   SLURM renumbers a job's GPUs from 0, set <code>gpus: device=N</code> to the host's index
   instead.</li>
+<li><code>CUDA_VISIBLE_DEVICES</code> does not limit what docker gives a container: with
+  <code>gpus: all</code> it still gets every GPU of the host, while only the visible ones
+  are checked. A GPU that <code>device=</code> or a count names and that is not visible
+  is refused. Under SLURM, prefer <code>auto</code> or <code>device=N</code>.</li>
 </ul>
 <h2 id="containers">Containers<a class="headerlink" href="#containers" title="Permanent link">&para;</a></h2>
 <p><code>prepare.docker.DockerBackend</code> runs a backend as a container on this host. It:</p>
@@ -2432,10 +2451,12 @@ pulled or container started. A key that is absent or null takes its default.
 The settings every container backend shares:</p>
 <ul>
 <li><code>image</code> is a non-empty image name, and <code>gpus</code> <code>auto</code>, <code>all</code>, <code>none</code> or what
-  <code>docker run --gpus</code> takes (<code>device=N</code>, a count). <code>auto</code> is the GPU the
-  preparer placed the backend on, and it places one only when it asks for GPU
-  memory: with <code>gpu_memory_mb: 0</code> there is no placement, and <code>auto</code> passes
-  <code>--gpus all</code>, every GPU, as <code>all</code> does (<code>none</code> gives it none);</li>
+  <code>docker run --gpus</code> takes (<code>device=N</code>, a count of 1 or more: <code>gpus: 0</code> is
+  refused, use <code>none</code>). <code>auto</code> is the GPU the preparer placed the backend on,
+  and it places one only when it asks for GPU memory: with <code>gpu_memory_mb: 0</code>
+  there is no placement, and <code>auto</code> passes <code>--gpus all</code>, every GPU, as <code>all</code>
+  does (<code>none</code> gives it none). With <code>gpu_memory_mb</code> above 0, <code>gpus</code> must say
+  which GPUs docker gives the container (<a href="#resources">Resources</a>);</li>
 <li><code>pull</code> is <code>missing</code>, <code>always</code> or <code>never</code>;</li>
 <li><code>startup_timeout_s</code> (and ARDY's <code>timeout_s</code>) is a finite number of seconds
   above 0;</li>
@@ -2489,7 +2510,7 @@ checks the shared keys above (check your own keys with its helpers, such as
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 16, 2026 02:11:05 UTC"><span class="timeago" datetime="2026-11-16T02:11:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 16, 2026 02:11:05 UTC">2026-11-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 11:20:51 UTC"><span class="timeago" datetime="2026-11-20T11:20:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 11:20:51 UTC">2026-11-20</span>
   </span>
 
     
