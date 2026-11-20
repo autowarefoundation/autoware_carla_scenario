@@ -1112,7 +1112,7 @@ python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12
 python -m autoware_carla_scenario.rerun outputs/2026-10-18/08-48-12/CutInScenario-3.trajectory.jsonl
 ```
 
-or from Python, `autoware_carla_scenario.rerun.convert_outputs(path)`. It also
+or from Python, `autoware_carla_scenario.rerun.convert_outputs(output_dir)`. It also
 converts a run again (with `--strict`, or a newer converter), and keeps the
 sensors the run recorded:
 
@@ -1561,10 +1561,10 @@ nothing, and the run's failure is `other`: give it a category.
 > - `CollisionCondition` and `TimeoutCondition` keep their failure once they
 >   have fired (a collision is cached, a timeout stays past its limit), so
 >   there is nothing to wait out: register them on their own.
->   `PersistentCondition(NotCondition(child), d)` would only fail the run `d`
+>   `PersistentCondition(NotCondition(condition), d)` would only fail the run `d`
 >   later, not say that anything held for `d`.
 > - `OffRoadFractionCondition` and `EntityExistenceCondition` check again on
->   every tick, so a plain `NotCondition(child)` turns their failure into a
+>   every tick, so a plain `NotCondition(condition)` turns their failure into a
 >   pass the persistent condition counts, and it fires once the failure has
 >   held for the duration (a NOT says no category: give it one).
 > - To say a state has *not* held for a while, wrap the condition for that
