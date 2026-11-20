@@ -352,4 +352,12 @@ def test_no_thread_of_the_server_outlives_close() -> None:
             stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
     finally:
         server.close()
-    assert [t for t in threading.enumerate() if t not in before] == []
+    # gRPC's own serving thread sets the event stop() waits for and only then
+    # returns, so it may still be finishing as close() returns: give each new
+    # thread a bounded while to end.  The handler pool's workers, which only
+    # an executor shutdown ends, would still be alive after it.
+    deadline = time.monotonic() + 10.0
+    new = [t for t in threading.enumerate() if t not in before]
+    for thread in new:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    assert [t.name for t in new if t.is_alive()] == []
