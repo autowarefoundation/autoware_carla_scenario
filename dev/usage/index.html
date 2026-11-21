@@ -1659,6 +1659,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#how-a-sessions-cases-are-counted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a session's cases are counted
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#seeing-a-run-in-the-viewer" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3533,6 +3544,17 @@
     <span class="md-ellipsis">
       
         Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-a-sessions-cases-are-counted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How a session's cases are counted
       
     </span>
   </a>
@@ -6420,6 +6442,22 @@ refuses them:</p>
   pages either.</li>
 </ul>
 </div>
+<h3 id="how-a-sessions-cases-are-counted">How a session's cases are counted<a class="headerlink" href="#how-a-sessions-cases-are-counted" title="Permanent link">&para;</a></h3>
+<p>The session list and a session's page count a session's cases the same way
+(#2285):</p>
+<ul>
+<li><strong>passed</strong>: its result's <code>passed</code> is <code>true</code>;</li>
+<li><strong>without a result</strong> (<em>pending</em> on the session list): it has no result to
+  read -- a multirun job's or a single run's result file is missing or
+  unreadable (a job still running, or one that crashed), a batch lists it as
+  pending, or it is a SLURM case without an outcome yet or with a stale one,
+  as <code>scenario-slurm status</code> and the SLURM panel count it;</li>
+<li><strong>failed</strong>: every other case, a result whose <code>passed</code> is <code>false</code> or no
+  boolean at all (no verdict) among them.</li>
+</ul>
+<p>A session is <em>All passed</em> (green) only when every case passed; it is red
+when a case failed, and grey when the cases that did not pass are all
+without a result.</p>
 <h3 id="seeing-a-run-in-the-viewer">Seeing a run in the viewer<a class="headerlink" href="#seeing-a-run-in-the-viewer" title="Permanent link">&para;</a></h3>
 <p>A scenario's page shows its run in Rerun's web viewer, embedded in the page:
 the case's trajectory log made into a Rerun recording (<a href="#seeing-a-run">Seeing a run</a>).
@@ -7000,7 +7038,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 22:17:32 UTC"><span class="timeago" datetime="2026-11-20T22:17:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 22:17:32 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 13:43:43 UTC"><span class="timeago" datetime="2026-11-21T13:43:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 13:43:43 UTC">2026-11-21</span>
   </span>
 
     
