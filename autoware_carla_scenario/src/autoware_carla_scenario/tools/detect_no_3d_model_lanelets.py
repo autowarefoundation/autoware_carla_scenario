@@ -51,6 +51,7 @@ from pathlib import Path
 
 import copy
 import os
+import re
 import shutil
 from collections.abc import Sequence
 from typing import Any, NoReturn
@@ -305,14 +306,63 @@ def _content_end(node: yaml.Node, text: str) -> int:
     return end
 
 
+def _content_start(node: yaml.Node) -> int:
+    """Return the index of the first character of *node*'s content.
+
+    A node's ``start_mark`` lies at its anchor or tag, if it has one, so for a
+    block collection the start of its first child is used instead.
+    """
+    if isinstance(node, yaml.CollectionNode) and not node.flow_style and node.value:
+        first = node.value[0]
+        return _content_start(first[0] if isinstance(node, yaml.MappingNode) else first)
+    return int(node.start_mark.index)
+
+
+def _key_line_tail(text: str, key_node: yaml.Node, value_node: yaml.Node) -> str:
+    """Return the text after the key's ``:`` up to the end of its line -- a
+    comment, an anchor or a tag -- when the value's content starts on a later
+    line, so that replacing the value keeps it; ``""`` otherwise (the line's
+    rest is then the value itself, or kept after the replaced span).
+    """
+    colon = text.find(":", int(key_node.end_mark.index))
+    line_ends = [i for i in (text.find("\n", colon), text.find("\r", colon)) if i != -1]
+    line_end = min(line_ends) if line_ends else len(text)
+    if _content_start(value_node) <= line_end:
+        return ""
+    return text[colon + 1 : line_end]
+
+
 def _format_value(
-    lanelet_ids: Sequence[int], indent: str, newline: str, *, flow: bool
+    lanelet_ids: Sequence[int],
+    indent: str,
+    newline: str,
+    *,
+    flow: bool,
+    tail: str = "",
 ) -> str:
-    """Render ``no_3d_model_lanelet_ids: <ids>`` starting at the key."""
+    """Render ``no_3d_model_lanelet_ids: <ids>`` starting at the key.
+
+    *tail* is what followed the key's ``:`` on its line (see
+    :func:`_key_line_tail`): kept after the ``:`` of a block list, and split
+    around a flow list -- its anchor or tag before it, its comment after.
+    """
     if not lanelet_ids or flow:
         items = ", ".join(str(int(lid)) for lid in lanelet_ids)
-        return f"{NO_3D_MODEL_KEY}: [{items}]"
-    lines = [f"{NO_3D_MODEL_KEY}:"]
+        # A comment starts at a "#" after whitespace (an anchor may hold one);
+        # the whitespace before it goes with it.
+        comment = re.search(r"\s*(?:^|(?<=\s))#", tail)
+        split = comment.start() if comment else len(tail)
+        properties = tail[:split].strip()
+        after = tail[split:]
+        if after.startswith("#"):
+            after = " " + after
+        head = (
+            f"{NO_3D_MODEL_KEY}: {properties} "
+            if properties
+            else f"{NO_3D_MODEL_KEY}: "
+        )
+        return f"{head}[{items}]{after}"
+    lines = [f"{NO_3D_MODEL_KEY}:{tail}"]
     lines.extend(f"{indent}  - {int(lid)}" for lid in lanelet_ids)
     return newline.join(lines)
 
@@ -401,7 +451,8 @@ def update_no_3d_model_lanelet_ids_text(text: str, lanelet_ids: Sequence[int]) -
             and value_node.flow_style
             and value_node.value
         )
-        replacement = _format_value(ids, indent, newline, flow=flow)
+        tail = _key_line_tail(text, key_node, value_node)
+        replacement = _format_value(ids, indent, newline, flow=flow, tail=tail)
         result = text[:start] + replacement + text[end:]
     else:
         # After the line holding the section's last value.
