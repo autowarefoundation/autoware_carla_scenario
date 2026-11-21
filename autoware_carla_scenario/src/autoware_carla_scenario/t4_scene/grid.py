@@ -123,13 +123,21 @@ def scene_stem(name: str) -> str:
 
 def files_under(paths: list[Path], suffix: str) -> list[Path]:
     """The files *paths* name: a file itself, or every ``*{suffix}`` file
-    under a directory (sorted)."""
+    under a directory (sorted).
+
+    Each file once, where it is first named: a file named twice -- itself
+    and under a directory given too, or by two spellings of one path -- was
+    converted twice, and with ``-o`` refused as two logs of one stem (#2283).
+    """
     found: list[Path] = []
+    seen: set[Path] = set()
     for path in paths:
-        if path.is_dir():
-            found.extend(sorted(path.rglob(f"*{suffix}")))
-        else:
-            found.append(path)
+        named = sorted(path.rglob(f"*{suffix}")) if path.is_dir() else [path]
+        for file in named:
+            resolved = file.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                found.append(file)
     return found
 
 
