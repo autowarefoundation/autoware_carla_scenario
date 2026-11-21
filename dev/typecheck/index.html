@@ -3263,7 +3263,7 @@ value, so the result is not checked:</p>
   re-export, and the <code>__init__</code> of a checked subpackage, which models
   nothing), so a model file no test compares fails the suite.
 - <strong>Third-party models</strong>: carla_driver_interface's geometry, python-dotenv's
-  <code>load_dotenv</code>, packaging's <code>Version</code> and <code>InvalidVersion</code>, eclipse-sumo's
+  <code>find_dotenv</code> and <code>load_dotenv</code>, packaging's <code>Version</code> and <code>InvalidVersion</code>, eclipse-sumo's
   <code>SUMO_HOME</code> (where it is installed), pyxodr's <code>RoadNetwork</code> and lxml's
   element.</p>
 <p>A constant whose model value is a literal (a <code>str</code>, <code>int</code>, <code>float</code> or a tuple
@@ -5001,8 +5001,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 343 of the package's 473
-modules (73%; about 108,200 of
-182,000 lines) are <code>CHECKED</code>: the kinematics, the
+modules (73%; about 108,300 of
+182,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -8008,6 +8008,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>python-dotenv is modelled</strong> as far as <code>server</code> uses it, with the
   installed package's signatures, which <code>test_typecheck_model.py</code> compares:
   <code>codon/dotenv/</code> declares
+  <code>find_dotenv(filename=".env", raise_error_if_not_found=False,
+  usecwd=False)</code>, returning a <code>str</code>, and
   <code>load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
   interpolate=True, encoding="utf-8")</code>, of a path that is <code>None</code>, a <code>str</code> or
   an <code>os.PathLike</code> (a stream, an <code>IO[str]</code> Codon has no type for, is not
@@ -8973,7 +8975,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 18:08:06 UTC"><span class="timeago" datetime="2026-11-21T18:08:06+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 18:08:06 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 20:53:56 UTC"><span class="timeago" datetime="2026-11-21T20:53:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 20:53:56 UTC">2026-11-21</span>
   </span>
 
     
