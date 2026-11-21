@@ -591,7 +591,7 @@ driver:
   lidars:
     - {logical_id: lidar_top, weather_noise: 1.5}
 environment:
-  rain: 80        # heavy rain: sparser, noisier sweeps
+  precipitation: 80   # heavy rain: sparser, noisier sweeps
 server:
   fog_density_scale: 0.01   # fog the cameras and the LiDARs both see
 ```
