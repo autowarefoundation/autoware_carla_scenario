@@ -458,6 +458,8 @@ class TestValidation:
             "where it was declared" in m and "no lanelet of its own" in m
             for m in errors
         )
+        # Said once: the entity itself is not refused for it (#2281).
+        assert not any("positive lanelet ID" in m for m in errors)
 
     def test_one_on_a_lanelet_of_one_map_is_warned_about(self) -> None:
         raw = _raw()

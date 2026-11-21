@@ -3151,7 +3151,7 @@ register_action_spec(
                 default=30.0,
                 required=False,
                 unit="km/h",
-                help="Times the lanelet path; empty or 0 leaves it untimed.",
+                help="Times the lanelet path; 0 leaves it untimed; empty uses 30 km/h.",
             ),
             FieldSpec(
                 name="lateral_offset_m",

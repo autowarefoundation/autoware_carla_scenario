@@ -52,6 +52,7 @@ from .registry import (
     INT_LIST_KINDS,
     ActionSpec,
     ConditionSpec,
+    ConstraintSpec,
     FieldSpec,
     get_action_spec,
     get_binding_spec,
@@ -154,6 +155,56 @@ def _is_blank(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+def _with_default(spec: FieldSpec, value: Any) -> Any:
+    """*value*, or *spec*'s default for a blank one, as the compiler's
+    ``_coerce_one`` reads it: an absent, empty or ``None`` field stands for
+    its default unless that is empty too (#2281)."""
+    if _is_blank(value) and spec.default is not None and spec.default != "":
+        return spec.default
+    return value
+
+
+def _node_fields(
+    node: "ActionNode | ConditionNode | ConstraintNode",
+) -> "tuple[FieldSpec, ...]":
+    """The field specs of *node*'s type; none for an unknown type."""
+    spec: "ActionSpec | ConditionSpec | ConstraintSpec | None"
+    if isinstance(node, ActionNode):
+        spec = get_action_spec(node.type)
+    elif isinstance(node, ConditionNode):
+        spec = get_condition_spec(node.type)
+    else:
+        spec = get_constraint_spec(node.type)
+    return spec.fields if spec is not None else ()
+
+
+def _value(node: "ActionNode | ConditionNode | ConstraintNode", key: str) -> Any:
+    """What *node*'s field *key* compiles to before it is typed: its value,
+    or its spec default when blank (:func:`_with_default`).
+
+    The checks that read one field against another read through this, so
+    they judge what the compiler builds -- an explicit ``null`` the default
+    it stands for, not a fallback of their own (#2281).
+    """
+    value = node.params.get(key)
+    for spec in _node_fields(node):
+        if spec.name == key:
+            return _with_default(spec, value)
+    return value
+
+
+def _node_number(
+    node: "ActionNode | ConditionNode | ConstraintNode", key: str
+) -> Optional[float]:
+    """The finite number *node*'s field *key* compiles to (:func:`_value`);
+    ``None`` when it is blank with no default, or not a number (the field
+    check's to report)."""
+    value = _value(node, key)
+    if _is_blank(value) or not _coercible_float(value):
+        return None
+    return float(str(value).strip())
+
+
 @dataclass(frozen=True)
 class _Refs:
     """Ids a node is allowed to point at.
@@ -185,8 +236,13 @@ def _check_field(
     refs: _Refs,
     object_id: str | None,
 ) -> None:
-    """Validate one parameter against its :class:`FieldSpec`."""
-    value = params.get(spec.name, spec.default)
+    """Validate one parameter against its :class:`FieldSpec`.
+
+    An absent, empty or ``None`` value is checked as its default, which is
+    what the compiler builds from it (#2281): a required field with a
+    default is not missing when left blank.
+    """
+    value = _with_default(spec, params.get(spec.name))
 
     # A record list with no records is blank too: an empty list is what an
     # unset one holds, so a required one needs a record.
@@ -423,7 +479,10 @@ def _check_choices(
     """
     fields = {f.name: f for f in spec.fields}
     for choice in spec.choices:
+        selector_spec = fields.get(choice.discriminator)
         picked = params.get(choice.discriminator)
+        if selector_spec is not None:
+            picked = _with_default(selector_spec, picked)
         for case in choice.cases:
             if not case.field or case.when != picked:
                 continue
@@ -540,7 +599,7 @@ def _check_collision_names_one_target(
     if node.type != "collision":
         return
     named_entity = not _is_blank(node.params.get("target"))
-    named_type = str(node.params.get("target_type", "ANY")) != "ANY"
+    named_type = str(_value(node, "target_type") or "ANY") != "ANY"
     if named_entity and named_type:
         out.error(
             f"{path}.target",
@@ -593,8 +652,8 @@ def _check_filter_ranges(out: _Collector, path: str, node: ConditionNode) -> Non
     """An entity filter's lower bound is not above its upper one, as
     :class:`~..conditions.EntityFilter` asks (#1111)."""
     for what in _FILTER_RANGES:
-        low = _number(node.params, f"min_{what}_m")
-        high = _number(node.params, f"max_{what}_m")
+        low = _node_number(node, f"min_{what}_m")
+        high = _node_number(node, f"max_{what}_m")
         if low is not None and high is not None and low > high:
             out.error(
                 f"{path}.min_{what}_m",
@@ -626,7 +685,7 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
             path, f"{spec.title} takes at most {limit} child constraint(s).", node.id
         )
 
-    if node.type == "lanelet_length" and str(node.params.get("rule")) == "equal_to":
+    if node.type == "lanelet_length" and str(_value(node, "rule")) == "equal_to":
         # The sweeper's LaneletLengthConstraint has no tolerance to give it, and
         # a measured centerline length is never a round number: the "=" rule
         # matches no lanelet.  A warning, so a document that used it still loads.
@@ -852,7 +911,7 @@ def _vertex_count(node: ActionNode) -> Optional[int]:
     its own field, and comes back as ``0`` here so nothing is said twice.
     """
     params = node.params
-    source = params.get("path_source", "goal")
+    source = _value(node, "path_source")
     try:
         if source == "vertices":
             return len(parse_vertices(params.get("vertices")))
@@ -874,9 +933,9 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
     is a document error the editor shows instead.
     """
     params = node.params
-    source = params.get("path_source", "goal")
-    domain = params.get("time_domain", "none")
-    timed = domain != "none"
+    source = _value(node, "path_source")
+    domain = _value(node, "time_domain")
+    timed = not _is_blank(domain) and domain != "none"
     if source == "goal":
         if _is_blank(params.get("goal_lanelet_id")):
             out.error(
@@ -891,7 +950,7 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
                 "to apply to: write the waypoints out, or choose None.",
                 node.id,
             )
-        if params.get("mode", "driver") != "driver":
+        if _value(node, "mode") not in (None, "", "driver"):
             # The trajectory a goal stands for is only stops for a driver to
             # route between: no legs to follow or to place the entity on.
             out.error(
@@ -901,12 +960,8 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
                 "choose Driver.",
                 node.id,
             )
-        offset = params.get("initial_distance_offset")
-        if (
-            not _is_blank(offset)
-            and _coercible_float(offset)
-            and float(str(offset)) > 0.0
-        ):
+        offset = _node_number(node, "initial_distance_offset")
+        if offset is not None and offset > 0.0:
             out.error(
                 f"{path}.initial_distance_offset",
                 "A route to a goal has no trajectory to start along: write "
@@ -958,36 +1013,32 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
                 "A lanelet path needs at least one lanelet.",
                 node.id,
             )
-        if timed and not _positive(params.get("speed_kmh")):
+        # An empty speed is the default, 30 km/h; only 0 leaves it untimed.
+        if timed and not _positive(_value(node, "speed_kmh")):
             out.error(
                 f"{path}.speed_kmh",
                 "A time reference needs a speed to time the lanelet path by.",
                 node.id,
             )
-    speed = params.get("speed_ms")
-    if not _is_blank(speed) and _coercible_float(speed) and float(str(speed)) < 0.0:
+    speed = _node_number(node, "speed_ms")
+    if speed is not None and speed < 0.0:
         out.error(f"{path}.speed_ms", "Speed must not be negative.", node.id)
-    cross = params.get("cross_factor")
-    if (
-        not _is_blank(cross)
-        and _coercible_float(cross)
-        and not 0.0 <= float(str(cross)) <= 1.0
-    ):
+    cross = _node_number(node, "cross_factor")
+    if cross is not None and not 0.0 <= cross <= 1.0:
         out.error(
             f"{path}.cross_factor",
             "Crossing away from crossings is a probability, 0 to 1.",
             node.id,
         )
-    if not _positive(params.get("time_scale", 1.0)):
+    if not _positive(_value(node, "time_scale")):
         out.error(f"{path}.time_scale", "Time scale must be positive.", node.id)
 
 
 def _check_spawn(out: _Collector, path: str, node: ActionNode) -> None:
     """A Spawn card's shift and speed are distances and speeds: not negative."""
-    params = node.params
     for key, what in (("shift_max", "How far on"), ("speed_ms", "The speed")):
-        value = params.get(key)
-        if not _is_blank(value) and _coercible_float(value) and float(str(value)) < 0.0:
+        value = _node_number(node, key)
+        if value is not None and value < 0.0:
             out.error(f"{path}.{key}", f"{what} must not be negative.", node.id)
 
 
@@ -1059,9 +1110,10 @@ def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
     """A construction zone ends after it starts, along its lane and in time;
     a stalled object is taken away after it is put down, as the actions ask
     (an end of ``1e9`` s or more is "never", which the empty field says)."""
-    params = node.params
     if node.type != "stalled_object":
-        start_s, end_s = _number(params, "start_s"), _number(params, "end_s")
+        # Read with their defaults, as the compiler builds them (#2281): an
+        # end_s of 50 before the default start_s of 100 is no zone either.
+        start_s, end_s = _node_number(node, "start_s"), _node_number(node, "end_s")
         if start_s is not None and end_s is not None and not end_s > start_s:
             out.error(
                 f"{path}.end_s",
@@ -1072,7 +1124,7 @@ def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
         elif start_s is not None and end_s is not None:
             if node.type == "construction_zone":
                 _check_highway_zone_length(out, path, node, end_s - start_s)
-    start, end = _number(params, "start_time"), _number(params, "end_time")
+    start, end = _node_number(node, "start_time"), _node_number(node, "end_time")
     if start is None or end is None:
         return
     if not end > start:
@@ -1095,16 +1147,11 @@ def _check_highway_zone_length(
     """Warn of a construction zone shorter than its tapers and buffer: it has
     no work zone, and the three are shortened to fit it (#2263), as
     ``construction_zones`` does."""
-    spec = get_action_spec(node.type)
-    defaults = {f.name: f.default for f in spec.fields} if spec is not None else {}
     parts: list[tuple[str, float]] = []
     for key in ("taper_length_in", "buffer_zone_length", "taper_length_out"):
-        value = _number(node.params, key)
+        value = _node_number(node, key)
         if value is None:
-            default = defaults.get(key)
-            if not isinstance(default, (int, float)):
-                return
-            value = float(default)
+            return
         parts.append((key, value))
     needed = sum(value for _, value in parts)
     if not length < needed:
@@ -1228,7 +1275,7 @@ def _check_equal_tolerance(
     field_spec = next((f for f in spec.fields if f.name == "tolerance"), None)
     if field_spec is None:
         return
-    tolerance = _number(node.params, "tolerance")
+    tolerance = _node_number(node, "tolerance")
     if tolerance is not None and tolerance < 0:
         out.error(
             f"{path}.tolerance",
@@ -1236,7 +1283,7 @@ def _check_equal_tolerance(
             node.id,
         )
         return
-    if str(node.params.get("rule")) != "equal_to" or not field_spec.unit:
+    if str(_value(node, "rule")) != "equal_to" or not field_spec.unit:
         return
     if tolerance is None or tolerance <= EQUAL_TO_DEFAULT_TOLERANCE:
         out.warn(
@@ -1256,8 +1303,11 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
     frame.  Along the road, a distance is one-dimensional (no lateral
     component) and neither it nor a TTC can be taken between bounding boxes
     (#1097).  All are refused when the condition is built, at setup."""
-    params = node.params
-    if node.type == "temporary_stop" and params.get("stop_lanelets", []) in ([], ()):
+    if node.type == "temporary_stop" and _value(node, "stop_lanelets") in (
+        None,
+        [],
+        (),
+    ):
         out.error(
             f"{path}.stop_lanelets",
             "Temporary Stop needs at least one lanelet to stop on.",
@@ -1274,8 +1324,8 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
     # True is (#1462).
     if (
         node.type == "entity_distance"
-        and read_bool(params.get("signed")) is True
-        and str(params.get("measure", "entity")) != "lane"
+        and read_bool(_value(node, "signed")) is True
+        and str(_value(node, "measure")) != "lane"
     ):
         out.error(
             f"{path}.signed",
@@ -1283,11 +1333,11 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
             "in the lane frame (measure: lane), or clear signed.",
             node.id,
         )
-    in_lane = str(params.get("measure", "entity")) == "lane"
+    in_lane = str(_value(node, "measure")) == "lane"
     if (
         node.type == "entity_distance"
         and in_lane
-        and str(params.get("distance_type", "EUCLIDEAN")) == "LATERAL"
+        and str(_value(node, "distance_type")) == "LATERAL"
     ):
         out.error(
             f"{path}.distance_type",
@@ -1299,7 +1349,7 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
     if (
         node.type in ("entity_distance", "ttc")
         and in_lane
-        and read_bool(params.get("edge_to_edge")) is True
+        and read_bool(_value(node, "edge_to_edge")) is True
     ):
         out.error(
             f"{path}.edge_to_edge",
@@ -1314,10 +1364,10 @@ def _check_traffic_source(out: _Collector, path: str, node: ActionNode) -> None:
     :data:`~..constants.MIN_BACKGROUND_SPEED_KMH`, as TrafficSourceAction
     asks (#967).  0 would be traffic that never moves.  A blank or non-finite
     one is the field check's."""
-    value = node.params.get("speed_kmh")
-    if _is_blank(value) or not _coercible_float(value):
+    value = _node_number(node, "speed_kmh")
+    if value is None:
         return
-    if float(str(value).strip()) < MIN_BACKGROUND_SPEED_KMH:
+    if value < MIN_BACKGROUND_SPEED_KMH:
         out.error(
             f"{path}.speed_kmh",
             f"Speed must be at least {MIN_BACKGROUND_SPEED_KMH:g} km/h: it is the "
@@ -1738,7 +1788,9 @@ def _check_declared_spawns(out: _Collector, document: ScenarioDocument) -> None:
     (#2014): an error, as the run would refuse to bring it in.  In a scenario
     whose route is found on any map, a hidden entity's lanelet names a
     lanelet of one map only: a warning, as on another map the run refuses it
-    too.
+    too.  Only such a scenario is checked here: in one without a route
+    search, a fixed spawn on lanelet 0 or less is :func:`_check_entity`'s
+    error already, hidden or not, and is said once (#2281).
     """
     for index, action in enumerate(document.actions):
         if action.type != "spawn" or action.actor is None:
@@ -1746,7 +1798,9 @@ def _check_declared_spawns(out: _Collector, document: ScenarioDocument) -> None:
         if not _is_blank(action.params.get("name")) or _has_place(action):
             continue
         entity = document.entity(str(action.actor))
-        if entity is None or not entity.spawn.hidden:
+        if entity is None or not entity.spawn.hidden or document.route is None:
+            # Without a route search, a hidden entity's fixed spawn on lanelet
+            # 0 or less is already _check_entity's error, said once (#2281).
             continue
         spawn = entity.spawn
         path = f"actions[{index}].lanelet_id"
@@ -1759,7 +1813,7 @@ def _check_declared_spawns(out: _Collector, document: ScenarioDocument) -> None:
                 "s) or a route pose.",
                 action.id,
             )
-        elif document.route is not None:
+        else:
             out.warn(
                 path,
                 f"This Spawn card brings {entity.display_name} in where it was "
@@ -2067,7 +2121,7 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
 
     for index, action in enumerate(document.actions):
         params = action.params
-        if action.type == "routing" and params.get("path_source") == "route":
+        if action.type == "routing" and _value(action, "path_source") == "route":
             route_rows(
                 f"actions[{index}].route_vertices",
                 action.id,
@@ -2077,7 +2131,7 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
         raw_junction = params.get("route_junction")
         if (
             action.type == "traffic_signal"
-            and params.get("target") == "route"
+            and _value(action, "target") == "route"
             # One that is no whole number is already reported against the
             # field; skipping it here, not the rest of the loop body, keeps
             # every later check on this action running.
@@ -2184,11 +2238,11 @@ def _check_route_progress_bounds(
     :func:`_check_equal_tolerance`): the document builds and runs as it did.
     """
     params = node.params
-    value = _number(params, "value")
+    value = _node_number(node, "value")
     if value is None:
         return
     bound = _route_bound(params.get("anchor"), route)
-    rule = str(params.get("rule") or "greater_than_or_equal")
+    rule = str(_value(node, "rule") or "greater_than_or_equal")
     hint = "Give a distance that puts the target on the route."
     if bound == "start" and value < 0:
         where = f"{-value:g} m before the route's start"
@@ -2209,7 +2263,7 @@ def _check_route_progress_bounds(
     rising = rule in ("greater_than", "greater_than_or_equal")
     falling = rule in ("less_than", "less_than_or_equal")
     if rule == "equal_to":
-        tolerance = _number(params, "tolerance")
+        tolerance = _node_number(node, "tolerance")
         if tolerance is None:
             tolerance = EQUAL_TO_DEFAULT_TOLERANCE
         if abs(value) <= tolerance:
@@ -2277,8 +2331,11 @@ def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
 def _check_required_lanelets(out: _Collector, document: ScenarioDocument) -> None:
     """A required lanelet parameter of a card holds a lanelet: 0 (or less) is
     the empty field, which the action or condition cannot be built on
-    (#1021).  A searched or derived one is :func:`_check_lanelet_slots`'s,
-    and a blank or non-numeric one the field check's."""
+    (#1021).  A blank one is read as its default (:func:`_with_default`), as
+    the compiler builds it (#2281): a ``null`` stands for the empty 0 the
+    field check accepts, not for a field this check may skip.  A searched or
+    derived one is :func:`_check_lanelet_slots`'s, and a non-numeric one the
+    field check's."""
     for slot in document.lanelet_slots():
         holder = slot.holder
         spec: ActionSpec | ConditionSpec | None = None
@@ -2295,7 +2352,7 @@ def _check_required_lanelets(out: _Collector, document: ScenarioDocument) -> Non
             or field_spec.kind != "lanelet"
         ):
             continue
-        raw = holder.params.get(slot.field, field_spec.default)
+        raw = _with_default(field_spec, holder.params.get(slot.field))
         if _is_blank(raw) or not _coercible_int(raw) or int(str(raw).strip()) > 0:
             continue
         out.error(

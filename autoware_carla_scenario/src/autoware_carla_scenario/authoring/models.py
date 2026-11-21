@@ -202,31 +202,48 @@ class _Node(BaseModel):
 def _sweep_params(
     fields: tuple[FieldSpec, ...], params: dict[str, Any]
 ) -> dict[str, Any]:
-    """*params* as the sweeper takes them: each ``bool`` field a real bool.
+    """*params* as the sweeper takes them: filled and typed as the compiler
+    would (#2281).
 
-    A constraint's and a binding's parameters go to the sweep config as
-    written -- the compiler's :func:`coerce_params` never sees them -- and the
-    sweeper reads a flag by its truth, so a ``no`` or an ``off`` kept as text
-    (a document reads them as text, #1946) would turn the flag on.  Each is
-    read as the validator reads it
-    (:func:`~autoware_carla_scenario.authoring.registry.read_bool`); a blank
-    one stands for the field's default.  A spelling that is neither is left
-    as written: the validator names it, and the sweeper refuses it.
+    A constraint's and a binding's parameters go to the sweep config -- the
+    compiler's :func:`~autoware_carla_scenario.authoring.compiler.coerce_params`
+    never sees them -- and the sweeper's own classes have defaults of their
+    own (a turn direction of ``straight`` where the spec says ``left``) and
+    take no number written as text.  So each field the spec knows is read
+    here as the compiler reads an action's: an absent, blank or ``None`` one
+    stands for its spec default (the one the validator and the inspector
+    show), and a number, a whole number, a lanelet id or a list of them is
+    converted to its type.  A bool is read as the validator reads it
+    (:func:`~autoware_carla_scenario.authoring.registry.read_bool`): a ``no``
+    or an ``off`` kept as text (a document reads them as text, #1946) would
+    turn the flag on, as the sweeper reads a flag by its truth.
+
+    A value that does not convert -- a misspelt flag, a word in a number
+    field -- is left as written: the validator names it, and the sweeper
+    refuses it.  So is a ``${...}`` reference, which Hydra resolves.  Keys
+    the spec does not know are kept too.
     """
+    from .compiler import _coerce_one  # noqa: PLC0415 -- compiler imports models
+
     out = dict(params)
     for spec in fields:
-        if spec.kind != "bool" or spec.name not in out:
-            continue
-        value = out[spec.name]
+        value = out.get(spec.name)
         if value is None or (isinstance(value, str) and not value.strip()):
-            if spec.default is None:
-                del out[spec.name]
-            else:
-                out[spec.name] = spec.default
+            if spec.default is None or spec.default == "":
+                out.pop(spec.name, None)
+                continue
+            value = spec.default
+        if isinstance(value, str) and "${" in value:
+            out[spec.name] = value
             continue
-        flag = read_bool(value)
-        if flag is not None:
-            out[spec.name] = flag
+        if spec.kind == "bool":
+            flag = read_bool(value)
+            out[spec.name] = value if flag is None else flag
+            continue
+        try:
+            out[spec.name] = _coerce_one(spec, value)
+        except (TypeError, ValueError):
+            out[spec.name] = value
     return out
 
 

@@ -480,8 +480,17 @@ def _issues(document: ScenarioDocument, severity: str = "error") -> list[str]:
 
 class TestValidator:
     def test_no_place_on_one_with_no_spawn_of_its_own_is_rejected(self) -> None:
+        # Once: without a route search, the fixed spawn on lanelet 0 is the
+        # entity's error, and the Spawn card adds none of its own (#2281).
         document = _document(_hidden("p", lanelet_id=0), spawns=(_spawn_card("p"),))
-        assert len(_issues(document)) == 1
+        errors = validate_document(document).errors
+        assert [(i.path, i.message) for i in errors] == [
+            (
+                "entities[1].spawn.lanelet_id",
+                "A fixed spawn needs a positive lanelet ID.",
+            )
+        ]
+        assert _issues(document) == []
 
     def test_a_place_of_its_own_is_accepted(self) -> None:
         document = _document(
