@@ -65,6 +65,8 @@ from .bindings import _walk_back_lanelet_key as _walk_back_lanelet_key
 from .case_choice import case_lanelet as _case_lanelet
 from .case_choice import choose_cases as _choose_cases
 from .case_choice import fits as _fits
+from .case_choice import override_key as _override_key
+from .case_choice import write_override as _write_override
 from .constraints import (
     Constraint,
     create_routing_graph,
@@ -448,12 +450,6 @@ def _with_odd_samples(
     ]
 
 
-def _override_key(override: str) -> str:
-    """The config key a Hydra override names: ``a.b`` of ``a.b=1``,
-    ``+a.b=1``, ``++a.b=1`` and ``~a.b``."""
-    return override.lstrip("~+").split("=", 1)[0]
-
-
 def _refuse_overridden(
     samples: Sequence[Any],
     arguments: Sequence[str],
@@ -529,6 +525,50 @@ def _refuse_overridden(
         "and the run would follow them while the case records the value "
         "drawn: " + "; ".join(reasons)
     )
+
+
+def check_sweep_shape(sweep_cfg: Any) -> None:
+    """Refuse a config's ``sweep`` value (``OmegaConf.select(cfg, "sweep")``)
+    that is neither null nor a mapping, resolving nothing in it.
+
+    What a run that does not expand the sweep checks of it (``examples/run.py``,
+    the lanelet sweeper before its step 0): an interpolation inside a sweep
+    that only expanding it reads is not resolved, as before (#2279).
+
+    Raises:
+        ValueError: If *sweep_cfg* is neither null nor a mapping.
+    """
+    if sweep_cfg is None or isinstance(sweep_cfg, (DictConfig, Mapping)):
+        return
+    raise ValueError(
+        "sweep must be a mapping (constraints, route, odd_sample, ...), "
+        f"got {_shape(sweep_cfg)}"
+    )
+
+
+def sweep_section(sweep_cfg: Any) -> dict[str, Any] | None:
+    """A config's ``sweep`` value (``OmegaConf.select(cfg, "sweep")``) as a
+    plain dict, resolved; ``None`` when the config has no sweep.
+
+    Only a missing ``sweep`` or null is no sweep: ``[]``, ``false``, ``0`` or
+    ``""`` is the wrong shape, an easy slip in YAML that must not run the
+    scenario once, as if it were concrete (#2279).  ``scenario-expand``, a
+    ``--multirun`` batch (:func:`expand_config`), a batch run without one
+    (``examples/run.py``) and the lanelet sweeper all read it this way.
+
+    Raises:
+        ValueError: If *sweep_cfg* is neither null nor a mapping
+            (:func:`check_sweep_shape`).
+    """
+    check_sweep_shape(sweep_cfg)
+    if sweep_cfg is None:
+        return None
+    if isinstance(sweep_cfg, DictConfig):
+        container = OmegaConf.to_container(sweep_cfg, resolve=True)
+    else:
+        container = dict(sweep_cfg)
+    assert isinstance(container, dict)  # a DictConfig's container is a dict
+    return {str(key): value for key, value in container.items()}
 
 
 def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
@@ -626,49 +666,23 @@ def _shape(value: Any) -> str:
     return shown(value)
 
 
-def _write_override(
-    values: dict[str, tuple[str, str | None]],
-    key: str,
-    value: str,
-    writer: str,
-    lanelet_id: int,
-) -> None:
-    """Set *key* to *value* in *values*, refusing a write that disagrees.
-
-    A key without a writer holds the pick, which any write replaces.
-
-    Raises:
-        ValueError: If *key* was already written by another writer with a
-            different value.
-    """
-    previous = values.get(key)
-    if previous is not None and previous[1] is not None and previous[0] != value:
-        raise ValueError(
-            f"sweep.bindings disagree about {key} on lanelet {lanelet_id}: "
-            f"{previous[1]} sets it to {previous[0]}, {writer} to {value}. "
-            "Give a stop_line_approach binding the offset of its spawn's "
-            "stop_line_offset, or drop one of the two."
-        )
-    values[key] = (value, writer)
-
-
 def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[str]]:
     """One override list per lanelet the constraints match, bindings applied.
 
     Picks whose cases end the same -- a walk-back moving the target key to
     the same predecessor -- give that case once, the first pick's (#1950).
 
+    *sweep* has passed :func:`check_constraint_keys`.
+
     Raises:
-        ValueError: If the constraints, bindings or exclusions are of the
-            wrong shape or do not parse, or the constraints are empty.
+        ValueError: If the constraints, bindings or exclusions do not parse,
+            or the constraints are empty.
     """
     constraints_cfg = sweep.get("constraints") or {}
     # Constraints are keyed by the target parameter (e.g. ego.spawn_lanelet_id);
-    # each value is a list of constraint dicts.  A sweep enumerates one
-    # parameter: the others a case needs are derived from its lanelet by the
-    # bindings.  A second key used to be ANDed into the first one's search and
-    # dropped, so it is refused rather than half honoured.
-    check_constraint_keys(sweep)
+    # each value is a list of constraint dicts.  That there is one such key,
+    # and each section's shape, expand_sweep (the only caller) has checked
+    # already (check_constraint_keys).
     constraints: list[Constraint] = []
     target_key: str | None = None
     for target_key, constraint_list in constraints_cfg.items():
@@ -869,7 +883,8 @@ def expand_config(
         ControlsError: When the config's ``controls`` are invalid, whether or
             not it has a sweep -- as ``scenario-check`` refuses them
             (:func:`scenario_controls`).
-        ValueError: When the sweep itself is invalid -- a ``case_index`` out
+        ValueError: When the sweep itself is invalid -- not a mapping
+            (:func:`sweep_section`), a ``case_index`` out
             of range, a route search beside constraints, more than one
             constraint key, an empty constraints section, or a constraint or
             binding the parsers refuse (:func:`expand_sweep`) -- or when the
@@ -889,12 +904,8 @@ def expand_config(
     weather = environment_rules(cfg)
     # And the run's seed, which every case runs with (a run refuses it too).
     seed = _config_seed(cfg)
-    sweep_cfg = OmegaConf.select(cfg, "sweep")
-    sweep = (
-        OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
-    )
-    if not isinstance(sweep, dict):
-        return [list(arguments)]  # already concrete
+    # A ``sweep`` that is not a mapping is refused, not run as concrete.
+    sweep = sweep_section(OmegaConf.select(cfg, "sweep")) or {}
     # Before the sweep is judged empty: a ``constraints: []`` is the wrong
     # shape, not an empty sweep (#2134).
     check_constraint_keys(sweep)
@@ -978,7 +989,9 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
 
     try:
         paths = resolve_map_paths(map_cfg)
-    except (MapSourceError, MapResolutionError, MapCacheError) as exc:
+    except MapSourceError as exc:  # only map.source is parsed as a URI (#2279)
+        raise ValueError(f"{prefix}map.source: {exc}") from exc
+    except (MapResolutionError, MapCacheError) as exc:
         raise ValueError(f"{prefix}{exc}") from exc  # each names the map
     except MapPackError as exc:  # a RuntimeError, PackAccessError too (#2198)
         raise ValueError(
@@ -1084,5 +1097,7 @@ __all__ = [
     "expand_route",
     "expand_sweep",
     "scenario_controls",
+    "check_sweep_shape",
     "scenario_rules",
+    "sweep_section",
 ]

@@ -3303,6 +3303,44 @@ class TestScenarioMap:
         assert "getView()" in script
 
 
+class TestAMapSourceThatIsNoURL:
+    """An unclosed ``[`` is urlsplit's ValueError, which MapSource.parse turns
+    into a MapSourceError: each route shows the reason, none is a 500, and a
+    stored draft holding such a source still opens (#2279)."""
+
+    _BAD = "https://[github.com/x/y"
+    _REASON = "is not a URL a repository can be cloned from"
+
+    def _shows_reason(self, response: Any, status: int = 200) -> None:
+        assert response.status_code == status
+        assert self._REASON in html.unescape(response.text)
+
+    def test_the_scenario_form(self, client: TestClient, draft_id: str) -> None:
+        self._shows_reason(
+            client.post(f"/draft/{draft_id}/scenario", data={"map_source": self._BAD})
+        )
+
+    def test_using_it(self, client: TestClient, draft_id: str) -> None:
+        self._shows_reason(
+            client.post(f"/draft/{draft_id}/map/use", data={"uri": self._BAD}),
+            status=422,
+        )
+
+    def test_a_new_draft_on_it(self, client: TestClient) -> None:
+        self._shows_reason(client.post("/maps/new", data={"uri": self._BAD}))
+
+    def test_browsing_it(self, client: TestClient) -> None:
+        self._shows_reason(client.get("/maps", params={"repo": self._BAD}))
+
+    def test_a_stored_draft_holding_it_opens(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        draft = _draft(store, draft_id)
+        draft.document.map.source = self._BAD
+        store.save(draft)
+        self._shows_reason(client.get(f"/draft/{draft_id}"))
+
+
 class TestJunctionCardsOfferWhatTheDocumentDeclares:
     """The two junction fields are pickers, not text boxes.
 
@@ -3648,6 +3686,33 @@ class TestTheJunctionEditor:
         )
 
         assert document.map.signal_groups[1].conflicts_with == []
+
+    @pytest.mark.parametrize("new_name", ["ns", "north_south"])
+    def test_a_self_conflict_survives_the_form(
+        self, client: TestClient, store: DraftStore, draft_id: str, new_name: str
+    ) -> None:
+        """The form has no box for the group itself, so a self-reference is
+        kept, under the new name, for the validator to report (#2279)."""
+        self._groups(client, draft_id, "ns", "ew")
+        draft = _draft(store, draft_id)
+        draft.document.map.signal_groups[0].conflicts_with = ["ns", "ew"]
+        store.save(draft)
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={
+                "name": new_name,
+                "lanelet2_regulatory_element_ids": "1330",
+                "conflicts_with": ["ew"],
+            },
+        )
+
+        document = _document(store, draft_id)
+        assert document.map.signal_groups[0].conflicts_with == ["ew", new_name]
+        messages = [issue.message for issue in validate_document(document).issues]
+        assert any(
+            f"Signal group '{new_name}' conflicts with itself" in m for m in messages
+        )
 
     def test_unticking_on_one_of_two_same_named_groups_leaves_the_references(
         self, client: TestClient, store: DraftStore, draft_id: str

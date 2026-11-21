@@ -8,6 +8,10 @@ lanelet in the most of the buckets it drew, the one run least so far among
 equals.  A drawn case is given here by its buckets (``sample.buckets``), so
 nothing here reads the sampler, the map or a config, and the library check
 compiles it (docs/typecheck.md); :mod:`.expand` uses it.
+
+And the overrides a case is written as: the config key one names
+(:func:`override_key`), and a binding's write of one that must agree with
+any other write of it (:func:`write_override`).
 """
 
 from __future__ import annotations
@@ -18,6 +22,8 @@ __all__ = [
     "case_lanelet",
     "choose_cases",
     "fits",
+    "override_key",
+    "write_override",
 ]
 
 
@@ -85,3 +91,37 @@ def choose_cases(
         uses[index] += 1
         chosen.append(index)
     return chosen, full
+
+
+def override_key(override: str) -> str:
+    """The config key a Hydra override names: ``a.b`` of ``a.b=1``,
+    ``+a.b=1``, ``++a.b=1`` and ``~a.b``."""
+    return override.lstrip("~+").split("=", 1)[0]
+
+
+def write_override(
+    values: Dict[str, Tuple[str, Optional[str]]],
+    key: str,
+    value: str,
+    writer: str,
+    lanelet_id: int,
+) -> None:
+    """Set *key* to *value* in *values*, refusing a write that disagrees.
+
+    A key without a writer holds the pick, which any write replaces.
+
+    Raises:
+        ValueError: If *key* was already written by another writer with a
+            different value.
+    """
+    previous = values.get(key)
+    if previous is not None and previous[1] is not None and previous[0] != value:
+        raise ValueError(
+            f"sweep.bindings disagree about {key} on lanelet {lanelet_id}: "
+            f"{previous[1]} sets it to {previous[0]}, {writer} to {value}. "
+            "Give a stop_line_approach binding the offset of its spawn's "
+            "stop_line_offset, or drop one of the two."
+        )
+    # Typed, so that Codon takes the writer as the Optional the dict holds.
+    written: Optional[str] = writer
+    values[key] = (value, written)

@@ -608,6 +608,27 @@ class TestMapSource:
         with pytest.raises(MapSourceError, match="names no ref"):
             MapSource.parse("https://example.com/o/n@")
 
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://[x/y",
+            "https://[github.com/x/y",
+            "git+http://[::1/x@main#maps",
+        ],
+    )
+    def test_refuses_an_unclosed_bracket_as_a_map_source_error(self, uri: str) -> None:
+        """urlsplit's own ValueError is no bare ValueError out of parse (#2279)."""
+        with pytest.raises(MapSourceError, match="is not a URL a repository can be "):
+            MapSource.parse(uri)
+
+    def test_an_unclosed_bracket_is_refused_with_its_credentials_redacted(
+        self,
+    ) -> None:
+        with pytest.raises(MapSourceError) as caught:
+            MapSource.parse("https://oauth2:TOKEN@[github.com/x/y")
+        assert "TOKEN" not in str(caught.value)
+        assert isinstance(caught.value.__cause__, ValueError)
+
     def test_refuses_a_repository_that_begins_with_a_dash(self) -> None:
         with pytest.raises(MapSourceError, match="begins with '-'"):
             MapSource.parse("-oProxyCommand@host:repo.git")

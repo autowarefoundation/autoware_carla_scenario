@@ -651,8 +651,8 @@ lanelets -- a [logical scenario](logical_scenarios.md). The scenario inspector's
 **Route search** section lists the pattern one segment per line ("lane 30-60 m,
 opposite lane: yes", "junction, turn left, traffic light: yes") with where the
 ego spawns and is sent, and edits it as the YAML the document stores (an empty
-box removes it; a malformed one is refused with the reason). A *Follow
-Trajectory* card's **Path** then offers *Along the scenario's route*, whose
+box removes it; a malformed one is refused with the reason). A *Set Goal*
+card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
 waypoint conditions. Progress is clamped to the route, so the validator warns
@@ -1327,8 +1327,9 @@ machine that runs the scenario (see
 
 ## Offline
 
-Only two things in the editor come from the network, and neither is load-bearing
-for editing:
+Only two things in the editor come from the network. htmx is load-bearing --
+every control goes through it, so an editor that cannot fetch it has no working
+controls at all -- and the map viewer is not:
 
 | | |
 | --- | --- |

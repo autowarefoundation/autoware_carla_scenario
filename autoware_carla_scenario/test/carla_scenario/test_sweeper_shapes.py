@@ -356,6 +356,72 @@ def test_a_falsy_constraints_section_alone_is_not_read_as_no_sweep(
     assert str(error.value) == _SECTION_MESSAGES["constraints"].format(shown)
 
 
+#: A ``sweep`` that is not a mapping, and how the refusal shows it (#2279).
+_NOT_A_SWEEP = [
+    ([], "a list, []"),
+    ([{}], "a list, [{}]"),
+    (False, "False"),
+    (0, "0"),
+    ("", "''"),
+]
+
+
+def _not_a_sweep_message(shown: str) -> str:
+    return f"sweep must be a mapping (constraints, route, odd_sample, ...), got {shown}"
+
+
+@pytest.mark.parametrize(("value", "shown"), _NOT_A_SWEEP)
+def test_a_sweep_that_is_not_a_mapping_is_refused(value: Any, shown: str) -> None:
+    """``sweep: [...]`` is not run once as a concrete config, nor ``sweep:
+    false`` refused as "not an OmegaConf config object" (#2279)."""
+    cfg = OmegaConf.create({"sweep": value})
+    with pytest.raises(ValueError) as error:
+        expand_module.sweep_section(OmegaConf.select(cfg, "sweep"))
+    assert str(error.value) == _not_a_sweep_message(shown)
+    with pytest.raises(ValueError) as error:
+        expand_module.expand_config(cfg, ["a=1"])
+    assert str(error.value) == _not_a_sweep_message(shown)
+
+
+def test_a_null_or_missing_sweep_is_no_sweep() -> None:
+    assert expand_module.sweep_section(None) is None
+    for cfg in ({"sweep": None}, {}):
+        assert expand_module.expand_config(OmegaConf.create(cfg), ["a=1"]) == [["a=1"]]
+    assert expand_module.sweep_section(OmegaConf.create({"route": None})) == {
+        "route": None
+    }
+    assert expand_module.sweep_section({"route": None}) == {"route": None}
+
+
+@pytest.mark.parametrize(("value", "shown"), _NOT_A_SWEEP)
+def test_the_sweeper_refuses_a_sweep_that_is_not_a_mapping_in_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    value: Any,
+    shown: str,
+) -> None:
+    """Its usual ``Error:`` line, not a bare AssertionError (#2279)."""
+    from unittest.mock import MagicMock
+
+    from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+    monkeypatch.delenv("HYDRA_FULL_ERROR", raising=False)
+    sweeper = mod.LaneletConstraintSweeper()
+    sweeper.config = OmegaConf.create(
+        {
+            "sweep": value,
+            "hydra": {"runtime": {"choices": {"scenario": "cut_in/left"}}},
+        }
+    )
+    sweeper.launcher = MagicMock()
+    with pytest.raises(SystemExit) as caught:
+        sweeper.sweep([])
+    assert caught.value.code == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert lines == [f"Error: cut_in/left: {_not_a_sweep_message(shown)}"]
+    sweeper.launcher.launch.assert_not_called()
+
+
 @pytest.mark.parametrize("section", sorted(_SECTION_MESSAGES))
 def test_a_null_or_missing_sweep_section_is_empty(section: str) -> None:
     for sweep in ({section: None}, {}):

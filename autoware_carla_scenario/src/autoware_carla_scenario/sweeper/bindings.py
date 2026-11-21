@@ -18,6 +18,7 @@ import lanelet2.geometry
 from ..lanelet_junction import is_junction_lanelet
 from ..utils.stop_line import _collect_stop_lines_from_reg_elems
 from ..value_text import shown
+from .constraints import _real_number
 
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet, ConstLineString3d, LaneletMap
@@ -282,29 +283,10 @@ def _check_offset(kind: str, value: Any) -> None:
     """Refuse a stop-line *offset* that is no finite number of metres >= 0.
 
     An int or a float, or another real number (numpy's ``int64`` or
-    ``float32``, say); never a bool, which would be 1 m or 0 m (#1951).  An
-    int too large for a float is no finite offset either.
+    ``float32``, say); never a bool, which would be 1 m or 0 m (#1951)
+    (:func:`.constraints._real_number`).
     """
-    number = math.nan
-    if isinstance(value, bool):
-        pass
-    elif isinstance(value, int) or isinstance(value, float):
-        try:
-            number = float(value)
-        except OverflowError:
-            number = math.inf
-    elif TYPE_CHECKING:
-        pass
-    else:
-        import numbers  # noqa: PLC0415 -- run time only
-
-        # numpy registers its integers and floats as numbers.Real, and its
-        # bool_ as none of them.
-        if isinstance(value, numbers.Real):
-            try:
-                number = float(value)
-            except OverflowError:
-                number = math.inf
+    number = _real_number(value)
     if not math.isfinite(number) or number < 0.0:
         raise ValueError(
             f"{kind} offset: a finite number of metres >= 0, got {shown(value)}"
