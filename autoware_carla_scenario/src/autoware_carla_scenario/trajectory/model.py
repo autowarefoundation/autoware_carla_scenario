@@ -47,10 +47,12 @@ from typing import (
     Union,
 )
 
+from ..entity_role import EntityRole
+from ..seed import check_whole_number
+
 if TYPE_CHECKING:
     from ..conditions.base import BaseCondition
     from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
-    from ..entity_role import EntityRole
 
 __all__ = [
     "MapPose",
@@ -120,28 +122,88 @@ class MapPose:
     z: Optional[float] = None
 
     def __post_init__(self) -> None:
-        _finite("MapPose", "x", self.x)
-        _finite("MapPose", "y", self.y)
-        _finite_or_none("MapPose", "yaw", self.yaw)
-        _finite_or_none("MapPose", "z", self.z)
+        object.__setattr__(self, "x", _finite("MapPose", "x", self.x))
+        object.__setattr__(self, "y", _finite("MapPose", "y", self.y))
+        object.__setattr__(self, "yaw", _finite_or_none("MapPose", "yaw", self.yaw))
+        object.__setattr__(self, "z", _finite_or_none("MapPose", "z", self.z))
 
 
-def _finite(owner: str, name: str, value: float) -> None:
-    if not math.isfinite(float(value)):
-        raise ValueError(f"{owner}.{name} must be finite")
+def _number(owner: str, name: str, value: float) -> float:
+    """*value* as a ``float``, if it is a number: an int or a float, or a
+    number that converts to one (numpy's).
+
+    ``float()`` alone would take ``"5"`` (or ``b"5"``) and ``True``: a pose
+    built with them would fail when the action starts, or read ``True`` as
+    1.0 (#2261).  A boolean (numpy's ``bool_`` too), a string, an array and
+    anything ``float()`` cannot convert are refused.
+
+    Raises:
+        ValueError: naming ``owner.name`` and *value*.
+    """
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{owner}.{name} must be a number, got {value!r}")
+    if TYPE_CHECKING:
+        pass
+    elif (
+        getattr(getattr(value, "dtype", None), "kind", None) == "b"
+        # numpy's ndim is an int; a stand-in's (a mock's) is not (#1906).
+        or (
+            isinstance(getattr(value, "ndim", 0), int)
+            and getattr(value, "ndim", 0) != 0
+        )
+        # float() reads bytes as text; a number has __float__ (or __index__).
+        or not (hasattr(type(value), "__float__") or hasattr(type(value), "__index__"))
+    ):
+        raise ValueError(f"{owner}.{name} must be a number, got {value!r}")
+    try:
+        return float(value)
+    except OverflowError:
+        # An int too big for a float: no finite position.
+        raise ValueError(f"{owner}.{name} must be finite") from None
 
 
-def _finite_or_none(owner: str, name: str, value: Optional[float]) -> None:
+def _finite(owner: str, name: str, value: float) -> float:
+    """*value* as a finite ``float`` (:func:`_number`).
+
+    Raises:
+        ValueError: naming ``owner.name``, if *value* is no number or is not
+            finite (``nan``, ``inf``).
+    """
+    number = _number(owner, name, value)
+    if not math.isfinite(number):
+        raise ValueError(f"{owner}.{name} must be finite, got {value!r}")
+    return number
+
+
+def _finite_or_none(owner: str, name: str, value: Optional[float]) -> Optional[float]:
     """:func:`_finite` for a field that ``None`` leaves unset."""
-    if value is not None:
-        _finite(owner, name, value)
+    if value is None:
+        return None
+    return _finite(owner, name, value)
 
 
-def _role_name(role: Union["EntityRole", str, None]) -> Optional[str]:
-    """*role* as the ``role_name`` string it stands for (``None`` stays ``None``)."""
+def _role_name(role: Union[EntityRole, str, None]) -> Optional[str]:
+    """*role* as the ``role_name`` string it stands for (``None`` stays ``None``).
+
+    Raises:
+        ValueError: if *role* is an empty string, which no entity is named
+            (the action would wait for it for the whole run, #2261), or is
+            neither an :class:`EntityRole` nor a string.
+    """
     if role is None:
         return None
-    return str(role)
+    if isinstance(role, EntityRole):
+        return str(role)
+    if isinstance(role, str):
+        if not role:
+            raise ValueError(
+                "RelativeLanePose.entity_ref must be a role name or None, got ''"
+            )
+        return role
+    raise ValueError(
+        "RelativeLanePose.entity_ref must be an EntityRole, a role name or "
+        f"None, got {role!r}"
+    )
 
 
 @dataclass(frozen=True)
@@ -212,11 +274,15 @@ class RelativeLanePose:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "d_lane", _whole("RelativeLanePose", "d_lane", self.d_lane)
+            self, "d_lane", check_whole_number("RelativeLanePose.d_lane", self.d_lane)
         )
-        _finite("RelativeLanePose", "ds", self.ds)
-        _finite("RelativeLanePose", "offset", self.offset)
-        _finite_or_none("RelativeLanePose", "yaw", self.yaw)
+        object.__setattr__(self, "ds", _finite("RelativeLanePose", "ds", self.ds))
+        object.__setattr__(
+            self, "offset", _finite("RelativeLanePose", "offset", self.offset)
+        )
+        object.__setattr__(
+            self, "yaw", _finite_or_none("RelativeLanePose", "yaw", self.yaw)
+        )
 
 
 def _one_of(owner: str, name: str, value: str, allowed: Sequence[str]) -> None:
@@ -224,32 +290,6 @@ def _one_of(owner: str, name: str, value: str, allowed: Sequence[str]) -> None:
         raise ValueError(
             f"{owner}.{name} must be one of {list(allowed)}, got {value!r}"
         )
-
-
-def _whole(owner: str, name: str, value: Any) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
-    if TYPE_CHECKING:
-        pass
-    elif getattr(getattr(value, "dtype", None), "kind", None) == "b" or (
-        # numpy's ndim is an int; a stand-in's (a mock's) is not (#1906).
-        isinstance(getattr(value, "ndim", 0), int) and getattr(value, "ndim", 0) != 0
-    ):
-        # numpy's bool_, which int() takes as 0 or 1, and an array of one
-        # element, which the numpy on Python 3.10 (2.2) still converts
-        # (#1906), as seed.check_whole_number refuses them.
-        raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
-    try:
-        # int() of None, of nan or inf, or of "2.5" raises its own TypeError,
-        # ValueError or OverflowError; refused here as any other (#2151).
-        whole = int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError(
-            f"{owner}.{name} must be a whole number, got {value!r}"
-        ) from None
-    if whole != value:
-        raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
-    return whole
 
 
 def _check_anchor(owner: str, anchor: Optional[str]) -> None:
@@ -297,11 +337,15 @@ class RouteLanePose:
     anchor: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _finite("RouteLanePose", "ds", self.ds)
-        _finite("RouteLanePose", "offset", self.offset)
-        _finite_or_none("RouteLanePose", "yaw", self.yaw)
+        object.__setattr__(self, "ds", _finite("RouteLanePose", "ds", self.ds))
         object.__setattr__(
-            self, "d_lane", _whole("RouteLanePose", "d_lane", self.d_lane)
+            self, "offset", _finite("RouteLanePose", "offset", self.offset)
+        )
+        object.__setattr__(
+            self, "yaw", _finite_or_none("RouteLanePose", "yaw", self.yaw)
+        )
+        object.__setattr__(
+            self, "d_lane", check_whole_number("RouteLanePose.d_lane", self.d_lane)
         )
         _check_anchor("RouteLanePose", self.anchor)
 
@@ -332,10 +376,14 @@ class RouteOppositePose:
     anchor: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _finite("RouteOppositePose", "ds", self.ds)
-        _finite("RouteOppositePose", "offset", self.offset)
-        _finite_or_none("RouteOppositePose", "yaw", self.yaw)
-        lane = _whole("RouteOppositePose", "lane", self.lane)
+        object.__setattr__(self, "ds", _finite("RouteOppositePose", "ds", self.ds))
+        object.__setattr__(
+            self, "offset", _finite("RouteOppositePose", "offset", self.offset)
+        )
+        object.__setattr__(
+            self, "yaw", _finite_or_none("RouteOppositePose", "yaw", self.yaw)
+        )
+        lane = check_whole_number("RouteOppositePose.lane", self.lane)
         if lane < 1:
             raise ValueError("RouteOppositePose.lane counts from 1")
         object.__setattr__(self, "lane", lane)
@@ -385,19 +433,25 @@ class RouteCrossingPose:
     def __post_init__(self) -> None:
         from ..route.model import PATH_APPROACHES  # noqa: PLC0415
 
-        _finite("RouteCrossingPose", "distance", self.distance)
-        _finite("RouteCrossingPose", "offset", self.offset)
-        _finite_or_none("RouteCrossingPose", "yaw", self.yaw)
-        junction = _whole("RouteCrossingPose", "junction", self.junction)
+        object.__setattr__(
+            self, "distance", _finite("RouteCrossingPose", "distance", self.distance)
+        )
+        object.__setattr__(
+            self, "offset", _finite("RouteCrossingPose", "offset", self.offset)
+        )
+        object.__setattr__(
+            self, "yaw", _finite_or_none("RouteCrossingPose", "yaw", self.yaw)
+        )
+        junction = check_whole_number("RouteCrossingPose.junction", self.junction)
         if junction < 0:
             raise ValueError("RouteCrossingPose.junction counts from 0")
         object.__setattr__(self, "junction", junction)
         _one_of("RouteCrossingPose", "approach", self.approach, PATH_APPROACHES)
         object.__setattr__(
-            self, "d_lane", _whole("RouteCrossingPose", "d_lane", self.d_lane)
+            self, "d_lane", check_whole_number("RouteCrossingPose.d_lane", self.d_lane)
         )
         if self.path is not None:
-            path = _whole("RouteCrossingPose", "path", self.path)
+            path = check_whole_number("RouteCrossingPose.path", self.path)
             if path < 1:
                 raise ValueError("RouteCrossingPose.path counts from 1")
             if self.turn is None:
@@ -439,9 +493,13 @@ class RouteCrosswalkPose:
     def __post_init__(self) -> None:
         from ..route.model import CROSSWALK_LEGS, SIDES  # noqa: PLC0415
 
-        _finite("RouteCrosswalkPose", "along", self.along)
-        _finite_or_none("RouteCrosswalkPose", "yaw", self.yaw)
-        junction = _whole("RouteCrosswalkPose", "junction", self.junction)
+        object.__setattr__(
+            self, "along", _finite("RouteCrosswalkPose", "along", self.along)
+        )
+        object.__setattr__(
+            self, "yaw", _finite_or_none("RouteCrosswalkPose", "yaw", self.yaw)
+        )
+        junction = check_whole_number("RouteCrosswalkPose.junction", self.junction)
         if junction < 0:
             raise ValueError("RouteCrosswalkPose.junction counts from 0")
         object.__setattr__(self, "junction", junction)
@@ -476,9 +534,15 @@ class RouteRoadsidePose:
     def __post_init__(self) -> None:
         from ..route.model import SIDES  # noqa: PLC0415
 
-        _finite("RouteRoadsidePose", "ds", self.ds)
-        _finite("RouteRoadsidePose", "kerb_distance", self.kerb_distance)
-        _finite_or_none("RouteRoadsidePose", "yaw", self.yaw)
+        object.__setattr__(self, "ds", _finite("RouteRoadsidePose", "ds", self.ds))
+        object.__setattr__(
+            self,
+            "kerb_distance",
+            _finite("RouteRoadsidePose", "kerb_distance", self.kerb_distance),
+        )
+        object.__setattr__(
+            self, "yaw", _finite_or_none("RouteRoadsidePose", "yaw", self.yaw)
+        )
         _one_of("RouteRoadsidePose", "side", self.side, SIDES)
         _check_anchor("RouteRoadsidePose", self.anchor)
 
@@ -883,8 +947,9 @@ class TrajectoryTiming:
         offset: Seconds added after scaling.  Must be finite.
 
     Raises:
-        ValueError: If *scale* is not finite and positive, or *offset* is
-            not finite.
+        ValueError: If *domain* is not a :class:`ReferenceContext`, *scale*
+            is not a finite and positive number, or *offset* is not a finite
+            number.
     """
 
     domain: ReferenceContext = ReferenceContext.RELATIVE
@@ -892,18 +957,30 @@ class TrajectoryTiming:
     offset: float = 0.0
 
     def __post_init__(self) -> None:
+        # Every consumer tests `domain is ReferenceContext.ABSOLUTE`, so any
+        # other value (the string "absolute", say) would be read as RELATIVE
+        # (#2261).
+        if not isinstance(self.domain, ReferenceContext):
+            raise ValueError(
+                "TrajectoryTiming.domain must be a ReferenceContext, "
+                f"got {self.domain!r}"
+            )
+        scale = _number("TrajectoryTiming", "scale", self.scale)
+        offset = _number("TrajectoryTiming", "offset", self.offset)
         # NaN fails `> 0.0`, but infinity passes it and would freeze a timed
         # trajectory at its first vertex; a non-finite offset makes every
         # trajectory time NaN.
-        if not math.isfinite(self.scale) or not self.scale > 0.0:
+        if not math.isfinite(scale) or not scale > 0.0:
             raise ValueError(
                 f"TrajectoryTiming.scale must be finite and positive, "
                 f"not {self.scale!r}"
             )
-        if not math.isfinite(self.offset):
+        if not math.isfinite(offset):
             raise ValueError(
                 f"TrajectoryTiming.offset must be finite, not {self.offset!r}"
             )
+        object.__setattr__(self, "scale", scale)
+        object.__setattr__(self, "offset", offset)
 
     def trajectory_time(self, scenario_time: float, action_start: float) -> float:
         """The vertex time that corresponds to *scenario_time*."""

@@ -490,6 +490,22 @@ def route_trajectory_summary(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _check_advance(name: str, gates: Mapping[int, "BaseCondition"], count: int) -> None:
+    """Refuse a waypoint condition on a vertex the trajectory does not have,
+    as :meth:`Trajectory.gated` does, rather than drop it (#2261).
+
+    Raises:
+        ValueError: ``<name>: no vertex <i> (it has <count>)``.
+    """
+    for index in gates:
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not (0 <= index < count)
+        ):
+            raise ValueError(f"{name}: no vertex {index!r} (it has {count})")
+
+
 def authored_trajectory(
     path_source: str,
     vertices: Any = None,
@@ -526,7 +542,8 @@ def authored_trajectory(
             :func:`parse_route_vertices`).
 
     Raises:
-        ValueError: On an unknown source, or a source without what it needs.
+        ValueError: On an unknown source, a source without what it needs, or
+            a waypoint condition on a vertex the trajectory does not have.
     """
     gates = dict(advance or {})
     if path_source == "vertices":
@@ -534,6 +551,7 @@ def authored_trajectory(
         problems = vertex_problems(rows)
         if problems:
             raise ValueError(f"{name}: {problems[0]}")
+        _check_advance(name, gates, len(rows))
         return Trajectory(
             name,
             [
@@ -546,6 +564,7 @@ def authored_trajectory(
         problems = relative_vertex_problems(relative_rows)
         if problems:
             raise ValueError(f"{name}: {problems[0]}")
+        _check_advance(name, gates, len(relative_rows))
         reference = reference_entity or None
         return Trajectory(
             name,
@@ -568,6 +587,7 @@ def authored_trajectory(
         problems = vertex_problems(route_rows)
         if problems:
             raise ValueError(f"{name}: {problems[0]}")
+        _check_advance(name, gates, len(route_rows))
         return Trajectory(
             name,
             [
