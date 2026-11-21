@@ -3283,7 +3283,8 @@ random) from 0 to 1, <code>weather_noise</code> not negative, <code>noise_seed</
 <code>fog_density_scale</code> positive.</p>
 <p>CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (<code>precipitation</code>) and fog (<code>fog_density</code>, beyond <code>fog_distance</code>) put on it, read when the
-sweep is taken -- what the weather rules render a run's rainfall rate and fog
+sweep is first read (the frame it is first sent on, at most one sweep interval after
+the frame it was taken on: weather changed between the two is put on it) -- what the weather rules render a run's rainfall rate and fog
 visibility as, <code>environment.precipitation</code> and <code>environment.fog_density</code>, and
 an <code>EnvironmentAction</code> mid-run set it alike
 (<code>sensor/lidar_weather.py</code>):</p>
@@ -3337,7 +3338,7 @@ warns), so start it with the same one. Built without the runner, pass
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">lidars</span><span class="p">:</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> weather_noise</span><span class="p">:</span><span class="w"> </span><span class="nv">1.5</span><span class="p p-Indicator">}</span>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="nt">environment</span><span class="p">:</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">rain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span><span class="w">        </span><span class="c1"># heavy rain: sparser, noisier sweeps</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">precipitation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span><span class="w">   </span><span class="c1"># heavy rain: sparser, noisier sweeps</span>
 <a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="nt">server</span><span class="p">:</span>
 <a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">  </span><span class="nt">fog_density_scale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.01</span><span class="w">   </span><span class="c1"># fog the cameras and the LiDARs both see</span>
 </code></pre></div>
@@ -3632,7 +3633,7 @@ drift from the <code>.proto</code> files (<code>compile_protos.py --check</code>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 15:51:58 UTC"><span class="timeago" datetime="2026-11-20T15:51:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 15:51:58 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 03:59:05 UTC"><span class="timeago" datetime="2026-11-21T03:59:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 03:59:05 UTC">2026-11-21</span>
   </span>
 
     

@@ -4996,8 +4996,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 343 of the package's 473
-modules (73%; about 107,300 of
-180,200 lines) are <code>CHECKED</code>: the kinematics, the
+modules (73%; about 107,400 of
+180,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5020,9 +5020,10 @@ probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: <code>odd.traffic_ranges</code>, #1680; not the probes themselves,
 <code>odd.traffic_probes</code>, which builds openodd's knobs), the gate package's
 <code>__init__</code>, its per-run record and probe, finding and writing the markers
-of the <code>--multirun</code> jobs given up, and finding the plans of the sweeps
-(<code>gate.errored</code> and <code>gate.sweep_plan</code>, #1967; not writing the plans or
-reading either, JSON objects of mixed value types), what a set of runs
+of the <code>--multirun</code> jobs given up, and finding and writing the plans of
+the sweeps (<code>gate.errored</code> and <code>gate.sweep_plan</code>, #1967; a plan written a
+member at a time, as a marker is, #2265; not reading either, JSON objects
+of mixed value types), what a set of runs
 left unrecorded (<code>gate.unrecorded</code>, #2124: the batches under a directory, a
 local batch's summary read for its errored and pending cases, and the
 <code>--multirun</code> jobs given up or never started; not a SLURM batch's manifest,
@@ -6487,8 +6488,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>200 functions and methods of those modules are <code>UNCALLED</code>
-(60 of them protected helpers, see <em>What is
+<p>203 functions and methods of those modules are <code>UNCALLED</code>
+(62 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6500,7 +6501,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 200 UNCALLED functions and methods, and why</summary>
+<summary>The 203 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6590,9 +6591,10 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.record.GateRecord.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>gate.record._array</code>: reads an array of a parsed JSON object (<code>Mapping[str, Any]</code>, returning <code>list[Any]</code>) of mixed value types, which Codon cannot express; only the uncalled from_dict() methods call it</li>
 <li><code>gate.record._object</code>: reads an object of a parsed JSON object (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express; only the uncalled GateRecord.from_dict() calls it</li>
+<li><code>gate.record._whole</code>: reads a whole number of a parsed JSON object (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express; only the uncalled GateCase.from_dict() calls it</li>
+<li><code>gate.record._wholes</code>: reads an array of whole numbers of a parsed JSON object (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express; only the uncalled GateCase.from_dict() calls it</li>
 <li><code>gate.record.read_gate_record</code>: parses a JSON document (<code>Any</code>) and reads it with GateRecord.from_dict(), a <code>Mapping[str, Any]</code> of mixed value types, which Codon cannot express</li>
 <li><code>gate.record.write_gate_record</code>: serialises GateRecord.to_dict(), a <code>dict[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
-<li><code>gate.sweep_plan.write_sweep_plan</code>: writes the plan as a JSON object of mixed value types (<code>dict[str, Any]</code>: a schema string beside a list of jobs, each a directory string beside a list of overrides), which Codon cannot express</li>
 <li><code>gate.unrecorded._recorded_at_stem</code>: takes a batch summary's entry as json.loads() reads it (<code>dict[str, Any]</code>), of mixed value types, which Codon cannot express, so the check has nothing to call it with; _summary_cases() calls it with the entry json.loads() read, so its body is compiled through it</li>
 <li><code>hils.host_devices.HostSetup.playbooks</code>: builds each playbook's variables as a <code>Dict[str, Any]</code> of mixed value types (a list of interfaces beside a user and booleans), which Codon cannot express; what it derives them from is the checked host_devices()'s</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
@@ -6633,6 +6635,8 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>scenario_runner._traffic_record</code>: reads the traffic backend's describe() and fidelity_census(), dicts of mixed value types, which Codon cannot express; _run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>scenario_runner._write_gate_record</code>: calls a scenario's gate_record() found with getattr(), a method of no declared type (<code>make(result, file_stem)</code> returns <code>Any</code>), and writes its GateRecord with gate.record's write_gate_record(), itself uncalled (a <code>dict[str, Any]</code> of mixed value types); _run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>scenario_runner._write_result</code>: merges the traffic record (<code>Any</code>) and environment.write()'s record (a <code>dict[str, Any]</code> of mixed value types, of the uncalled write()) into the result document, which Codon cannot express; _run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>sensor.base.drain</code>: generic over what the queue holds (a TypeVar parameter, a camera's frames or a LiDAR's sweeps), so the check has nothing to call it with; the camera's and the LiDAR's destroy() call it with their queues, so its body is compiled through them</li>
+<li><code>sensor.base.put_dropping_oldest</code>: generic over what the queue holds (a TypeVar parameter, a camera's frames or a LiDAR's sweeps), so the check has nothing to call it with; the camera's and the LiDAR's listeners call it with their queues, so its body is compiled through them</li>
 <li><code>signals.controller._group_members</code>: reads the authoring package's pydantic signal groups (<code>list[Any]</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
 <li><code>signals.controller._phase_states</code>: reads one of the authoring package's pydantic phases (<code>Any</code>, so the runtime does not import authoring), with getattr defaults for fields older documents lack; only build_controllers, itself uncalled, calls it</li>
 <li><code>signals.controller.build_controllers</code>: reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed <code>list[Any]</code> so the runtime does not import authoring</li>
@@ -8962,7 +8966,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 01:11:43 UTC"><span class="timeago" datetime="2026-11-21T01:11:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 01:11:43 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 03:59:05 UTC"><span class="timeago" datetime="2026-11-21T03:59:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 03:59:05 UTC">2026-11-21</span>
   </span>
 
     
