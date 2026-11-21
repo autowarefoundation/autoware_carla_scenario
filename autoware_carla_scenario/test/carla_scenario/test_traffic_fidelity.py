@@ -536,6 +536,34 @@ def test_a_full_road_holds_the_queue_behind_it() -> None:
     assert model.vehicle("v").link == "b"
 
 
+def test_a_vehicle_added_takes_its_place_in_the_queue_by_its_offset() -> None:
+    # Put at the back whatever its offset, v was held 2 jam spacings short of
+    # the end behind q0..q2, at 77.5 m and standing, and could leave only
+    # after them (#2283).
+    model = MesoscopicTraffic(
+        {name: MesoLink(name, 100.0, 1, 10.0) for name in ("a", "b")},
+        headway_s=2.0,
+        jam_spacing_m=7.5,
+    )
+    for i, offset in enumerate((0.0, 10.0, 20.0)):
+        model.add(f"q{i}", ["a", "b"], now=0.0, offset_m=offset)
+    model.add("v", ["a", "b"], now=0.0, offset_m=90.0)
+    assert model.position("v", 0.0) == ("a", pytest.approx(90.0))
+    assert model.speed("v", 0.0) == pytest.approx(10.0)
+    # The others keep their order, each still where it is.
+    for i, offset in enumerate((0.0, 10.0, 20.0)):
+        assert model.position(f"q{i}", 0.0) == ("a", pytest.approx(offset))
+    model.step(1.0)
+    assert model.vehicle("v").link == "b"
+    assert all(model.vehicle(f"q{i}").link == "a" for i in range(3))
+    # One between two others goes between them; one as far along as another
+    # goes behind it, as one put at a road's start joins its back.
+    model.add("m", ["a", "b"], now=1.0, offset_m=25.0)
+    model.add("t", ["a", "b"], now=1.0, offset_m=30.0)
+    model.add("z", ["a", "b"], now=1.0, offset_m=0.0)
+    assert model._queues["a"].vehicles == ["q2", "t", "m", "q1", "q0", "z"]
+
+
 def test_a_red_light_holds_a_vehicle_at_the_end_of_its_road() -> None:
     green = {"value": False}
     model = _model(gate=lambda a, b: green["value"])

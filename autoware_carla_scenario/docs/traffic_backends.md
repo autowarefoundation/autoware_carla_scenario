@@ -1161,8 +1161,10 @@ uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{s
 and `"true"`, `"yes"`, `"on"`, `"1"`, `1`), read as the run's own switches
 are ([The switches](usage.md#the-switches)): so a quoted
 `traffic.options.fcd_output='false'` is false. Anything else (`maybe`, `2`,
-null) is refused before the run, naming the option as
-`ambient.enabled must be true or false, got 'maybe'`.
+null) is refused before the run, naming the option by its full key as
+`traffic.options.ambient.enabled must be true or false, got 'maybe'`. So
+does every other option's error, and it shows the value as written
+(`traffic.options.warmup_s must be finite and not negative (got -1)`).
 
 **Its sections** -- `ambient`, `pedestrians`, `bicycles` and `mesoscopic`
 under `traffic.options` -- are mappings. An absent or null one is the

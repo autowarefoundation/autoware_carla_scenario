@@ -95,9 +95,12 @@ def segment_count(length: float, segment_length: float) -> int:
     """How many segments SUMO's mesoscopic model cuts a road of *length* into.
 
     As ``MELoop::numSegmentsFor``: the road's length over the segment length,
-    rounded half up, and at least one.
+    rounded half up, and at least one.  A length that is no finite number --
+    the ``inf`` :meth:`SumoMesoscopicTraffic.position` takes for a road it has
+    no :class:`MesoLink` of -- is one segment, not the ``OverflowError`` (or,
+    for NaN, ``ValueError``) of flooring it (#2283).
     """
-    if segment_length <= 0.0:
+    if segment_length <= 0.0 or not math.isfinite(length):
         return 1
     return max(int(math.floor(length / segment_length + 0.5)), 1)
 
@@ -455,7 +458,9 @@ class SumoMesoscopicTraffic:
         """The road *vehicle_id* is on and how far along it, metres.
 
         SUMO's segment start, moved on at the vehicle's speed since it got
-        there, up to the segment's end.
+        there, up to the segment's end.  On a road outside the model's
+        *links*, whose length it does not know, the segment has no end: the
+        start moved on at the vehicle's speed.
         """
         vehicle = self._vehicles[vehicle_id]
         running = self._running.get(vehicle_id)

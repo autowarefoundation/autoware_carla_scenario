@@ -123,7 +123,7 @@ def test_a_sumo_switch_is_read_strictly_by_its_key(
     ):
         config = SumoBackendConfig.from_mapping(_nested(path, value))
         assert _read(config, path) is expected
-    key = ".".join(path)
+    key = "traffic.options." + ".".join(path)
     for bad in ("maybe", 2, 0.5, ["true"]):
         with pytest.raises(
             ValueError, match=rf"^{re.escape(key)} must be true or false, got "
@@ -149,7 +149,9 @@ def test_a_nested_sumo_config_reads_its_switch_when_built_directly() -> None:
     assert AmbientTrafficConfig(enabled="no").enabled is False  # type: ignore[arg-type]
     assert PedestrianConfig(enabled="1").enabled is True  # type: ignore[arg-type]
     assert BicycleConfig(enabled=0).enabled is False  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match=r"^bicycles\.enabled must be true or false"):
+    with pytest.raises(
+        ValueError, match=r"^traffic\.options\.bicycles\.enabled must be true or false"
+    ):
         BicycleConfig(enabled="maybe")  # type: ignore[arg-type]
 
 
@@ -5619,14 +5621,18 @@ def test_the_mirror_limits_take_whole_numbers_from_zero() -> None:
     assert BicycleConfig.from_mapping({"max_bicycles": 0}).max_bicycles == 0
     assert PedestrianConfig.from_mapping({"max_persons": 0}).max_persons == 0
     for bad in (-1, -2, 2.5, 3.0, True, "3"):
-        with pytest.raises(ValueError, match="^max_vehicles must be an integer"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.max_vehicles must be an integer"
+        ):
             SumoBackendConfig.from_mapping({"max_vehicles": bad})
         with pytest.raises(
-            ValueError, match="^bicycles.max_bicycles must be an integer"
+            ValueError,
+            match="^traffic.options.bicycles.max_bicycles must be an integer",
         ):
             SumoBackendConfig.from_mapping({"bicycles": {"max_bicycles": bad}})
         with pytest.raises(
-            ValueError, match="^pedestrians.max_persons must be an integer"
+            ValueError,
+            match="^traffic.options.pedestrians.max_persons must be an integer",
         ):
             SumoBackendConfig.from_mapping({"pedestrians": {"max_persons": bad}})
 
@@ -5637,19 +5643,27 @@ def test_the_radii_must_be_positive_and_finite() -> None:
     )
     assert SumoBackendConfig(spawn_radius_m=50).spawn_radius_m == 50
     for bad in (0.0, -5.0, math.nan, math.inf, -math.inf):
-        with pytest.raises(ValueError, match="^spawn_radius_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.spawn_radius_m must be positive"
+        ):
             SumoBackendConfig.from_mapping({"spawn_radius_m": bad})
-        with pytest.raises(ValueError, match="^bicycles.radius_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.bicycles.radius_m must be positive"
+        ):
             BicycleConfig(radius_m=bad)
-        with pytest.raises(ValueError, match="^pedestrians.radius_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.pedestrians.radius_m must be positive"
+        ):
             PedestrianConfig(radius_m=bad)
     for bad in (0.0, -5.0, math.nan, -math.inf):
         with pytest.raises(
-            ValueError, match="^bicycles.max_distance_m must be positive"
+            ValueError,
+            match="^traffic.options.bicycles.max_distance_m must be positive",
         ):
             BicycleConfig(max_distance_m=bad)
         with pytest.raises(
-            ValueError, match="^pedestrians.max_distance_m must be positive"
+            ValueError,
+            match="^traffic.options.pedestrians.max_distance_m must be positive",
         ):
             PedestrianConfig(max_distance_m=bad)
     # inf is no limit on how far a walk or a ride goes, as before.
@@ -5666,23 +5680,33 @@ def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
     not_negative = ("feedback_distance_m", "warmup_s")
     for bad in (-1.0, math.nan, math.inf):
         for key in positive:
-            with pytest.raises(ValueError, match=f"^{key} must be positive and finite"):
+            with pytest.raises(
+                ValueError, match=f"^traffic.options.{key} must be positive and finite"
+            ):
                 SumoBackendConfig.from_mapping({key: bad})
-        with pytest.raises(ValueError, match="^lane_change_duration_s must be"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.lane_change_duration_s must be"
+        ):
             SumoBackendConfig.from_mapping(
                 {"lane_change_duration_s": bad, "lateral_resolution_m": None}
             )
         for key in not_negative:
-            with pytest.raises(ValueError, match=f"^{key} must be finite and not"):
+            with pytest.raises(
+                ValueError, match=f"^traffic.options.{key} must be finite and not"
+            ):
                 SumoBackendConfig.from_mapping({key: bad})
     for key in positive:
-        with pytest.raises(ValueError, match=f"^{key} must be positive"):
+        with pytest.raises(
+            ValueError, match=f"^traffic.options.{key} must be positive"
+        ):
             SumoBackendConfig.from_mapping({key: 0.0})
     # resync_distance_m: inf never puts a car back, as before; NaN, 0 and
     # below are refused.
     assert SumoBackendConfig(resync_distance_m=math.inf).resync_distance_m == math.inf
     for bad in (0.0, -1.0, math.nan, -math.inf):
-        with pytest.raises(ValueError, match="^resync_distance_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.resync_distance_m must be positive"
+        ):
             SumoBackendConfig.from_mapping({"resync_distance_m": bad})
     # 0 is meaningful for these: never correct SUMO, and no warm-up.
     zero = SumoBackendConfig(feedback_distance_m=0.0, warmup_s=0.0)
@@ -5692,7 +5716,9 @@ def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
 def test_the_tm_port_must_be_a_port() -> None:
     assert SumoBackendConfig.from_mapping({"tm_port": 8200}).tm_port == 8200
     for bad in (0, -1, 65536, 8000.0, True, "8000"):
-        with pytest.raises(ValueError, match="^tm_port must be an integer"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.tm_port must be an integer"
+        ):
             SumoBackendConfig.from_mapping({"tm_port": bad})
 
 
@@ -5852,18 +5878,24 @@ def test_the_generated_demand_refuses_negative_and_non_finite_numbers() -> None:
         # No demand per hour is allowed: as good as none generated.
         assert cls.from_mapping({rate: 0}).period() > 1e9
         for bad in (-1.0, math.nan, math.inf):
-            with pytest.raises(ValueError, match=f"^{group}.{rate} must be finite"):
+            with pytest.raises(
+                ValueError, match=f"^traffic.options.{group}.{rate} must be finite"
+            ):
                 cls.from_mapping({rate: bad})
         for bad in (0.0, -1.0, math.nan, math.inf):
             for key in ("period_s", "end_s"):
                 with pytest.raises(
-                    ValueError, match=f"^{group}.{key} must be positive"
+                    ValueError, match=f"^traffic.options.{group}.{key} must be positive"
                 ):
                     SumoBackendConfig.from_mapping({group: {key: bad}})
     for bad in (-1.0, math.nan, math.inf):
-        with pytest.raises(ValueError, match="^ambient.fringe_factor must be finite"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.ambient.fringe_factor must be finite"
+        ):
             AmbientTrafficConfig(fringe_factor=bad)
-        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be finite"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.bicycles.min_distance_m must be finite"
+        ):
             BicycleConfig(min_distance_m=bad)
 
 
@@ -5928,7 +5960,9 @@ def test_a_sumo_number_option_refuses_what_is_no_number_by_its_key(
 ) -> None:
     # A bool passed as 0 or 1 (period_s: true was a 1 s period), and a string
     # or a null in a required field raised a TypeError naming no key (#1663).
-    name = re.escape(f"{group}.{key}" if group else key)
+    name = re.escape(
+        f"traffic.options.{group}.{key}" if group else f"traffic.options.{key}"
+    )
     bad: list[Any] = [True, False, "2", "", [1.0], {"a": 1}, 10**400, -(10**400)]
     for value in bad:
         with pytest.raises(ValueError, match=f"^{name} {message}"):
@@ -5968,7 +6002,8 @@ def test_the_lane_change_duration_refuses_what_is_no_number_by_its_key() -> None
 
     for value in (True, "3", 10**400):
         with pytest.raises(
-            ValueError, match="^lane_change_duration_s must be positive and finite"
+            ValueError,
+            match="^traffic.options.lane_change_duration_s must be positive and finite",
         ):
             build(value)
     duration = build(3).lane_change_duration_s
@@ -5991,16 +6026,99 @@ def test_the_shipped_sumo_options_still_load_and_a_bool_is_refused_up_front() ->
             run.check_run_config(_shipped(["traffic=sumo", override]))
 
 
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        (
+            {"warmup_s": -1},
+            "traffic.options.warmup_s must be finite and not negative (got -1)",
+        ),
+        (
+            {"spawn_radius_m": 0},
+            "traffic.options.spawn_radius_m must be positive and finite or null "
+            "(got 0)",
+        ),
+        (
+            {"resync_distance_m": 0},
+            "traffic.options.resync_distance_m must be positive (got 0)",
+        ),
+        (
+            {"max_vehicles": -1},
+            "traffic.options.max_vehicles must be an integer >= 0 or null (got -1)",
+        ),
+        (
+            {"tm_port": 0},
+            "traffic.options.tm_port must be an integer within 1-65535 (got 0)",
+        ),
+        (
+            {"vehicle_control": "pedal"},
+            "traffic.options.vehicle_control must be one of physics, teleport "
+            "(got 'pedal')",
+        ),
+        (
+            {"lane_change_duration_s": 2},
+            "traffic.options.lane_change_duration_s needs "
+            "traffic.options.lateral_resolution_m: null",
+        ),
+        (
+            {"ambient": {"end_s": 0}},
+            "traffic.options.ambient.end_s must be positive and finite (got 0)",
+        ),
+        (
+            {"ambient": {"enabled": "maybe"}},
+            "traffic.options.ambient.enabled must be true or false, got 'maybe'",
+        ),
+        (
+            {"pedestrians": {"max_distance_m": -5}},
+            "traffic.options.pedestrians.max_distance_m must be positive (got -5)",
+        ),
+        (
+            {"pedestrians": {"max_persons": -1}},
+            "traffic.options.pedestrians.max_persons must be an integer >= 0 or "
+            "null (got -1)",
+        ),
+        (
+            {"bicycles": {"radius_m": 0}},
+            "traffic.options.bicycles.radius_m must be positive and finite or "
+            "null (got 0)",
+        ),
+        (
+            {"bicycles": {"min_distance_m": 3000, "max_distance_m": 2000}},
+            "traffic.options.bicycles.min_distance_m must be less than "
+            "traffic.options.bicycles.max_distance_m (got 3000 and 2000)",
+        ),
+        (
+            {"bicycles": {"vehicle_control": "pedal"}},
+            "traffic.options.bicycles.vehicle_control must be one of physics, "
+            "teleport (got 'pedal')",
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_a_sumo_option_error_names_the_full_key_and_the_value_as_written(
+    mapping: dict[str, Any], message: str
+) -> None:
+    # A bare `warmup_s` or `bicycles.radius_m` (easy to take for
+    # traffic.bicycles), and the float a value became, misled (#2283).
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}"):
+        SumoBackendConfig.from_mapping(mapping)
+
+
 def test_the_bicycle_ride_distances_must_be_an_interval() -> None:
     # randomTrips.py keeps a ride min <= distance < max: an inverted or equal
     # pair kept none, and generated no ride without a word (#1452).
     for low, high in ((3000.0, 2000.0), (2000.0, 2000.0)):
         with pytest.raises(
             ValueError,
-            match="^bicycles.min_distance_m must be less than bicycles.max_distance_m",
+            match=(
+                r"^traffic\.options\.bicycles\.min_distance_m must be less than "
+                r"traffic\.options\.bicycles\.max_distance_m"
+            ),
         ):
             BicycleConfig(enabled=True, min_distance_m=low, max_distance_m=high)
-        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be less"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.bicycles.min_distance_m must be less"
+        ):
             SumoBackendConfig.from_mapping(
                 {"bicycles": {"min_distance_m": low, "max_distance_m": high}}
             )

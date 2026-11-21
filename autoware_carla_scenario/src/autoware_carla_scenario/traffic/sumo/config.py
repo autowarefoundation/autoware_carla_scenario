@@ -20,6 +20,7 @@ from ...constants import (
 )
 from ..config import check_port
 from ..fidelity import MesoscopicConfig, _number
+from ...value_text import shown
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
 from .signal_states import sumo_step
 
@@ -50,14 +51,14 @@ def _check_count(key: str, value: Optional[int]) -> None:
     if value is not None and (
         isinstance(value, bool) or not isinstance(value, int) or value < 0
     ):
-        raise ValueError(f"{key} must be an integer >= 0 or null (got {value!r})")
+        raise ValueError(f"{key} must be an integer >= 0 or null (got {shown(value)})")
 
 
 def _check_positive(key: str, value: float) -> float:
     """*value* as a float, refused unless finite and > 0."""
     number = _number(key, value, "positive and finite")
     if not (math.isfinite(number) and number > 0.0):
-        raise ValueError(f"{key} must be positive and finite (got {number!r})")
+        raise ValueError(f"{key} must be positive and finite (got {shown(value)})")
     return number
 
 
@@ -68,7 +69,7 @@ def _check_positive_or_null(key: str, value: Optional[float]) -> Optional[float]
     requirement = "positive and finite or null"
     number = _number(key, value, requirement)
     if not (math.isfinite(number) and number > 0.0):
-        raise ValueError(f"{key} must be {requirement} (got {number!r})")
+        raise ValueError(f"{key} must be {requirement} (got {shown(value)})")
     return number
 
 
@@ -80,7 +81,7 @@ def _check_positive_or_inf(key: str, value: float) -> float:
     """
     number = _number(key, value, "positive")
     if not number > 0.0:
-        raise ValueError(f"{key} must be positive (got {number!r})")
+        raise ValueError(f"{key} must be positive (got {shown(value)})")
     return number
 
 
@@ -90,7 +91,7 @@ def _check_positive_or_inf_or_null(key: str, value: Optional[float]) -> Optional
         return None
     number = _number(key, value, "positive or null")
     if not number > 0.0:
-        raise ValueError(f"{key} must be positive or null (got {number!r})")
+        raise ValueError(f"{key} must be positive or null (got {shown(value)})")
     return number
 
 
@@ -98,7 +99,7 @@ def _check_not_negative(key: str, value: float) -> float:
     """*value* as a float, refused unless finite and >= 0."""
     number = _number(key, value, "finite and not negative")
     if not (math.isfinite(number) and number >= 0.0):
-        raise ValueError(f"{key} must be finite and not negative (got {number!r})")
+        raise ValueError(f"{key} must be finite and not negative (got {shown(value)})")
     return number
 
 
@@ -187,19 +188,19 @@ class AmbientTrafficConfig:
     def __post_init__(self) -> None:
         # A switch read strictly: "false" (a quoted override, an
         # ${oc.env:...}) is false, a typo is refused (#1757).
-        self.enabled = check_flag("ambient.enabled", self.enabled)
+        self.enabled = check_flag("traffic.options.ambient.enabled", self.enabled)
         self.use_safe_weights = check_flag(
-            "ambient.use_safe_weights", self.use_safe_weights
+            "traffic.options.ambient.use_safe_weights", self.use_safe_weights
         )
         self.vehicles_per_hour, self.period_s, self.end_s = _check_demand(
-            "ambient",
+            "traffic.options.ambient",
             "vehicles_per_hour",
             self.vehicles_per_hour,
             self.period_s,
             self.end_s,
         )
         self.fringe_factor = _check_not_negative(
-            "ambient.fringe_factor", self.fringe_factor
+            "traffic.options.ambient.fringe_factor", self.fringe_factor
         )
 
     def period(self) -> float:
@@ -251,19 +252,21 @@ class PedestrianConfig:
     blueprint: str = "walker.pedestrian.0015"
 
     def __post_init__(self) -> None:
-        self.enabled = check_flag("pedestrians.enabled", self.enabled)
+        self.enabled = check_flag("traffic.options.pedestrians.enabled", self.enabled)
         self.persons_per_hour, self.period_s, self.end_s = _check_demand(
-            "pedestrians",
+            "traffic.options.pedestrians",
             "persons_per_hour",
             self.persons_per_hour,
             self.period_s,
             self.end_s,
         )
         self.max_distance_m = _check_positive_or_inf(
-            "pedestrians.max_distance_m", self.max_distance_m
+            "traffic.options.pedestrians.max_distance_m", self.max_distance_m
         )
-        self.radius_m = _check_positive_or_null("pedestrians.radius_m", self.radius_m)
-        _check_count("pedestrians.max_persons", self.max_persons)
+        self.radius_m = _check_positive_or_null(
+            "traffic.options.pedestrians.radius_m", self.radius_m
+        )
+        _check_count("traffic.options.pedestrians.max_persons", self.max_persons)
         check_text("traffic.options.pedestrians.blueprint", self.blueprint)
 
     def period(self) -> float:
@@ -332,36 +335,41 @@ class BicycleConfig:
     vehicle_control: str = "teleport"
 
     def __post_init__(self) -> None:
-        self.enabled = check_flag("bicycles.enabled", self.enabled)
+        self.enabled = check_flag("traffic.options.bicycles.enabled", self.enabled)
         if self.vehicle_control not in _VEHICLE_CONTROLS:
             raise ValueError(
-                "bicycles.vehicle_control must be one of "
-                f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
+                "traffic.options.bicycles.vehicle_control must be one of "
+                f"{', '.join(_VEHICLE_CONTROLS)} (got {shown(self.vehicle_control)})"
             )
         self.bicycles_per_hour, self.period_s, self.end_s = _check_demand(
-            "bicycles",
+            "traffic.options.bicycles",
             "bicycles_per_hour",
             self.bicycles_per_hour,
             self.period_s,
             self.end_s,
         )
+        # The pair as written, for the error below: ``0``, not ``0.0``.
+        min_shown = shown(self.min_distance_m)
+        max_shown = shown(self.max_distance_m)
         self.min_distance_m = _check_not_negative(
-            "bicycles.min_distance_m", self.min_distance_m
+            "traffic.options.bicycles.min_distance_m", self.min_distance_m
         )
         self.max_distance_m = _check_positive_or_inf_or_null(
-            "bicycles.max_distance_m", self.max_distance_m
+            "traffic.options.bicycles.max_distance_m", self.max_distance_m
         )
         # randomTrips.py keeps a ride min <= distance < max: an equal or
         # inverted pair keeps none, and generates no ride without a word.
         max_distance = self.max_distance_m
         if max_distance is not None and not self.min_distance_m < max_distance:
             raise ValueError(
-                "bicycles.min_distance_m must be less than "
-                f"bicycles.max_distance_m (got {self.min_distance_m!r} and "
-                f"{max_distance!r})"
+                "traffic.options.bicycles.min_distance_m must be less than "
+                "traffic.options.bicycles.max_distance_m "
+                f"(got {min_shown} and {max_shown})"
             )
-        self.radius_m = _check_positive_or_null("bicycles.radius_m", self.radius_m)
-        _check_count("bicycles.max_bicycles", self.max_bicycles)
+        self.radius_m = _check_positive_or_null(
+            "traffic.options.bicycles.radius_m", self.radius_m
+        )
+        _check_count("traffic.options.bicycles.max_bicycles", self.max_bicycles)
 
     def period(self) -> float:
         """Seconds between two generated rides."""
@@ -578,26 +586,28 @@ class SumoBackendConfig:
 
     def __post_init__(self) -> None:
         # The switches, read strictly as the nested configs' are (#1757).
-        self.publish_walkers = check_flag("publish_walkers", self.publish_walkers)
+        self.publish_walkers = check_flag(
+            "traffic.options.publish_walkers", self.publish_walkers
+        )
         self.pedestrian_crossings = check_flag(
-            "pedestrian_crossings", self.pedestrian_crossings
+            "traffic.options.pedestrian_crossings", self.pedestrian_crossings
         )
         self.cycle_on_sidewalks = check_flag(
-            "cycle_on_sidewalks", self.cycle_on_sidewalks
+            "traffic.options.cycle_on_sidewalks", self.cycle_on_sidewalks
         )
-        self.use_libsumo = check_flag("use_libsumo", self.use_libsumo)
-        self.fcd_output = check_flag("fcd_output", self.fcd_output)
+        self.use_libsumo = check_flag("traffic.options.use_libsumo", self.use_libsumo)
+        self.fcd_output = check_flag("traffic.options.fcd_output", self.fcd_output)
         if self.traffic_light_authority not in _LIGHT_AUTHORITIES:
             raise ValueError(
-                "traffic_light_authority must be one of "
-                f"{', '.join(_LIGHT_AUTHORITIES)} (got {self.traffic_light_authority!r})"
+                "traffic.options.traffic_light_authority must be one of "
+                f"{', '.join(_LIGHT_AUTHORITIES)} (got {shown(self.traffic_light_authority)})"
             )
         if self.vehicle_control not in _VEHICLE_CONTROLS:
             raise ValueError(
-                "vehicle_control must be one of "
-                f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
+                "traffic.options.vehicle_control must be one of "
+                f"{', '.join(_VEHICLE_CONTROLS)} (got {shown(self.vehicle_control)})"
             )
-        check_port("tm_port", self.tm_port)
+        check_port("traffic.options.tm_port", self.tm_port)
         # A section handed to the constructor directly is not read by
         # from_mapping: a null or a mapping there would fail later, in
         # describe() or prepare(), naming no key (#2174).
@@ -627,37 +637,39 @@ class SumoBackendConfig:
         check_text("traffic.options.binary", self.binary)
         check_text("traffic.options.cache_dir", self.cache_dir, optional=True)
         self.feedback_distance_m = _check_not_negative(
-            "feedback_distance_m", self.feedback_distance_m
+            "traffic.options.feedback_distance_m", self.feedback_distance_m
         )
         self.resync_distance_m = _check_positive_or_inf(
-            "resync_distance_m", self.resync_distance_m
+            "traffic.options.resync_distance_m", self.resync_distance_m
         )
         self.curve_lateral_acceleration = _check_positive_or_null(
-            "curve_lateral_acceleration", self.curve_lateral_acceleration
+            "traffic.options.curve_lateral_acceleration",
+            self.curve_lateral_acceleration,
         )
         self.lateral_resolution_m = _check_positive_or_null(
-            "lateral_resolution_m", self.lateral_resolution_m
+            "traffic.options.lateral_resolution_m", self.lateral_resolution_m
         )
         self.lane_change_duration_s = _check_positive_or_null(
-            "lane_change_duration_s", self.lane_change_duration_s
+            "traffic.options.lane_change_duration_s", self.lane_change_duration_s
         )
         self.step_length_s = _check_positive_or_null(
-            "step_length_s", self.step_length_s
+            "traffic.options.step_length_s", self.step_length_s
         )
         # Against the tick the runner gives the world, before the run starts
         # CARLA: prepare() checks it again against the tick it is handed.
         sumo_step(FIXED_DELTA_SECONDS, self.step_length_s)
-        self.warmup_s = _check_not_negative("warmup_s", self.warmup_s)
+        self.warmup_s = _check_not_negative("traffic.options.warmup_s", self.warmup_s)
         self.spawn_radius_m = _check_positive_or_null(
-            "spawn_radius_m", self.spawn_radius_m
+            "traffic.options.spawn_radius_m", self.spawn_radius_m
         )
-        _check_count("max_vehicles", self.max_vehicles)
+        _check_count("traffic.options.max_vehicles", self.max_vehicles)
         if (
             self.lane_change_duration_s is not None
             and self.lateral_resolution_m is not None
         ):
             raise ValueError(
-                "lane_change_duration_s needs lateral_resolution_m: null: SUMO "
+                "traffic.options.lane_change_duration_s needs "
+                "traffic.options.lateral_resolution_m: null: SUMO "
                 "changes lanes either over a duration, in its lane-based model, "
                 "or in its sublane model (the default), where "
                 "max_lateral_speed_mps and max_lateral_accel (traffic.vehicles) "
@@ -665,14 +677,14 @@ class SumoBackendConfig:
             )
         if self.scenario_vehicles not in _SCENARIO_VEHICLE_DRIVERS:
             raise ValueError(
-                "scenario_vehicles must be one of "
-                f"{', '.join(_SCENARIO_VEHICLE_DRIVERS)} (got {self.scenario_vehicles!r})"
+                "traffic.options.scenario_vehicles must be one of "
+                f"{', '.join(_SCENARIO_VEHICLE_DRIVERS)} (got {shown(self.scenario_vehicles)})"
             )
         if self.scenario_pedestrians not in _SCENARIO_PEDESTRIAN_DRIVERS:
             raise ValueError(
-                "scenario_pedestrians must be one of "
+                "traffic.options.scenario_pedestrians must be one of "
                 f"{', '.join(_SCENARIO_PEDESTRIAN_DRIVERS)} "
-                f"(got {self.scenario_pedestrians!r})"
+                f"(got {shown(self.scenario_pedestrians)})"
             )
 
     @classmethod
