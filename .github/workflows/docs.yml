@@ -80,7 +80,9 @@ jobs:
             # from a feature branch or an old tag without a `version` would
             # overwrite the public `dev` docs with that ref's (#2302).
             if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
-              echo "::error::Without a version this deploys master's docs as dev; run it from master, or give the version ${GITHUB_REF_NAME} carries (${pkg})"
+              # Not "give the version this ref carries": a feature branch
+              # carries master's version, and would then become `latest`.
+              echo "::error::Without a version this deploys master's docs as dev; run it from master, or from a release's v<version> tag with that version (${GITHUB_REF_NAME} is not master)"
               exit 1
             fi
             echo "version=dev" >> "$GITHUB_OUTPUT"
