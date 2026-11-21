@@ -1,13 +1,16 @@
 """Acceleration condition: the component, the sign, and the degenerate cases.
 
-CARLA reports acceleration directly, so the world is faked and what is left to
-test is the decomposition -- which is where the sign convention lives, and the
-sign is the whole point of a harsh-braking assertion.
+CARLA reports a vehicle's acceleration directly, so the world is faked and
+what is left to test is the decomposition -- which is where the sign
+convention lives, and the sign is the whole point of a harsh-braking
+assertion.  A walker's it reports as 0, so that one is differentiated from
+the walker's measured velocity (#2271).
 """
 
 from __future__ import annotations
 
 import math
+from typing import Callable
 from unittest.mock import MagicMock
 
 import typesafe_carla.carla as carla
@@ -174,3 +177,98 @@ class TestDetails:
         assert details["rule"] == "LESS_THAN"
         assert details["direction"] == "LONGITUDINAL"
         assert math.isclose(details["value"], -3.0)
+
+
+def _walker(heading: tuple[float, float] = (1.0, 0.0)) -> MagicMock:
+    """A fake walker on CARLA's controller: it reports no velocity and no
+    acceleration (5 m/s^2 here, to show it is not read), only where it is."""
+    walker = MagicMock()
+    walker.id = 7
+    walker.type_id = "walker.pedestrian.0001"
+    walker.attributes = {"role_name": "pedestrian1"}
+    walker.get_velocity.return_value = carla.Vector3D(0.0, 0.0, 0.0)
+    walker.get_acceleration.return_value = carla.Vector3D(5.0, 0.0, 0.0)
+    transform = MagicMock()
+    transform.get_forward_vector.return_value = carla.Vector3D(*heading, 0.0)
+    walker.get_transform.return_value = transform
+    return walker
+
+
+_DT = 0.05
+
+
+def _walk(
+    condition: AccelerationCondition,
+    walker: MagicMock,
+    x_of_t: Callable[[float], float],
+    ticks: int,
+    start: int = 1,
+) -> list[object]:
+    """Check *condition* on *walker* placed at ``x_of_t(t)`` each tick."""
+    world = _world(walker)
+    results: list[object] = []
+    for k in range(start, start + ticks):
+        t = k * _DT
+        walker.get_location.return_value = carla.Location(x_of_t(t), 0.0, 0.5)
+        results.append(condition.check(world, t))
+    return results
+
+
+class TestWalker:
+    def test_a_walker_accelerating_is_seen_from_its_third_check(self) -> None:
+        condition = AccelerationCondition(
+            "pedestrian1", 0.5, ComparisonRule.GREATER_THAN, label="acc"
+        )
+        results = _walk(condition, _walker(), lambda t: 0.5 * t * t, 4)
+        # Nothing to measure a velocity from, then one velocity: unknown.
+        assert results[0] is None and results[1] is None
+        fired = results[2]
+        assert fired is not None
+        assert "(1.00 m/s^2)" in fired.message  # type: ignore[attr-defined]
+        assert results[3] is not None
+
+    def test_a_walker_at_a_steady_pace_does_not_accelerate(self) -> None:
+        condition = AccelerationCondition(
+            "pedestrian1", 0.5, ComparisonRule.GREATER_THAN, label="acc"
+        )
+        results = _walk(condition, _walker(), lambda t: 1.4 * t, 10)
+        assert all(result is None for result in results)
+        steady = AccelerationCondition(
+            "pedestrian1", 0.1, ComparisonRule.LESS_THAN, label="steady"
+        )
+        assert _walk(steady, _walker(), lambda t: 1.4 * t, 3)[2] is not None
+
+    def test_a_walker_slowing_down_brakes_along_its_heading(self) -> None:
+        condition = AccelerationCondition(
+            "pedestrian1",
+            -1.0,
+            ComparisonRule.LESS_THAN,
+            AccelerationDirection.LONGITUDINAL,
+            label="braking",
+        )
+        results = _walk(condition, _walker(), lambda t: 1.4 * t - t * t, 3)
+        fired = results[2]
+        assert fired is not None
+        assert "(-2.00 m/s^2)" in fired.message  # type: ignore[attr-defined]
+
+    def test_checked_again_at_the_same_time_it_reads_the_same(self) -> None:
+        condition = AccelerationCondition(
+            "pedestrian1", 0.5, ComparisonRule.GREATER_THAN, label="acc"
+        )
+        walker = _walker()
+        _walk(condition, walker, lambda t: 0.5 * t * t, 3)
+        again = condition.check(_world(walker), 3 * _DT)
+        assert again is not None
+        assert "(1.00 m/s^2)" in again.message
+
+    def test_closing_forgets_the_walker(self) -> None:
+        condition = AccelerationCondition(
+            "pedestrian1", 0.5, ComparisonRule.GREATER_THAN, label="acc"
+        )
+        walker = _walker()
+        assert _walk(condition, walker, lambda t: 0.5 * t * t, 3)[2] is not None
+        condition.close()
+        # The next run's clock starts over: two reads again before a verdict.
+        results = _walk(condition, walker, lambda t: 0.5 * t * t, 3)
+        assert results[0] is None and results[1] is None
+        assert results[2] is not None

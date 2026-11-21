@@ -114,6 +114,10 @@ class EntityExistenceCondition(BaseCondition):
     scenario terminates immediately when the ego (or any critical actor)
     is missing.
 
+    An absence is logged (as an error) once, when the actor goes missing, not
+    on every check while it stays so; it is logged again if the actor comes
+    back and goes missing again.  The result is returned on every check.
+
     Args:
         entity_name: The ``role_name`` attribute of the actor to monitor.
             Accepts both :class:`EntityRole` and plain ``str``.
@@ -184,11 +188,15 @@ class EntityExistenceCondition(BaseCondition):
         msg = (
             f"Actor '{self._entity_name}' not found in the world " f"at {elapsed:.2f}s"
         )
-        if not self._quiet:
-            logger.error(msg)
-        elif not self._said_absent:
+        # Said once per absence: under a NotCondition and a
+        # PersistentCondition (the recommended pattern) it is checked every
+        # tick for as long as the actor is gone (#2271).
+        if not self._said_absent:
             self._said_absent = True
-            logger.debug(msg)
+            if self._quiet:
+                logger.debug(msg)
+            else:
+                logger.error(msg)
 
         return ScenarioResult(
             passed=False,

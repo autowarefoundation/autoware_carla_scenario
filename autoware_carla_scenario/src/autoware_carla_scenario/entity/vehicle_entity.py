@@ -74,9 +74,13 @@ class VehicleEntityConfig:
     vehicle_type: str = "vehicle.mini.cooper"
     initial_speed_kmh: float = 0.0
     spawn_retry_max_count: int = 0
+    #: Lateral shift (m) per spawn retry, across the spawn heading (both
+    #: sides; :func:`~._spawn.spawn_vehicle_actor`).
     spawn_retry_t_step: float = 0.1
     spawn_retry_z_step: float = 0.5
     od_pose: Optional["OpenDrivePose"] = None
+    #: Accepted for compatibility and unused: the spawn retries shift the
+    #: resolved spawn transform rather than re-snapping it to the ground.
     ground_projection: Optional["GroundProjectionConfig"] = None
 
     def __post_init__(self) -> None:
@@ -114,6 +118,11 @@ class VehicleEntity(BackendDriven):
     This class handles spawning, destroying, and providing access to an NPC
     vehicle actor.  It mirrors the :class:`EgoVehicle` API but is intended
     for non-ego vehicles that participate in a scenario.
+
+    Raises:
+        ValueError: If *config* names the ego (``"Ego"``, ``"ego"``,
+            ``"hero"``, in any case): the ego is an :class:`EgoVehicle`, and
+            an NPC under its name would replace it in the entity registry.
     """
 
     # Declared for the static check (docs/typecheck.md): Codon types an
@@ -122,6 +131,10 @@ class VehicleEntity(BackendDriven):
     _vehicle: Optional["carla.Actor"]
 
     def __init__(self, config: VehicleEntityConfig) -> None:
+        # The config lets "Ego" through because EgoConfig builds on it, but an
+        # NPC named so would replace the ego in the entity registry (#2271):
+        # the ego is an EgoVehicle, never a VehicleEntity.
+        _refuse_ego_role_name(config.role_name, "an NPC vehicle entity")
         self._config = config
         self._vehicle: Optional["carla.Actor"] = None
 

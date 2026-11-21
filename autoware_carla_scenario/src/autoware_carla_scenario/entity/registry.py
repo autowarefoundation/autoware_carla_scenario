@@ -22,8 +22,11 @@ than no entity at all.
 Entities are kept by kind, so that an action can look up the kind it acts on
 with a type (docs/typecheck.md): :func:`find_vehicle_entity` returns what a
 traffic backend drives, the ego included, and :func:`find_pedestrian_entity` a
-pedestrian.  An object of neither kind -- a test double, a duck-typed entity of
-a scenario package -- is kept as both, so every lookup returns it, as
+pedestrian.  A role is looked up as the actor lookups read it
+(:func:`~autoware_carla_scenario.entity_role.canonical_role_name`): ``"ego"``
+and ``"hero"``, in any case, name the ego registered as ``"Ego"``.  An object
+of neither kind -- a test double, a duck-typed entity of a scenario package --
+is kept as both, so every lookup returns it, as
 :func:`find_entity_by_role_name` returns an entity of any kind.
 """
 
@@ -32,7 +35,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional, Union
 
-from ..entity_role import EntityRole
+from ..entity_role import EntityRole, canonical_role_name
 from ..traffic.driven import BackendDriven
 from .pedestrian_entity import PedestrianEntity
 
@@ -45,6 +48,14 @@ _VEHICLES: dict[str, BackendDriven] = {}
 _PEDESTRIANS: dict[str, PedestrianEntity] = {}
 
 
+def _key(role_name: Union[EntityRole, str]) -> str:
+    """The key *role_name* is kept under: as
+    :func:`~autoware_carla_scenario.entity_role.canonical_role_name` reads it,
+    so ``"ego"`` and ``"hero"`` (in any case) find the ego registered as
+    ``"Ego"``, as the actor lookups do (#2271)."""
+    return canonical_role_name(str(role_name))
+
+
 def register_entity(role_name: Union[EntityRole, str], entity: Any) -> None:
     """Make *entity* findable by its role name.
 
@@ -55,7 +66,7 @@ def register_entity(role_name: Union[EntityRole, str], entity: Any) -> None:
         role_name: The role the entity answers to.
         entity: The entity object.
     """
-    key = str(role_name)
+    key = _key(role_name)
     if isinstance(entity, BackendDriven):
         register_vehicle_entity(key, entity)
         return
@@ -77,7 +88,7 @@ def register_vehicle_entity(
     traffic backend drives, the ego included): typed, so the static check
     follows it (docs/typecheck.md).
     """
-    key = str(role_name)
+    key = _key(role_name)
     unregister_entity(key)
     _VEHICLES[key] = entity
 
@@ -89,14 +100,14 @@ def register_pedestrian_entity(
 
     The pedestrian counterpart of :func:`register_vehicle_entity`.
     """
-    key = str(role_name)
+    key = _key(role_name)
     unregister_entity(key)
     _PEDESTRIANS[key] = entity
 
 
 def unregister_entity(role_name: Union[EntityRole, str]) -> None:
     """Forget the entity registered under *role_name*, if any."""
-    key = str(role_name)
+    key = _key(role_name)
     if key in _VEHICLES:
         del _VEHICLES[key]
     if key in _PEDESTRIANS:
@@ -118,7 +129,7 @@ def find_entity_by_role_name(role_name: Union[EntityRole, str]) -> Optional[Any]
     Returns:
         The entity, or ``None`` when no entity has that role in this run.
     """
-    key = str(role_name)
+    key = _key(role_name)
     if key in _VEHICLES:
         return _VEHICLES[key]
     if key in _PEDESTRIANS:
@@ -138,7 +149,7 @@ def find_vehicle_entity(role_name: Union[EntityRole, str]) -> Optional[BackendDr
         The vehicle, or ``None`` when no entity has that role in this run or
         the one that has is a pedestrian.
     """
-    key = str(role_name)
+    key = _key(role_name)
     if key in _VEHICLES:
         return _VEHICLES[key]
     return None
@@ -156,7 +167,7 @@ def find_pedestrian_entity(
         The pedestrian, or ``None`` when no entity has that role in this run
         or the one that has is a vehicle.
     """
-    key = str(role_name)
+    key = _key(role_name)
     if key in _PEDESTRIANS:
         return _PEDESTRIANS[key]
     return None
