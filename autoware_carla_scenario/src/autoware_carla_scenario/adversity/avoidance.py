@@ -11,12 +11,16 @@ TeraSim's ``utils/nade/avoidance.py``, on predicted futures:
   is unavoidable: an unreasonable adversity, whose naturalistic probability
   is cut by ``unavoidable_factor`` (3e-4) and whose IS magnitude is
   multiplied by ``unavoidable_magnitude`` (40).
-* **Response** (:func:`respond`): once an adversity is sampled, NPC victims
-  avoid it -- brake at the emergency deceleration for 3 s -- with the IS
-  probability ``avoid_is_probability`` (0.2) against the naturalistic 0.99,
-  else accept it (hold their speed for 2 s).  An ego victim is never
-  driven (TeraSim's ``AV_neglected``), and nothing is drawn for an
-  unavoidable conflict: the victims accept it.
+* **Response** (:func:`respond`): once an adversity is sampled whose
+  victims do not include the ego, its NPC victims avoid it -- brake at the
+  emergency deceleration for 3 s -- with the IS probability
+  ``avoid_is_probability`` (0.2) against the naturalistic 0.99, else accept
+  it (hold their speed for 2 s); nothing is drawn for an unavoidable
+  conflict: the victims accept it.  When the ego is among the victims
+  (TeraSim's ``AV_neglected``), nothing is drawn and no victim is driven,
+  NPC victims included: the ego drives itself.  Without ``challenge_npcs``
+  the ego is the only victim an adversity can have, so then there is never
+  a response.
 """
 
 from __future__ import annotations
