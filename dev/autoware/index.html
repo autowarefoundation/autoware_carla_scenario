@@ -2646,7 +2646,8 @@ refused when the ego is built, with an error naming it:
 <code>+autoware.boot_timout_s=30</code> fails the run rather than leaving the default
 timeout in place. The values are checked too, naming the key and showing the
 value: a null setting is its default, as an absent one is; <code>address</code> is a
-non-empty <code>host:port</code>; <code>ready_timeout_ticks</code> a positive whole number (<code>1200</code>,
+<code>host:port</code> with a port from 0 to 65535 (<code>localhost:0</code> binds an ephemeral
+port; an IPv6 host is bracketed, <code>[::1]:50052</code>); <code>ready_timeout_ticks</code> a positive whole number (<code>1200</code>,
 or <code>1200.0</code>, kept as the int); and the seconds and <code>base_link_offset_m</code> are
 numbers, an int or a float. A boolean or a quoted number is refused rather
 than read as 0, 1 or the number: <code>autoware.liveness_timeout_s=false</code> does not
@@ -2757,7 +2758,7 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <tr>
 <td><code>bridge_parameters</code></td>
 <td><code>{use_sim_time: true}</code></td>
-<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, <code>route_watch_period_s</code>, <code>reroute_max_attempts</code>, <code>rpc_timeout_s</code>, <code>mission_poll_timeout_s</code>, ... <code>route_watch_period_s</code> and <code>mission_poll_timeout_s</code> must suit <code>autoware.liveness_timeout_s</code> (<a href="#a-local-workspace-in-its-dev-container">above</a>). For both launcher types, the mapping is merged over the default, and null or absent is the default: <code>{auto_engage: false}</code> keeps <code>use_sim_time: true</code>, which <code>use_sim_time: false</code> turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (<code>reroute_max_attempts: 10.0</code>) as the int, as the node declares them; a fraction for an integer one, or a boolean for a number, is refused</td>
+<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, <code>route_watch_period_s</code>, <code>reroute_max_attempts</code>, <code>rpc_timeout_s</code>, <code>mission_poll_timeout_s</code>, ... <code>route_watch_period_s</code> and <code>mission_poll_timeout_s</code> must suit <code>autoware.liveness_timeout_s</code> (<a href="#a-local-workspace-in-its-dev-container">above</a>). For both launcher types, the mapping is merged over the default, and null or absent is the default: <code>{auto_engage: false}</code> keeps <code>use_sim_time: true</code>, which <code>use_sim_time: false</code> turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (<code>reroute_max_attempts: 10.0</code>) as the int, as the node declares them; a fraction for an integer one, a boolean or a string (<code>'5'</code>) for a number, a NaN or an infinity for a seconds parameter, and a <code>rpc_timeout_s</code>, <code>mission_poll_timeout_s</code>, <code>step_timeout_s</code> or <code>tick_period_s</code> that is not above 0 are refused, naming the parameter (<code>route_watch_period_s</code> of 0 or less turns the re-route watch off)</td>
 </tr>
 <tr>
 <td><code>colcon_args</code></td>
@@ -3017,7 +3018,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 18:51:23 UTC"><span class="timeago" datetime="2026-11-20T18:51:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 18:51:23 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 08:25:34 UTC"><span class="timeago" datetime="2026-11-21T08:25:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 08:25:34 UTC">2026-11-21</span>
   </span>
 
     
