@@ -131,7 +131,11 @@ from autoware_carla_scenario.run_outputs import (
 )
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EgoVehicleConfig, EntityConfig
-from autoware_carla_scenario.scenario_hash import SCENARIO_SECTIONS, scenario_hash
+from autoware_carla_scenario.scenario_hash import (
+    SCENARIO_SECTIONS,
+    SCENARIO_SETTINGS,
+    scenario_hash,
+)
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
@@ -3680,6 +3684,12 @@ def _set_scenario_hash(cfg: DictConfig, scenario: BaseScenario) -> None:
                 if OmegaConf.is_config(node)
                 else node
             )
+    # And the few settings of the other sections that say what is simulated
+    # (server.fog_density_scale), each resolved on its own.
+    for section, key in SCENARIO_SETTINGS:
+        value = OmegaConf.select(cfg, f"{section}.{key}", default=None)
+        if value is not None:
+            config.setdefault(section, {})[key] = value
     scenario_class = type(scenario)
     scenario.scenario_hash = scenario_hash(
         config, f"{scenario_class.__module__}.{scenario_class.__qualname__}"
