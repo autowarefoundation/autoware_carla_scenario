@@ -36,6 +36,7 @@ re-exported here.
 from __future__ import annotations
 
 import math
+import operator
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from ..value_text import shown
@@ -498,11 +499,13 @@ def _check_advance(name: str, gates: Mapping[int, "BaseCondition"], count: int) 
         ValueError: ``<name>: no vertex <i> (it has <count>)``.
     """
     for index in gates:
-        if (
-            isinstance(index, bool)
-            or not isinstance(index, int)
-            or not (0 <= index < count)
-        ):
+        # An int, or a number that is one (numpy's integers, which look up
+        # the same vertex); not a bool.
+        try:
+            position = None if isinstance(index, bool) else operator.index(index)
+        except TypeError:
+            position = None
+        if position is None or not (0 <= position < count):
             raise ValueError(f"{name}: no vertex {index!r} (it has {count})")
 
 

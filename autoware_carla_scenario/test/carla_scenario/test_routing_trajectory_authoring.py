@@ -817,3 +817,23 @@ class TestAdvanceOnAMissingVertex:
             )
         ]
         assert "There is no vertex 5: the trajectory has 3." in _messages(document)
+
+    def test_a_numpy_integer_index_still_gates_its_vertex(self) -> None:
+        """A numpy integer key looked up its vertex before the check (#2261)."""
+        import numpy as np
+
+        conditions = [TrajectoryTimeCondition(float(i)) for i in range(3)]
+        advance: dict[Any, TrajectoryTimeCondition] = {
+            np.int64(i): c for i, c in enumerate(conditions)
+        }
+        trajectory = authored_trajectory("vertices", vertices=_ROWS, advance=advance)
+        assert [v.advance for v in trajectory.vertices] == conditions
+
+    @pytest.mark.parametrize("index", [True, "1", 1.5])
+    def test_an_index_that_is_no_integer_is_refused(self, index: Any) -> None:
+        with pytest.raises(ValueError, match=r"^trajectory: no vertex "):
+            authored_trajectory(
+                "vertices",
+                vertices=_ROWS,
+                advance={index: TrajectoryTimeCondition(1.0)},
+            )
