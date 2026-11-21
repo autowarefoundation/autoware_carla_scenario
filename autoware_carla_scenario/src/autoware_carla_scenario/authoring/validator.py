@@ -577,6 +577,7 @@ def _check_condition(
     _check_collision_names_one_target(out, path, node)
     _check_persistent_child(out, path, node)
     _check_filter_ranges(out, path, node)
+    _check_map_area(out, path, node)
     _check_condition_frame(out, path, node)
     _check_equal_tolerance(out, path, spec, node)
 
@@ -646,6 +647,35 @@ def _check_persistent_child(out: _Collector, path: str, node: ConditionNode) -> 
 #: An entity filter's bounds, in pairs: the runtime's EntityFilter refuses a
 #: lower bound above its upper one.
 _FILTER_RANGES = ("distance", "ahead", "left")
+
+
+def _check_map_area(out: _Collector, path: str, node: ConditionNode) -> None:
+    """An area card names an area some map could hold, as
+    :func:`~..conditions.map_area_from_fields` asks (#1111): no picked
+    lanelets for a ground of polygons, and attributes written ``key=value``.
+    Whether the map holds it -- a picked lanelet of another ground, a ground
+    the map has none of -- is the map's to say: the places panel outlines
+    the area, and the run says so once and does not hold."""
+    if node.type != "area_distance":
+        return
+    from ..conditions.map_area import (  # noqa: PLC0415
+        AreaGround,
+        parse_attributes,
+    )
+
+    ground = str(node.params.get("ground") or "")
+    picked = node.params.get("lanelet_ids") or []
+    if picked and ground.upper() in {g.name for g in AreaGround if not g.on_lanelets}:
+        out.error(
+            f"{path}.lanelet_ids",
+            "This ground is polygons, not lanelets: narrow it by attributes, "
+            "not by picked lanelets.",
+            node.id,
+        )
+    try:
+        parse_attributes(str(node.params.get("attributes") or ""))
+    except ValueError as exc:
+        out.error(f"{path}.attributes", f"Attributes: {exc}.", node.id)
 
 
 def _check_filter_ranges(out: _Collector, path: str, node: ConditionNode) -> None:

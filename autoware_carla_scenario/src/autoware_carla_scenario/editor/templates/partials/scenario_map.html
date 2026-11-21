@@ -60,13 +60,15 @@
           {{ ic.icon('right', 12) }}
         </button>
       </div>
-    {% elif view.searching %}
+    {% elif view.searching or view.areas_unmatched %}
+      {# A search binds one of its matches; an area outlines all of its own.
+         Both wait on the same thing, the map being parsed. #}
       <button class="ed-btn-sm"
               hx-get="/draft/{{ draft.id }}/map-view?load_map=1"
               hx-target="#scenario-map" hx-swap="innerHTML"
               hx-indicator="#map-bind-spinner">
         <span id="map-bind-spinner" class="htmx-indicator ed-spinner"></span>
-        Bind a pattern
+        {% if view.searching %}Bind a pattern{% else %}Outline areas{% endif %}
       </button>
     {% endif %}
   </div>
@@ -177,9 +179,51 @@
             </span>
           </button>
         {% else %}
-          <p class="ed-help">This scenario names no lanelet yet.</p>
+          {% if not view.areas %}
+            <p class="ed-help">This scenario names no lanelet yet.</p>
+          {% endif %}
         {% endfor %}
       </div>
+
+      {% if view.areas %}
+        {# An area is every element of its ground, so it is outlined whole
+           rather than pinned: a pin per crosswalk of a city would bury the
+           places above.  The viewer outlines lanelets only; polygons of the
+           polygon layer are counted. #}
+        <div class="ed-point-list" data-areas>
+          {% for area in view.areas %}
+            {%- set hue = HUES.get(area.entity_id) or 'var(--accent)' -%}
+            {%- set preview = area.preview -%}
+            <button class="ed-point {% if preview.error or preview.empty %}is-unset{% endif %}"
+                    style="--point-hue: {{ hue }}"
+                    {% if preview.lanelet_ids %}data-focus-lanelet="{{ preview.lanelet_ids[0] }}"{% endif %}
+                    hx-get="/draft/{{ draft.id }}/inspector/{{ area.owner_id }}"
+                    hx-target="#inspector" hx-swap="innerHTML">
+              <span class="ed-point-glyph">{{ ic.icon('eye', 12) }}</span>
+              <span class="ed-point-text">
+                <span class="ed-point-name">
+                  {{ area.title }} <span class="role">area</span>
+                </span>
+                <span class="ed-point-meta">{{ area.description }}</span>
+                <span class="ed-point-note">
+                  {% if preview.error %}
+                    {{ preview.error }}
+                  {% elif not preview.map_loaded %}
+                    outlined once the map is parsed
+                  {% elif preview.empty %}
+                    nothing on this map is in it: the run refuses the card
+                  {% else %}
+                    {%- set n = preview.lanelet_ids|length -%}
+                    {%- if n %}{{ n }} lanelet{{ 's' if n != 1 }} outlined{% endif -%}
+                    {%- if n and preview.polygon_count %}, {% endif -%}
+                    {%- if preview.polygon_count %}{{ preview.polygon_count }} polygon{{ 's' if preview.polygon_count != 1 }} (not drawn){% endif -%}
+                  {% endif %}
+                </span>
+              </span>
+            </button>
+          {% endfor %}
+        </div>
+      {% endif %}
     </aside>
   </div>
 </div>

@@ -388,9 +388,15 @@
                             | first | default(none, true)) -%}
       {%- if field_spec %}
         {%- set shown = node.params.get(name) -%}
-        {%- if shown is not none %}
+        {#- An empty text or list is as absent as no value: "Attributes" with
+            nothing after it, or "Only these lanelets []", reads as a gap. -#}
+        {%- set empty = shown is none or (shown is string and not shown|trim)
+                        or (shown is iterable and shown is not string and not shown|list) -%}
+        {%- if not empty %}
           <div class="cond-detail">
-            {{ field_spec.label }} {{ shown }}{{ ' ' ~ field_spec.unit if field_spec.unit }}
+            {{ field_spec.label }}
+            {% if shown is iterable and shown is not string %}{{ shown|join(', ') }}{% else %}{{ shown }}{% endif %}
+            {{- ' ' ~ field_spec.unit if field_spec.unit }}
           </div>
         {%- elif field_spec.required %}
           <div class="cond-detail">any {{ field_spec.label|lower }}</div>

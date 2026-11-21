@@ -3303,6 +3303,77 @@ class TestScenarioMap:
         assert "getView()" in script
 
 
+class TestAreasOnTheMap:
+    """A Distance to an area card outlines its whole area on the places panel:
+    the lanelets its ground and filters match on the map, read with the
+    framework's own matcher, so the outline is the ground the run measures to."""
+
+    @pytest.fixture(autouse=True)
+    def _unloaded_map(self) -> None:
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+
+    @staticmethod
+    def _area_card(store: DraftStore, draft_id: str, **params: Any) -> str:
+        from autoware_carla_scenario.authoring.models import ConditionNode
+
+        draft = _draft(store, draft_id)
+        node = ConditionNode(
+            type="area_distance",
+            params={"entity": "ego", "rule": "less_than", "distance": 0.5, **params},
+        )
+        draft.document.assertions.fail_conditions.append(node)
+        store.save(draft)
+        return node.id
+
+    def test_an_unloaded_map_offers_to_outline_the_area(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._area_card(store, draft_id, ground="CROSSWALK", lanelet_ids=[587])
+        body = client.get(f"/draft/{draft_id}/map-view").text
+        assert "Distance to an area" in body
+        assert "crosswalks (lanelet 587)" in body
+        assert "outlined once the map is parsed" in body
+
+    def test_the_area_is_outlined_with_the_places(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        node_id = self._area_card(store, draft_id, ground="CROSSWALK")
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        highlight = set(
+            body.split('data-highlight="', 1)[1].split('"', 1)[0].split(",")
+        )
+        # The cut-in's own places, and every crosswalk of the map besides.
+        assert {"183", "141"} <= highlight
+        assert "587" in highlight
+        assert "84 lanelets outlined" in body
+        row = body.split("data-areas", 1)[1]
+        assert f"/draft/{draft_id}/inspector/{node_id}" in row
+
+    def test_polygons_are_counted_not_drawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._area_card(store, draft_id, ground="DETECTION_AREA")
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        assert "2 polygons (not drawn)" in body
+
+    def test_a_picked_lanelet_of_another_ground_is_said(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # 183 is a road: the ego's spawn.
+        self._area_card(store, draft_id, ground="CROSSWALK", lanelet_ids=[183])
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        assert "lanelet 183 is not one of the crosswalks" in body
+
+    def test_an_area_the_map_lacks_is_said(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._area_card(store, draft_id, ground="PARKING_LOT")
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        assert "nothing on this map is in it" in body
+
+
 class TestAMapSourceThatIsNoURL:
     """An unclosed ``[`` is urlsplit's ValueError, which MapSource.parse turns
     into a MapSourceError: each route shows the reason, none is a 500, and a

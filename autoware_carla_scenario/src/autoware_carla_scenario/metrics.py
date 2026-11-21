@@ -66,6 +66,7 @@ from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
 from .failure import FailureCategory
 from .utils.clearance import HIDDEN_BELOW_M, actor_vertical_span, level_gap
+from .utils.polygon import ground_box
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -324,47 +325,6 @@ class Metric:
 # ---------------------------------------------------------------------------
 # Boxes on the ground
 # ---------------------------------------------------------------------------
-
-
-def _box_of(actor: "carla.Actor", transform: "carla.Transform") -> Box:
-    """*actor*'s bounding box on the ground, in the world frame, *transform*
-    being where the actor is."""
-    heading = math.radians(transform.rotation.yaw)
-    yaw = heading
-    extent_x, extent_y = 0.0, 0.0
-    offset_x, offset_y = 0.0, 0.0
-    # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
-    try:
-        box = actor.bounding_box
-        extent_x, extent_y = float(box.extent.x), float(box.extent.y)
-        offset_x, offset_y = float(box.location.x), float(box.location.y)
-        yaw += math.radians(box.rotation.yaw)
-    except AttributeError:
-        pass
-    # CARLA's frame is left-handed: +y is to the right of +x.
-    forward = (math.cos(yaw), math.sin(yaw))
-    right = (-forward[1], forward[0])
-    centre = (
-        transform.location.x
-        + offset_x * math.cos(heading)
-        - offset_y * math.sin(heading),
-        transform.location.y
-        + offset_x * math.sin(heading)
-        + offset_y * math.cos(heading),
-    )
-
-    def corner(along: float, across: float) -> Point:
-        return (
-            centre[0] + along * forward[0] + across * right[0],
-            centre[1] + along * forward[1] + across * right[1],
-        )
-
-    return [
-        corner(extent_x, -extent_y),
-        corner(extent_x, extent_y),
-        corner(-extent_x, extent_y),
-        corner(-extent_x, -extent_y),
-    ]
 
 
 def _cross(o: Point, a: Point, b: Point) -> float:
@@ -641,7 +601,7 @@ def _read_frame(world: "carla.World") -> _Frame:
         # A road user parked under the map (hidden) is out of the scene.
         if placed.location.z < HIDDEN_BELOW_M:
             continue
-        others.append(_box_of(actor, placed))
+        others.append(ground_box(actor, placed))
         # One on another level of road -- on a bridge over the ego, in an
         # underpass beneath it -- may overlap the ego's box on the ground, but
         # is as far from it as the height between them.
@@ -649,7 +609,7 @@ def _read_frame(world: "carla.World") -> _Frame:
     return _Frame(
         transform.rotation.yaw,
         float(transform.location.z),
-        _box_of(ego, transform),
+        ground_box(ego, transform),
         others,
         others_gap,
     )
@@ -1017,7 +977,7 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         try:
             transform = ego.get_transform()
             waypoint = _driving_waypoint(
-                world, _centre(_box_of(ego, transform)), float(transform.location.z)
+                world, _centre(ground_box(ego, transform)), float(transform.location.z)
             )
         except Exception:
             waypoint = None

@@ -23,6 +23,7 @@ from .composition import (
     AccelerationCondition,
     AccelerationDirection,
     DistanceCoordinateSystem,
+    EntityAreaDistanceCondition,
     EntityDistanceCondition,
     RelativeDistanceType,
     EntityLaneOfCondition,
@@ -56,6 +57,7 @@ from .entity_filter import (
     SelectedEntity,
     entity_filter_from_fields,
 )
+from .map_area import AreaGround, MapArea, map_area_from_fields
 from .place_clear import PlaceClearCondition
 from .route_progress import RouteProgressCondition
 from .trajectory_time import TrajectoryTimeCondition
@@ -82,6 +84,7 @@ __all__ = [
     "TrajectoryTimeCondition",
     "DistanceCoordinateSystem",
     "EntityCountCondition",
+    "EntityAreaDistanceCondition",
     "EntityDistanceCondition",
     "EntityFilter",
     "RoadUserKind",
@@ -94,6 +97,9 @@ __all__ = [
     "OffRoadFractionCondition",
     "OrCondition",
     "PersistentCondition",
+    "AreaGround",
+    "MapArea",
+    "map_area_from_fields",
     "PlaceClearCondition",
     "RelativeDistanceType",
     "RelativeSpeedCondition",
