@@ -233,7 +233,7 @@ processes of their own, the `commonroad_metrics` project at the root of the
 repository (`commonroad_metrics/README.md`), spoken to in JSON lines, on the
 frames a run recorded every 0.1 s of simulated time
 ([How metrics are computed](#how-metrics-are-computed)), the frames shared
-among several workers at once (four, or as many as the machine has cores).
+among several workers at once (four, or fewer on a machine with fewer cores).
 The workers read the world's map as CommonRoad: roadgen (>= 0.42.0, the `map`
 extra) converts the world's OpenDRIVE once per machine, cached under
 `~/.cache/autoware_carla_scenario/commonroad`, and stay up for the next run on
@@ -280,7 +280,14 @@ only after the horizon needs no more than the ego stopping short of it. When
 no braking avoids a contact within the horizon -- a car coming at the ego
 that does not stop in time -- ALongReq is `-inf` and BTN `inf`. TTC has no
 horizon, as CriMe's: it is when they would meet, however far off. A road user
-behind the ego gives no ALongReq. The lanelets the worker keeps are those within
+behind the ego gives no ALongReq. CriMe reads a road user whose box overlaps
+the ego's -- a negative bumper-to-bumper headway, a collision -- as one behind
+(HW, THW and TTC `inf`, ALongReq and BTN `0`); the worker reads one
+overlapping it with its centre ahead of the ego's, or level with it, as
+touching: HW and THW `0` and, while the ego closes on it, TTC `0`, ALongReq
+`-inf`, BTN `inf`, and ALatReq and STN `inf`, so a condition such as
+`crime_ttc_s < 1` holds on the frames of a collision. Only one whose centre is
+behind the ego's reads HW `inf`. The lanelets the worker keeps are those within
 `radius_m` of the ego anywhere along their centre line, and always those it
 is on, so a long straight lanelet stays in from its middle. The reachable set (the drivable
 area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the
@@ -413,10 +420,13 @@ NumPy one too; `None` is the default) -- not the string `"false"`, which
 would leave the heavy metrics on --, `cache_dir` is `None` or a
 path (a `str` is taken as one), `metric_periods_s` is `None` (the default
 periods) or a mapping, `reach_settings` is `None` (no overrides) or a mapping
-of sections to mappings, and `command` is `None` (find the worker) or a
+of sections to mappings (`{"reachable_set": {"size_grid": 0.3}}`) whose
+section and key names are strings and whose values JSON can carry (finite numbers; not NumPy's `float32`), and `command` is `None` (find the worker) or a
 non-empty tuple or list of non-empty strings (not a `str`): a bad value
 raises `ValueError`, naming the field, when the settings are built, not later
-in a run. A timeout far past what `poll()` waits at once
+in a run. A section or key CommonRoad-Reach's configuration does not have
+(`planning.size_grid` for `reachable_set.size_grid`) is refused by the worker
+as it starts, before the first frame. A timeout far past what `poll()` waits at once
 (about 25 days) is waited in pieces.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:
