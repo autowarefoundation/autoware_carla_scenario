@@ -2760,7 +2760,7 @@ processes of their own, the <code>commonroad_metrics</code> project at the root 
 repository (<code>commonroad_metrics/README.md</code>), spoken to in JSON lines, on the
 frames a run recorded every 0.1 s of simulated time
 (<a href="#how-metrics-are-computed">How metrics are computed</a>), the frames shared
-among several workers at once (four, or as many as the machine has cores).
+among several workers at once (four, or fewer on a machine with fewer cores).
 The workers read the world's map as CommonRoad: roadgen (&gt;= 0.42.0, the <code>map</code>
 extra) converts the world's OpenDRIVE once per machine, cached under
 <code>~/.cache/autoware_carla_scenario/commonroad</code>, and stay up for the next run on
@@ -2807,7 +2807,16 @@ only after the horizon needs no more than the ego stopping short of it. When
 no braking avoids a contact within the horizon -- a car coming at the ego
 that does not stop in time -- ALongReq is <code>-inf</code> and BTN <code>inf</code>. TTC has no
 horizon, as CriMe's: it is when they would meet, however far off. A road user
-behind the ego gives no ALongReq. The lanelets the worker keeps are those within
+behind the ego gives no ALongReq. CriMe reads a road user whose box overlaps
+the ego's -- a negative bumper-to-bumper headway, a collision -- as one behind
+(HW, THW and TTC <code>inf</code>, ALongReq and BTN <code>0</code>); the worker reads one
+overlapping it with its centre ahead of the ego's, or level with it, as
+touching: HW and THW <code>0</code> and, while the ego closes on it, TTC <code>0</code>, ALongReq
+<code>-inf</code>, BTN <code>inf</code>, and ALatReq and STN <code>inf</code>, so a condition such as
+<code>crime_ttc_s &lt; 1</code> holds on the frames of a collision. One whose centre is
+behind the ego's, or one beside the ego whose box does not touch it (CriMe
+counts a road user sharing any lanelet with the ego as in its lane, a car
+straddling a lane line or the ego changing lanes), still reads HW <code>inf</code>. The lanelets the worker keeps are those within
 <code>radius_m</code> of the ego anywhere along their centre line, and always those it
 is on, so a long straight lanelet stays in from its middle. The reachable set (the drivable
 area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the
@@ -2928,10 +2937,13 @@ NumPy one too; <code>None</code> is the default) -- not the string <code>"false"
 would leave the heavy metrics on --, <code>cache_dir</code> is <code>None</code> or a
 path (a <code>str</code> is taken as one), <code>metric_periods_s</code> is <code>None</code> (the default
 periods) or a mapping, <code>reach_settings</code> is <code>None</code> (no overrides) or a mapping
-of sections to mappings, and <code>command</code> is <code>None</code> (find the worker) or a
+of sections to mappings (<code>{"reachable_set": {"size_grid": 0.3}}</code>) whose
+section and key names are strings and whose values JSON can carry (finite numbers; not NumPy's <code>float32</code>), and <code>command</code> is <code>None</code> (find the worker) or a
 non-empty tuple or list of non-empty strings (not a <code>str</code>): a bad value
 raises <code>ValueError</code>, naming the field, when the settings are built, not later
-in a run. A timeout far past what <code>poll()</code> waits at once
+in a run. A section or key CommonRoad-Reach's configuration does not have
+(<code>planning.size_grid</code> for <code>reachable_set.size_grid</code>) is refused by the worker
+as it starts, before the first frame. A timeout far past what <code>poll()</code> waits at once
 (about 25 days) is waited in pieces.</p>
 <p>AlpaSim's other metrics need more than the world, and are not metrics here:</p>
 <table>
@@ -3120,7 +3132,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 16:27:20 UTC"><span class="timeago" datetime="2026-11-21T16:27:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 16:27:20 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 17:05:17 UTC"><span class="timeago" datetime="2026-11-21T17:05:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 17:05:17 UTC">2026-11-21</span>
   </span>
 
     
