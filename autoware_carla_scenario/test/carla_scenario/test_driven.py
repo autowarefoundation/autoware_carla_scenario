@@ -735,6 +735,19 @@ class TestTheTurnActionDelegates:
 
 
 class TestTheTurnActionRefusesBadDistances:
+    @pytest.mark.parametrize("value", [True, False])
+    @pytest.mark.parametrize(
+        "option", ["search_distance", "waypoint_step", "post_junction_distance"]
+    )
+    def test_a_boolean_distance_is_refused(self, option: str, value: bool) -> None:
+        # True would read as 1 m (#2273).
+        from autoware_carla_scenario.actions import TurnAction
+        from autoware_carla_scenario.traffic import TurnDirection
+
+        with pytest.raises(ValueError, match=rf"{option} .*not {value!r}"):
+            options: dict[str, Any] = {option: value}
+            TurnAction("npc1", TurnDirection.LEFT, **options)
+
     @pytest.mark.parametrize("value", [0.0, -1.0, math.nan, math.inf, -math.inf])
     @pytest.mark.parametrize(
         "option", ["search_distance", "waypoint_step", "post_junction_distance"]

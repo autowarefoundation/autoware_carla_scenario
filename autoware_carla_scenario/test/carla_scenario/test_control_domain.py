@@ -159,6 +159,33 @@ class TestActions:
         _Command("weather2", ()).tick(None, 0.0)
 
 
+class TestTheEgoUnderItsNames:
+    """The ego is one entity under each of its names (#2273)."""
+
+    @pytest.mark.parametrize("other", ["ego", "hero", "HERO", "Ego"])
+    def test_two_names_of_the_ego_conflict(self, other: str) -> None:
+        _Command("speed", (LON,), entity="Ego").tick(None, 0.0)
+        with pytest.raises(ControlConflictError) as raised:
+            _Command("speed2", (LON,), entity=other).tick(None, 0.0)
+        assert raised.value.entity == "Ego"
+
+    def test_the_holder_is_found_under_any_name(self) -> None:
+        _Command("speed", (LON,), entity="hero", until=_Switch()).tick(None, 0.0)
+        assert control_holder("Ego", LON, 1.0) == "_Command 'speed'"
+        assert control_holder("ego", LON, 1.0) == "_Command 'speed'"
+
+    def test_a_release_frees_the_domain_under_every_name(self) -> None:
+        holding = _Command("speed", (LON,), entity="hero", until=_Switch())
+        holding.tick(None, 0.0)
+        holding.close()
+        assert control_holder("Ego", LON, 1.0) is None
+        _Command("speed2", (LON,), entity="Ego", until=_Switch()).tick(None, 1.0)
+
+    def test_an_npc_name_is_not_folded(self) -> None:
+        _Command("speed", (LON,), entity="npc1").tick(None, 0.0)
+        _Command("speed2", (LON,), entity="NPC1").tick(None, 0.0)
+
+
 class TestOverride:
     def test_an_overriding_action_stops_the_holder(self) -> None:
         holding = _Command("walk", MOVEMENT, until=_Switch())

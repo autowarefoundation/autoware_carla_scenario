@@ -482,6 +482,14 @@ class TestAction:
             options: dict[str, Any] = {option: value}
             LaneChangeAction("npc", LaneChangeDirection.LEFT, **options)
 
+    @pytest.mark.parametrize("value", [True, False])
+    @pytest.mark.parametrize("option", ["start_after_m", "lane_change_length_m"])
+    def test_a_boolean_distance_is_refused(self, option: str, value: bool) -> None:
+        # True would read as 1 m (#2273).
+        with pytest.raises(ValueError, match=rf"{option} .*not {value!r}"):
+            options: dict[str, Any] = {option: value}
+            LaneChangeAction("npc", LaneChangeDirection.LEFT, **options)
+
     @pytest.mark.parametrize("option", ["start_after_m", "lane_change_length_m"])
     def test_zero_is_taken(self, option: str) -> None:
         options: dict[str, Any] = {option: 0.0}

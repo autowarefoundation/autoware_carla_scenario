@@ -24,8 +24,11 @@ class TurnIndicatorAction(BaseAction):
 
     Sets the blinker bits of the CARLA vehicle's light state and leaves its
     other lights as they are; the indicators stay so until something sets them
-    again -- another of these actions, or, on an ego driven by a policy
-    (``ego.entity=carla_driver``), the policy's next turn-indicator command.
+    again -- another of these actions, or, on an ego that commands its own
+    indicators, its next turn-indicator command: a policy's
+    (``ego.entity=carla_driver``), Autoware's (``ego.entity=autoware``,
+    through its bridge) or a ROS 2 stack's ``TurnIndicatorsCommand``
+    (``ego.entity=ros2``).
     What a camera sees, and what
     :class:`~autoware_carla_scenario.conditions.TurnIndicatorCondition` reads.
 

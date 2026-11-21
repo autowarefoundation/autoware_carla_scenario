@@ -38,7 +38,7 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
-from ..entity.registry import find_vehicle_entity
+from ..entity.registry import fail_if_pedestrian, find_vehicle_entity
 from ..traffic.base import DrivenEntity, TrafficBackend
 from ..traffic.driven import BackendDriven
 from ..traffic.parameters import (
@@ -72,7 +72,9 @@ class TrafficParametersAction(BaseAction):
         bicycles: The bicycle parameters to change, likewise; not with
             *entity_name* either.
         entity_name: ``role_name`` of the one vehicle to change; ``None``
-            (default) changes the whole run's traffic.
+            (default) changes the whole run's traffic.  One not found is
+            warned of as the action fires; a pedestrian raises, as for the
+            other vehicle actions.
         condition: Trigger condition (see :class:`BaseCondition`); fires on
             the first tick by default.
         timing: Tick phase.
@@ -184,6 +186,8 @@ class TrafficParametersAction(BaseAction):
             name: str = self._entity_name
             entity = find_vehicle_entity(name)
             if entity is None:
+                # A pedestrian is not a vehicle that is missing (#2273).
+                fail_if_pedestrian(name, "override_vehicle_parameters")
                 logger.warning(
                     "%s '%s': vehicle '%s' not found",
                     type(self).__name__,

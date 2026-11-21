@@ -13,6 +13,7 @@ from ..conditions.base import BaseCondition
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
 from ..control_domain import ControlConflictError, ControlDomain
+from ..entity_role import canonical_role_name
 from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
@@ -503,7 +504,13 @@ class _Hold:
 
 class _ControlSlots:
     """Who holds each control domain of each entity
-    (:mod:`~autoware_carla_scenario.control_domain`)."""
+    (:mod:`~autoware_carla_scenario.control_domain`).
+
+    An entity is keyed on its :func:`canonical_role_name`, so the ego is one
+    entity under each of its names (``"Ego"``, ``"ego"``, ``"hero"``): two
+    actions commanding it under two of them conflict (#2273).  A release is
+    by owner, so it frees whatever name the domain was taken under.
+    """
 
     _holds: dict[tuple[str, str], _Hold]
 
@@ -530,7 +537,8 @@ class _ControlSlots:
                 *owner* does not override; none is taken then.
         """
         overridden: list[BaseAction] = []
-        for entity, domain in claims:
+        for named, domain in claims:
+            entity = canonical_role_name(named)
             held = self.holder(entity, domain, at)
             if held is None:
                 continue
@@ -543,8 +551,9 @@ class _ControlSlots:
                 overridden.append(holder)
         for stopped in overridden:
             self.release(stopped)
-        for entity, domain in claims:
-            self._holds[(entity, domain.value)] = _Hold(owner, at, runs)
+        for named, domain in claims:
+            key = (canonical_role_name(named), domain.value)
+            self._holds[key] = _Hold(owner, at, runs)
         return overridden
 
     def release(self, owner: BaseAction) -> None:
@@ -557,7 +566,7 @@ class _ControlSlots:
     ) -> Optional[BaseAction]:
         """The action holding *domain* of *entity* at scenario time *at*, or
         ``None``."""
-        key = (entity, domain.value)
+        key = (canonical_role_name(entity), domain.value)
         if key not in self._holds:
             return None
         hold = self._holds[key]

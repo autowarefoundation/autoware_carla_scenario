@@ -411,6 +411,48 @@ class TestTrafficSignalActionByLanes:
         assert light._state is None
 
 
+class TestTrafficSignalActionIdsAreChecked:
+    """``lanelet2_traffic_light_ids`` is checked as the action is built (#2273)."""
+
+    @pytest.mark.parametrize(
+        "ids",
+        [123, "123", [True], [242, False], [1.5], [242.0], ["242"], [None]],
+        ids=repr,
+    )
+    def test_what_is_not_a_sequence_of_ids_is_refused(self, ids: Any) -> None:
+        with pytest.raises(ValueError, match="lanelet2_traffic_light_ids") as raised:
+            TrafficSignalAction(
+                state=MagicMock(), lanelet2_traffic_light_ids=ids, label="x"
+            )
+        assert repr(ids) in str(raised.value)
+        assert str(raised.value).startswith("x: ")
+
+    def test_any_sequence_of_whole_numbers_is_taken_as_a_list(self) -> None:
+        import numpy as np
+
+        given: list[Any] = [
+            [242, 460],
+            (242, 460),
+            range(242, 244),
+            [np.int64(242)],
+            [],
+        ]
+        for ids in given:
+            action = TrafficSignalAction(
+                state=MagicMock(), lanelet2_traffic_light_ids=ids, label="x"
+            )
+            assert action._lanelet2_ids == [int(i) for i in ids]
+            assert all(type(i) is int for i in action._lanelet2_ids or [])
+
+    def test_a_generator_is_read_once_and_kept(self) -> None:
+        action = TrafficSignalAction(
+            state=MagicMock(),
+            lanelet2_traffic_light_ids=(i for i in (242, 460)),  # type: ignore[arg-type]
+            label="x",
+        )
+        assert action._lanelet2_ids == [242, 460]
+
+
 class TestTrafficSignalActionRouteJunction:
     @pytest.mark.parametrize(
         "junction", [0.5, 1.9, True, False, math.nan, math.inf, "2"]

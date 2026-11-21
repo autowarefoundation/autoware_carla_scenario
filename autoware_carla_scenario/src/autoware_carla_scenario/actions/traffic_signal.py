@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import logging
 import math
+import operator
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition
@@ -67,16 +68,19 @@ class TrafficSignalAction(BaseAction):
             ``route_junction`` is a whole number from 0 (``2.0`` read as 2).
 
     Raises:
-        ValueError: For a route approach or turn that is not one, or a
+        ValueError: For a route approach or turn that is not one, a
             ``route_junction`` that is a boolean, a fraction, NaN, infinite
-            or negative.
+            or negative, or ``lanelet2_traffic_light_ids`` that is neither a
+            target nor a sequence of whole numbers (a string, a single id, a
+            boolean or a fractional id), checked here rather than when the
+            action fires.
     """
 
     _state: "carla.TrafficLightState"
     #: The target, split by kind: an attribute holds one type in the static
     #: check (Codon), and the target is one of three.
     _all_lights: bool
-    _lanelet2_ids: Optional[Sequence[int]]
+    _lanelet2_ids: Optional[list[int]]
     _freeze: bool
     _route: bool
     _route_junction: int
@@ -112,7 +116,7 @@ class TrafficSignalAction(BaseAction):
             else:
                 self._all_lights = True
         elif lanelet2_traffic_light_ids is not None:
-            self._lanelet2_ids = lanelet2_traffic_light_ids
+            self._lanelet2_ids = _traffic_light_ids(label, lanelet2_traffic_light_ids)
         self._freeze = freeze
         if route_approach not in PATH_APPROACHES:
             raise ValueError(
@@ -266,3 +270,33 @@ class TrafficSignalAction(BaseAction):
             list(lanelet2_ids),
             self._freeze,
         )
+
+
+def _traffic_light_ids(label: str, given: Sequence[int]) -> list[int]:
+    """*given* as a list of Lanelet2 ids, each a whole number (a numpy integer
+    too), refused with a :class:`ValueError` naming
+    ``lanelet2_traffic_light_ids`` otherwise.
+
+    Checked as the action is built: a single id (``123``) failed only as the
+    action fired, and a string (``"123"``) iterated as the ids ``'1'``,
+    ``'2'``, ``'3'`` and set no light (#2273).
+    """
+    if isinstance(given, str):
+        raise ValueError(
+            f"{label}: lanelet2_traffic_light_ids must be a sequence of "
+            f"Lanelet2 ids (ints), got {given!r}"
+        )
+    ids: list[int] = []
+    try:
+        for each in given:
+            # True would read as id 1; operator.index() refuses a fraction
+            # and a string, and takes a numpy integer.
+            if isinstance(each, bool):
+                raise TypeError("a boolean is not an id")
+            ids.append(operator.index(each))
+    except TypeError:
+        raise ValueError(
+            f"{label}: lanelet2_traffic_light_ids must be a sequence of "
+            f"Lanelet2 ids (ints), got {given!r}"
+        ) from None
+    return ids

@@ -108,13 +108,16 @@ def _refusal(name: str, value: float) -> str:
     """Why :class:`EnvironmentAction` refuses *value* for its argument *name*,
     or ``""`` when it takes it.
 
-    Every value must be finite; the weather fields of :data:`_PERCENT_FIELDS`
-    within [0, 100], *tire_friction*, *visibility_m* and
+    Every value must be a number, not a boolean, and finite; the weather
+    fields of :data:`_PERCENT_FIELDS` within [0, 100], *tire_friction*, *visibility_m* and
     *fog_visibility_range_m* positive, *fog_distance*, *rainfall_rate_mm_h*
     and *wind_speed_kmh* not negative, *sun_altitude_angle* within [-90, 90]
     and *sun_azimuth_angle* within [0, 360] (:data:`_SUN_ANGLE_RANGES`), the
     quantiles within [0, 1].
     """
+    # True would read as 1 (#2273).
+    if isinstance(value, bool):
+        return f"must be a number, not {value!r}"
     if not math.isfinite(value):
         return f"must be finite, got {value}"
     if name in _PERCENT_FIELDS and not (0.0 <= value <= 100.0):
@@ -607,9 +610,10 @@ class EnvironmentAction(BaseAction):
     :func:`world_cloud_cover`); the time of day is read off CARLA's sun, and
     the cloud cover off CARLA's clouds when no action named one.
 
-    The default phase is ``init``: most scenarios set the weather once, before
-    anything moves.  Registering it on the tick loop instead is what makes the
-    weather change *during* a run.
+    Which phase it runs in is where it is registered; the Python API has no
+    default (the editor's card defaults to ``init``).  Most scenarios set the
+    weather once, in ``init``, before anything moves; registering it on the
+    tick loop instead is what makes the weather change *during* a run.
 
     **How far drivers see** is *visibility_m*, when given: the action records
     it (:func:`~autoware_carla_scenario.visibility.set_world_visibility`), and
@@ -679,7 +683,8 @@ class EnvironmentAction(BaseAction):
         once: If ``True`` (default) the action fires at most once.
 
     Raises:
-        ValueError: A numeric argument is not finite (NaN or infinite); a
+        ValueError: A numeric argument is a boolean or not finite (NaN or
+            infinite); a
             weather field given as 0-100 (*cloudiness*, *precipitation*,
             *precipitation_deposits*, *wetness*, *wind_intensity*,
             *fog_density*) is outside it; *tire_friction*, *visibility_m* or
