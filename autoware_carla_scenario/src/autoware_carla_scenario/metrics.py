@@ -65,7 +65,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
 from .failure import FailureCategory
-from .utils.clearance import HIDDEN_BELOW_M, _level_gap, _vertical_span
+from .utils.clearance import HIDDEN_BELOW_M, actor_vertical_span, level_gap
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -500,7 +500,7 @@ class _Frame:
     others_centre: list[Point]
     others_radius: list[float]
     #: Metres between the ego's box and each other's in height, ``0.0`` for
-    #: one on the ego's level of road (``utils.clearance._level_gap``).
+    #: one on the ego's level of road (``utils.clearance.level_gap``).
     others_gap: list[float]
     #: What the ego's box meets: _FRONT, _REAR and _LATERAL once the road
     #: users have been read (collisions_read), _OFFROAD once the road has
@@ -628,7 +628,7 @@ def _read_frame(world: "carla.World") -> _Frame:
     if ego is None:
         return _NO_EGO
     transform = ego.get_transform()
-    ego_span = _vertical_span(ego, transform)
+    ego_span = actor_vertical_span(ego, transform)
     others: list[Box] = []
     others_gap: list[float] = []
     for actor in actors:
@@ -645,7 +645,7 @@ def _read_frame(world: "carla.World") -> _Frame:
         # One on another level of road -- on a bridge over the ego, in an
         # underpass beneath it -- may overlap the ego's box on the ground, but
         # is as far from it as the height between them.
-        others_gap.append(_level_gap(ego_span, _vertical_span(actor, placed)))
+        others_gap.append(level_gap(ego_span, actor_vertical_span(actor, placed)))
     return _Frame(
         transform.rotation.yaw,
         float(transform.location.z),

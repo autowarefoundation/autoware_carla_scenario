@@ -31,11 +31,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "HIDDEN_BELOW_M",
+    "KERB_SHIFT_MAX_M",
+    "KERB_SHIFT_STEP_M",
     "Obstacle",
     "actor_box_centre",
+    "actor_vertical_span",
     "box_centre",
     "claim_spot",
+    "first_box_in_way",
     "first_in_way",
+    "level_gap",
+    "off_the_kerb",
     "on_another_level",
     "overlaps",
 ]
@@ -68,7 +74,7 @@ _SAME_LEVEL_MARGIN_M = 1.0
 _MAX_GRADE = 0.10
 
 
-def _vertical_span(
+def actor_vertical_span(
     actor: "carla.Actor", transform: "carla.Transform"
 ) -> tuple[float, float]:
     """The bottom and top of *actor*'s box in the world, *transform* being
@@ -91,7 +97,7 @@ def _height_of(actor: "carla.Actor") -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _level_gap(one: tuple[float, float], other: tuple[float, float]) -> float:
+def level_gap(one: tuple[float, float], other: tuple[float, float]) -> float:
     """How far apart in height the vertical spans *one* and *other* (bottom,
     top) are, in metres, when that is more than :data:`_SAME_LEVEL_MARGIN_M`:
     a road user on a bridge over the other, or in an underpass beneath it.
@@ -107,11 +113,11 @@ def on_another_level(
     *planar_distance* metres from one whose span is *one* in the plane, is
     on another level of road than it: on a bridge over it, or in an
     underpass beneath it.  Its box clear of *one* by more than
-    :data:`_SAME_LEVEL_MARGIN_M` (:func:`_level_gap`), and their bottoms
+    :data:`_SAME_LEVEL_MARGIN_M` (:func:`level_gap`), and their bottoms
     (where each stands on its road) apart by more than a road of
     :data:`_MAX_GRADE` climbs over the distance between them -- the bottoms,
     not the gap, which a tall box shortens (#1587, #1597)."""
-    if _level_gap(one, other) <= 0.0:
+    if level_gap(one, other) <= 0.0:
         return False
     return abs(other[0] - one[0]) > _MAX_GRADE * max(planar_distance, 0.0)
 
@@ -394,7 +400,7 @@ def overlaps(
             if (
                 level
                 and not math.isnan(claim_z)
-                and _level_gap(span, _span_at(world, claimant, claim_z, True)) > 0.0
+                and level_gap(span, _span_at(world, claimant, claim_z, True)) > 0.0
             ):
                 continue
             if _rectangles_meet(mine, (cx, cy, math.radians(cyaw), cl, cw)):

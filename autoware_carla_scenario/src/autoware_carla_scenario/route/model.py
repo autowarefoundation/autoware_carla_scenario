@@ -519,12 +519,12 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
     segments = tuple(_parse_segment(i, s) for i, s in enumerate(segments_raw))
     spawn_s = _distance("ego_spawn_s", raw.get("ego_spawn_s"))
     margin = _distance("ego_goal_margin", raw.get("ego_goal_margin"))
-    match_index = _whole_number("match_index", raw.get("match_index"))
+    match_index = _search_number("match_index", raw.get("match_index"))
     if match_index is None:
         match_index = 0
     if match_index < 0:
         raise ValueError("match_index must not be negative")
-    max_matches = _whole_number("max_matches", raw.get("max_matches"))
+    max_matches = _search_number("max_matches", raw.get("max_matches"))
     if max_matches is None:
         max_matches = DEFAULT_MAX_MATCHES
     if not 1 <= max_matches <= MAX_MATCHES_LIMIT:
@@ -538,8 +538,24 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
         ego_goal_margin=margin,
         match_index=match_index,
         max_matches=max_matches,
-        seed=_whole_number("seed", raw.get("seed")),
+        seed=_search_number("seed", raw.get("seed")),
     )
+
+
+def _search_number(name: str, value: Any) -> Optional[int]:
+    """A whole number a route search sets under *name*; ``None`` (the
+    default) only when it is missing or null.
+
+    A blank string is refused, as ``odd.sampler.whole_number_setting``
+    refuses it: a Hydra override such as ``sweep.route.max_matches=`` must not
+    silently leave the default in place (#2266).
+    """
+    if value is None:
+        return None
+    number = _whole_number(name, value)
+    if number is None:  # A blank string, which no whole number is.
+        raise ValueError(f"{name} must be a whole number, got {value!r}")
+    return number
 
 
 def _blank(value: Any) -> bool:
@@ -733,10 +749,15 @@ class RouteMatch:
         list, not a string, which would be read a character at a time
         (#2143).
 
+        A segment kind is ``lane`` or ``junction``, and each segment ends no
+        earlier than it starts (where the one before ends, the first at 0):
+        what :meth:`to_config` writes (#2266).
+
         Raises:
             ValueError: On keys that do not describe one route, naming the
                 key of a value that is not a number, not a whole number or
-                not a list.
+                not a list, of a segment kind that is none, and of a segment
+                end below its start.
         """
 
         def whole(key: str, value: Any) -> int:
@@ -794,8 +815,26 @@ class RouteMatch:
         lanelet_ids = [whole("lanelet_ids", v) for v in items("lanelet_ids")]
         if not lanelet_ids:
             return None
-        kinds = [str(v) for v in items("segment_kinds")]
+        kinds: list[str] = []
+        for i, v in enumerate(items("segment_kinds")):
+            # Only what a match's segments are: "Junction" would leave the
+            # route with no junctions (#2266).
+            if str(v) not in ("lane", "junction"):
+                raise ValueError(
+                    f"scenario.route.segment_kinds[{i}]: {shown(v)} is not "
+                    "'lane' or 'junction'"
+                )
+            kinds.append(str(v))
         ends = [number("segment_ends", v) for v in items("segment_ends")]
+        for i, end in enumerate(ends):
+            # Each segment starts where the one before ends, the first at 0:
+            # an end below that would be a segment of negative length (#2266).
+            begin = ends[i - 1] if i else 0.0
+            if end < begin:
+                raise ValueError(
+                    f"scenario.route.segment_ends[{i}]: {shown(end)} is below "
+                    f"the segment's start, {shown(begin)}"
+                )
         counts = [
             whole("segment_lanelet_counts", v) for v in items("segment_lanelet_counts")
         ]

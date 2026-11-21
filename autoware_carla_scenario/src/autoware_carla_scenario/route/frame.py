@@ -146,7 +146,11 @@ class RouteFrame:
 
         What :meth:`point` gives, read off the line :meth:`project` searches
         rather than the lanelet's centreline: no lanelet is looked up, so it is
-        cheap enough for every tick.  Clamped to the route.
+        cheap enough for every tick.  Clamped to the reference line, not to
+        the route: the line runs over the route's whole lanelets, from the
+        first one's start (route s ``-start_s``, before route s 0) to the last
+        one's end (past :attr:`length`), and an *s* beyond it is held at its
+        nearer end.
         """
         arc = self._arc
         i = min(max(bisect.bisect_right(arc, s) - 1, 0), len(arc) - 2)

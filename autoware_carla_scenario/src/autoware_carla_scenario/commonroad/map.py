@@ -52,6 +52,19 @@ def _version(text: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def _cache_place(
+    opendrive: str, version: str, cache_dir: Optional[Path]
+) -> tuple[Path, str]:
+    """Where *opendrive* (OpenDRIVE text) converted by roadgen *version* is
+    cached: the cache's root (*cache_dir*, or :func:`default_cache_dir`) and
+    the name of the map's directory under it, a hash of the two."""
+    root = default_cache_dir()
+    if cache_dir is not None:
+        root = cache_dir
+    key = hashlib.sha256(f"roadgen={version}\0{opendrive}".encode()).hexdigest()[:16]
+    return root, key
+
+
 def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
     """The CommonRoad scenario of *opendrive* (OpenDRIVE text), converted or
     cached; its path.
@@ -68,8 +81,7 @@ def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
         roadgen.Map, "export_commonroad"
     ):
         raise ImportError(f"roadgen {version} does not write CommonRoad: {_INSTALL}")
-    root = cache_dir if cache_dir is not None else default_cache_dir()
-    key = hashlib.sha256(f"roadgen={version}\0{opendrive}".encode()).hexdigest()[:16]
+    root, key = _cache_place(opendrive, version, cache_dir)
     target = root / key
     path = target / MAP_FILE
     if path.is_file():

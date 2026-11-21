@@ -423,6 +423,9 @@ class DeclarativeScenario(BaseScenario):
             minimum=0,
         )
         self._case_count = 0 if case_count is None else case_count
+        # The frame the ego was placed on, when the run laid the route on the
+        # map itself: the scenario's route is laid on it, not again (#2266).
+        placed_on: Optional[RouteFrame] = None
         if match is None:
             from .route.search import find_route_matches  # noqa: PLC0415
 
@@ -442,9 +445,9 @@ class DeclarativeScenario(BaseScenario):
             # Unexpanded, the run counts the matches itself (those the ego
             # cannot be placed on included, which an expansion skips).
             self._case_count = len(matches)
-            frame = RouteFrame(match, lanelet_map, routing_graph)
+            placed_on = RouteFrame(match, lanelet_map, routing_graph)
             (spawn_id, spawn_s), goal = ego_placement(
-                frame, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
+                placed_on, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
             )
             # The route places the ego along it; across the lane and turned
             # against it is still what the run asked for.
@@ -457,7 +460,7 @@ class DeclarativeScenario(BaseScenario):
             )
             if goal is not None and self.goal_pose is None:
                 self.goal_pose = Lanelet2Pose(lanelet_id=goal[0], s=goal[1])
-        set_scenario_route(match, lanelet_map, routing_graph)
+        set_scenario_route(match, lanelet_map, routing_graph, frame=placed_on)
         self._route_match = match
         logger.info(
             "DeclarativeScenario '%s': route match %d through lanelets %s "

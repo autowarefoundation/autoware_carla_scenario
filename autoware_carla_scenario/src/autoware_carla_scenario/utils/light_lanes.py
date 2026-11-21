@@ -6,8 +6,10 @@ carla-ue5-maps map, 0.7 m to 6.7 m before it.  So a light is not matched to
 an element by how near its waypoint is to the element's stop line.  The
 match goes by the lanes instead: the lanelets the waypoint is on, then the
 lanelets ahead of them, up to the first that carry a traffic light element
-(:func:`elements_ahead`).  This is how ``carla_driver_interface.hdmap``
-finds a light on a Lanelet2 map (``rules_ahead``).
+(:func:`elements_ahead`).  This follows how ``carla_driver_interface.hdmap``
+finds a light on a Lanelet2 map (``rules_ahead``), except that each lanelet
+ahead is reached by its shortest path, where ``rules_ahead`` keeps the first
+path it walks (#2266).
 
 Both readers of lights match the same way: a run's T4Scene
 (:mod:`..t4_scene.convert`), and the action, the condition and the signal
@@ -18,6 +20,7 @@ A lit lanelet in a scene is therefore the light a scenario sets.
 
 from __future__ import annotations
 
+import heapq
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple, Optional
 
@@ -38,9 +41,11 @@ __all__ = [
 
 #: How far (m) of lanelets past the one a light's stop waypoint is on its
 #: traffic light regulatory elements are looked for; and how near (m) a
-#: lanelet's start is to another's end to follow it.  As
-#: ``carla_driver_interface.hdmap`` finds a light on a Lanelet2 map: a policy
-#: that took its lights from there is shown the same lanelets lit.
+#: lanelet's start is to another's end to follow it.  The values
+#: ``carla_driver_interface.hdmap`` finds a light on a Lanelet2 map with, so a
+#: policy that took its lights from there is shown the same lanelets lit --
+#: but where its ``rules_ahead`` keeps a longer path to a lanelet than the
+#: shortest :func:`elements_ahead` follows (#2266).
 LIGHT_SEARCH_M = 50.0
 JOIN_M = 0.3
 
@@ -126,8 +131,15 @@ def elements_ahead(
     """The traffic light regulatory elements of the first lanelets on or ahead
     of the lanelets *point* (map frame) is on that carry one: each branch
     stops at its first such lanelet, or once :data:`LIGHT_SEARCH_M` of
-    lanelets lie behind it (``carla_driver_interface.hdmap``'s
-    ``rules_ahead``)."""
+    lanelets lie behind it.
+
+    Each lanelet is reached by its shortest path from the lanelets *point*
+    is on (the lengths of the lanelets between), whatever order the map lists
+    successors in: a light just past a merge is found when its short branch is
+    within reach, even if a long branch reaches it first (#2266).  So it
+    differs from ``carla_driver_interface.hdmap``'s ``rules_ahead``, which
+    keeps the first path it walks.  The elements come nearest lanelet first,
+    a tie by the lower lanelet id, each lanelet's in the map's order."""
     b = lanes.boxes
     near = np.flatnonzero(
         (b[:, 0] <= point[0])
@@ -137,10 +149,12 @@ def elements_ahead(
     )
     start = {lanes.ids[i] for i in near if _inside(point, lanes.outlines[i])}
     found: dict[int, None] = {}
-    queue = [(lanelet_id, 0.0) for lanelet_id in sorted(start)]
+    # Dijkstra: (distance to the lanelet's start, lanelet id), nearest first.
+    queue: list[tuple[float, int]] = [(0.0, lanelet_id) for lanelet_id in sorted(start)]
+    heapq.heapify(queue)
     seen: set[int] = set()
     while queue:
-        lanelet_id, travelled = queue.pop(0)
+        travelled, lanelet_id = heapq.heappop(queue)
         if lanelet_id in seen:
             continue
         seen.add(lanelet_id)
@@ -152,7 +166,9 @@ def elements_ahead(
             travelled if lanelet_id in start else travelled + lanes.lengths[lanelet_id]
         )
         if ahead <= LIGHT_SEARCH_M:
-            queue += [(nxt, ahead) for nxt in lanes.successors[lanelet_id]]
+            for nxt in lanes.successors[lanelet_id]:
+                if nxt not in seen:
+                    heapq.heappush(queue, (ahead, nxt))
     return list(found)
 
 
