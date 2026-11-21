@@ -152,6 +152,9 @@ def test_the_autoware_bridge_config_refuses_what_is_no_number_naming_it(
         ":50052",
         ":",
         "localhost:²",  # a digit, but not an ASCII one
+        "::1",  # gRPC binds ::1 at port 443
+        "::1:50052",  # an unbracketed IPv6 host: gRPC binds nothing
+        "[::1:50052",
     ],
 )
 def test_the_autoware_bridge_config_refuses_an_address_that_is_no_host_port(

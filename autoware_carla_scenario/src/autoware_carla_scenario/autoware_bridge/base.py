@@ -61,9 +61,12 @@ def _check_number(key: str, value: float) -> None:
 def _is_host_port(address: str) -> bool:
     """Whether *address* is ``host:port``: a host, a colon, and a port of
     ASCII digits from 0 to 65535.  Split at the last colon, so a bracketed
-    IPv6 host (``[::1]:50052``) is one."""
+    IPv6 host (``[::1]:50052``) is one; a bare one is not: gRPC reads
+    ``::1`` as that host at port 443, and ``::1:50052`` as no address."""
     host, colon, port = address.rpartition(":")
     if not colon or not host.strip() or not port or len(port) > 5:
+        return False
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
         return False
     for char in port:
         if char not in "0123456789":
