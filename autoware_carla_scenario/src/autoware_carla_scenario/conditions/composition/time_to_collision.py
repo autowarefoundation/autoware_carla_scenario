@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...coordinate.lane_distance import lane_closing_speed, lane_separation
@@ -120,8 +119,6 @@ class TimeToCollisionCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         if (target is None) == (position is None):
             raise ValueError(
                 "a time-to-collision condition measures to an entity or to a "
@@ -138,13 +135,14 @@ class TimeToCollisionCondition(CompositionCondition):
         self._target = str(target) if target is not None else None
         self._coordinate_system = coordinate_system
         self._edge_to_edge = edge_to_edge
+        # Before the place is looked up, so a bad tolerance is refused first.
+        self._comparison = ScalarComparisonRule(
+            field="ttc", rule=rule, value=value, tolerance=tolerance
+        )
         self._place: Optional[Vector3] = None
         if position is not None:
             location = to_carla_location(position)
             self._place = Vector3(location.x, location.y, 0.0)
-        self._comparison = ScalarComparisonRule(
-            field="ttc", rule=rule, value=value, tolerance=tolerance
-        )
         # A walker's velocity, measured from where it stood when last checked.
         self._velocities = WalkerVelocities()
 

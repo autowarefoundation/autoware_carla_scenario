@@ -67,7 +67,7 @@ lines, and last a `condition` line for each condition that changed. A run judged
 {"type":"action","frame":101,"t":0.05,"phase":"post_tick","index":0,"label":"cut_in","action_type":"LaneChangeAction","state":"startTransition"}
 {"type":"condition","frame":101,"t":0.05,"role":"pass","index":0,"label":"arrived","satisfied":false}
 {"type":"actor_gone","id":3,"frame":180,"t":4.0}
-{"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"ReachPositionCondition","satisfied":true,"message":"..."}]}
+{"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"EntityPositionDistanceCondition","satisfied":true,"message":"..."}]}
 ```
 
 | Record | Written | Fields |

@@ -242,3 +242,44 @@ class TestValidatorWarns:
             ConditionNode(id="e1", type="elapsed_time", params={"duration": 1.0})
         )
         assert _persistent_warnings(document) == []
+
+
+def _world_with(actors: list[MagicMock]) -> MagicMock:
+    world = MagicMock()
+    world.id = 1
+    world.get_actors.return_value = actors
+    world.get_actor.return_value = None
+    return world
+
+
+def test_an_absent_entity_is_logged_once_per_absence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The recommended pattern checks the existence condition every tick for
+    as long as the entity is gone; it says so once, not at the tick rate
+    (#2271), and again when the entity goes missing a second time."""
+    existence = EntityExistenceCondition("npc1", label="npc1_exists")
+    cond = PersistentCondition(NotCondition(existence), duration=1.0)
+    gone = _world_with([])
+    actor = MagicMock()
+    actor.attributes = {"role_name": "npc1"}
+    present = _world_with([actor])
+
+    def errors() -> int:
+        return sum(1 for r in caplog.records if r.levelno == logging.ERROR)
+
+    with caplog.at_level(logging.DEBUG):
+        fired = [cond.check(gone, i * 0.05) for i in range(1, 25)]
+        assert any(result is not None for result in fired)
+        assert errors() == 1
+        cond.check(present, 1.25)
+        assert errors() == 1
+        cond.check(gone, 1.30)
+        cond.check(gone, 1.35)
+        assert errors() == 2
+    # Said again in the next run.
+    caplog.clear()
+    existence.reset()
+    with caplog.at_level(logging.DEBUG):
+        existence.check(gone, 0.05)
+        assert errors() == 1

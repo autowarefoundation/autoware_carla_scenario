@@ -21,6 +21,7 @@ from autoware_carla_scenario.entity import (
     EmergencyVehicleEntityConfig,
     MotorcycleEntityConfig,
     PedestrianEntityConfig,
+    VehicleEntity,
     VehicleEntityConfig,
 )
 from autoware_carla_scenario.entity._spawn import SpawnPointIndex, SpawnTransform
@@ -115,6 +116,24 @@ def test_a_vehicle_config_may_still_name_the_ego() -> None:
     # EgoConfig is built on VehicleEntityConfig, and EntityRole allows "Ego".
     assert _vehicle(str(EGO_ROLE_NAME)).role_name == "Ego"
     assert _vehicle(EntityRole.ego()).role_name == "Ego"  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("role", ["Ego", EntityRole.ego()])
+def test_an_npc_vehicle_entity_named_ego_is_refused(role: Any) -> None:
+    # The config lets "Ego" through for EgoConfig, but an NPC entity under it
+    # would replace the runner's ego in the entity registry (#2271).
+    config = _vehicle(role)
+    with pytest.raises(ValueError, match="'Ego' for an NPC vehicle entity"):
+        VehicleEntity(config)
+
+
+def test_an_ego_config_is_never_an_npc_vehicle_entity() -> None:
+    with pytest.raises(ValueError, match="'Ego'"):
+        VehicleEntity(EgoConfig(spawn_location=SpawnPointIndex(0)))
+
+
+def test_an_npc_vehicle_entity_with_an_npc_name_is_built() -> None:
+    assert VehicleEntity(_vehicle("npc1")).role_name == "npc1"
 
 
 def test_the_native_ego_is_still_spawned_as_ego() -> None:
