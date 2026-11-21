@@ -729,3 +729,71 @@ def test_a_source_or_camera_list_that_is_no_list_is_refused_naming_it(
 def test_a_source_or_camera_that_is_no_mapping_is_refused_naming_it(key: str) -> None:
     with pytest.raises(ValueError, match=rf"^{key}\[0\] must be a mapping, got 'x'"):
         Ros2EgoConfig.from_mapping({key: ["x"]})
+
+
+@pytest.mark.parametrize("key", ["name", "kind"])
+@pytest.mark.parametrize("absent", [True, False])
+def test_a_source_without_its_name_or_kind_is_refused_naming_it(
+    key: str, absent: bool
+) -> None:
+    """#2261: the constructor raised a TypeError, which the pre-run check
+    does not catch, so the user saw a traceback."""
+    source: dict[str, Any] = {"name": "planner", "kind": "trajectory", "topic": "/t"}
+    if absent:
+        del source[key]
+    else:
+        source[key] = None
+    with pytest.raises(
+        ValueError, match=rf"^command source: {key} is required, got None$"
+    ):
+        Ros2EgoConfig.from_mapping({"sources": [source]})
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"name": "planner", "topic": "/t"},
+        {"name": "planner", "kind": None, "topic": "/t"},
+        {"kind": "trajectory", "topic": "/t"},
+    ],
+)
+def test_the_pre_run_check_names_a_missing_name_or_kind(source: dict) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import _check_ros2_settings
+
+    cfg = OmegaConf.create({"ego": {"entity": "ros2"}, "ros2": {"sources": [source]}})
+    with pytest.raises(ValueError, match=r"^ros2: command source: \w+ is required"):
+        _check_ros2_settings(cfg)
+
+
+@pytest.mark.parametrize("name", [5, True, ["planner"]])
+def test_a_source_name_that_is_no_string_is_refused(name: Any) -> None:
+    with pytest.raises(ValueError, match=r"^command source: name must be a string"):
+        CommandSourceConfig.from_mapping(
+            {"name": name, "kind": "trajectory", "topic": "/t"}
+        )
+
+
+@pytest.mark.parametrize("frame_id", [False, 0, 5, ["base_link"]])
+def test_a_camera_frame_id_that_is_no_string_is_refused(frame_id: Any) -> None:
+    """#2261: false was read as unset, and 5 failed in the sensor thread."""
+    with pytest.raises(
+        ValueError, match=r"^camera 'camera': frame_id must be a string, got "
+    ):
+        Ros2CameraConfig.from_mapping({"topic": "/a", "frame_id": frame_id})
+
+
+def test_a_camera_frame_id_null_or_empty_is_its_logical_id() -> None:
+    for mapping in ({"frame_id": None}, {"frame_id": ""}, {}):
+        camera = Ros2CameraConfig.from_mapping({"topic": "/a", **mapping})
+        assert camera.header_frame_id == "camera"
+
+
+@pytest.mark.parametrize("logical_id", ["", False, 7])
+def test_a_camera_logical_id_must_be_a_non_empty_string(logical_id: Any) -> None:
+    """#2261: "" published images with an empty frame_id."""
+    with pytest.raises(
+        ValueError, match=r"^camera: logical_id must be a non-empty string, got "
+    ):
+        Ros2CameraConfig.from_mapping({"topic": "/a", "logical_id": logical_id})
