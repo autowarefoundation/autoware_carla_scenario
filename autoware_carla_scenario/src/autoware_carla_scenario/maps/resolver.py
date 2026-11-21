@@ -242,16 +242,6 @@ def projector_info_path(directory: Path) -> Optional[Path]:
     return None
 
 
-def _climbs_out(path: str) -> bool:
-    """Whether the repository-relative *path* has a ``..`` component.
-
-    A source's path is joined onto the checkout, onto the map root (a map
-    already unpacked there) and onto the derived directory -- the last one
-    written to -- so a ``..`` in it would reach outside all three.
-    """
-    return ".." in path.split("/")
-
-
 def _find_lanelet2(
     directory: Path, *, named: str = "", label: str = "", where: str = ""
 ) -> Path:
@@ -304,7 +294,7 @@ def _lanelet2_of(directory: Path, source: MapSource) -> Path:
 
 
 def _find_xodr(
-    directory: Path, derived: Path, name: str
+    directory: Path, derived: Path, name: str, *, label: str = ""
 ) -> tuple[Optional[Path], bool]:
     """Return the map's OpenDRIVE and whether it was derived rather than shipped.
 
@@ -320,13 +310,43 @@ def _find_xodr(
     :meth:`ResolvedMap.derived_xodr` names -- is taken, never any ``*.xodr``
     that happens to be there: a file left by something else, or one a map
     sharing the directory was captured as, is not this map's OpenDRIVE.
+
+    Of the map directory, its one ``.xodr`` is taken, or of several the one
+    named after the directory (``<name>.xodr``): the file is what
+    ``map.overwrite_xodr`` installs into CARLA, so it is never picked by
+    the alphabet (#2269).
+
+    Args:
+        directory: The map directory.
+        derived: The map's derived directory in the cache.
+        name: The map's name: the directory's, or CARLA's for a derived
+            file.
+        label: What to call the map in an error, by default *directory*.
+
+    Raises:
+        MapResolutionError: If *directory* holds several ``.xodr`` and none
+            of them is ``<name>.xodr``.
     """
+    candidates = sorted(
+        p for p in directory.glob("*.xodr") if _is_map_file(directory, p)
+    )
     # Each through an annotated local: Codon types a tuple by its members, and
     # every return of the function is a tuple of an Optional[Path].
-    for candidate in sorted(directory.glob("*.xodr")):
-        if _is_map_file(directory, candidate):
-            shipped: Optional[Path] = candidate
-            return shipped, False
+    if len(candidates) == 1:
+        shipped: Optional[Path] = candidates[0]
+        return shipped, False
+    if candidates:
+        preferred = directory / f"{_short_map_name(name)}.xodr"
+        for candidate in candidates:
+            if candidate.name == preferred.name:
+                named: Optional[Path] = candidate
+                return named, False
+        names = ", ".join(p.name for p in candidates)
+        raise MapResolutionError(
+            f"{label or str(directory)} holds several OpenDRIVE files "
+            f"({names}) and none is named {preferred.name}. Keep the map's "
+            f"own and name it {preferred.name}."
+        )
     fetched: Optional[Path] = _derived_file(derived, name)
     if fetched is not None:
         return fetched, True
@@ -379,11 +399,9 @@ def resolve_map(
             the map directory cannot be read (a name too long, a permission
             the process lacks).
     """
+    # MapSource refuses a path with a `..` component, which would reach out
+    # of the checkout, the map root and the derived directory (#2269).
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
-    if _climbs_out(parsed.directory):
-        raise MapResolutionError(
-            f"{parsed.redacted_uri} names a directory outside the repository ('..')."
-        )
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(at_directory)
@@ -590,8 +608,6 @@ def cached_map(
         MapSourceError: If *source* is not a usable URI.
     """
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
-    if _climbs_out(parsed.directory):
-        return None
     try:
         return _cached_map(parsed, cache)
     except OSError:
@@ -638,14 +654,19 @@ def _cached_map(
         # Checked out but never pulled: the file is a pointer, and handing it to
         # a Lanelet2 parser reports a broken map rather than a missing fetch.
         return None
-    return _describe(
-        parsed,
-        directory,
-        derived,
-        commit=commit,
-        provisioned=provisioned,
-        lanelet2_path=lanelet2_path,
-    )
+    try:
+        return _describe(
+            parsed,
+            directory,
+            derived,
+            commit=commit,
+            provisioned=provisioned,
+            lanelet2_path=lanelet2_path,
+        )
+    except MapResolutionError:
+        # Several .xodr and none named after the map: ambiguous, as several
+        # .osm are above, and resolve_map says why (#2269).
+        return None
 
 
 def pin_source(
@@ -714,7 +735,12 @@ def _describe(
             if source is None
             else _lanelet2_of(directory, source)
         )
-    xodr_path, xodr_is_derived = _find_xodr(directory, derived, directory.name)
+    xodr_path, xodr_is_derived = _find_xodr(
+        directory,
+        derived,
+        directory.name,
+        label="" if source is None else source.redacted_uri,
+    )
     return ResolvedMap(
         source=source,
         name=directory.name,

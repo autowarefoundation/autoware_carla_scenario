@@ -15,6 +15,7 @@ import json
 import logging
 import multiprocessing
 import os
+import re
 import socket
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -538,6 +539,67 @@ class TestMapSource:
     def test_keeps_a_path_with_other_characters(self, path: str) -> None:
         assert MapSource(repo_url="https://example.com/o/n", path=path).path == path
 
+    @pytest.mark.parametrize(
+        ("path", "component"),
+        [
+            ("./maps/T", "a '.'"),
+            ("maps/./T", "a '.'"),
+            ("maps/T/.", "a '.'"),
+            (".", "a '.'"),
+            ("maps//T", "an empty"),
+            ("..", "a '..'"),
+            ("../outside", "a '..'"),
+            ("maps/../T", "a '..'"),
+        ],
+    )
+    def test_refuses_a_path_with_a_dot_or_empty_component(
+        self, path: str, component: str
+    ) -> None:
+        """git's sparse checkout matches the path literally (#2269)."""
+        message = (
+            f"^{re.escape(repr(path))} is not a usable map path: it has "
+            f"{re.escape(component)} component"
+        )
+        with pytest.raises(MapSourceError, match=message):
+            MapSource.parse(f"git+https://example.com/o/n@main#{path}")
+        with pytest.raises(MapSourceError, match=message):
+            MapSource(repo_url="https://example.com/o/n", path=path)
+        with pytest.raises(MapSourceError, match=message):
+            MapSource(repo_url="https://example.com/o/n").with_path(path)
+
+    @pytest.mark.parametrize("path", ["/maps/T", "maps/T/", "/maps/T/"])
+    def test_drops_a_leading_or_trailing_slash_when_parsing(self, path: str) -> None:
+        assert MapSource.parse(f"https://example.com/o/n#{path}").path == "maps/T"
+
+    @pytest.mark.parametrize("path", ["/maps/T", "maps/T/"])
+    def test_refuses_a_leading_or_trailing_slash_built_directly(
+        self, path: str
+    ) -> None:
+        with pytest.raises(MapSourceError, match="an empty component"):
+            MapSource(repo_url="https://example.com/o/n", path=path)
+
+    @pytest.mark.parametrize("path", ["maps/.hidden", "maps/T..", "...", "a.b/c"])
+    def test_keeps_a_component_that_only_holds_dots(self, path: str) -> None:
+        assert MapSource(repo_url="https://example.com/o/n", path=path).path == path
+
+    @pytest.mark.parametrize(
+        ("uri", "name"),
+        [
+            ("git@example.com:maps.git", "maps"),
+            ("git@example.com:maps.git@v1", "maps"),
+            ("git@example.com:maps", "maps"),
+            ("git@github.com:o/r.git", "r"),
+            ("https://user@example.com/o/r", "r"),
+            ("https://example.com/o/r.git", "r"),
+            ("file:///srv/maps", "maps"),
+        ],
+    )
+    def test_the_repository_name_leaves_out_the_host(self, uri: str, name: str) -> None:
+        """An scp-like URL's ``user@host:`` is no part of it (#2269)."""
+        source = MapSource.parse(uri)
+        assert source.repo_name == name
+        assert source.name == name
+
     def test_refuses_a_ref_read_out_of_a_page_url(self) -> None:
         with pytest.raises(MapSourceError, match="begins with '-'"):
             MapSource.parse("https://github.com/o/n/tree/--foo=bar/maps/T")
@@ -678,6 +740,27 @@ class TestResolveMap:
         assert resolved.projector_info_path is not None
         assert resolved.commit == _head(origin_repo)
         assert not resolved.provisioned
+
+    @pytest.mark.parametrize(
+        "path",
+        ["./autoware_maps/TownA", "autoware_maps/./TownA", "autoware_maps//TownA"],
+    )
+    def test_a_path_spelled_with_a_dot_or_an_empty_component_is_refused(
+        self, origin_repo: Path, cache: GitMapCache, path: str
+    ) -> None:
+        """Refused on a fresh cache and on one that has the map alike (#2269).
+
+        git's sparse checkout matches such a path literally, so it checked
+        nothing out on a fresh cache, yet resolved once ``autoware_maps/TownA``
+        was checked out, as a cache entry of its own."""
+        with pytest.raises(MapSourceError, match="not a usable map path"):
+            resolve_map(_uri(origin_repo, path), cache=cache)
+        resolved = resolve_map(_uri(origin_repo), cache=cache)
+        assert resolved.lanelet2_path.read_text() == _OSM
+        with pytest.raises(MapSourceError, match="not a usable map path"):
+            resolve_map(_uri(origin_repo, path), cache=cache)
+        with pytest.raises(MapSourceError, match="not a usable map path"):
+            cached_map(_uri(origin_repo, path), cache=cache)
 
     def test_reads_the_cache_without_the_origin(
         self, origin_repo: Path, cache: GitMapCache, tmp_path: Path
@@ -1155,9 +1238,12 @@ class TestLinksInAMapDirectory:
         """Joined onto the checkout, the map root and the derived directory."""
         # ``../outside`` from the map root is where ``outside`` really is, and
         # it holds an .osm: without the check it is taken as a provisioned map.
-        with pytest.raises(MapResolutionError, match=r"\.\."):
+        # The source itself refuses it, before anything is read (#2269).
+        with pytest.raises(MapSourceError, match=r"a '\.\.' component"):
             resolve_map(_uri(origin_repo, path), cache=cache)
-        assert cached_map(_uri(origin_repo, path), cache=cache) is None
+        with pytest.raises(MapSourceError, match=r"a '\.\.' component"):
+            cached_map(_uri(origin_repo, path), cache=cache)
+        assert not list(cache.root.glob("**/*.osm"))
 
     def test_a_local_directory_is_held_to_the_same_rule(
         self, tmp_path: Path, outside: Path
@@ -1863,6 +1949,62 @@ class TestResolveDirectory:
         resolved = resolve_directory(local_map, cache=cache)
         assert resolved.xodr_path == local_map / "TownL.xodr"
         assert not resolved.xodr_is_derived
+
+    def test_of_several_opendrives_the_one_named_after_the_directory_is_taken(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        """Not the alphabetically first: it is what CARLA is given (#2269)."""
+        (local_map / "Old.xodr").write_text("<OpenDRIVE/>")
+        (local_map / "TownL.xodr").write_text("<OpenDRIVE/>")
+        resolved = resolve_directory(local_map, cache=cache)
+        assert resolved.xodr_path == local_map / "TownL.xodr"
+        assert not resolved.xodr_is_derived
+
+    def test_several_opendrives_none_named_after_the_directory_are_refused(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        """As several ``.osm`` are, naming the files (#2269)."""
+        (local_map / "A.xodr").write_text("<OpenDRIVE/>")
+        (local_map / "B.xodr").write_text("<OpenDRIVE/>")
+        with pytest.raises(
+            MapResolutionError,
+            match=(
+                rf"^{re.escape(str(local_map))} holds several OpenDRIVE files "
+                r"\(A\.xodr, B\.xodr\) and none is named TownL\.xodr\."
+            ),
+        ):
+            resolve_directory(local_map, cache=cache)
+
+    def test_one_opendrive_is_taken_whatever_its_name(
+        self, local_map: Path, cache: GitMapCache
+    ) -> None:
+        (local_map / "Other.xodr").write_text("<OpenDRIVE/>")
+        resolved = resolve_directory(local_map, cache=cache)
+        assert resolved.xodr_path == local_map / "Other.xodr"
+
+    def test_several_opendrives_in_a_repository_are_refused_naming_the_source(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        town_b = origin_repo / "autoware_maps" / "TownB"
+        (town_b / "Draft.xodr").write_text("<OpenDRIVE/>")
+        _git(origin_repo, "add", "-A")
+        _git(origin_repo, "commit", "--quiet", "-m", "A second OpenDRIVE")
+        # The one named after the directory is taken.
+        resolved = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
+        assert resolved.xodr_path is not None
+        assert resolved.xodr_path.name == "TownB.xodr"
+
+        (town_b / "TownB.xodr").rename(town_b / "Final.xodr")
+        _git(origin_repo, "add", "-A")
+        _git(origin_repo, "commit", "--quiet", "-m", "Neither named after it")
+        uri = _uri(origin_repo, "autoware_maps/TownB")
+        with pytest.raises(
+            MapResolutionError,
+            match=r"TownB holds several OpenDRIVE files \(Draft\.xodr, Final\.xodr\)",
+        ):
+            resolve_map(uri, cache=cache)
+        # The editor's cached look is as undecided as a resolve is.
+        assert cached_map(uri, cache=cache) is None
 
     def test_accepts_the_osm_itself(self, local_map: Path, cache: GitMapCache) -> None:
         (local_map / "other.osm").write_text(_OSM)
