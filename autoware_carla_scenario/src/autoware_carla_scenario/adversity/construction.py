@@ -21,6 +21,13 @@ The zones, from ``start`` to ``end``:
 * **taper_out** -- ``[end - taper_length_out, end]``: cones back to the edge;
 * **termination** -- ``[end, end + termination_zone_length]``: signs.
 
+A zone shorter than its tapers and buffer together has no work zone, and
+the tapers and the buffer are shortened in proportion so that they fill it
+from ``start`` to ``end``, one after another (#2263): left at full length
+they would overlap, with cones on top of each other and past ``end``.  A
+warning zone is never laid out before ``s = 0``, so a zone that starts there
+or before it has none.
+
 Objects step from a zone's start while short of its end, by the zone's
 spacing: ``spacing`` (0.7 of it in a taper, 0.8 in the buffer), or with
 ``use_dynamic_spacing`` and a ``speed_limit_mph`` MUTCD's -- the speed in feet
@@ -86,6 +93,12 @@ SIGN = "sign"
 HIGHWAY = "highway"
 URBAN = "urban"
 
+#: What each text field of :class:`ConstructionSettings` takes (#2263).
+_CONSTRUCTION_TYPES = (CONE, BARRIER, "mixed")
+_SIDES = ("right", "left")
+_TAPER_TYPES = ("linear", "curved")
+_LAYOUTS = (HIGHWAY, URBAN)
+
 #: How far inside the lane's edge (m) the cones stand.
 _EDGE_MARGIN_M = 0.3
 #: How far inside the lane's edge (m) the urban work zone's objects stand.
@@ -129,6 +142,14 @@ def _check_spacing(name: str, value: float) -> None:
         raise ValueError(f"{name} must be finite and positive, not {value}")
 
 
+def _check_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
+    """Refuse *value* for the text field *name* unless it is one of
+    *choices*, spelled exactly: a typo would otherwise be read as another
+    choice, or as none, in silence (#2263)."""
+    if value not in choices:
+        raise ValueError(f"{name} must be one of {', '.join(choices)}, not {value!r}")
+
+
 def _check_span(start: float, end: float) -> None:
     """Refuse a zone from *start* to *end* unless both are finite and *end*
     is after *start*: an infinite one would be stepped through for ever."""
@@ -160,7 +181,8 @@ class ConstructionSettings:
     finite, the spacings (``spacing``, ``warning_zone_spacing``) positive,
     and the lengths, ``speed_limit_mph`` and ``merge_signs`` not negative
     (0 for none).  ``work_zone_offset`` and ``warning_sign_offset`` may be of
-    either sign.
+    either sign.  The text fields take only the values listed below, spelled
+    exactly (lower case); any other is refused (#2263).
 
     Attributes:
         construction_type: The work zone's objects: ``"cone"``,
@@ -211,6 +233,10 @@ class ConstructionSettings:
     merge_signs: int = 2
 
     def __post_init__(self) -> None:
+        _check_choice("construction_type", self.construction_type, _CONSTRUCTION_TYPES)
+        _check_choice("taper_type", self.taper_type, _TAPER_TYPES)
+        _check_choice("side", self.side, _SIDES)
+        _check_choice("layout", self.layout, _LAYOUTS)
         _check_spacing("spacing", self.spacing)
         _check_finite("work_zone_offset", self.work_zone_offset)
         _check_length("speed_limit_mph", self.speed_limit_mph)
@@ -268,6 +294,11 @@ def construction_zones(
     over the work zone, and when the merge taper starts at *start* it is of
     no length, its signs clamped to *start* (as TeraSim's).
 
+    A highway zone shorter than ``taper_length_in + buffer_zone_length +
+    taper_length_out`` has no work zone, and those three are shortened in
+    proportion to fill it, so that none overlaps another or runs past *end*
+    (#2263).  The warning zone does not reach before ``s = 0``.
+
     Raises:
         ValueError: *start* or *end* not finite, *end* not after *start*, or
             a layout that is neither :data:`HIGHWAY` nor :data:`URBAN`.
@@ -278,21 +309,32 @@ def construction_zones(
     if settings.layout != HIGHWAY:
         raise ValueError(f"no construction layout '{settings.layout}'")
     zones: list[tuple[str, float, float]] = []
-    if settings.warning_zone_length > 0.0:
-        zones.append(("warning", max(0.0, start - settings.warning_zone_length), start))
-    if settings.taper_length_in > 0.0:
-        zones.append(("taper_in", start, start + settings.taper_length_in))
-    buffer_start = start + settings.taper_length_in
-    if settings.buffer_zone_length > 0.0:
-        zones.append(
-            ("buffer", buffer_start, buffer_start + settings.buffer_zone_length)
-        )
-    work_start = buffer_start + settings.buffer_zone_length
-    work_end = end - settings.taper_length_out
-    if work_end > work_start:
-        zones.append(("work", work_start, work_end))
-    if settings.taper_length_out > 0.0:
-        zones.append(("taper_out", end - settings.taper_length_out, end))
+    warning_start = max(0.0, start - settings.warning_zone_length)
+    if settings.warning_zone_length > 0.0 and start > warning_start:
+        zones.append(("warning", warning_start, start))
+    taper_in = settings.taper_length_in
+    buffer = settings.buffer_zone_length
+    taper_out = settings.taper_length_out
+    needed = taper_in + buffer + taper_out
+    if needed > end - start:
+        # No room for a work zone: the rest shortened to fit (#2263).
+        share = (end - start) / needed
+        taper_in *= share
+        buffer *= share
+        taper_out *= share
+    buffer_start = start + taper_in
+    taper_out_start = end - taper_out
+    # The buffer ends where the exit taper starts in a shortened zone, which
+    # the sum's rounding could otherwise put a hair after it.
+    work_start = min(buffer_start + buffer, taper_out_start)
+    if taper_in > 0.0:
+        zones.append(("taper_in", start, buffer_start))
+    if buffer > 0.0 and work_start > buffer_start:
+        zones.append(("buffer", buffer_start, work_start))
+    if taper_out_start > work_start:
+        zones.append(("work", work_start, taper_out_start))
+    if taper_out > 0.0:
+        zones.append(("taper_out", taper_out_start, end))
     if settings.termination_zone_length > 0.0:
         zones.append(("termination", end, end + settings.termination_zone_length))
     return zones
