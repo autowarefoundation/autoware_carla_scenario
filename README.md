@@ -24,6 +24,8 @@ Any OpenDRIVE file that describes the same place as the Lanelet2 map will do.
 ├── autoware_carla_scenario/          # The framework package (uv workspace member)
 ├── data/                             # nishishinjuku fixture map used by the tests and examples
 ├── examples/scenario_package_template/  # A standalone scenario package to copy
+├── stl_driver/                       # The STL policy, a simulated ego for tuning scenarios (own uv.lock)
+├── commonroad_metrics/               # The CommonRoad worker behind the CommonRoad metrics (own uv.lock)
 ├── .github/actions/                  # Composite actions (incl. scenario image packing)
 ├── pyproject.toml                    # uv workspace root
 └── uv.lock

@@ -870,7 +870,7 @@ conf/
 ├── hils/                    # Ego driven by ECUs under test (ego.entity: hils)
 ├── traffic_manager/
 │   └── default.yaml         # CARLA Traffic Manager settings
-├── traffic/                 # Traffic backend: traffic_manager, sumo, none
+├── traffic/                 # Traffic backend: traffic_manager, sumo, hybrid, none
 ├── launcher/                # Who runs a batch's cases: local, slurm
 ├── hydra/sweeper/
 │   └── lanelet_constraint.yaml
@@ -913,7 +913,7 @@ Defines the default config group composition:
 | `ros2` | `default` | Ego driven by ROS 2 nodes, used when `ego.entity: ros2` ([ROS 2](ros2.md)) |
 | `hils` | `default` | Ego driven by ECUs under test, used when `ego.entity: hils` ([HILS](hils.md)) |
 | `traffic_manager` | `default` | CARLA Traffic Manager |
-| `traffic` | `traffic_manager` | Traffic backend: `traffic_manager`, `sumo` or `none` ([Traffic Backends](traffic_backends.md)) |
+| `traffic` | `traffic_manager` | Traffic backend: `traffic_manager`, `sumo`, `hybrid` or `none` ([Traffic Backends](traffic_backends.md)) |
 | `scenario` | `intersection_passing/left_turn` | Scenario to run |
 | `map` | `nishishinjuku` | Map to load |
 | `launcher` | `null` | Who runs a batch's cases: unset runs them here, one after another; `launcher=slurm` runs them as a SLURM array job ([SLURM](slurm.md)) |
@@ -942,7 +942,11 @@ Defines the default config group composition:
 | `ego.spawn_s` | float | `25.0` | Longitudinal offset along lanelet centerline (meters) |
 | `ego.spawn_t` | float | `0.0` | Lateral offset from the lanelet centerline, positive to its left (meters) |
 | `ego.spawn_heading` | float | `0.0` | Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians) |
+| `ego.goal_lanelet_id` | int \| null | `null` | Lanelet the ego is routed to; required for `ego.entity: autoware`, which plans its route to it (a scenario may name it in `setup()` instead). The other entities read no goal |
 | `ego.goal_s` | float | `0.0` | Longitudinal offset along the goal lanelet (`ego.goal_lanelet_id`) centerline (meters) |
+| `ego.waypoint_lanelet_ids` | list[int] | `[]` | Lanelets the route must pass through, in order, on the way to the goal; empty leaves the way there to the planner (for Autoware, the shortest one) |
+| `ego.entity` | str | `autopilot` | Which entity drives the ego: `autopilot` (CARLA's TrafficManager), `autoware` ([Autoware](autoware.md)), `carla_driver` ([Driver Interface](driver_interface.md)), `ros2` ([ROS 2](ros2.md)) or `hils` ([HILS](hils.md)) |
+| `ego.native_autoware_interface` | bool | `false` | `ego.entity: autoware` only: spawn the ego for CARLA 1.0's native Autoware interface (`ros2_autoware_control=true`, role name `ego`), so the server applies Autoware's control itself ([Autoware](autoware.md#carlas-native-autoware-interface)) |
 
 The speed must be finite and not negative, and the poses (`ego.spawn_s`,
 `ego.spawn_t`, `ego.spawn_heading`, `ego.goal_s`) finite: a negative or NaN
@@ -1399,6 +1403,99 @@ Tests that the ego vehicle stops at a stop line for a minimum duration, then res
 - Reads the stop lines off the map (none is configured): the spawn lanelet's own, or else those of the first step of its successors, up to three steps on, that has any; setup fails if there is none
 - Registers a latched TemporaryStopCondition over those stop lines
 - Pass condition: ego stays within `s_margin` of a stop line at speed below `speed_threshold` for at least `stop_duration` seconds, then accelerates above `restart_speed_kmh`
+
+#### Cut-in
+
+Tests that the ego copes with a vehicle that changes into its lane just ahead
+of it. NPC1 starts in the lane beside the ego's, on the `side` it cuts in
+from, and changes lanes towards the ego after `cut_in_after_seconds`. Run
+unexpanded, the ego spawns on lanelet 20 (`left`) or 19 (`right`) of the
+Nishi-Shinjuku map; the config's `sweep:` expands one case per lane with a lane
+on that side (see [Cut-in](scenarios/cut_in.md), which also covers the lanes
+ahead and placing NPC1 by the measured gap).
+
+| Config | `side` | `npc_lanelet_id` | Description |
+|--------|--------|------------------|-------------|
+| `cut_in/left` | `left` | `19` | NPC1 cuts in from the ego's left |
+| `cut_in/right` | `right` | `20` | NPC1 cuts in from the ego's right |
+
+**Scenario-specific parameters:**
+
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.side` | str | `"left"` | per config (above) | The side of the ego NPC1 comes from: `"left"` or `"right"` |
+| `scenario.npc_lanelet_id` | int | `0` | per config (above) | The lanelet beside the ego's spawn lanelet NPC1 starts on; a sweep binds it to the lane beside the pick |
+| `scenario.npc_ahead_m` | float | `10.0` | `10.0` | How far ahead of the ego NPC1 starts, along its lanelet (m) |
+| `scenario.npc_gap_m` | float \| null | null | — | The starting gap as `vehicle_ahead_gap_m` measures it (bumper to bumper, m); replaces `npc_ahead_m` when set |
+| `scenario.npc_vehicle_type` | str | `"vehicle.mini.cooper"` | `"vehicle.mini.cooper"` | NPC1's blueprint |
+| `scenario.npc_initial_speed_kmh` | float | `30.0` | `30.0` | NPC1's starting speed (km/h) |
+| `scenario.cut_in_after_seconds` | float | `2.0` | `2.0` | NPC1 changes into the ego's lane this long after the start |
+| `scenario.hold_seconds` | float | `3.0` | `3.0` | The run passes once NPC1 has been on the ego's lane this long without a collision |
+| `scenario.timeout_seconds` | float | `20.0` | `20.0` | Maximum scenario duration |
+| `scenario.fail_on_leaving_lane` | bool | `true` | `true` | Fail when the ego leaves the lanes ahead of it |
+| `scenario.lanes_ahead_m` | float | `1000.0` | `1000.0` | How far the lanes ahead reach from the start of the spawn lanelet (m) |
+| `scenario.leaving_lane_seconds` | float | `0.2` | `0.2` | How long the ego has to be off those lanes before the run fails |
+| `scenario.fail_on_any_collision` | bool | `true` | `true` | Fail on any collision of the ego; `false` fails only on a collision with NPC1 |
+
+**Behavior:**
+- Sets all traffic lights to GREEN
+- Registers a lane change of NPC1 towards the ego after `cut_in_after_seconds`
+- Pass condition: NPC1 has been on the ego's lane for `hold_seconds`, with no collision
+- Fail conditions: the ego collides (with anything, or only with NPC1 when `fail_on_any_collision` is `false`), leaves the lanes ahead of it, or the timeout is reached
+
+#### Pedestrian Dart-out
+
+Tests that the ego stops for, or avoids, a pedestrian who runs into the road
+from the kerb. Run unexpanded, the ego spawns on lanelet 19 of the
+Nishi-Shinjuku map; the config's `sweep:` expands one case per lane with no
+lane on its kerb side (see [Pedestrian Dart-out](scenarios/pedestrian_dart_out.md),
+which also covers the pedestrian who turns back).
+
+| Config |
+|--------|
+| `pedestrian_dart_out/pedestrian_dart_out` |
+
+**Scenario-specific parameters:**
+
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.pedestrian_ahead_m` | float | `35.0` | `35.0` | How far ahead of the ego's spawn, along its lanelet, the pedestrian waits at the kerb (m) |
+| `scenario.pedestrian_offset_m` | float | `3.0` | `3.0` | The pedestrian's distance from the lane's centreline, on its kerb side (m; the sign is ignored; not 0) |
+| `scenario.trigger_distance_m` | float | `20.0` | `20.0` | The pedestrian steps out once the ego is this close to it (m) |
+| `scenario.walk_speed_ms` | float | `2.0` | `2.0` | Walking speed into the road (m/s) |
+| `scenario.turn_back_ttc_s` | float \| null | null | — | Turn back to the kerb when a vehicle's time to collision with the pedestrian is at most this (s); `null`: not by TTC |
+| `scenario.turn_back_distance_m` | float \| null | null | — | Turn back when a vehicle is at most this far from the pedestrian along the road (m); `null`: not by distance |
+| `scenario.turn_back_within_m` | float | `1.0` | `1.0` | How far onto the road, from the kerb, the pedestrian may be and still turn back (m) |
+| `scenario.walker_type` | str | `"walker.pedestrian.0015"` | `"walker.pedestrian.0015"` | The pedestrian's blueprint |
+| `scenario.pass_beyond_m` | float | `10.0` | `10.0` | The run passes once the ego is this far past the pedestrian's crossing line, on its own lanelet (m) |
+| `scenario.timeout_seconds` | float | `25.0` | `25.0` | Maximum scenario duration |
+
+**Behavior:**
+- Sets all traffic lights to GREEN
+- Registers the pedestrian's walk across the lane, triggered when the ego comes within `trigger_distance_m`
+- Pass condition: the ego comes within 3 m of the point `pass_beyond_m` past the crossing
+- Fail conditions: the ego hits the pedestrian, or the timeout is reached
+
+#### Adversity
+
+Stages one adversarial action of an NPC or a pedestrian against the ego, picked
+by `scenario.kind`. Each case and its full parameter table are in
+[Adversities](scenarios/adversity.md); the actions themselves are in
+[Adversarial Actions and NADE](adversity.md).
+
+Unlike the other examples these are concrete cases on Town10HD_Opt: run them
+with `map=town10hd_opt` (`uv run scenario scenario=adversity/brake_check
+map=town10hd_opt`). On the default map their lanelet ids name other lanelets
+or none.
+
+| Config | `kind` | The adversity |
+|--------|--------|---------------|
+| `adversity/brake_check` | `brake_check` | NPC1, ahead of the ego, brakes hard to a stop |
+| `adversity/ignore_leader` | `ignore_leader` | NPC1, behind a slow ego, speeds up as if the ego were not there |
+| `adversity/cut_in` | `cut_in` | NPC1 changes in front of the ego from the lane beside |
+| `adversity/traffic_rule` | `traffic_rule` | NPC1 drives on through its red light |
+| `adversity/jaywalking` | `jaywalking` | A pedestrian walks straight across the road, off any crosswalk |
+| `adversity/nade` | `nade` | Background vehicles stage the adversities, sampled by NADE |
 
 ### Scenario Evaluation
 
@@ -2403,7 +2500,7 @@ setting each value.
 **Cause**: The `scenario.name` field in the YAML does not match any registered scenario class.
 
 **Solution**:
-- Supported scenario names: `intersection_passing`, `lane_change`, `traffic_light_compliance`, `temporary_stop`
+- Supported scenario names: `adversity`, `cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`, `temporary_stop`, `traffic_light_compliance`
 - Check the `name` field in your scenario YAML config
 
 ---
