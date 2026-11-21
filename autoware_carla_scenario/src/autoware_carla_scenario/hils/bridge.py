@@ -974,7 +974,7 @@ class HilsBridge:
             if done():
                 return True
             if stoppable and self._stop.is_set():
-                raise _Stopping("stopping")
+                raise _Stopping("the bridge is stopping")
             now = time.monotonic()
             if now - start >= seconds:
                 return False
@@ -1303,7 +1303,12 @@ class HilsBridge:
         try:
             self._begin(ego, str(message.get("scenario", "")))
         except HilsStepError as exc:
-            logger.error("%s", exc)
+            # A stop (SIGTERM) is no step failure: the run is still told.
+            logger.log(
+                logging.INFO if isinstance(exc, _Stopping) else logging.ERROR,
+                "%s",
+                exc,
+            )
             link.send({"type": "error", "message": str(exc)})
             return
         link.send({"type": "ready"})
@@ -1325,7 +1330,11 @@ class HilsBridge:
         try:
             self._begin(ego, "")
         except HilsStepError as exc:
-            logger.error("%s", exc)
+            logger.log(
+                logging.INFO if isinstance(exc, _Stopping) else logging.ERROR,
+                "%s",
+                exc,
+            )
 
     def _state(self, snapshot: "carla.WorldSnapshot") -> Optional[EgoState]:
         assert self._ego is not None and self._map is not None

@@ -2587,7 +2587,9 @@ def test_a_stop_ends_a_waiting_scenario_step(
         threading.Timer(0.2, bridge.stop).start()
         start = time.monotonic()
         if phase == "scenario_start":
-            with pytest.raises(HilsStepError, match="scenario_start: stopping"):
+            with pytest.raises(
+                HilsStepError, match="scenario_start: the bridge is stopping"
+            ):
                 bridge._begin(world.actors[0], "t")
         else:
             bridge._finish()
