@@ -139,8 +139,9 @@ def lane_gap(
       once, because unlike the others this is a misconfiguration rather than a
       fact about the scenario, and a condition that never fires for a whole run
       should say why.
-    * **No chain of roads joins the two.**  A junction stands between them, or
-      they are further apart than a measurement reaches; see the module
+    * **No chain of roads joins the two.**  They are further apart than a
+      measurement reaches, or -- with ``across_junctions=False`` only -- the
+      chain that joins them runs through a junction; see the module
       docstring.
     * **The source is not moving.**  There is no direction of travel to measure
       along.

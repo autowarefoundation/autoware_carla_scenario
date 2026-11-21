@@ -77,7 +77,7 @@ class CarlaWorldPose:
     pitch: float = field(default=0.0)
     yaw: float = field(
         default=0.0
-    )  # degrees, right-hand rule in CARLA (clockwise from East)
+    )  # degrees, clockwise from East seen from above (CARLA is left-handed)
 
     def to_carla_transform(self) -> "carla.Transform":
         """Convert to a carla.Transform object."""

@@ -382,6 +382,37 @@ class TestRulesByVehicle:
         with pytest.raises(RulesError, match=f"^{key}: expected a file"):
             use_weather_rules(spec(blank))
 
+    @pytest.mark.parametrize("blank", [Path(""), Path(".")])
+    @pytest.mark.parametrize(
+        ("spec", "key"),
+        [
+            (lambda b: b, r"environment\.rules"),
+            (lambda b: {"default": b}, r"environment\.rules\.default"),
+            (lambda b: {"vehicles": {"ego": b}}, r"environment\.rules\.vehicles\.ego"),
+        ],
+    )
+    def test_a_blank_path_object_is_refused_naming_its_key(
+        self, blank, spec, key
+    ) -> None:
+        # #2296: Path("") is Path("."), the run's directory, as a blank str is.
+        with pytest.raises(
+            RulesError, match=f"^{key}: expected a file, got {re.escape(repr(blank))}$"
+        ):
+            check_weather_rules(spec(blank))
+
+    @pytest.mark.parametrize("blank", ["", " ", "\t\n"])
+    def test_a_blank_vehicles_pattern_is_refused(self, blank) -> None:
+        # #2296: it matches no vehicle, so its file would be read and never
+        # followed.
+        match = (
+            r"^environment\.rules\.vehicles: expected a vehicle pattern, "
+            f"got {re.escape(repr(blank))}$"
+        )
+        with pytest.raises(RulesError, match=match):
+            check_weather_rules({"vehicles": {"ego": "a.yaml", blank: "b.yaml"}})
+        with pytest.raises(RulesError, match=match):
+            use_weather_rules({"vehicles": {blank: "missing.yaml"}})
+
     def test_a_refusal_names_the_value(self) -> None:
         with pytest.raises(
             RulesError,

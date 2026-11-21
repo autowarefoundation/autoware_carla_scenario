@@ -259,6 +259,9 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `MapManager` | Singleton owning the loaded `LaneletMap`, `pyxodr` road network, MGRS offset, and z offset. |
 | `to_carla_world`, `to_carla_location`, `to_lanelet2`, `to_opendrive` | Pose conversion entry points (overload by input frame). |
 | `project_onto_road` | Project a `CarlaWorldPose` onto a specified OpenDRIVE road. |
+| `project_onto_lanelet` | Project a `CarlaWorldPose` onto a specified lanelet's centerline: a `Lanelet2Pose` whose `s` and `t` are read in that lanelet's own frame (the Lanelet2 counterpart of `project_onto_road`). |
+| `to_map_frame` | Convert any pose to a 6-DoF `BridgePose` in Autoware's `map` frame (the Lanelet2 file read with its `map_projector_info.yaml` projector), as Autoware's initial pose or goal. |
+| `route_road_ids(lanelet_ids)` | The OpenDRIVE roads a route of lanelets runs on, each once, in order (a junction's lanelets left out). |
 | `road_traffic_rule` | An OpenDRIVE road's traffic rule, `"RHT"` or `"LHT"` (its `rule` attribute, `"RHT"` where unset). |
 | `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
 | `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`; refuses (`ValueError`) a negative or non-finite distance, or a ray of no length. |
@@ -272,6 +275,8 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id)` | ID translation between Lanelet2 traffic-light regulatory elements and OpenDRIVE controllers, on the loaded maps. |
 | `get_signal_ids_for_controller(controller_id)` | Map an OpenDRIVE controller id to its signal ids, on the loaded map. |
 | `get_stop_line_linestrings(lanelet_id)` | Collect Lanelet2 stop-line `LineString3d` objects for a lanelet, on the loaded map. |
+| `get_stop_line_linestrings_with_following(lanelet_id, depth=1)` | `get_stop_line_linestrings` as `(lanelet_id, linestring)` pairs: the lanelet's own, or where it has none, those of its successors up to `depth` steps on; a negative `depth` raises `ValueError`. |
+| `find_traffic_lights_for_lanelet2_id(world, lanelet2_tl_id)` | The CARLA traffic-light actors a Lanelet2 traffic-light regulatory element names: through its OpenDRIVE controller, or by its lanes where no controller is named after it. |
 
 ## Entities (`autoware_carla_scenario.entity`)
 
