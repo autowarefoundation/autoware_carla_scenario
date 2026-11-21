@@ -115,6 +115,32 @@ class TestParseGeoReference:
         assert lat == pytest.approx(10.0)
         assert lon == pytest.approx(20.0)
 
+    def test_exponent_is_read(self):
+        """Python writes a float below 1e-4 with an exponent (#2296)."""
+        xodr = f"<geoReference>+proj=tmerc +lat_0={5e-05} +lon_0=139 +h_0=1.5E1</geoReference>"
+        lat, lon, alt = _parse_geo_reference(xodr)
+        assert lat == pytest.approx(5e-05, abs=1e-12)
+        assert lon == pytest.approx(139.0)
+        assert alt == pytest.approx(15.0)
+
+    def test_leading_plus_is_read(self):
+        """PROJ accepts a signed `+lon_0=+141` (#2296)."""
+        xodr = "<geoReference>+proj=tmerc +lat_0=+35 +lon_0=+141</geoReference>"
+        assert _parse_geo_reference(xodr) == pytest.approx((35.0, 141.0, 0.0))
+
+    def test_false_easting_with_exponent(self):
+        """`+x_0=1e3` is the same false easting as `+x_0=1000` (#2296)."""
+        proj = "+proj=tmerc +lat_0=35 +lon_0=139 +k=0.9999 +x_0={} +y_0=-2.5e2"
+        exponent = _parse_geo_reference(
+            f"<geoReference>{proj.format('1e3')}</geoReference>"
+        )
+        plain = _parse_geo_reference(
+            f"<geoReference>{proj.format('1000').replace('-2.5e2', '-250')}</geoReference>"
+        )
+        assert exponent == pytest.approx(plain, abs=1e-12)
+        # And it moves the origin: x_0=1 would put it about a kilometre closer.
+        assert exponent[1] != pytest.approx(139.0, abs=1e-3)
+
     @pytest.mark.parametrize(
         ("proj", "expected_lat", "expected_lon"),
         [

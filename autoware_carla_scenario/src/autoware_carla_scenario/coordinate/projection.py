@@ -197,6 +197,13 @@ def read_map_origin(lanelet2_path: Path) -> Optional[tuple[float, float, float]]
         return None
 
 
+#: A number in a PROJ string, as one regex group: an optional sign, digits
+#: with an optional fraction (or a bare fraction) and an optional exponent.
+#: Python writes a float below 1e-4 with an exponent (`5e-05`), and PROJ
+#: accepts a leading `+` (`+lon_0=+141`) (#2296).
+_PROJ_NUMBER = r"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)"
+
+
 def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     """Extract (lat, lon, alt) from the geoReference PROJ string in an XODR file.
 
@@ -235,8 +242,8 @@ def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     # of a group (`Optional[str]`) that is then used as a str.
     proj_string = str(geo_ref_match.group(1))
 
-    lat_match = re.search(r"\+lat_0=([-\d.]+)", proj_string)
-    lon_match = re.search(r"\+lon_0=([-\d.]+)", proj_string)
+    lat_match = re.search(r"\+lat_0=" + _PROJ_NUMBER, proj_string)
+    lon_match = re.search(r"\+lon_0=" + _PROJ_NUMBER, proj_string)
 
     if lat_match is None:
         raise ValueError(f"Could not find +lat_0 in geoReference: {proj_string!r}")
@@ -246,16 +253,16 @@ def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     lat = float(lat_match.group(1))
     lon = float(lon_match.group(1))
 
-    alt_match = re.search(r"\+h_0=([-\d.]+)", proj_string)
+    alt_match = re.search(r"\+h_0=" + _PROJ_NUMBER, proj_string)
     alt = float(alt_match.group(1)) if alt_match else 0.0
 
     # A false origin moves the frame's (0, 0) away from (lat_0, lon_0): the
     # converter writes `+lat_0=0 +lon_0=141 +x_0=... +y_0=...` for an MGRS map.
     if "+proj=tmerc" in proj_string:
-        false_easting = _proj_float(proj_string, r"\+x_0=([-\d.]+)", 0.0)
-        false_northing = _proj_float(proj_string, r"\+y_0=([-\d.]+)", 0.0)
+        false_easting = _proj_float(proj_string, r"\+x_0=" + _PROJ_NUMBER, 0.0)
+        false_northing = _proj_float(proj_string, r"\+y_0=" + _PROJ_NUMBER, 0.0)
         if false_easting != 0.0 or false_northing != 0.0:
-            scale = _proj_float(proj_string, r"\+k(?:_0)?=([-\d.]+)", 1.0)
+            scale = _proj_float(proj_string, r"\+k(?:_0)?=" + _PROJ_NUMBER, 1.0)
             lat, lon = _tmerc_frame_origin(
                 lat, lon, scale, false_easting, false_northing
             )
