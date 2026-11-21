@@ -129,9 +129,25 @@ Python version, and the viewer's Run form reads it the same way.
   traceback). With `--multirun` each scenario's config is checked before its
   sweep reads the map, as the lanelet sweeper checks it, and reported as
   `Error: <scenario>: <key> ...`
+- A command line that does not compose -- an override naming a key the
+  config does not have (`ego.spawn_lanelt_id=10`) -- is reported as
+  `scenario-check` and `scenario-expand` report it: one
+  `Error: <scenario>: could not override ...` message with the closest key,
+  and exit 2, before anything runs (`HYDRA_FULL_ERROR=1` shows the traceback)
+- `--help`, `--hydra-help`, `--info` and `--cfg job` (or `hydra`, `all`) run
+  no batch: Hydra answers them for the first scenario the glob matches, and
+  a `Note:` on stderr names it
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
-  then `HH-MM-SS-2`, ...: every batch has a directory of its own). The file
+  then `HH-MM-SS-2`, ...: every batch has a directory of its own), or to the
+  directory `hydra.run.dir=` names (`hydra.sweep.dir=` with `--multirun`),
+  as for a single run. That directory is created if it does not exist; one
+  that exists must be empty, since a batch's directory is its own: one that
+  is not, or one given with `--resume-into`, is refused with
+  `Error: ...` and exit 2 before anything runs (resume a batch in its
+  directory with `--resume-into` alone). The other mode's key
+  (`hydra.sweep.dir=` without `--multirun`) is ignored with a warning, as
+  Hydra ignores it. The file
   is first written once the batch's pre-run checks have passed, just before
   its first case runs, with every case listed as `"passed": null,
   "pending": true` (as a SLURM batch's cases without an outcome are), and
@@ -354,6 +370,17 @@ optionally deriving per-job parameters via "bindings" (picks that end as
 the same case once their bindings are applied give one job). Each scenario
 YAML may declare its own `sweep:` section (see
 `traffic_light_compliance.yaml` for an example).
+
+Only this sweeper (or a glob batch with `--multirun`, see
+[Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
+expands a scenario's `sweep:`. A `--multirun` without `hydra/sweeper=` runs
+Hydra's basic sweeper, which runs one job per combination of the command
+line's own comma-separated values and ignores the scenario's `sweep:`.
+When the command line sweeps nothing of its own (one job, the scenario as
+configured) and the scenario has a `sweep:`, it warns, pointing to
+`hydra/sweeper=lanelet_constraint` or a glob; a command line that sweeps a
+value itself (`seed=1,2`, `'seed=range(0,32)'`, the rollouts of
+[WOSAC](wosac.md)) runs those jobs of the scenario as configured, unwarned.
 
 `sweep.constraints` sweeps **one** parameter: it holds a single target key
 (such as `ego.spawn_lanelet_id`) with its list of constraints, and every other
@@ -713,10 +740,10 @@ uv run scenario scenario='intersection_passing/*' \
   resume only a batch whose process has ended (stopped with Ctrl-C, killed,
   or stopped from the viewer), since a running one would go on writing the
   same directory.
-- The batch's own logs in the directory are not replaced: the Autoware
-  stack's episode logs (`autoware-NNN-<name>.log`), numbered from `000` by
-  each batch, are appended to, so the resumed batch's episodes follow the
-  killed batch's first episodes in the same files, and a Docker stack's
+- The batch's own logs in the directory are not replaced: each case's
+  Autoware stack writes to `autoware-<stem>.log`, named by the case's stem
+  (#2248), and a case run again appends to its log, so the resumed run
+  follows the killed one in the same file, and a Docker stack's
   dependency and build logs (`autoware-deps.log`, `autoware-build.log`) are
   written over.
 - `--resume-into` is for a local batch: with `launcher=slurm`, or on a
@@ -1588,7 +1615,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, a batch's command line that does not compose (an override of a key the config does not have: `Error: <scenario>: could not override ...`), a batch's `hydra.run.dir=` (`hydra.sweep.dir=`) that is not empty or is given with `--resume-into`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a
@@ -1604,8 +1631,12 @@ whose result JSON is unreadable or has no boolean `passed` (a missing key,
 `"false"`, `1`) has no verdict and counts as failed. The exceptions:
 
 - Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
-  `hydra/sweeper=`), a case that raises an exception ends the sweep at once
-  with 1, as Hydra does; a case that runs and fails does not.
+  `hydra/sweeper=`), a case that raises an exception does not end the sweep
+  either: its traceback is logged, it counts as errored, and the sweep goes
+  on. Once every case has run, `Sweep failed: N of M case(s) failed:` names
+  each failed case, an errored one with `(errored: <exception>)`, and the
+  process exits 1. A single run that raises exits 1 with the traceback, as
+  before.
 - `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
   verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
   Interrupted while it waits, it cancels the array and exits with the verdict

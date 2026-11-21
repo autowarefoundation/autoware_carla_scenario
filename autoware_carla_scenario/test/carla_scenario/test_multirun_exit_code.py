@@ -683,6 +683,104 @@ def test_basic_sweeper_exit_code(
         assert "1 of 3 case(s) failed" in output, output
 
 
+def test_basic_sweeper_runs_past_a_case_that_raised_and_names_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2294: a case that raises does not end Hydra's basic sweep, nor hide
+    the cases that failed: every case runs, the raising case's traceback is
+    logged, and the summary names it and the failed case, exit 1."""
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    proc = _run(_BASIC_APP, tmp_path, "+verdict=raise,fail,pass")
+    output = proc.stdout + proc.stderr
+    assert output.count("case verdict=") == 3, output
+    assert proc.returncode == 1, output
+    # Logged by Hydra's job logging (stdout); the summary goes to stderr.
+    assert "Traceback" in output, output
+    assert "Case +verdict=raise raised RuntimeError" in output, output
+    assert "Sweep failed: 2 of 3 case(s) failed:" in proc.stderr, output
+    summary = proc.stderr.split("Sweep failed:", 1)[1]
+    assert "+verdict=raise (errored: RuntimeError: CARLA went away)" in summary
+    assert "+verdict=fail" in summary
+    assert "+verdict=pass" not in summary
+
+
+@pytest.mark.parametrize(
+    ("sweeper", "launcher", "recorded"),
+    [
+        (
+            "hydra._internal.core_plugins.basic_sweeper.BasicSweeper",
+            "hydra._internal.core_plugins.basic_launcher.BasicLauncher",
+            True,
+        ),
+        (
+            "hydra_plugins.hydra_optuna_sweeper.optuna_sweeper.OptunaSweeper",
+            "hydra._internal.core_plugins.basic_launcher.BasicLauncher",
+            False,
+        ),
+        (
+            "hydra._internal.core_plugins.basic_sweeper.BasicSweeper",
+            "hydra_plugins.hydra_joblib_launcher.joblib_launcher.JoblibLauncher",
+            False,
+        ),
+    ],
+)
+def test_only_hydras_basic_sweep_records_a_raise(
+    monkeypatch: pytest.MonkeyPatch, sweeper: str, launcher: str, recorded: bool
+) -> None:
+    """Another sweeper or launcher may run the case in another process, where
+    what is recorded never reaches main(): the case raises, as before."""
+    from hydra.types import RunMode
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+
+    hydra_cfg = OmegaConf.create(
+        {
+            "mode": RunMode.MULTIRUN,
+            "sweeper": {"_target_": sweeper},
+            "launcher": {"_target_": launcher},
+            "overrides": {"task": ["+verdict=raise"]},
+        }
+    )
+
+    class FakeHydraConfig:
+        @staticmethod
+        def initialized() -> bool:
+            return True
+
+        @staticmethod
+        def get() -> Any:
+            return hydra_cfg
+
+    monkeypatch.setattr(run, "HydraConfig", FakeHydraConfig)
+    monkeypatch.delenv("AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES", raising=False)
+    monkeypatch.setattr(run, "_multirun_failed", [])
+    monkeypatch.setattr(run, "_multirun_ran", [])
+    assert run._record_basic_sweeper_error(RuntimeError("boom")) is recorded
+    assert bool(run._multirun_failed) is recorded
+
+
+def test_a_single_run_that_raises_still_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside a sweep a raise is Hydra's, exit 1 with its traceback, as before."""
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    script = tmp_path / "app.py"
+    script.write_text(textwrap.dedent(_BASIC_APP), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(script), "+verdict=raise", f"hydra.run.dir={tmp_path}/r"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=tmp_path,
+        check=False,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert "RuntimeError: CARLA went away" in proc.stderr, output
+    assert "Sweep failed" not in output, output
+
+
 def test_lanelet_sweeper_stops_with_2_on_a_refused_case(tmp_path: Path) -> None:
     proc = _run(
         _SWEEPER_APP,
