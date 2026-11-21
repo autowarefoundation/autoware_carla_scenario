@@ -4996,8 +4996,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 343 of the package's 473
-modules (73%; about 107,200 of
-180,000 lines) are <code>CHECKED</code>: the kinematics, the
+modules (73%; about 107,300 of
+180,200 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6487,8 +6487,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>201 functions and methods of those modules are <code>UNCALLED</code>
-(61 of them protected helpers, see <em>What is
+<p>200 functions and methods of those modules are <code>UNCALLED</code>
+(60 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6500,7 +6500,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 201 UNCALLED functions and methods, and why</summary>
+<summary>The 200 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6697,7 +6697,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>traffic.traffic_manager.TrafficManagerBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>trajectory.model._refusing_vertex_times</code>: the run-time wrapper of TrajectoryVertex.__init__ that refuses the calls written for a vertex with a time (<code>*args: Any, **kwargs: Any</code>, functools.wraps, an inspect.Signature); the check drops the decorator and compiles __init__ as written</li>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
-<li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
 <li><code>ui.slurm_launch.SlurmOptions.from_request</code>: reads the run panel's fields (<code>dict[str, Any] | None</code>: the JSON body of a request, of values of any type), which Codon cannot express, through a helper that returns a number of either type it is given (<code>number(key, kind: type) -&gt; Any</code>, an int or a float); the checks of each field are the checked ui.slurm_options'</li>
 <li><code>ui.slurm_launch.Submission.to_dict</code>: returns the submission as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express</li>
 <li><code>ui.slurm_launch.batch_status</code>: returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types: the values of the batch's records as <code>json.loads()</code> read them (the manifest's through the checked slurm.manifest's uncalled Manifest.get(), the submissions' and the tasks' through get(), of any type), which Codon cannot express; each case's state, and the values it shows as their JSON text, are the checked _case_states()'s (CaseState)</li>
