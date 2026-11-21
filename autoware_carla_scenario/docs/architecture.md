@@ -487,9 +487,21 @@ classDiagram
     class EntityExistenceCondition
     class OffRoadFractionCondition
     class PlaceClearCondition
+    class EntityCountCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
+    class RouteProgressCondition
+    class ActionStateCondition
+    class TrajectoryTimeCondition
+    class LaneChangeSettledCondition
+    class MetricCondition
+    class AdversityFeasibleCondition
+    class AdversityActiveCondition
 
+    class CompositionCondition {
+        <<abstract>>
+        +_check(world, elapsed) ScenarioResult | None
+    }
     class EntityLanePositionCondition
     class EntityDistanceCondition
     class EntityPositionDistanceCondition
@@ -500,7 +512,9 @@ classDiagram
     class AccelerationCondition
     class StandstillCondition
     class TemporaryStopCondition
+    class TurnIndicatorCondition
     class WaypointCondition
+    class EntityLaneOfCondition
 
     class AndCondition
     class OrCondition
@@ -515,19 +529,30 @@ classDiagram
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- OffRoadFractionCondition
     BaseCondition <|-- PlaceClearCondition
+    BaseCondition <|-- EntityCountCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- TrafficSignalControllerCondition
-    BaseCondition <|-- EntityLanePositionCondition
-    BaseCondition <|-- EntityDistanceCondition
-    BaseCondition <|-- EntityPositionDistanceCondition
-    BaseCondition <|-- TimeToCollisionCondition
-    BaseCondition <|-- TimeHeadwayCondition
-    BaseCondition <|-- RelativeSpeedCondition
-    BaseCondition <|-- SpeedCondition
-    BaseCondition <|-- AccelerationCondition
-    BaseCondition <|-- StandstillCondition
-    BaseCondition <|-- TemporaryStopCondition
-    BaseCondition <|-- WaypointCondition
+    BaseCondition <|-- RouteProgressCondition
+    BaseCondition <|-- ActionStateCondition
+    BaseCondition <|-- TrajectoryTimeCondition
+    BaseCondition <|-- LaneChangeSettledCondition
+    BaseCondition <|-- MetricCondition
+    BaseCondition <|-- AdversityFeasibleCondition
+    BaseCondition <|-- AdversityActiveCondition
+    BaseCondition <|-- CompositionCondition
+    CompositionCondition <|-- EntityLanePositionCondition
+    CompositionCondition <|-- EntityDistanceCondition
+    CompositionCondition <|-- EntityPositionDistanceCondition
+    CompositionCondition <|-- TimeToCollisionCondition
+    CompositionCondition <|-- TimeHeadwayCondition
+    CompositionCondition <|-- RelativeSpeedCondition
+    CompositionCondition <|-- SpeedCondition
+    CompositionCondition <|-- AccelerationCondition
+    CompositionCondition <|-- StandstillCondition
+    CompositionCondition <|-- TemporaryStopCondition
+    CompositionCondition <|-- TurnIndicatorCondition
+    CompositionCondition <|-- WaypointCondition
+    EntityLanePositionCondition <|-- EntityLaneOfCondition
     BaseCondition <|-- AndCondition
     BaseCondition <|-- OrCondition
     BaseCondition <|-- NotCondition
@@ -543,11 +568,14 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, and a place clear of road users |
-| **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition`, `EntityCountCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, a place clear of road users, and how many road users of a kind are where |
+| **Position** | `EntityLanePositionCondition`, `EntityLaneOfCondition`, `WaypointCondition`, `RouteProgressCondition` | Road/lane position (a named lane, or the lane of a position), no road ahead within a distance (`WaypointCheckType.IS_EMPTY`), distance along the route |
 | **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
-| **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
+| **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition`, `TurnIndicatorCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go, turn indicators |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
+| **Actions** | `ActionStateCondition`, `TrajectoryTimeCondition`, `LaneChangeSettledCondition` | Another action's lifecycle state, a trajectory's clock, a lane change settled |
+| **Adversity** | `AdversityFeasibleCondition`, `AdversityActiveCondition` | Whether an adversity can be carried out here, and whether one is in progress |
+| **Metric** | `MetricCondition` | A metric NG for longer than allowed |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks (a persistent condition counts only passing ticks, so it never fires around a condition that only reports a failure -- the collision, off-road, existence and timeout ones -- and warns when built around one: [Usage](usage.md#output-files)) |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |

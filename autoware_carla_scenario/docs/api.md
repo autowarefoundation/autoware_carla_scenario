@@ -122,11 +122,19 @@ and composite conditions reset their children.
 
 ### Composition conditions (`autoware_carla_scenario.conditions.composition`)
 
-These build on `CompositionCondition`, which composes a child condition
-tree internally:
+These build on `CompositionCondition`, which guards each on its entity
+(the condition does not hold while the entity is absent or parked under the
+map) and, for `StandstillCondition` and `TemporaryStopCondition`, composes a
+child condition tree internally:
 
 - `EntityLanePositionCondition`
+- `EntityLaneOfCondition` -- the entity is on the lane of a position, beside it, or on its road
+- `EntityDistanceCondition`, `RelativeDistanceType`, `DistanceCoordinateSystem`
+- `EntityPositionDistanceCondition` -- the distance from an entity to a place on the map
+- `TimeToCollisionCondition`, `TimeHeadwayCondition`
+- `RelativeSpeedCondition`
 - `SpeedCondition`, `SpeedDirection`, `SpeedCoordinateSystem`
+- `AccelerationCondition`, `AccelerationDirection` -- a walker's acceleration is differentiated from its measured velocity (`WalkerVelocities`), since CARLA reports 0 for a walker on its controller
 - `StandstillCondition`
 - `TurnIndicatorCondition`, `TurnIndicatorState` -- the turn indicators a vehicle shows (OFF / LEFT / RIGHT / HAZARD), read off its CARLA light state
 - `TemporaryStopCondition`

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -93,8 +92,6 @@ class SpeedCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         if (
             coordinate_system == SpeedCoordinateSystem.ENTITY
             and reference_entity_name is None

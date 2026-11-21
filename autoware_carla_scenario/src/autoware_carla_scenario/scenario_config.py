@@ -222,11 +222,12 @@ class EntityConfig:
     #: Search range (m) below the estimated z for the ground projection ray.
     ground_projection_ray_distance_lower: float = 10.0
 
-    #: Maximum number of upward-shift retries when the initial spawn fails.
+    #: Maximum number of shifted retries when the initial spawn fails.
     #: 0 disables retries.
     spawn_retry_max_count: int = 10
 
-    #: Upward shift (metres) per retry attempt when the initial spawn fails.
+    #: Lateral shift (metres) per retry attempt when the initial spawn fails:
+    #: across the spawn heading, on both sides.
     spawn_retry_t_step: float = 0.1
 
     #: Vertical shift (metres) per retry attempt.

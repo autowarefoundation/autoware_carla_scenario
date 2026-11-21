@@ -35,6 +35,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _s_between(s_lo: float, s_hi: float) -> list[ScalarComparisonRule]:
+    """The rules of a stretch ``s_lo <= s <= s_hi``, in the frame of the
+    position condition they are given to."""
+    return [
+        ScalarComparisonRule(
+            field="s", rule=ComparisonRule.GREATER_THAN_OR_EQUAL, value=s_lo
+        ),
+        ScalarComparisonRule(
+            field="s", rule=ComparisonRule.LESS_THAN_OR_EQUAL, value=s_hi
+        ),
+    ]
+
+
 class TemporaryStopCondition(CompositionCondition):
     """Pass when entity temporarily stops at any of the given positions.
 
@@ -389,18 +402,7 @@ class TemporaryStopCondition(CompositionCondition):
         return EntityLanePositionCondition(
             entity_name,
             Lanelet2Pose(lanelet_id=lanelet_id, s=0.0),
-            rules=[
-                ScalarComparisonRule(
-                    field="s",
-                    rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
-                    value=s_lo,
-                ),
-                ScalarComparisonRule(
-                    field="s",
-                    rule=ComparisonRule.LESS_THAN_OR_EQUAL,
-                    value=s_hi,
-                ),
-            ],
+            rules=_s_between(s_lo, s_hi),
             label=label,
         )
 
@@ -444,18 +446,7 @@ class TemporaryStopCondition(CompositionCondition):
         return EntityLanePositionCondition.anywhere_on_road(
             entity_name,
             road_id,
-            rules=[
-                ScalarComparisonRule(
-                    field="s",
-                    rule=ComparisonRule.GREATER_THAN_OR_EQUAL,
-                    value=s_lo,
-                ),
-                ScalarComparisonRule(
-                    field="s",
-                    rule=ComparisonRule.LESS_THAN_OR_EQUAL,
-                    value=s_hi,
-                ),
-            ],
+            rules=_s_between(s_lo, s_hi),
             label=label,
         )
 

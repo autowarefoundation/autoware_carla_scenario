@@ -97,8 +97,9 @@ def spawn_vehicle_actor(
             which are offset from the spawn transform itself.
         spawn_retry_max_count: Maximum number of lateral-shift retries
             when the initial spawn fails.  0 disables retries.
-        spawn_retry_t_step: Lateral shift in OpenDRIVE *t* (metres) per
-            retry attempt.
+        spawn_retry_t_step: Lateral shift (metres) per retry attempt, across
+            the resolved spawn transform's heading in the ground plane (each
+            attempt tries both sides), not along the road's OpenDRIVE *t*.
         spawn_retry_z_step: Vertical shift (metres) per retry attempt.
         ground_projection: Accepted for compatibility; unused now that the
             retries offset the resolved spawn transform instead of re-snapping.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
@@ -124,9 +123,11 @@ class EntityPositionDistanceCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         super().__init__(entity_name=entity_name, label=label)
+        # First, so a bad tolerance is refused before the place is looked up.
+        self._comparison = ScalarComparisonRule(
+            field="distance", rule=rule, value=value, tolerance=tolerance
+        )
         self._at = TrajectoryVertex(position)
         self._target = None
         self._height_known = True
@@ -148,9 +149,6 @@ class EntityPositionDistanceCondition(CompositionCondition):
             self._target = self._located(to_carla_location(world_pose))
         self._placed_on_build = self._target is not None
         self._vertical = vertical
-        self._comparison = ScalarComparisonRule(
-            field="distance", rule=rule, value=value, tolerance=tolerance
-        )
 
     @staticmethod
     def _located(location: "carla.Location") -> Vector3:

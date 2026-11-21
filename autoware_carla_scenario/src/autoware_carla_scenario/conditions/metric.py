@@ -95,8 +95,6 @@ class MetricCondition(BaseCondition):
             raise ValueError(
                 f"MetricCondition: {metric!r} is not a metric; known: {known}"
             )
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         if not math.isfinite(max_ng_seconds) or max_ng_seconds < 0:
             raise ValueError("max_ng_seconds must be non-negative and finite")
         self._metric = metric
