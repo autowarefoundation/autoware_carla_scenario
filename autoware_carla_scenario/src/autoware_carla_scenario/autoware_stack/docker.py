@@ -826,15 +826,13 @@ class DockerAutowareLauncher:
         )
         return inspected.returncode == 0
 
-    def _dependency_image(self, base_image: str, tag: Optional[str] = None) -> str:
+    def _dependency_image(self, base_image: str, tag: str) -> str:
         """The image with what the stack needs installed, made if missing.
 
         That is the ``scenario_bridge`` node's packages and, with ``rosdep``,
-        the workspace's dependencies.  *tag* is :meth:`_dependency_tag`'s,
-        when the caller has it.
+        the workspace's dependencies.  *tag* is :meth:`_dependency_tag`'s for
+        *base_image*.
         """
-        if tag is None:
-            tag = self._dependency_tag(base_image)
         if self._has_image(tag):
             logger.info("Workspace dependencies: %s", tag)
             return tag

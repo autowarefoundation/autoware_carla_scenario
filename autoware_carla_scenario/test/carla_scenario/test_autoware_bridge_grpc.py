@@ -163,10 +163,15 @@ def test_close_is_idempotent(bridge: GrpcAutowareBridgeServer) -> None:
 
 def test_bind_failure_raises() -> None:
     # Bind an ephemeral port, then try to reuse that exact port for a second
-    # server: the explicit (non-zero) request must fail loudly.
+    # server: the explicit (non-zero) request must fail loudly, naming the
+    # server and the address (grpcio's own error names neither server).
     first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(
+            RuntimeError,
+            match=rf"^Failed to bind the AutowareBridge server to "
+            rf"'localhost:{first.port}' \(port already in use\?\): ",
+        ):
             GrpcAutowareBridgeServer(
                 AutowareBridgeConfig(address=f"localhost:{first.port}")
             )

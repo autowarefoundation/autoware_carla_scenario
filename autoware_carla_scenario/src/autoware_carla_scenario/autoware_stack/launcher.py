@@ -221,12 +221,18 @@ def _check_stop_timeout_s(stop_timeout_s: float) -> None:
     field; a caller prefixes the group it came from
     (``autoware.launcher.``).
 
+    A bool or a quoted number is refused as well, not taken as a 1 s wait or
+    left to ``math.isfinite()``'s ``TypeError``, which names no field (#2275).
+
     Raises:
-        ValueError: ``stop_timeout_s must be positive and finite, got ...``.
+        ValueError: ``stop_timeout_s must be a number, got ...``, or
+            ``stop_timeout_s must be positive and finite, got ...``.
     """
+    if isinstance(stop_timeout_s, bool) or not isinstance(stop_timeout_s, (int, float)):
+        raise ValueError(f"stop_timeout_s must be a number, got {stop_timeout_s!r}")
     if not math.isfinite(stop_timeout_s) or stop_timeout_s <= 0.0:
         raise ValueError(
-            f"stop_timeout_s must be positive and finite, got {stop_timeout_s}"
+            f"stop_timeout_s must be positive and finite, got {stop_timeout_s!r}"
         )
 
 

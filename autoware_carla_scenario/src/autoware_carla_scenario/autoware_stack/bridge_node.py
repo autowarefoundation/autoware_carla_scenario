@@ -30,6 +30,7 @@ __all__ = [
     "DOUBLE_PARAMETERS",
     "INTEGER_PARAMETERS",
     "MISSION_POLL_TIMEOUT_S",
+    "POSITIVE_PARAMETERS",
     "ROUTE_WATCH_PERIOD_S",
     "bridge_command",
     "bridge_package_dir",
@@ -84,6 +85,19 @@ DOUBLE_PARAMETERS: tuple[str, ...] = (
 #: float is passed as the int (``10``), and any other float refused (#2217).
 INTEGER_PARAMETERS: tuple[str, ...] = ("reroute_max_attempts",)
 
+#: The double parameters that must be positive: the node waits on, or ticks
+#: at, each.  A NaN, zero or negative one would never let a readiness report
+#: through (``rpc_timeout_s``), expire every startup request as soon as it is
+#: sent (``step_timeout_s``), or reach ``create_timer`` unchecked
+#: (``tick_period_s``) (#2275).  ``route_watch_period_s`` is not among them:
+#: 0 or less turns the re-route watch off.
+POSITIVE_PARAMETERS: tuple[str, ...] = (
+    "mission_poll_timeout_s",
+    "rpc_timeout_s",
+    "step_timeout_s",
+    "tick_period_s",
+)
+
 
 def bridge_package_dir() -> Path:
     """The installed :mod:`autoware_carla_scenario.autoware_bridge` directory."""
@@ -102,24 +116,35 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
     declares as an integer (:data:`INTEGER_PARAMETERS`) is passed as the int.
 
     Raises:
-        ValueError: naming the parameter, for a float that is not a whole
-            number given for an integer parameter, or a boolean for a number,
-            which the node would refuse as it starts, after the scenario has.
+        ValueError: naming the parameter and the value, for a value the node
+            would refuse, or misbehave with, as it starts, after the scenario
+            has: a boolean or a string (``'5'``, which reaches ROS as an
+            integer or a string) for a number; a NaN or an infinity for a
+            double; one that is not positive for a
+            :data:`POSITIVE_PARAMETERS` one; a float that is not a whole
+            number for an integer parameter.
     """
     args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
     for name, value in parameters.items():
         if value is None:
             continue
+        number = name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS
+        if number and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            # A bool is passed as ``:=true`` and a string as itself, which
+            # rclpy refuses for a number, or reads as another type.
+            raise ValueError(
+                f"{name} must be a number, as the scenario_bridge node "
+                f"declares it, got {value!r}"
+            )
         if isinstance(value, bool):
-            if name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS:
-                # Passed as ``:=true``, which rclpy refuses for a number.
-                raise ValueError(
-                    f"{name} must be a number, as the scenario_bridge node "
-                    f"declares it, got {value!r}"
-                )
             value = str(value).lower()
-        elif isinstance(value, int) and name in DOUBLE_PARAMETERS:
-            value = float(value)
+        elif name in DOUBLE_PARAMETERS:
+            seconds = float(value)
+            if not math.isfinite(seconds):
+                raise ValueError(f"{name} must be finite, got {value!r}")
+            if name in POSITIVE_PARAMETERS and seconds <= 0.0:
+                raise ValueError(f"{name} must be positive, got {value!r}")
+            value = seconds
         elif isinstance(value, float) and name in INTEGER_PARAMETERS:
             if not math.isfinite(value) or value != math.floor(value):
                 raise ValueError(
@@ -206,16 +231,14 @@ def _seconds_parameter(
 ) -> float:
     """*parameters*' *name* as seconds; *default* when it is not set.
 
-    A value that is not a number (one the node would refuse itself) reads as
-    the default: the node's own error says what is wrong with it.
+    A value that is not a finite number (a boolean, a string, a NaN), which
+    :func:`bridge_ros_args` refuses, reads as the default: its error says what
+    is wrong with it.
     """
     value = parameters.get(name)
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return default
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        return default
+    seconds = float(value)
     return seconds if math.isfinite(seconds) else default
 
 

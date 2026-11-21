@@ -140,6 +140,37 @@ def test_the_autoware_bridge_config_refuses_what_is_no_number_naming_it(
     assert repr(value) in str(refused.value)
 
 
+@pytest.mark.parametrize(
+    "address",
+    [
+        "localhost",  # gRPC binds port 443
+        "localhost:abc",
+        "localhost:99999",  # gRPC binds 99999 modulo 65536
+        "localhost:65536",
+        "localhost:-1",
+        "localhost:",
+        ":50052",
+        ":",
+        "localhost:²",  # a digit, but not an ASCII one
+    ],
+)
+def test_the_autoware_bridge_config_refuses_an_address_that_is_no_host_port(
+    address: str,
+) -> None:
+    """#2275: refused naming the key, not when the bridge starts, or never."""
+    with pytest.raises(ValueError, match="^address must be a host:port") as refused:
+        AutowareBridgeConfig(address=address)
+    assert repr(address) in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["localhost:50052", "localhost:0", "0.0.0.0:65535", "[::1]:50052", "[::]:0"],
+)
+def test_the_autoware_bridge_config_takes_a_host_port(address: str) -> None:
+    assert AutowareBridgeConfig(address=address).address == address
+
+
 def test_the_autoware_bridge_config_keeps_ints_as_ints() -> None:
     config = AutowareBridgeConfig(boot_timeout_s=300, liveness_timeout_s=0)
     assert type(config.ready_timeout_ticks) is int

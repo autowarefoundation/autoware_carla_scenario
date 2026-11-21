@@ -4,7 +4,7 @@ Splatsim-consistent topology: the scenario library **hosts** this
 ``AutowareBridge`` gRPC server and ``autoware_carla_interface`` is the **client**
 that dials it (see the topology note in
 ``proto/autoware_bridge/v0/autoware_bridge.proto``).  Because only the client
-initiates, the two RPCs are direction-inverted from a "framework pushes" model:
+initiates, the three RPCs are direction-inverted from a "framework pushes" model:
 
 * ``GetMission`` - the client pulls the scenario's mission (initial pose, goal,
   waypoints).  It returns ``available=False`` until :meth:`configure` has been
@@ -91,7 +91,7 @@ def _pose_to_proto(pose: BridgePose) -> pb2.Pose:
 
 
 class _AutowareBridgeServicer(pb2_grpc.AutowareBridgeServicer):
-    """Serves the two RPCs by delegating to the owning bridge (thread-safe)."""
+    """Serves the three RPCs by delegating to the owning bridge (thread-safe)."""
 
     def __init__(self, bridge: "GrpcAutowareBridgeServer") -> None:
         self._bridge = bridge
@@ -195,16 +195,17 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         self._closed = False
         self._port = None
         self._server = self._new_server()
-        port = self._server.add_insecure_port(self._config.address)
-        # add_insecure_port returns 0 both when it binds an ephemeral port (the
-        # caller asked for ":0") and when the bind fails.  Only the latter is an
-        # error, so branch on the requested port rather than the returned one.
-        requested_port = self._config.address.rsplit(":", 1)[-1]
-        if port == 0 and requested_port != "0":
+        try:
+            # The port bound: the one asked for, or the ephemeral one ":0"
+            # picked.  A failed bind raises a RuntimeError naming no server
+            # (as grpcio does from the package's floor, 1.60, on); it never
+            # returns 0.
+            port = self._server.add_insecure_port(self._config.address)
+        except RuntimeError as exc:
             raise RuntimeError(
                 f"Failed to bind the AutowareBridge server to "
-                f"{self._config.address!r} (port already in use?)."
-            )
+                f"{self._config.address!r} (port already in use?): {exc}"
+            ) from exc
         self._port = port
         self._server.start()
         logger.info("AutowareBridge server listening on port %d", self._port)

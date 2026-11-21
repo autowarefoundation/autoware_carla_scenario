@@ -230,7 +230,10 @@ class BridgeHandshake:
         goal and waypoints go to the stack at once
         (:meth:`~autoware_carla_scenario.autoware_bridge.base.AutowareBridge.reroute`),
         moved to ``base_link`` as the first ones were, and *initial_pose* is not
-        used -- localization is already running.
+        used -- localization is already running.  A re-route is this run's
+        only: the mission set before :meth:`start` is kept, and a retried
+        scenario hands the stack that again, not the goal it was re-routed to
+        (#2275).
 
         Args:
             initial_pose: Map-frame pose the stack initializes localization at,
@@ -244,9 +247,7 @@ class BridgeHandshake:
                 re-route.
         """
         if self._configured:
-            self._goal_pose = goal_pose
-            self._waypoint_poses = list(waypoints)
-            self._reroute(goal_pose)
+            self._reroute(goal_pose, list(waypoints))
             return
         self._initial_pose = initial_pose
         self._goal_pose = goal_pose
@@ -425,14 +426,18 @@ class BridgeHandshake:
         if self._launcher is not None:
             self._start_stack()
 
-    def _reroute(self, goal: "BridgePose") -> None:
-        """Hand the stack a new *goal* and the waypoints set with it, moved to
-        ``base_link`` by the offset :meth:`start` took."""
+    def _reroute(self, goal: "BridgePose", waypoints: list["BridgePose"]) -> None:
+        """Hand the stack a new *goal* and *waypoints*, moved to ``base_link``
+        by the offset :meth:`start` took.
+
+        Neither is stored: the mission :meth:`start` hands over stays the one
+        set before it, so a retried scenario starts from that again.
+        """
         offset = self._base_link_offset_m
         goal_pose = goal.moved_forward(offset)
         # An Optional, as configure()'s is, for Codon's dispatch thunk (see start()).
-        waypoints: Optional[list["BridgePose"]] = [
-            pose.moved_forward(offset) for pose in self._waypoint_poses
+        moved: Optional[list["BridgePose"]] = [
+            pose.moved_forward(offset) for pose in waypoints
         ]
         logger.info(
             "Re-routing the %s stack to (%.2f, %.2f) in the map frame through "
@@ -440,9 +445,9 @@ class BridgeHandshake:
             self._stack_name,
             goal_pose.position.x,
             goal_pose.position.y,
-            len(self._waypoint_poses),
+            len(waypoints),
         )
-        self._bridge.reroute(goal_pose, waypoints)
+        self._bridge.reroute(goal_pose, moved)
 
     def _start_stack(self) -> None:
         """Start this scenario's stack, now that the mission is being served.
