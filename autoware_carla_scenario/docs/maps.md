@@ -55,7 +55,10 @@ with `-`, which git would read as an option. So no space, control character,
 `~`, `^`, `:`, `?`, `*`, `[`, `\`, `..` or `@{`; no empty, leading or
 trailing `/`; no trailing `.`; and no `/`-separated part that begins with `.`
 or ends in `.lock`. A repository may not begin with `-` either, and an `@`
-must be followed by a ref. Such a source is refused when it is parsed, before
+must be followed by a ref. A path may not contain a control character, nor an
+empty, `.` or `..` component (`#./maps/T`, `#maps//T`, `#maps/../T`): write
+the directory as `maps/T`, relative to the repository root (a leading or
+trailing `/` is dropped). Such a source is refused when it is parsed, before
 any git command runs.
 
 A local repository — a plain absolute path or a `file://` URL — may have an
@@ -128,7 +131,11 @@ autoware_maps/Town10HD_Opt
 ```
 
 Only the files this framework reads are pulled out of git-lfs — the `.osm`, the
-`.xodr` if there is one, and the YAML beside them. The point cloud stays a
+`.xodr` if there is one, and the YAML beside them. A directory may hold
+several `.osm` if one is `lanelet2_map.osm`, and several `.xodr` if one is
+named after the directory (`Town10HD_Opt/Town10HD_Opt.xodr`): that is the one
+`map.overwrite_xodr` installs into CARLA. Otherwise the map is ambiguous and
+refused, naming the files, rather than read from whichever sorts first. The point cloud stays a
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
 from costing 22 MB. `git lfs pull` runs only while one of those files is still
 a pointer -- not for a repository without LFS, and not on **Refresh** or **Pin
@@ -403,7 +410,8 @@ uv run scenario map=town10hd_opt map.directory=/path/to/autoware_maps/Town10HD_O
 
 The directory is read exactly as a map directory in a repository is: its `.osm`
 (`lanelet2_map.osm` when there are several), `map_projector_info.yaml`, and any
-`.xodr` it ships. It may name the `.osm` itself to pick one out of several;
+`.xodr` it ships (the one named after the directory when there are several).
+It may name the `.osm` itself to pick one out of several;
 that file is used whatever the case of its suffix (`Edited.OSM`), and is never
 swapped for another `.osm` beside it. A directory itself is searched for
 `*.osm` and `*.xodr` with the case matched exactly, as a repository is.
@@ -469,7 +477,9 @@ without one. A map whose CARLA assets need it installed is run with
 | `holds git-lfs pointers in place of its map files, and git-lfs is not installed` | The map keeps its files in LFS. Install `git-lfs` (and put it on `PATH`), then resolve it again. |
 | `is ambiguous in` / `names no branch, tag or commit in` | An abbreviated commit hash matches several commits, or none of the remote's branches and tags. Write more of it, or the full hash. |
 | `does not name a directory in the repository` | The `#path` is wrong for that ref. Browse the repository in the Map library. |
-| `names a directory outside the repository` / `names a link to a directory outside the repository` | The `#path` contains `..`, or is a symlink leading out of the checkout. Point it at the real directory. |
+| `is not a usable map path` | The `#path` has a control character, or an empty, `.` or `..` component. Write it as `DIR/SUBDIR`. |
+| `names a link to a directory outside the repository` | The `#path` is a symlink leading out of the checkout. Point it at the real directory. |
+| `holds several Lanelet2 files` / `holds several OpenDRIVE files` | The map directory has several `.osm` and none is `lanelet2_map.osm`, or several `.xodr` and none is named after the directory. Point the source at one `.osm`; keep one `.xodr`, or name the map's own after the directory. |
 | `map directory cannot be read` | The `#path` names a directory the process cannot look at under the map root: a path component longer than the file system allows, a permission it lacks, or an I/O error. The editor shows the map as not downloaded. |
 | A map's `.xodr` or `map_projector_info.yaml` is ignored (for the descriptor, `Ignoring .../map_projector_info.yaml` in the log) | It is a symlink to a file outside the map directory, a dangling link, or a link to a directory. Copy the file into the map directory. |
 | A pinned source re-clones on a machine that has the map | Expected: a pinned source never trusts an unpacked directory, because it records no revision. |

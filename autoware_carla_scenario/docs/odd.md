@@ -246,7 +246,8 @@ These live in `autoware_carla_scenario.odd`:
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing, except `in_junction`, `junction_type` and
-`lane_count`, which then read the CARLA waypoint.
+`lane_count`, which then read the CARLA waypoint, and `speed_limit_kph`,
+which then reads CARLA's `get_speed_limit()` for the ego.
 
 The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
@@ -1733,7 +1734,10 @@ sweep:
       scenario: CutInScenario      # learn from this scenario's runs only (all, when left out)
 ```
 
-`flaky: true` takes the defaults. Its other fields are `FlakySearch`'s:
+`flaky: true` takes the defaults; `false`, null or leaving it out is no
+flaky search. A switch is read as `tire_friction`'s is, so `"true"`, `1`,
+`"false"` and `0` mean what they say, and anything else that is not a
+mapping is refused. The mapping's other fields are `FlakySearch`'s:
 `pool`, `coverage_depth`, `threshold`, `epsilon`, `perturbations`, `draws`
 and `directions`. The space holds every parameter of a case: the attributes
 drawn, the weather effects' quantiles, and where in its range the grip and

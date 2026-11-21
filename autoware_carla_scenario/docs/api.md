@@ -64,7 +64,7 @@ See [ODD](odd.md).
 | `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text, situation, target, cover_by, min_stay, metadata)` | A named rule; with `situation=True`, also covered as a situation. `OddDefinition.situations()` lists those. |
 | `OddDefinition(name, attributes, modules, *, roots, text)` | The ODD: judges values with OpenODD's semantics (roots, labels, inactive modules, missing values), and marks buckets outside it. |
 | `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
-| `default_odd()` | The built-in ODD: openodd's bundled `default` (every attribute, no modules), measured in CARLA. |
+| `default_odd()` | The built-in ODD: openodd's bundled `default` (the scenery, conditions and traffic the framework measures, no modules), measured in CARLA. |
 | `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
 | `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
@@ -75,8 +75,9 @@ See [ODD](odd.md).
 | `plan_route_coverage(odd, scenario_or_route, *, lanelet_map, routing_graph, name)` | Check a planned route against the ODD on the Lanelet2 map: the verdict per lanelet (inside, outside, undecided) and the expected metres per bucket. Takes a scenario, a `PlannedRoute(start, goal, via, name)` or lanelet ids. Raises `RouteError` when the route cannot be planned. See [Checking a planned route](odd.md#checking-a-planned-route). |
 | `combine_route_coverage(odd, routes)` | The expected coverage of several routes, and the buckets no route reaches. |
 | `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
-| `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
+| `UNDECIDED`, `Undecided` | What a probe's `on_lanelet` returns for a value only the run can tell, and its class (for an annotation). |
 | `OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries, weights)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first; `weights={module: share}` (`strategy="weighted"`) puts that share of the cases in each module. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
+| `OddCase`, `ParameterSpace` | A case drawn from the ODD and the space it was drawn in (`tuple[OddSample, ParameterSpace]`): what a run records. |
 | `OddKnob(key, values, scale, offset, integer, range, limits, quantity)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under `controls` in their config, by measure key. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
