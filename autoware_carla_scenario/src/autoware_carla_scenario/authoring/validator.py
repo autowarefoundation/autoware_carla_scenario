@@ -2331,8 +2331,11 @@ def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:
 def _check_required_lanelets(out: _Collector, document: ScenarioDocument) -> None:
     """A required lanelet parameter of a card holds a lanelet: 0 (or less) is
     the empty field, which the action or condition cannot be built on
-    (#1021).  A searched or derived one is :func:`_check_lanelet_slots`'s,
-    and a blank or non-numeric one the field check's."""
+    (#1021).  A blank one is read as its default (:func:`_with_default`), as
+    the compiler builds it (#2281): a ``null`` stands for the empty 0 the
+    field check accepts, not for a field this check may skip.  A searched or
+    derived one is :func:`_check_lanelet_slots`'s, and a non-numeric one the
+    field check's."""
     for slot in document.lanelet_slots():
         holder = slot.holder
         spec: ActionSpec | ConditionSpec | None = None
@@ -2349,7 +2352,7 @@ def _check_required_lanelets(out: _Collector, document: ScenarioDocument) -> Non
             or field_spec.kind != "lanelet"
         ):
             continue
-        raw = holder.params.get(slot.field, field_spec.default)
+        raw = _with_default(field_spec, holder.params.get(slot.field))
         if _is_blank(raw) or not _coercible_int(raw) or int(str(raw).strip()) > 0:
             continue
         out.error(

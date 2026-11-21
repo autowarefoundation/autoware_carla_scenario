@@ -231,6 +231,21 @@ def test_a_null_select_reads_as_its_default_in_the_cross_field_checks() -> None:
     ]
 
 
+@pytest.mark.parametrize("blank", ["absent", None, ""])
+@pytest.mark.parametrize("type_id", ["construction_zone", "stalled_object"])
+def test_a_blank_required_lanelet_is_refused_as_its_empty_default(
+    type_id: str, blank: Any
+) -> None:
+    # A null lanelet compiles to the default 0, no lanelet: refused as an
+    # absent one is, not let through because the field check now accepts it.
+    document = new_document()
+    actor = "npc1" if type_id == "stalled_object" else None
+    params = {} if blank == "absent" else {"lanelet_id": blank}
+    document.actions.append(ActionNode(type=type_id, actor=actor, params=params))
+    messages = [i.message for i in validate_document(document).errors]
+    assert any("pick a lanelet" in m for m in messages), messages
+
+
 # ---------------------------------------------------------------------------
 # Set Goal's path speed
 # ---------------------------------------------------------------------------
