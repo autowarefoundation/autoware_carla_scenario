@@ -149,7 +149,12 @@ Configure your environment by exporting the variables consumed by the
 package, or by loading a `.env` file (the package depends on
 `python-dotenv`): the first `.env` found from the working directory up
 is loaded when `autoware_carla_scenario.server` is imported, wherever the
-package is installed, and an exported variable wins over the file. The most common variables:
+package is installed, and an exported variable wins over the file. In a
+checkout of this repository that is a `.env` at its root (copy
+`autoware_carla_scenario/.env.example` there), found from anywhere inside it.
+Since the file can set `CARLA_EXECUTABLE`, the program the runner launches,
+run the framework only from a directory whose `.env` (and its parents') you
+trust. The most common variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|

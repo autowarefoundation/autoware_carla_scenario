@@ -143,19 +143,24 @@ def _host_port(host: str, port: int) -> str:
 _RPC_PORT_ARG = "-carla-rpc-port="
 
 
-def _rpc_port_arg(extra_args: List[str], port: int) -> bool:
-    """Whether *extra_args* sets the port CARLA listens on (each
-    ``-carla-rpc-port=`` of them names *port*).
+def _check_rpc_port_args(extra_args: List[str], port: int) -> None:
+    """Refuse an argument of *extra_args* that moves the port CARLA listens on
+    away from *port*.
+
+    Unreal reads ``-carla-rpc-port=`` case-insensitively, so it is matched
+    whatever its case, and with a second leading ``-``
+    (``--carla-rpc-port=``) too.
 
     Raises:
         ValueError: If one of them names another port, or no port: CARLA
             would listen there while the manager waited at *port*.
     """
-    found = False
     for arg in extra_args:
-        if not arg.startswith(_RPC_PORT_ARG):
+        spelled = arg.lower()
+        dashes = 1 if spelled.startswith("-" + _RPC_PORT_ARG) else 0
+        if not spelled[dashes:].startswith(_RPC_PORT_ARG):
             continue
-        value = arg[len(_RPC_PORT_ARG) :]
+        value = arg[dashes + len(_RPC_PORT_ARG) :]
         digits = value != "" and all(c in "0123456789" for c in value)
         if not (digits and int(value) == port):
             raise ValueError(
@@ -163,8 +168,6 @@ def _rpc_port_arg(extra_args: List[str], port: int) -> bool:
                 f"would listen on {value!r} while the manager waits on {port}. "
                 "Set the port (server.port) instead, or make them the same."
             )
-        found = True
-    return found
 
 
 def _is_loopback_literal(name: str) -> bool:
@@ -303,9 +306,10 @@ class CarlaServerManager:
                 after launching it.  Defaults to 120 s (UE5 can be slow
                 on first boot).
             extra_args: Additional CLI arguments passed to ``CarlaUnreal.sh``.
-                A ``-carla-rpc-port=`` among them must name *port*: one that
-                names another makes :meth:`start` raise ``ValueError``
-                rather than wait for a server on the wrong port.
+                A ``-carla-rpc-port=`` among them (in any case, or as
+                ``--carla-rpc-port=``) must name *port*: one that names
+                another makes :meth:`start` raise ``ValueError`` rather than
+                wait for a server on the wrong port.
             reuse_if_running: When ``True`` (default), :meth:`start` skips
                 launching a new process if a CARLA server is already
                 reachable on *host*:*port*.  :meth:`stop` is also a no-op
@@ -402,7 +406,7 @@ class CarlaServerManager:
 
         # Refused before anything is launched: a server told to listen
         # elsewhere would never answer where it is waited for.
-        rpc_port_set = _rpc_port_arg(self.extra_args, self.port)
+        _check_rpc_port_args(self.extra_args, self.port)
         exe_path = self.executable()
         if exe_path is None:
             raise RuntimeError(
@@ -417,9 +421,13 @@ class CarlaServerManager:
         self._launcher = exe_path
 
         cmd = [str(exe_path)] + self.extra_args
-        # The server listens where the client will look for it.
-        if not rpc_port_set:
-            cmd.append(f"{_RPC_PORT_ARG}{self.port}")
+        # The server listens where the client will look for it.  Spelled
+        # exactly so, even when extra_args names the same port otherwise
+        # (-CARLA-RPC-PORT=, a leading zero): it is the marker the SLURM
+        # cleanup finds this server's processes by (slurm.ports, slurm.scripts).
+        rpc_port_arg = f"{_RPC_PORT_ARG}{self.port}"
+        if rpc_port_arg not in self.extra_args:
+            cmd.append(rpc_port_arg)
         # Without a display UE crashes opening its window; it renders off-screen then.
         headless = not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         if headless and "-RenderOffScreen" not in self.extra_args:

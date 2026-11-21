@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Local environment (.env.example is the template)
+.env
+
 # Artifacts
 *.xodr
 # Generated with roadgen, which CI does not have -- see its generate.py.

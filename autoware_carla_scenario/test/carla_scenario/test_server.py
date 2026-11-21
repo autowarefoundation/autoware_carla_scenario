@@ -159,10 +159,21 @@ def test_a_launched_server_listens_on_the_configured_port(
     # A -carla-rpc-port= that names the server's port is passed on as it is.
     same = [f"-carla-rpc-port={free_port}"]
     assert _launched(monkeypatch, tmp_path, free_port, same) == same
+    # Spelled otherwise, it is followed by the exact spelling, the marker the
+    # SLURM cleanup finds the server's processes by.
+    upper = [f"-CARLA-RPC-PORT=0{free_port}"]
+    assert _launched(monkeypatch, tmp_path, free_port, upper) == upper + same
 
 
 @pytest.mark.parametrize(
-    "arg", ["-carla-rpc-port=3000", "-carla-rpc-port=", "-carla-rpc-port=2x"]
+    "arg",
+    [
+        "-carla-rpc-port=3000",
+        "-carla-rpc-port=",
+        "-carla-rpc-port=2x",
+        "-CARLA-RPC-PORT=3000",
+        "--carla-rpc-port=3000",
+    ],
 )
 def test_a_carla_rpc_port_other_than_the_port_is_refused_before_launching(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int, arg: str
@@ -474,23 +485,30 @@ def test_the_working_directorys_dotenv_is_loaded(tmp_path: Path) -> None:
     import subprocess
     import sys
 
-    (tmp_path / ".env").write_text(
+    run_root = tmp_path / "run"
+    run_dir = run_root / "sub" / "dir"
+    run_dir.mkdir(parents=True)
+    (run_root / ".env").write_text(
         "ACS_DOTENV_FROM_CWD=loaded\nACS_DOTENV_SET=from-file\n"
     )
-    run_dir = tmp_path / "sub" / "dir"
-    run_dir.mkdir(parents=True)
+    # A script file, not `python -c`: python-dotenv searches from the working
+    # directory anyway when __main__ has no __file__, which would hide the
+    # search from the package's own directory this guards against.
+    probe = tmp_path / "probe" / "probe.py"
+    probe.parent.mkdir()
+    probe.write_text(
+        "import os\n"
+        "import autoware_carla_scenario.server\n"
+        "print(os.environ.get('ACS_DOTENV_FROM_CWD'), os.environ['ACS_DOTENV_SET'])\n"
+    )
     env = {
         k: v
         for k, v in os.environ.items()
         if k not in ("ACS_DOTENV_FROM_CWD", "PYTHON_DOTENV_DISABLED")
     }
     env["ACS_DOTENV_SET"] = "from-env"
-    code = (
-        "import os, autoware_carla_scenario.server; "
-        "print(os.environ.get('ACS_DOTENV_FROM_CWD'), os.environ['ACS_DOTENV_SET'])"
-    )
     out = subprocess.run(
-        [sys.executable, "-c", code],
+        [sys.executable, str(probe)],
         cwd=run_dir,
         env=env,
         capture_output=True,
