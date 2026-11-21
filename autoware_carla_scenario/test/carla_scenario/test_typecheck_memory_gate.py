@@ -47,7 +47,8 @@ def _no_earlier_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_need_grows_with_the_source() -> None:
-    # As measured: next to nothing, ~1.8 GB; the whole library, ~9.3 GB.
+    # A little above what was measured: next to nothing, 1.8 GB; the library
+    # check of 2.8 million characters, 9.3 GB.
     assert 1.8 * GB <= codon_bytes(3_000) <= 2.0 * GB
     assert 9.0 * GB <= codon_bytes(2_800_000) <= 10.0 * GB
 

@@ -5,6 +5,7 @@ None of these runs Codon: the toolchain is a directory laid out like one.
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -225,3 +226,202 @@ def test_a_bare_basename_falls_back_to_the_one_checked_file_of_that_name(
     (diagnostic,) = check._parse_output(f"config.py:{line} (1): error: bad\n", ws)
     assert diagnostic.path == "/user/my_pkg/config.py"
     assert diagnostic.line == 1
+
+
+def _shared_basename_workspace(tmp_path: Path) -> check._Workspace:
+    """The checked files of the audit's reproduction (#2288): ``a/util.py``
+    and ``b/util.py``, both with a function across their line 3, and the
+    ``odds.py`` that calls ``bad()`` of ``b/util.py``."""
+    sources = {
+        "acs_dupbase/a/util.py": "def good(x: int) -> int:\n    y = 1\n    return x\n",
+        "acs_dupbase/b/util.py": (
+            'def bad(x: int) -> int:\n    y = 1\n    return x + "oops"\n'
+        ),
+        "acs_dupbase/odds.py": "from .b.util import bad\n\n\ndef build():\n    bad(2)\n",
+    }
+    ws = check._Workspace(tmp_path, None)
+    for rel, source in sources.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(check.PRELUDE + source, encoding="utf-8")
+        ws.files[rel] = f"/user/{rel}"
+        ws.origins[rel] = list(range(1, source.count("\n") + 1))
+    return ws
+
+
+def test_the_realized_function_tells_files_of_one_basename_apart(
+    tmp_path: Path,
+) -> None:
+    # Codon names b/util.py "util.py", as it names a/util.py: the function
+    # the next frame realizes, bad(), is b/util.py's alone (#2288).
+    ws = _shared_basename_workspace(tmp_path)
+    p = check._PRELUDE_LINES
+    output = (
+        f"util.py:{p + 3} (12-22): error: unsupported operand type(s) for +: "
+        "'int' and 'str'\n"
+        f"├─ odds.py:{p + 5} (5-8): error: during the realization of bad(x: int)\n"
+        f"╰─ odds.py:{p + 4} (1-4): error: during the realization of build()\n"
+    )
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/acs_dupbase/b/util.py"
+    assert diagnostic.line == 3
+    assert diagnostic.message == "unsupported operand type(s) for +: 'int' and 'str'"
+    assert diagnostic.trace[0] == "during the realization of bad(x: int) [odds.py:5]"
+
+
+def test_a_method_realization_names_its_function(tmp_path: Path) -> None:
+    assert check._realized_name("during the realization of bad(x: int)") == "bad"
+    assert (
+        check._realized_name("during the realization of Foo.__init__:0(self: Foo)")
+        == "__init__"
+    )
+    assert check._realized_name("during the realization of f[T](x: T)") == "f"
+    assert check._realized_name("unsupported operand type(s)") is None
+
+
+def test_files_of_one_basename_nothing_tells_apart_are_all_named(
+    tmp_path: Path,
+) -> None:
+    # No frame encloses the error: rather than dropping it for the call
+    # site, the diagnostic names every checked util.py and its line (#2288).
+    ws = _shared_basename_workspace(tmp_path)
+    p = check._PRELUDE_LINES
+    (diagnostic,) = check._parse_output(f"util.py:{p + 2} (5): error: bad\n", ws)
+    assert diagnostic.path == "/user/acs_dupbase/a/util.py"
+    assert diagnostic.line == 2
+    assert diagnostic.column is None
+    assert diagnostic.message == (
+        "bad (Codon names the file util.py only, which more than one checked "
+        "file is called: this is one of /user/acs_dupbase/a/util.py:2, "
+        "/user/acs_dupbase/b/util.py:2)"
+    )
+
+
+def test_a_line_only_one_file_of_the_basename_has_is_that_files(
+    tmp_path: Path,
+) -> None:
+    ws = _shared_basename_workspace(tmp_path)
+    (tmp_path / "acs_dupbase/b/util.py").write_text(
+        check.PRELUDE + "def bad(x: int) -> int:\n    y = 1\n    z = 2\n    return x\n",
+        encoding="utf-8",
+    )
+    ws.origins["acs_dupbase/b/util.py"] = [1, 2, 3, 4]
+    p = check._PRELUDE_LINES
+    (diagnostic,) = check._parse_output(f"util.py:{p + 4} (5): error: bad\n", ws)
+    assert diagnostic.path == "/user/acs_dupbase/b/util.py"
+    assert diagnostic.line == 4
+    assert diagnostic.message == "bad"
+
+
+def test_an_ambiguous_frame_of_the_trace_names_every_candidate(
+    tmp_path: Path,
+) -> None:
+    ws = _shared_basename_workspace(tmp_path)
+    p = check._PRELUDE_LINES
+    output = (
+        f"odds.py:{p + 5} (5): error: bad\n"
+        f"╰─ util.py:{p + 2} (1): error: during the realization of h()\n"
+    )
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/acs_dupbase/odds.py"
+    assert diagnostic.trace == (
+        "during the realization of h() [one of /user/acs_dupbase/a/util.py:2, "
+        "/user/acs_dupbase/b/util.py:2]",
+    )
+
+
+def test_the_scenario_check_leaves_imports_only_python_runs_to_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon compiles the body of `if TYPE_CHECKING:` (a compile-time true
+    # there) and the `else` of `if not TYPE_CHECKING:`, nothing else of
+    # them: an import only Python runs needs no Codon model and is not
+    # compiled, though it must still find in Python what it imports (#2288).
+    package = tmp_path / "src" / "acs_tc2288"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "helper.py").write_text("X = 1\n", encoding="utf-8")
+    (package / "scn.py").write_text(
+        textwrap.dedent(
+            """\
+            from typing import TYPE_CHECKING
+
+            if TYPE_CHECKING:
+                import acs_tc2288_compiled
+            else:
+                import acs_tc2288_run_time
+            if not TYPE_CHECKING:
+                import acs_tc2288_run_time_too
+                from autoware_carla_scenario import AcsNoSuchName2288
+                from . import helper
+            else:
+                import acs_tc2288_compiled_too
+            """
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / "src"))
+    codon_path = tmp_path / "codon_path"
+    codon_path.mkdir()
+    tc = _fake_toolchain(tmp_path / "codon", "fake")
+    sources = check._collect(["acs_tc2288.scn"], tc, codon_path)
+    problems = {(d.line, d.message.split(" ")[0]) for d in sources.problems}
+    assert problems == {
+        (4, "acs_tc2288_compiled"),
+        (12, "acs_tc2288_compiled_too"),
+        (9, "autoware_carla_scenario"),
+    }
+    (missing,) = [d for d in sources.problems if d.line == 9]
+    assert "has no AcsNoSuchName2288 in Python" in missing.message
+    assert "acs_tc2288.helper" not in sources.modules
+
+
+def test_type_checking_branches_are_codons_and_pythons() -> None:
+    tree = ast.parse(
+        "if TYPE_CHECKING:\n    import a\nelse:\n    import b\n"
+        "if not TYPE_CHECKING:\n    import c\nelse:\n    import d\n"
+    )
+    check_time, run_time = check._type_checking_branches(tree)
+
+    def names(stmts: list[ast.stmt]) -> set[str]:
+        return {s.names[0].name for s in stmts if isinstance(s, ast.Import)}
+
+    assert names(check_time) == {"a", "d"}
+    assert names(run_time) == {"b", "c"}
+    assert {
+        n.names[0].name
+        for n in check._run_time_only_nodes(tree)
+        if isinstance(n, ast.Import)
+    } == {"b", "c"}
+
+
+_EXCLUDED_MODULE = "autoware_carla_scenario.wosac.pack"
+
+
+def test_the_library_check_refuses_an_excluded_module_before_any_codon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Compiling it would only fail and advise excluding it (#2288).
+    monkeypatch.setattr(check, "find_supported_codon", _no_lookup)
+    result = check.typecheck_library([_EXCLUDED_MODULE, "autoware_carla_scenario.nope"])
+    assert not result.ok
+    assert result.skipped is None
+    assert [d.message for d in result.diagnostics] == [
+        "autoware_carla_scenario.nope is not a module of autoware_carla_scenario "
+        "the check can compile",
+        f"{_EXCLUDED_MODULE} is EXCLUDED in typecheck/library.py: "
+        f"{check.EXCLUDED[_EXCLUDED_MODULE]}",
+    ]
+
+
+def test_scenario_check_library_fails_on_an_excluded_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.typecheck import cli
+
+    tc = _fake_toolchain(tmp_path / "codon", "fake")
+    monkeypatch.setattr(cli, "find_supported_codon", lambda: tc)
+    monkeypatch.setattr(check, "_compile", _no_lookup)
+    assert cli.main(["--library", _EXCLUDED_MODULE]) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("[FAILED] ")
+    assert f"{_EXCLUDED_MODULE} is EXCLUDED in typecheck/library.py" in out

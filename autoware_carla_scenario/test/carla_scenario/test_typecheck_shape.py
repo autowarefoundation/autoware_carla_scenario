@@ -145,6 +145,33 @@ def test_another_key_or_order_is_another_shape() -> None:
     assert _shape(**reordered) != _shape(**_CASE)
 
 
+@dataclasses.dataclass
+class _Leg:
+    speed: float = 1.0
+
+
+@dataclasses.dataclass
+class _LegsConfig:
+    legs: dict[str, _Leg] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.legs = {
+            k: _Leg(**v) if isinstance(v, dict) else v for k, v in self.legs.items()
+        }
+
+
+def test_another_key_of_a_mapping_is_another_shape() -> None:
+    # A reused verdict names the config paths of the case it was made for:
+    # `scenario.legs['north']` must not be another case's error (#2288).
+    def driver(legs: dict[str, Any]) -> Any:
+        return render_driver(_Scenario, _LegsConfig, {"legs": legs})
+
+    north = driver({"north": {"speed": 2.0}})
+    assert north.shape != driver({"south": {"speed": 2.0}}).shape
+    assert north.shape == driver({"north": {"speed": 7.5}}).shape
+    assert "scenario.legs['north'].speed" in north.config_lines.values()
+
+
 def test_the_case_names_its_values() -> None:
     driver = render_driver(_Scenario, _Config, {"timeout_seconds": 5, "label": "a"})
     assert driver.case == {"timeout_seconds": "5", "label": "'a'"}

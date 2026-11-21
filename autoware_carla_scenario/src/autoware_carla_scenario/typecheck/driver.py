@@ -29,7 +29,8 @@ Codon types the program statically, so the values of a sweep's cases do not
 change the verdict, only their types do: :attr:`Driver.shape` is the program
 with each value replaced by its type, and the check's key
 (:func:`~.check._cache_key`), so a sweep compiles once per shape of its
-config, not once per case.
+config, not once per case.  A mapping's keys stay as written: they are in the
+config paths an error names (#2288).
 
 After that, the driver calls the function appended to each of the scenario's
 own modules (:func:`render_module_checks`), which calls every function and
@@ -213,8 +214,16 @@ def _render(
         ):
             return _render_dataclass(hint, value, imports, actual, path)
         key_hint, value_hint = (args + (Any, Any))[:2] if origin is dict else (Any, Any)
+
+        def key(k: Any) -> str:
+            rendered = _render(k, key_hint, imports)
+            # A key is in the config path of its value (`scenario.legs['north']`)
+            # that an error names, a reused verdict's too: a shape keeps it
+            # as written, so cases whose keys differ do not share one (#2288).
+            return f"{rendered}{k!r}" if imports.shape else rendered
+
         items = ", ".join(
-            f"{_render(k, key_hint, imports)}: "
+            f"{key(k)}: "
             f"{_render(v, value_hint, imports, _at(actual, k), f'{path}[{k!r}]')}"
             for k, v in value.items()
         )
