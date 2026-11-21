@@ -1470,6 +1470,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cut-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cut-in
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pedestrian-dart-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pedestrian Dart-out
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adversity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adversity
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3373,6 +3406,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#cut-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cut-in
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pedestrian-dart-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pedestrian Dart-out
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adversity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adversity
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4752,7 +4818,7 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>├── hils/                    # Ego driven by ECUs under test (ego.entity: hils)
 <a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>├── traffic_manager/
 <a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>│   └── default.yaml         # CARLA Traffic Manager settings
-<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>├── traffic/                 # Traffic backend: traffic_manager, sumo, none
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>├── traffic/                 # Traffic backend: traffic_manager, sumo, hybrid, none
 <a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>├── launcher/                # Who runs a batch's cases: local, slurm
 <a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>├── hydra/sweeper/
 <a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>│   └── lanelet_constraint.yaml
@@ -4830,7 +4896,7 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <tr>
 <td><code>traffic</code></td>
 <td><code>traffic_manager</code></td>
-<td>Traffic backend: <code>traffic_manager</code>, <code>sumo</code> or <code>none</code> (<a href="../traffic_backends/">Traffic Backends</a>)</td>
+<td>Traffic backend: <code>traffic_manager</code>, <code>sumo</code>, <code>hybrid</code> or <code>none</code> (<a href="../traffic_backends/">Traffic Backends</a>)</td>
 </tr>
 <tr>
 <td><code>scenario</code></td>
@@ -4964,10 +5030,34 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td>Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians)</td>
 </tr>
 <tr>
+<td><code>ego.goal_lanelet_id</code></td>
+<td>int | null</td>
+<td><code>null</code></td>
+<td>Lanelet the ego is routed to; required for <code>ego.entity: autoware</code>, which plans its route to it (a scenario may name it in <code>setup()</code> instead). The other entities read no goal</td>
+</tr>
+<tr>
 <td><code>ego.goal_s</code></td>
 <td>float</td>
 <td><code>0.0</code></td>
 <td>Longitudinal offset along the goal lanelet (<code>ego.goal_lanelet_id</code>) centerline (meters)</td>
+</tr>
+<tr>
+<td><code>ego.waypoint_lanelet_ids</code></td>
+<td>list[int]</td>
+<td><code>[]</code></td>
+<td>Lanelets the route must pass through, in order, on the way to the goal; empty leaves the way there to the planner (for Autoware, the shortest one)</td>
+</tr>
+<tr>
+<td><code>ego.entity</code></td>
+<td>str</td>
+<td><code>autopilot</code></td>
+<td>Which entity drives the ego: <code>autopilot</code> (CARLA's TrafficManager), <code>autoware</code> (<a href="../autoware/">Autoware</a>), <code>carla_driver</code> (<a href="../driver_interface/">Driver Interface</a>), <code>ros2</code> (<a href="../ros2/">ROS 2</a>) or <code>hils</code> (<a href="../hils/">HILS</a>)</td>
+</tr>
+<tr>
+<td><code>ego.native_autoware_interface</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td><code>ego.entity: autoware</code> only: spawn the ego for CARLA 1.0's native Autoware interface (<code>ros2_autoware_control=true</code>, role name <code>ego</code>), so the server applies Autoware's control itself (<a href="../autoware/#carlas-native-autoware-interface">Autoware</a>)</td>
 </tr>
 </tbody>
 </table>
@@ -5816,6 +5906,305 @@ finite and at least 0, got nan</code>).</p>
 - Reads the stop lines off the map (none is configured): the spawn lanelet's own, or else those of the first step of its successors, up to three steps on, that has any; setup fails if there is none
 - Registers a latched TemporaryStopCondition over those stop lines
 - Pass condition: ego stays within <code>s_margin</code> of a stop line at speed below <code>speed_threshold</code> for at least <code>stop_duration</code> seconds, then accelerates above <code>restart_speed_kmh</code></p>
+<h4 id="cut-in">Cut-in<a class="headerlink" href="#cut-in" title="Permanent link">&para;</a></h4>
+<p>Tests that the ego copes with a vehicle that changes into its lane just ahead
+of it. NPC1 starts in the lane beside the ego's, on the <code>side</code> it cuts in
+from, and changes lanes towards the ego after <code>cut_in_after_seconds</code>. Run
+unexpanded, the ego spawns on lanelet 20 (<code>left</code>) or 19 (<code>right</code>) of the
+Nishi-Shinjuku map; the config's <code>sweep:</code> expands one case per lane with a lane
+on that side (see <a href="../scenarios/cut_in/">Cut-in</a>, which also covers the lanes
+ahead and placing NPC1 by the measured gap).</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+<th><code>side</code></th>
+<th><code>npc_lanelet_id</code></th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cut_in/left</code></td>
+<td><code>left</code></td>
+<td><code>19</code></td>
+<td>NPC1 cuts in from the ego's left</td>
+</tr>
+<tr>
+<td><code>cut_in/right</code></td>
+<td><code>right</code></td>
+<td><code>20</code></td>
+<td>NPC1 cuts in from the ego's right</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Scenario-specific parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Shipped</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scenario.side</code></td>
+<td>str</td>
+<td><code>"left"</code></td>
+<td>per config (above)</td>
+<td>The side of the ego NPC1 comes from: <code>"left"</code> or <code>"right"</code></td>
+</tr>
+<tr>
+<td><code>scenario.npc_lanelet_id</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td>per config (above)</td>
+<td>The lanelet beside the ego's spawn lanelet NPC1 starts on; a sweep binds it to the lane beside the pick</td>
+</tr>
+<tr>
+<td><code>scenario.npc_ahead_m</code></td>
+<td>float</td>
+<td><code>10.0</code></td>
+<td><code>10.0</code></td>
+<td>How far ahead of the ego NPC1 starts, along its lanelet (m)</td>
+</tr>
+<tr>
+<td><code>scenario.npc_gap_m</code></td>
+<td>float | null</td>
+<td>null</td>
+<td>—</td>
+<td>The starting gap as <code>vehicle_ahead_gap_m</code> measures it (bumper to bumper, m); replaces <code>npc_ahead_m</code> when set</td>
+</tr>
+<tr>
+<td><code>scenario.npc_vehicle_type</code></td>
+<td>str</td>
+<td><code>"vehicle.mini.cooper"</code></td>
+<td><code>"vehicle.mini.cooper"</code></td>
+<td>NPC1's blueprint</td>
+</tr>
+<tr>
+<td><code>scenario.npc_initial_speed_kmh</code></td>
+<td>float</td>
+<td><code>30.0</code></td>
+<td><code>30.0</code></td>
+<td>NPC1's starting speed (km/h)</td>
+</tr>
+<tr>
+<td><code>scenario.cut_in_after_seconds</code></td>
+<td>float</td>
+<td><code>2.0</code></td>
+<td><code>2.0</code></td>
+<td>NPC1 changes into the ego's lane this long after the start</td>
+</tr>
+<tr>
+<td><code>scenario.hold_seconds</code></td>
+<td>float</td>
+<td><code>3.0</code></td>
+<td><code>3.0</code></td>
+<td>The run passes once NPC1 has been on the ego's lane this long without a collision</td>
+</tr>
+<tr>
+<td><code>scenario.timeout_seconds</code></td>
+<td>float</td>
+<td><code>20.0</code></td>
+<td><code>20.0</code></td>
+<td>Maximum scenario duration</td>
+</tr>
+<tr>
+<td><code>scenario.fail_on_leaving_lane</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td><code>true</code></td>
+<td>Fail when the ego leaves the lanes ahead of it</td>
+</tr>
+<tr>
+<td><code>scenario.lanes_ahead_m</code></td>
+<td>float</td>
+<td><code>1000.0</code></td>
+<td><code>1000.0</code></td>
+<td>How far the lanes ahead reach from the start of the spawn lanelet (m)</td>
+</tr>
+<tr>
+<td><code>scenario.leaving_lane_seconds</code></td>
+<td>float</td>
+<td><code>0.2</code></td>
+<td><code>0.2</code></td>
+<td>How long the ego has to be off those lanes before the run fails</td>
+</tr>
+<tr>
+<td><code>scenario.fail_on_any_collision</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td><code>true</code></td>
+<td>Fail on any collision of the ego; <code>false</code> fails only on a collision with NPC1</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Behavior:</strong>
+- Sets all traffic lights to GREEN
+- Registers a lane change of NPC1 towards the ego after <code>cut_in_after_seconds</code>
+- Pass condition: NPC1 has been on the ego's lane for <code>hold_seconds</code>, with no collision
+- Fail conditions: the ego collides (with anything, or only with NPC1 when <code>fail_on_any_collision</code> is <code>false</code>), leaves the lanes ahead of it, or the timeout is reached</p>
+<h4 id="pedestrian-dart-out">Pedestrian Dart-out<a class="headerlink" href="#pedestrian-dart-out" title="Permanent link">&para;</a></h4>
+<p>Tests that the ego stops for, or avoids, a pedestrian who runs into the road
+from the kerb. Run unexpanded, the ego spawns on lanelet 19 of the
+Nishi-Shinjuku map; the config's <code>sweep:</code> expands one case per lane with no
+lane on its kerb side (see <a href="../scenarios/pedestrian_dart_out/">Pedestrian Dart-out</a>,
+which also covers the pedestrian who turns back).</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pedestrian_dart_out/pedestrian_dart_out</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Scenario-specific parameters:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Shipped</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scenario.pedestrian_ahead_m</code></td>
+<td>float</td>
+<td><code>35.0</code></td>
+<td><code>35.0</code></td>
+<td>How far ahead of the ego's spawn, along its lanelet, the pedestrian waits at the kerb (m)</td>
+</tr>
+<tr>
+<td><code>scenario.pedestrian_offset_m</code></td>
+<td>float</td>
+<td><code>3.0</code></td>
+<td><code>3.0</code></td>
+<td>The pedestrian's distance from the lane's centreline, on its kerb side (m; the sign is ignored; not 0)</td>
+</tr>
+<tr>
+<td><code>scenario.trigger_distance_m</code></td>
+<td>float</td>
+<td><code>20.0</code></td>
+<td><code>20.0</code></td>
+<td>The pedestrian steps out once the ego is this close to it (m)</td>
+</tr>
+<tr>
+<td><code>scenario.walk_speed_ms</code></td>
+<td>float</td>
+<td><code>2.0</code></td>
+<td><code>2.0</code></td>
+<td>Walking speed into the road (m/s)</td>
+</tr>
+<tr>
+<td><code>scenario.turn_back_ttc_s</code></td>
+<td>float | null</td>
+<td>null</td>
+<td>—</td>
+<td>Turn back to the kerb when a vehicle's time to collision with the pedestrian is at most this (s); <code>null</code>: not by TTC</td>
+</tr>
+<tr>
+<td><code>scenario.turn_back_distance_m</code></td>
+<td>float | null</td>
+<td>null</td>
+<td>—</td>
+<td>Turn back when a vehicle is at most this far from the pedestrian along the road (m); <code>null</code>: not by distance</td>
+</tr>
+<tr>
+<td><code>scenario.turn_back_within_m</code></td>
+<td>float</td>
+<td><code>1.0</code></td>
+<td><code>1.0</code></td>
+<td>How far onto the road, from the kerb, the pedestrian may be and still turn back (m)</td>
+</tr>
+<tr>
+<td><code>scenario.walker_type</code></td>
+<td>str</td>
+<td><code>"walker.pedestrian.0015"</code></td>
+<td><code>"walker.pedestrian.0015"</code></td>
+<td>The pedestrian's blueprint</td>
+</tr>
+<tr>
+<td><code>scenario.pass_beyond_m</code></td>
+<td>float</td>
+<td><code>10.0</code></td>
+<td><code>10.0</code></td>
+<td>The run passes once the ego is this far past the pedestrian's crossing line, on its own lanelet (m)</td>
+</tr>
+<tr>
+<td><code>scenario.timeout_seconds</code></td>
+<td>float</td>
+<td><code>25.0</code></td>
+<td><code>25.0</code></td>
+<td>Maximum scenario duration</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Behavior:</strong>
+- Sets all traffic lights to GREEN
+- Registers the pedestrian's walk across the lane, triggered when the ego comes within <code>trigger_distance_m</code>
+- Pass condition: the ego comes within 3 m of the point <code>pass_beyond_m</code> past the crossing
+- Fail conditions: the ego hits the pedestrian, or the timeout is reached</p>
+<h4 id="adversity">Adversity<a class="headerlink" href="#adversity" title="Permanent link">&para;</a></h4>
+<p>Stages one adversarial action of an NPC or a pedestrian against the ego, picked
+by <code>scenario.kind</code>. Each case and its full parameter table are in
+<a href="../scenarios/adversity/">Adversities</a>; the actions themselves are in
+<a href="../adversity/">Adversarial Actions and NADE</a>.</p>
+<p>Unlike the other examples these are concrete cases on Town10HD_Opt: run them
+with <code>map=town10hd_opt</code> (<code>uv run scenario scenario=adversity/brake_check
+map=town10hd_opt</code>). On the default map their lanelet ids name other lanelets
+or none.</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+<th><code>kind</code></th>
+<th>The adversity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>adversity/brake_check</code></td>
+<td><code>brake_check</code></td>
+<td>NPC1, ahead of the ego, brakes hard to a stop</td>
+</tr>
+<tr>
+<td><code>adversity/ignore_leader</code></td>
+<td><code>ignore_leader</code></td>
+<td>NPC1, behind a slow ego, speeds up as if the ego were not there</td>
+</tr>
+<tr>
+<td><code>adversity/cut_in</code></td>
+<td><code>cut_in</code></td>
+<td>NPC1 changes in front of the ego from the lane beside</td>
+</tr>
+<tr>
+<td><code>adversity/traffic_rule</code></td>
+<td><code>traffic_rule</code></td>
+<td>NPC1 drives on through its red light</td>
+</tr>
+<tr>
+<td><code>adversity/jaywalking</code></td>
+<td><code>jaywalking</code></td>
+<td>A pedestrian walks straight across the road, off any crosswalk</td>
+</tr>
+<tr>
+<td><code>adversity/nade</code></td>
+<td><code>nade</code></td>
+<td>Background vehicles stage the adversities, sampled by NADE</td>
+</tr>
+</tbody>
+</table>
 <h3 id="scenario-evaluation">Scenario Evaluation<a class="headerlink" href="#scenario-evaluation" title="Permanent link">&para;</a></h3>
 <p>Each scenario registers <strong>pass conditions</strong> and <strong>fail conditions</strong>. The tick loop evaluates them every frame:</p>
 <ul>
@@ -7091,7 +7480,7 @@ setting each value.</p>
 <h3 id="unknown-scenario-name-error">"Unknown scenario name" error<a class="headerlink" href="#unknown-scenario-name-error" title="Permanent link">&para;</a></h3>
 <p><strong>Cause</strong>: The <code>scenario.name</code> field in the YAML does not match any registered scenario class.</p>
 <p><strong>Solution</strong>:
-- Supported scenario names: <code>intersection_passing</code>, <code>lane_change</code>, <code>traffic_light_compliance</code>, <code>temporary_stop</code>
+- Supported scenario names: <code>adversity</code>, <code>cut_in</code>, <code>intersection_passing</code>, <code>lane_change</code>, <code>pedestrian_dart_out</code>, <code>temporary_stop</code>, <code>traffic_light_compliance</code>
 - Check the <code>name</code> field in your scenario YAML config</p>
 <hr />
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
@@ -7121,7 +7510,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 20:53:56 UTC"><span class="timeago" datetime="2026-11-21T20:53:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 20:53:56 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 22:35:52 UTC"><span class="timeago" datetime="2026-11-21T22:35:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 22:35:52 UTC">2026-11-21</span>
   </span>
 
     
