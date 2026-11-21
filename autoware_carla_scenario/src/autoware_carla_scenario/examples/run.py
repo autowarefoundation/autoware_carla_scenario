@@ -4353,6 +4353,12 @@ def _hydra_main(cfg: DictConfig) -> None:
         _multirun_failed.append(case)
 
 
+#: The ``_target_`` of Hydra's basic sweeper and launcher, which run every
+#: case in this process (:func:`_record_basic_sweeper_error`).
+_BASIC_SWEEPER_TARGET = "hydra._internal.core_plugins.basic_sweeper.BasicSweeper"
+_BASIC_LAUNCHER_TARGET = "hydra._internal.core_plugins.basic_launcher.BasicLauncher"
+
+
 def _record_basic_sweeper_error(exc: BaseException) -> bool:
     """Record *exc*, what a ``--multirun`` case of Hydra's basic sweeper
     raised, as that case's error, with its traceback logged, and return
@@ -4364,13 +4370,26 @@ def _record_basic_sweeper_error(exc: BaseException) -> bool:
     failed (errored) instead, the sweep goes on, and :func:`main` exits 1
     with the summary naming it (#2294).  A single run raises as it always
     has; a case the lanelet sweeper forked (``SWEEPER_OWNS_RETRIES_ENV``)
-    too, since the sweeper reads its exit status and retries it.
+    too, since the sweeper reads its exit status and retries it.  So does a
+    case of any other sweeper or launcher (an installed plugin's: Optuna,
+    joblib, submitit): one may run it in another process, where what is
+    recorded here never reaches :func:`main`, and only the raise reports it.
     """
     from ..sweeper.isolation import (  # noqa: PLC0415
         SWEEPER_OWNS_RETRIES_ENV,
     )
 
-    if not _is_multirun() or os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
+    if (
+        not HydraConfig.initialized()
+        or not _is_multirun()
+        or os.environ.get(SWEEPER_OWNS_RETRIES_ENV)
+    ):
+        return False
+    hydra_cfg = HydraConfig.get()
+    if (
+        hydra_cfg.sweeper.get("_target_") != _BASIC_SWEEPER_TARGET
+        or hydra_cfg.launcher.get("_target_") != _BASIC_LAUNCHER_TARGET
+    ):
         return False
     case = " ".join(_task_overrides())
     logger.error(
@@ -4688,22 +4707,33 @@ def _batch_output_dir_refusal(output_dir: Path, resume_into: Path | None) -> str
 def _warn_if_sweep_not_expanded(scenario: str | None, overrides: list[str]) -> None:
     """Warn when *scenario* (the default one when ``None``), composed with
     the command line's *overrides*, has a sweep that Hydra's basic sweeper
-    does not expand: a ``--multirun`` without ``hydra/sweeper=`` runs one job
-    per combination of the command line's own sweeps, not the scenario's
-    cases (#2294), where the same scenario given as a glob runs every case.
+    does not expand, and the command line sweeps nothing of its own: such a
+    ``--multirun`` without ``hydra/sweeper=`` runs one job, the scenario as
+    configured, not its cases (#2294), where the same scenario given as a
+    glob runs every case.
 
-    Composed without the overrides Hydra sweeps (``a=1,2``) or reads itself
-    (``hydra...``, flags); nothing is said when it does not compose: the run
-    reports that itself.
+    A command line that sweeps a value itself (``seed=1,2``,
+    ``'seed=range(0,32)'``: the rollouts of one scenario, docs/wosac.md) asks
+    for those jobs, of the scenario as configured, and is not warned.
+    Composed without what Hydra reads itself (``hydra...``, flags); nothing
+    is said when it does not compose: the run reports that itself.
     """
+    from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+        OverridesParser,
+    )
+
     plain = [
         arg
         for arg in overrides
-        if not arg.startswith("-")
-        and not arg.lstrip("+~").startswith("hydra")
-        and "," not in arg.partition("=")[2]
-        and not arg.partition("=")[2].startswith(("glob(", "range(", "choice("))
+        if not arg.startswith("-") and not arg.lstrip("+~").startswith("hydra")
     ]
+    try:
+        parsed = OverridesParser.create().parse_overrides(plain)
+    except Exception:  # noqa: BLE001 -- the run reports it
+        logger.debug("Cannot parse the command line's overrides", exc_info=True)
+        return
+    if any(override.is_sweep_override() for override in parsed):
+        return
     try:
         GlobalHydra.instance().clear()
         with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
@@ -4722,8 +4752,8 @@ def _warn_if_sweep_not_expanded(scenario: str | None, overrides: list[str]) -> N
     if swept:
         logger.warning(
             "%s has a sweep (sweep.constraints, sweep.route or sweep.odd_sample) "
-            "that Hydra's basic sweeper does not expand: --multirun runs one job "
-            "per combination of the command line's overrides; add "
+            "that Hydra's basic sweeper does not expand: --multirun runs one job, "
+            "the scenario as configured; add "
             "hydra/sweeper=lanelet_constraint, or name the scenario with a glob "
             "(a batch runs every case of each scenario's sweep with "
             "--multirun), to run every case of it",

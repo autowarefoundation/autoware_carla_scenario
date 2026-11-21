@@ -416,8 +416,12 @@ def test_a_batch_asking_for_no_job_is_answered_by_hydra(
 @pytest.mark.parametrize(
     ("argv", "warned"),
     [
-        (["--multirun", "scenario=lane_change/left", "seed=1,2"], True),
+        # The command line's own sweep: the scenario as configured, once per
+        # seed (docs/wosac.md), as asked.
+        (["--multirun", "scenario=lane_change/left", "seed=1,2"], False),
+        (["--multirun", "scenario=lane_change/left", "seed=range(0,3)"], False),
         (["--multirun", "scenario=lane_change/left"], True),
+        (["--multirun", "scenario=lane_change/left", "seed=3"], True),
         (
             [
                 "--multirun",

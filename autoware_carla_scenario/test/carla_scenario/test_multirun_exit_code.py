@@ -704,6 +704,62 @@ def test_basic_sweeper_runs_past_a_case_that_raised_and_names_it(
     assert "+verdict=pass" not in summary
 
 
+@pytest.mark.parametrize(
+    ("sweeper", "launcher", "recorded"),
+    [
+        (
+            "hydra._internal.core_plugins.basic_sweeper.BasicSweeper",
+            "hydra._internal.core_plugins.basic_launcher.BasicLauncher",
+            True,
+        ),
+        (
+            "hydra_plugins.hydra_optuna_sweeper.optuna_sweeper.OptunaSweeper",
+            "hydra._internal.core_plugins.basic_launcher.BasicLauncher",
+            False,
+        ),
+        (
+            "hydra._internal.core_plugins.basic_sweeper.BasicSweeper",
+            "hydra_plugins.hydra_joblib_launcher.joblib_launcher.JoblibLauncher",
+            False,
+        ),
+    ],
+)
+def test_only_hydras_basic_sweep_records_a_raise(
+    monkeypatch: pytest.MonkeyPatch, sweeper: str, launcher: str, recorded: bool
+) -> None:
+    """Another sweeper or launcher may run the case in another process, where
+    what is recorded never reaches main(): the case raises, as before."""
+    from hydra.types import RunMode
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+
+    hydra_cfg = OmegaConf.create(
+        {
+            "mode": RunMode.MULTIRUN,
+            "sweeper": {"_target_": sweeper},
+            "launcher": {"_target_": launcher},
+            "overrides": {"task": ["+verdict=raise"]},
+        }
+    )
+
+    class FakeHydraConfig:
+        @staticmethod
+        def initialized() -> bool:
+            return True
+
+        @staticmethod
+        def get() -> Any:
+            return hydra_cfg
+
+    monkeypatch.setattr(run, "HydraConfig", FakeHydraConfig)
+    monkeypatch.delenv("AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES", raising=False)
+    monkeypatch.setattr(run, "_multirun_failed", [])
+    monkeypatch.setattr(run, "_multirun_ran", [])
+    assert run._record_basic_sweeper_error(RuntimeError("boom")) is recorded
+    assert bool(run._multirun_failed) is recorded
+
+
 def test_a_single_run_that_raises_still_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

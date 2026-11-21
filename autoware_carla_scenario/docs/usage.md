@@ -375,9 +375,12 @@ Only this sweeper (or a glob batch with `--multirun`, see
 [Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
 expands a scenario's `sweep:`. A `--multirun` without `hydra/sweeper=` runs
 Hydra's basic sweeper, which runs one job per combination of the command
-line's own comma-separated values and ignores the scenario's `sweep:`; it
-warns when the scenario has one, pointing to
-`hydra/sweeper=lanelet_constraint` or a glob.
+line's own comma-separated values and ignores the scenario's `sweep:`.
+When the command line sweeps nothing of its own (one job, the scenario as
+configured) and the scenario has a `sweep:`, it warns, pointing to
+`hydra/sweeper=lanelet_constraint` or a glob; a command line that sweeps a
+value itself (`seed=1,2`, `'seed=range(0,32)'`, the rollouts of
+[WOSAC](wosac.md)) runs those jobs of the scenario as configured, unwarned.
 
 `sweep.constraints` sweeps **one** parameter: it holds a single target key
 (such as `ego.spawn_lanelet_id`) with its list of constraints, and every other
