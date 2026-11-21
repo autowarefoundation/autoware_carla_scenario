@@ -83,8 +83,10 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     return fake
 
 
-def _layout(tmp_path: Path, cases: int = 1) -> BatchLayout:
-    layout = BatchLayout(tmp_path / "batch")
+def _layout(
+    tmp_path: Path, cases: int = 1, directory: Path | None = None
+) -> BatchLayout:
+    layout = BatchLayout(tmp_path / "batch" if directory is None else directory)
     write_json(
         layout.manifest,
         {
@@ -973,7 +975,8 @@ def test_an_outcome_a_resubmission_did_not_replace_is_stale(
 
     monkeypatch.setattr(collect_module, "resubmit_target", lambda *_a: _TARGET)
     monkeypatch.setattr(status_module, "squeue_states", lambda _job: {})
-    layout = _layout(tmp_path, cases=2)
+    # Where the viewer finds it: a batch session under outputs/.
+    layout = _layout(tmp_path, cases=2, directory=tmp_path / "outputs" / _DAY / _TIME)
     write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1]]})
     write_json(layout.task(0, 0), {"state": "done"})
     write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [[1]]})
@@ -989,6 +992,9 @@ def test_an_outcome_a_resubmission_did_not_replace_is_stale(
     first = layout.read_result(0)
     assert first is not None
     assert stale_reason(layout, 0, first) is None
+    # The results pages, before it is collected: a stale outcome is without
+    # one, saying why, never its old verdict (#2285).
+    _assert_results_pages(tmp_path, monkeypatch, layout, reason)
     assert unfinished_cases(layout) == ([1] if stale else [])
     assert collect(layout) == (1 if stale else 0)
     out = capsys.readouterr().out
@@ -1025,6 +1031,57 @@ def test_an_outcome_a_resubmission_did_not_replace_is_stale(
     assert "  1 with a result (1 passed, 0 errored), 1 without\n" in status
     assert "1 of those without have a stale result" in status
     assert status.split("\n")[2].endswith(": s#2")
+
+
+_DAY = "2026-11-07"
+_TIME = "12-00-00"
+
+
+def _assert_results_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layout: BatchLayout,
+    reason: str | None,
+) -> None:
+    """What ``ui.cases.batch_entries``, the session list and the session page
+    show of the two-case batch at *layout*, case 1's outcome stale for
+    *reason* if it is not ``None`` (#2285)."""
+    from fastapi.testclient import TestClient
+
+    from autoware_carla_scenario.ui import app as app_module
+    from autoware_carla_scenario.ui import cases, scanner, slurm_launch
+
+    found = cases.batch_entries(layout.batch_dir)
+    assert found is not None
+    entries, final = found
+    assert not final
+    assert [e["passed"] for e in entries] == [True, None if reason else True]
+    if reason is None:
+        assert not entries[1].get("pending")
+    else:
+        assert entries[1]["pending"] is True
+        assert entries[1]["message"] == f"Stale result: {reason}"
+
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(slurm_launch, "squeue_states", lambda _job: {})
+    scanner.clear_cache()
+    try:
+        client = TestClient(app_module.app, base_url="http://127.0.0.1")
+        index = client.get("/")
+        assert index.status_code == 200, index.text
+        page = client.get(f"/session/batch/{_DAY}/{_TIME}")
+        assert page.status_code == 200, page.text
+    finally:
+        scanner.clear_cache()
+    if reason is None:
+        assert "2/2 passed" in index.text
+        assert "All passed" in page.text
+        return
+    assert "1/2 passed" in index.text and "2/2 passed" not in index.text
+    assert "1 pending" in index.text
+    assert "All passed" not in page.text
+    assert "1 without a result" in page.text
 
 
 def test_a_stale_outcome_past_a_later_submission_that_left_the_case_alone(
