@@ -14,6 +14,7 @@ import io
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -460,6 +461,194 @@ def test_the_threat_numbers_are_the_required_accelerations_over_the_most(
     # CriMe's most a car can brake and steer: 11.5 and 8 m/s^2.
     assert values["crime_btn"] == pytest.approx(-values["crime_a_long_req_mps2"] / 11.5, abs=1e-3)
     assert values["crime_stn"] == pytest.approx(abs(values["crime_a_lat_req_mps2"]) / 8.0, abs=1e-3)
+
+
+OVERLAP_MEASURES = [
+    "crime_hw_m",
+    "crime_thw_s",
+    "crime_ttc_s",
+    "crime_a_long_req_mps2",
+    "crime_btn",
+    "crime_a_lat_req_mps2",
+    "crime_stn",
+]
+
+
+@pytest.mark.parametrize("centre_gap", [4.0, 2.0, 0.0], ids=["4m", "2m", "level"])
+def test_a_car_overlapping_the_ego_from_ahead_is_a_collision(
+    evaluator: Evaluator, centre_gap: float
+) -> None:
+    """#2290: CriMe read the negative headway of a car whose box overlaps the
+    ego's as one behind (TTC inf, ALongReq 0): the most critical frames as
+    the least.  Overlapping from ahead, it is touching: the gap is closed."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    lead = on_road(50 + centre_gap, 1.75, 5.0, 2)
+    values, errors = evaluator.evaluate(ego, [lead], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values == {
+        "crime_hw_m": 0.0,
+        "crime_thw_s": 0.0,
+        "crime_ttc_s": 0.0,
+        "crime_a_long_req_mps2": -math.inf,
+        "crime_btn": math.inf,
+        "crime_a_lat_req_mps2": math.inf,
+        "crime_stn": math.inf,
+    }
+
+
+def test_a_car_touching_the_ego_from_ahead_is_a_collision(evaluator: Evaluator) -> None:
+    """#2290: bumper to bumper (4.5 m long, 4.5 m apart) read as one behind."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    values, errors = evaluator.evaluate(ego, [on_road(54.5, 1.75, 5.0, 2)], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values["crime_hw_m"] == pytest.approx(0.0, abs=0.01)
+    assert values["crime_ttc_s"] == 0.0
+    assert values["crime_a_long_req_mps2"] == -math.inf
+    assert values["crime_btn"] == math.inf
+    # Just short of touching, closing at 10 m/s: about to.
+    near, errors = evaluator.evaluate(ego, [on_road(54.6, 1.75, 5.0, 2)], ["crime_ttc_s"])
+    assert errors == {}
+    assert 0.0 < near["crime_ttc_s"] <= 0.02
+
+
+def test_a_car_overlapping_the_ego_and_pulling_away(evaluator: Evaluator) -> None:
+    """#2290: an overlapping lead faster than the ego is touching, but the gap
+    opens: no contact to come, no braking needed."""
+    ego = on_road(50, 1.75, 5.0, 1)
+    values, errors = evaluator.evaluate(
+        ego,
+        [on_road(54, 1.75, 15.0, 2)],
+        ["crime_hw_m", "crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"],
+    )
+    assert errors == {}
+    assert values == {
+        "crime_hw_m": 0.0,
+        "crime_ttc_s": math.inf,
+        "crime_a_long_req_mps2": 0.0,
+        "crime_btn": 0.0,
+    }
+
+
+def test_a_car_overlapping_the_ego_from_ahead_and_aside_is_a_collision(
+    evaluator: Evaluator,
+) -> None:
+    """#2290: boxes overlapping by a corner, 1 m apart sideways."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    values, errors = evaluator.evaluate(ego, [on_road(52, 2.75, 5.0, 2)], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values["crime_hw_m"] == 0.0
+    assert values["crime_ttc_s"] == 0.0
+    assert values["crime_btn"] == math.inf
+
+
+@pytest.mark.parametrize(
+    ("ego_right", "other_distance", "other_right"),
+    [(1.75, 52.0, 3.7), (3.0, 51.0, 5.25), (3.3, 50.0, 5.25)],
+    ids=["straddling-the-line", "ego-changing-lanes", "level"],
+)
+def test_a_car_beside_the_ego_in_a_shared_lanelet_is_no_collision(
+    evaluator: Evaluator, ego_right: float, other_distance: float, other_right: float
+) -> None:
+    """#2290 review: CriMe takes a road user in the ego's lane by any lanelet
+    their boxes share, so a car beside the ego, its centre ahead and the
+    boxes apart sideways, has a negative headway too: no contact."""
+    ego = on_road(50, ego_right, 15.0, 1)
+    other = on_road(other_distance, other_right, 5.0, 2)
+    values, errors = evaluator.evaluate(ego, [other], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values == {
+        "crime_hw_m": math.inf,
+        "crime_thw_s": math.inf,
+        "crime_ttc_s": math.inf,
+        "crime_a_long_req_mps2": 0.0,
+        "crime_btn": 0.0,
+        "crime_a_lat_req_mps2": 0.0,
+        "crime_stn": 0.0,
+    }
+
+
+@pytest.mark.parametrize("centre_gap", [-2.0, -4.0, -20.0], ids=["overlap", "deep", "far"])
+def test_a_car_behind_the_ego_is_still_no_conflict(evaluator: Evaluator, centre_gap: float) -> None:
+    """#2290: only a road user whose centre is behind the ego's -- one hitting
+    it from behind too -- reads HW inf: no braking of the ego's avoids it."""
+    ego = on_road(50, 1.75, 5.0, 1)
+    follower = on_road(50 + centre_gap, 1.75, 15.0, 2)
+    values, errors = evaluator.evaluate(ego, [follower], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values == {
+        "crime_hw_m": math.inf,
+        "crime_thw_s": math.inf,
+        "crime_ttc_s": math.inf,
+        "crime_a_long_req_mps2": 0.0,
+        "crime_btn": 0.0,
+        "crime_a_lat_req_mps2": 0.0,
+        "crime_stn": 0.0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("reach_settings", "message"),
+    [
+        # The example the README and the docstring gave (#2290).
+        (
+            {"planning": {"size_grid": 0.3}},
+            "reach_settings['planning']['size_grid']: CommonRoad-Reach's 'planning' "
+            "section has no key 'size_grid'",
+        ),
+        (
+            {"reachable_set": {"size_gird": 0.3}},
+            "reach_settings['reachable_set']['size_gird']:",
+        ),
+        (
+            {"planing": {"steps_computation": 5}},
+            "reach_settings['planing']: CommonRoad-Reach's configuration has no section",
+        ),
+        (
+            {"config_omega": {}},
+            "reach_settings['config_omega']: CommonRoad-Reach's configuration has no section",
+        ),
+        (
+            {"vehicle": {"ego": 1.0}},
+            "reach_settings['vehicle']['ego']: vehicle.ego is a section",
+        ),
+        (
+            {"reachable_set": 0.3},
+            "reach_settings['reachable_set'] must be a mapping",
+        ),
+    ],
+)
+def test_reach_settings_refuse_what_reach_does_not_have(
+    reach_settings: dict[str, Any], message: str
+) -> None:
+    """#2290: a misspelled or misplaced key was set where nothing read it."""
+    with pytest.raises(ValueError, match=re.escape(message)):
+        Evaluator(str(MAP), EvaluatorSettings(reach_settings=reach_settings))
+
+
+def test_reach_settings_set_reach_configuration() -> None:
+    evaluator = Evaluator(
+        str(MAP), EvaluatorSettings(reach_settings={"reachable_set": {"size_grid": 0.5}})
+    )
+    assert evaluator._reach_base_config().reachable_set.size_grid == 0.5
+
+
+def test_the_worker_refuses_unknown_reach_settings_at_init() -> None:
+    """#2290: refused by init, not by every frame's Reach measures after it."""
+    requests = [
+        {
+            "op": "init",
+            "map": str(MAP),
+            "settings": {"reach_settings": {"planning": {"size_grid": 0.3}}},
+        },
+        {"op": "evaluate", "measures": ["reach_drivable_area_m2"], "ego": {}},
+    ]
+    stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert answers[0]["ok"] is False
+    assert answers[0]["error"].startswith("ValueError: reach_settings['planning']['size_grid']: ")
+    assert answers[1] == {"ok": False, "error": "evaluate before init"}
 
 
 def test_the_worst_case_time_to_react(evaluator: Evaluator) -> None:

@@ -543,6 +543,36 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
             {"planning": 1},
             "reach_settings['planning'] must be a mapping or None, got 1",
         ),
+        # #2290: what JSON cannot carry raised a bare TypeError as a worker
+        # started, and a name not a string is no section or key of Reach's.
+        (
+            "reach_settings",
+            {"reachable_set": {"size_grid": np.float32(0.3)}},
+            "reach_settings['reachable_set']['size_grid'] must be a JSON value "
+            f"(no NaN or infinity), got {np.float32(0.3)!r}",
+        ),
+        (
+            "reach_settings",
+            {"reachable_set": {"size_grid": math.nan}},
+            "reach_settings['reachable_set']['size_grid'] must be a JSON value "
+            "(no NaN or infinity), got nan",
+        ),
+        (
+            "reach_settings",
+            {"reachable_set": {"size_grid": [object]}},
+            "reach_settings['reachable_set']['size_grid'] must be a JSON value "
+            "(no NaN or infinity), got [<class 'object'>]",
+        ),
+        (
+            "reach_settings",
+            {1: {"size_grid": 0.3}},
+            "reach_settings section names must be strings, got 1",
+        ),
+        (
+            "reach_settings",
+            {"reachable_set": {("size_grid",): 0.3}},
+            "reach_settings['reachable_set'] key names must be strings, got ('size_grid',)",
+        ),
         (
             "metric_periods_s",
             0.5,
@@ -589,6 +619,35 @@ def test_none_settings_are_their_defaults() -> None:
         "planning": {"steps_computation": 5},
         "reachable_set": {},
     }
+
+
+def test_json_reach_settings_are_kept() -> None:
+    """#2290: JSON values -- a NumPy float64 is a float -- pass."""
+    reach = {"reachable_set": {"size_grid": np.float64(0.3), "mode_inflation": 2}}
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)
+    assert settings.worker_settings()["reach_settings"] == {
+        "reachable_set": {"size_grid": 0.3, "mode_inflation": 2}
+    }
+
+
+def test_a_request_json_cannot_carry_is_a_worker_error(tmp_path: Path) -> None:
+    """#2290: json.dumps' TypeError escaped request() bare; nothing is sent,
+    and the worker still answers the next request."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", '{"ok": true, "values": {}}'],
+        tmp_path / "map.xml",
+    )
+    try:
+        with pytest.raises(
+            cr_worker.CommonRoadWorkerError,
+            match=re.escape("cannot send 'evaluate' to the CommonRoad worker: "),
+        ):
+            worker.request({"op": "evaluate", "x": np.float32(1.0)})
+        assert worker.request({"op": "evaluate"}) == {"ok": True, "values": {}}
+    finally:
+        worker.close()
 
 
 def test_a_str_cache_dir_is_a_path(tmp_path: Path) -> None:
