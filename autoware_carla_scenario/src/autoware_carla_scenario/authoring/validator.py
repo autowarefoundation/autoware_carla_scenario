@@ -1069,6 +1069,9 @@ def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
                 "(start_s).",
                 node.id,
             )
+        elif start_s is not None and end_s is not None:
+            if node.type == "construction_zone":
+                _check_highway_zone_length(out, path, node, end_s - start_s)
     start, end = _number(params, "start_time"), _number(params, "end_time")
     if start is None or end is None:
         return
@@ -1084,6 +1087,36 @@ def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
             f"An end time past {_stalled_forever_s():g} s is never: leave it empty.",
             node.id,
         )
+
+
+def _check_highway_zone_length(
+    out: _Collector, path: str, node: ActionNode, length: float
+) -> None:
+    """Warn of a construction zone shorter than its tapers and buffer: it has
+    no work zone, and the three are shortened to fit it (#2263), as
+    ``construction_zones`` does."""
+    spec = get_action_spec(node.type)
+    defaults = {f.name: f.default for f in spec.fields} if spec is not None else {}
+    parts: list[tuple[str, float]] = []
+    for key in ("taper_length_in", "buffer_zone_length", "taper_length_out"):
+        value = _number(node.params, key)
+        if value is None:
+            default = defaults.get(key)
+            if not isinstance(default, (int, float)):
+                return
+            value = float(default)
+        parts.append((key, value))
+    needed = sum(value for _, value in parts)
+    if not length < needed:
+        return
+    named = " + ".join(f"{key} {value:g} m" for key, value in parts)
+    out.warn(
+        f"{path}.end_s",
+        f"The zone is {length:g} m long (start_s to end_s), shorter than "
+        f"{named} = {needed:g} m: it has no work zone, and the tapers and "
+        "the buffer are shortened in proportion to fit it.",
+        node.id,
+    )
 
 
 def _stalled_forever_s() -> float:

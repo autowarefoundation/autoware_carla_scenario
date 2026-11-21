@@ -434,6 +434,32 @@ class TestAssignGpus:
                 HostResources((), 1000),
             )
 
+    def test_a_gpu_named_twice_is_booked_once(self) -> None:
+        """``device=0,0`` is GPU 0 once (#2263): its memory was booked twice,
+        refusing with a negative free memory."""
+        host = HostResources(gpus=(Gpu(0, "GPU-a", 10000),), memory_mb=10**6)
+        placed = assign_gpus(
+            [
+                ("a", Resources(gpu_memory_mb=6000, gpus=(0, 0))),
+                ("b", Resources(gpu_memory_mb=3000)),
+            ],
+            host,
+        )
+        assert placed == {"a": host.gpus[0], "b": host.gpus[0]}
+        settings = docker_module.read_docker_settings(
+            "soma",
+            {"gpus": '"device=0,0"', "gpu_memory_mb": 6000},
+            image="img:1",
+            container_port=1,
+        )
+        need = docker_module.DockerBackend(settings).resources()
+        assert need == Resources(gpu_memory_mb=6000, gpu=0)
+        with pytest.raises(
+            InsufficientResourcesError,
+            match=r"b: 5000 MiB of GPU memory needed, 4000 MiB free",
+        ):
+            assign_gpus([("a", need), ("b", Resources(gpu_memory_mb=5000))], host)
+
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
@@ -522,6 +548,18 @@ class TestDockerBackend:
                 "device=1,3",
                 Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(1, 3)),
             ),
+            # An index named twice is one GPU (#2263).
+            (
+                '"device=0,0"',
+                Resources(gpu_memory_mb=24000, memory_mb=16000, gpu=0),
+            ),
+            (
+                "device=1,2,1",
+                Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(1, 2)),
+            ),
+            # Read around surrounding spaces (#2263).
+            (" none", Resources(memory_mb=16000)),
+            (" device=1 ", Resources(gpu_memory_mb=24000, memory_mb=16000, gpu=1)),
         ],
     )
     def test_what_a_container_takes_follows_its_gpus(
@@ -850,6 +888,29 @@ class TestDockerSettingsAreChecked:
             "soma", {"gpus": 2}, image="img:1", container_port=1
         )
         assert read.gpus == "2"
+
+    @pytest.mark.parametrize(
+        ("gpus", "stored", "args"),
+        [
+            (" none", "none", []),
+            ("none\n", "none", []),
+            ("auto ", "auto", ["--gpus", "device=3"]),
+            (" all ", "all", ["--gpus", "all"]),
+            (" device=1", "device=1", ["--gpus", "device=1"]),
+        ],
+    )
+    def test_gpus_are_stored_stripped_for_the_check_and_docker_alike(
+        self, gpus: str, stored: str, args: list[str]
+    ) -> None:
+        """The GPU check read ``gpus`` stripped and docker raw (#2263): ``' none'``
+        took no GPU yet gave docker ``--gpus ' none'``."""
+        read = docker_module.read_docker_settings(
+            "soma", {"gpus": gpus}, image="img:1", container_port=1
+        )
+        assert read.gpus == stored
+        assert docker_module._gpu_args(read.gpus, 3) == args
+        # Settings built directly are read the same way.
+        assert docker_module._gpu_args(gpus, 3) == args
 
     def test_nothing_is_pulled_or_started_for_a_bad_gpus(
         self, monkeypatch: pytest.MonkeyPatch

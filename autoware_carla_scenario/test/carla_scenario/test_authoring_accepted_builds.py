@@ -371,6 +371,54 @@ def test_validator_refuses_what_the_action_refuses(
 
 
 @pytest.mark.parametrize(
+    ("params", "warned"),
+    [
+        ({"start_s": 100.0, "end_s": 150.0}, True),
+        ({"start_s": 100.0, "end_s": 200.0}, False),
+        (
+            {
+                "start_s": 0.0,
+                "end_s": 35.0,
+                "taper_length_in": 20.0,
+                "buffer_zone_length": None,
+                "taper_length_out": 10.0,
+            },
+            True,
+        ),
+        (
+            {
+                "start_s": 0.0,
+                "end_s": 35.0,
+                "taper_length_in": 20.0,
+                "buffer_zone_length": 0.0,
+                "taper_length_out": 10.0,
+            },
+            False,
+        ),
+    ],
+)
+def test_validator_warns_of_a_zone_shorter_than_its_tapers_and_buffer(
+    params: dict[str, Any], warned: bool
+) -> None:
+    """Such a zone is laid out with its tapers and buffer shortened to fit
+    (#2263): built, and the editor says so."""
+    document = _card("construction_zone", None, lanelet_id=_LANELET, **params)
+    report = validate_document(document)
+    assert report.ok, _errors(report)
+    warnings = [i for i in report.warnings if i.path == "actions[0].end_s"]
+    assert bool(warnings) == warned, warnings
+    if warned:
+        assert "taper_length_in" in warnings[0].message
+        assert "shortened" in warnings[0].message
+    _build(document)
+    # The urban layout has no tapers or buffer: never warned.
+    urban = _card("urban_construction_zone", None, lanelet_id=_LANELET, **params)
+    assert not [
+        i for i in validate_document(urban).warnings if i.path == "actions[0].end_s"
+    ]
+
+
+@pytest.mark.parametrize(
     ("type_id", "actor"),
     [
         ("construction_zone", None),
