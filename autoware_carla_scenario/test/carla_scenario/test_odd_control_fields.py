@@ -87,7 +87,6 @@ def test_sampler_still_exports_its_public_names() -> None:
         "VISIBILITY_KEY",
     ):
         assert name in sampler.__all__
-    assert sampler._MAPPING_FIELDS is control_fields.MAPPING_FIELDS
 
 
 def test_controls_holds_the_moved_objects() -> None:

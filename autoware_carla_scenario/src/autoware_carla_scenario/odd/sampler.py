@@ -82,6 +82,7 @@ from openodd.sampler import OddSampler as _OddSampler
 from ..config_flags import check_flag
 from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
+from ..value_text import shown
 from openodd import Rules, RulesError
 
 from .backend import (
@@ -95,7 +96,6 @@ from .backend import (
 from .control_fields import (
     CONTROL_TARGETS,
     FLAKY_FIELDS,
-    MAPPING_FIELDS,
     ODD_CASE_KEY,
     SAMPLE_FIELDS,
     TIRE_FRICTION_KEY,
@@ -123,6 +123,7 @@ __all__ = [
     "sample_count",
     "sample_coverage_paths",
     "sample_draws",
+    "sample_flaky",
     "sample_knobs",
     "sample_odd",
     "sample_strategy",
@@ -141,10 +142,6 @@ __all__ = [
 
 #: A case drawn from the ODD and the space it was drawn in: what a run records.
 OddCase = tuple[OddSample, ParameterSpace]
-
-#: The fields a ``target: measure`` control refuses
-#: (:data:`.control_fields.MAPPING_FIELDS`).
-_MAPPING_FIELDS = MAPPING_FIELDS
 
 
 class OddSampler(_OddSampler):
@@ -283,7 +280,9 @@ def controls_from_mapping(
         raise ValueError(f"{key}: expected a mapping of name -> knob, got {raw!r}")
     # Checked here, with each field's path, before openodd reads them: it
     # takes `integer: "false"` as true and `values: false` as none, and
-    # raises a bare TypeError on `scale: null` (#2226).
+    # raises a bare TypeError on `scale: null` (#2226).  An unknown target,
+    # and a `target: measure` control that maps the value, are refused here
+    # too, so what is left below is a valid target (#2269).
     from .controls import ControlsError, control_errors  # noqa: PLC0415
 
     errors = control_errors(raw, key)
@@ -291,32 +290,14 @@ def controls_from_mapping(
         raise ControlsError(errors)
     plain: dict[str, Any] = {}
     for name, spec in raw.items():
-        if isinstance(spec, Mapping):
-            # A field given null is one not given: its default (#2226).
-            spec = {k: v for k, v in spec.items() if v is not None}
-        if not isinstance(spec, Mapping) or spec.get("target") is None:
-            # No target, or null: a raw setting (#2171).
-            plain[name] = (
-                {k: v for k, v in spec.items() if k != "target"}
-                if isinstance(spec, Mapping)
-                else spec
-            )
-            continue
-        target = spec["target"]
-        if target not in CONTROL_TARGETS:
-            raise ValueError(
-                f"control {name}: target must be one of {list(CONTROL_TARGETS)}, "
-                f"got {target!r}"
-            )
-        rest = {k: v for k, v in spec.items() if k != "target"}
-        if target == "measure":
-            mapped = sorted(f for f in _MAPPING_FIELDS if f in rest)
-            if mapped:
-                raise ValueError(
-                    f"control {name}: target: measure writes the measure's value "
-                    f"unchanged, so it takes no {', '.join(mapped)}"
-                )
-        plain[name] = rest
+        # A field given null is one not given: its default (#2226).  The
+        # target is the knob's own business no further: a setting (also when
+        # not given or null, #2171) and a measure are both written as given.
+        plain[name] = (
+            {k: v for k, v in spec.items() if v is not None and k != "target"}
+            if isinstance(spec, Mapping)
+            else spec
+        )
     return knobs_from_mapping(plain)
 
 
@@ -387,13 +368,11 @@ def sampler_from_config(
     mapping without ``flaky`` (see :func:`search_from_config`).
 
     Raises:
-        ValueError: On an unknown field, or a ``flaky`` other than missing,
-            null or false: ``true`` and any mapping, ``{}`` included, are a
-            flaky search, which needs :func:`search_from_config`.
+        ValueError: On an unknown field, a ``flaky`` :func:`sample_flaky`
+            refuses, or one that asks for a flaky search (``true``, any
+            mapping, ``{}`` included), which needs :func:`search_from_config`.
     """
-    # ``{}`` is falsy but a flaky search with the defaults, as ``true`` is.
-    flaky = raw.get("flaky")
-    if flaky is not None and flaky is not False:
+    if sample_flaky(raw) is not None:
         raise ValueError("sweep.odd_sample.flaky needs search_from_config()")
     sampler, _, count = search_from_config(
         raw,
@@ -606,14 +585,54 @@ def sample_strategy(raw: Mapping[str, Any]) -> Optional[str]:
     return value
 
 
+def sample_flaky(raw: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """A ``sweep.odd_sample`` mapping's ``flaky``: the options of the flaky
+    search it asks for (:data:`FLAKY_FIELDS`), ``{}`` for the defaults, or
+    ``None`` for no flaky search.
+
+    ``flaky`` is a mapping of options or a switch.  Not given or null is no
+    search; a mapping is a search with those options (``{}``, though falsy,
+    the defaults).  Anything else is read as the sibling switches
+    ``tire_friction`` and ``visibility`` are
+    (:func:`~autoware_carla_scenario.config_flags.check_flag`), so a Hydra
+    override or an ``${oc.env:...}`` that hands it as text means what it
+    says: true (``true``, ``"true"``, ``"on"``, ``1``) is the defaults, false
+    (``false``, ``"false"``, ``"off"``, ``0``) no search (#2269).
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.flaky`` and the value, when it
+            is neither a mapping nor true or false (``""``, ``"ture"``,
+            ``2``, ``[]``), or a mapping with a field not in
+            :data:`FLAKY_FIELDS`.
+    """
+    value = raw.get("flaky")
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        unknown = set(value) - FLAKY_FIELDS
+        if unknown:
+            raise ValueError(
+                f"sweep.odd_sample.flaky: unknown fields {sorted(unknown)}"
+            )
+        return value
+    try:
+        on = check_flag("sweep.odd_sample.flaky", value)
+    except ValueError:
+        raise ValueError(
+            "sweep.odd_sample.flaky: expected a mapping, or true or false, "
+            f"got {shown(value)}"
+        ) from None
+    return {} if on else None
+
+
 def check_sample_settings(raw: Mapping[str, Any]) -> None:
     """Refuse a ``sweep.odd_sample`` mapping's ``seed``, ``count``,
     ``tire_friction``, ``visibility``, ``coverage_from``, ``odd``, ``knobs``,
-    ``strategy`` and ``weights`` when drawing from it would
+    ``strategy``, ``weights`` and ``flaky`` when drawing from it would
     (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`,
     :func:`sample_coverage_paths`, :func:`sample_odd`, :func:`sample_knobs`
     and :func:`controls_from_mapping`, :func:`sample_strategy`,
-    :func:`weights_from_config`): read before anything is drawn, built or
+    :func:`weights_from_config`, :func:`sample_flaky`): read before anything is drawn, built or
     resolved.  ``weights`` given as the path of a file is read when the
     sampler is built, against its base directory; here only a path that is
     empty is refused.
@@ -629,6 +648,7 @@ def check_sample_settings(raw: Mapping[str, Any]) -> None:
     sample_odd(raw)
     controls_from_mapping(sample_knobs(raw), "sweep.odd_sample.knobs")
     sample_strategy(raw)
+    sample_flaky(raw)
     weights = raw.get("weights")
     if isinstance(weights, (str, Path)):
         if not str(weights).strip():
@@ -679,8 +699,10 @@ def search_from_config(
             not a whole number, a ``tire_friction`` or ``visibility`` that
             is not true or false, or a ``coverage_from`` that is not a path
             or a list of paths, an ``odd`` that names no ODD, ``knobs`` or
-            *controls* that are no mapping, or a ``strategy`` that is no name
-            (:func:`check_sample_settings`).
+            *controls* that are no mapping, a ``strategy`` that is no name,
+            or a ``flaky`` that is neither a mapping of :data:`FLAKY_FIELDS`
+            nor true or false (:func:`sample_flaky`,
+            :func:`check_sample_settings`).
     """
     from ..coverage.report import load_and_merge  # noqa: PLC0415
     from .registry import resolve_odd  # noqa: PLC0415
@@ -692,14 +714,7 @@ def search_from_config(
     check_sample_settings(raw)
     seed = sample_seed(raw)
     count = sample_count(raw)
-    flaky = raw.get("flaky")
-    if flaky is True:
-        flaky = {}
-    if flaky is not None and flaky is not False and not isinstance(flaky, Mapping):
-        raise ValueError("sweep.odd_sample.flaky: expected a mapping or true")
-    unknown = set(flaky or {}) - FLAKY_FIELDS
-    if unknown:
-        raise ValueError(f"sweep.odd_sample.flaky: unknown fields {sorted(unknown)}")
+    flaky = sample_flaky(raw)
     definition = resolve_odd(sample_odd(raw, odd))
     coverage = None
     paths = sample_coverage_paths(raw)
@@ -751,7 +766,7 @@ def search_from_config(
         backend=backend,
     )
     search = None
-    if flaky is not None and flaky is not False:
+    if flaky is not None:
         options = {str(k): v for k, v in flaky.items()}
         scenario = options.pop("scenario", None)
         search = FlakySearch(sampler, seed=seed, **options)

@@ -246,7 +246,8 @@ These live in `autoware_carla_scenario.odd`:
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing, except `in_junction`, `junction_type` and
-`lane_count`, which then read the CARLA waypoint.
+`lane_count`, which then read the CARLA waypoint, and `speed_limit_kph`,
+which then reads CARLA's `get_speed_limit()` for the ego.
 
 The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,

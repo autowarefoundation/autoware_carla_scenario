@@ -44,6 +44,7 @@ from autoware_carla_scenario.odd.sampler import (
     sample_count,
     sample_coverage_paths,
     sample_draws,
+    sample_flaky,
     sample_seed,
     sampler_from_config,
     search_from_config,
@@ -1602,6 +1603,11 @@ def test_a_control_is_a_raw_setting_unless_it_says_otherwise() -> None:
         knobs_from_mapping({"m": raw})
     )
     assert controls_from_mapping({"m": "k"}) == knobs_from_mapping({"m": "k"})
+    # A measure-targeted control is written as given, its range kept.
+    measure = {"key": "k", "range": [-15, 15]}
+    assert controls_from_mapping({"m": {**measure, "target": "measure"}}) == (
+        knobs_from_mapping({"m": measure})
+    )
 
 
 @pytest.mark.parametrize(
@@ -1891,11 +1897,15 @@ def test_an_unknown_flaky_field_is_refused() -> None:
 
     with pytest.raises(ValueError, match="flaky: unknown fields"):
         search_from_config({"flaky": {"bogus": 1}}, odd=_weather_odd())
+    with pytest.raises(ValueError, match="flaky: unknown fields"):
+        check_sample_settings({"flaky": {"bogus": 1}})
     with pytest.raises(ValueError, match="search_from_config"):
         sampler_from_config({"flaky": True}, odd=_weather_odd())
 
 
-@pytest.mark.parametrize("flaky", [True, {}, {"scenario": "cut_in/left"}, "false"])
+@pytest.mark.parametrize(
+    "flaky", [True, {}, {"scenario": "cut_in/left"}, "true", " On ", 1]
+)
 def test_sampler_from_config_refuses_any_flaky_search(flaky: Any) -> None:
     # ``{}`` is falsy, but search_from_config reads it as ``true``: the defaults.
     with pytest.raises(ValueError, match="needs search_from_config"):
@@ -1903,12 +1913,88 @@ def test_sampler_from_config_refuses_any_flaky_search(flaky: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "raw", [{"count": 1}, {"count": 1, "flaky": None}, {"count": 1, "flaky": False}]
+    "raw",
+    [
+        {"count": 1},
+        {"count": 1, "flaky": None},
+        {"count": 1, "flaky": False},
+        {"count": 1, "flaky": "false"},
+        {"count": 1, "flaky": "off"},
+        {"count": 1, "flaky": 0},
+    ],
 )
 def test_sampler_from_config_takes_no_flaky_search(raw: dict[str, Any]) -> None:
     sampler, count = sampler_from_config(raw, odd=_weather_odd())
     assert count == 1
     assert sampler is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ({}, None),
+        ({"flaky": None}, None),
+        ({"flaky": False}, None),
+        ({"flaky": 0}, None),
+        ({"flaky": "false"}, None),
+        ({"flaky": " Off "}, None),
+        ({"flaky": "no"}, None),
+        ({"flaky": True}, {}),
+        ({"flaky": 1}, {}),
+        ({"flaky": "true"}, {}),
+        ({"flaky": "ON"}, {}),
+        ({"flaky": {}}, {}),
+        ({"flaky": {"scenario": "s", "pool": 4}}, {"scenario": "s", "pool": 4}),
+    ],
+)
+def test_sample_flaky_reads_a_mapping_or_a_switch(
+    raw: dict[str, Any], expected: Any
+) -> None:
+    """``flaky`` is read as its sibling switches are (#2269): check_flag."""
+    assert sample_flaky(raw) == expected
+    check_sample_settings(raw)
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        ("", "''"),
+        ("ture", "'ture'"),
+        (2, "2"),
+        (0.0, "0.0"),
+        (1.5, "1.5"),
+        ([], "[]"),
+        (["pool"], "['pool']"),
+        pytest.param(10**5000, "an integer of about 10**5000", id="huge-integer"),
+    ],
+)
+def test_a_bad_flaky_is_refused_naming_its_key_and_value(
+    value: Any, shown: str
+) -> None:
+    """Before anything is drawn, by every reader (#2269)."""
+    message = (
+        "^sweep.odd_sample.flaky: expected a mapping, or true or false, "
+        f"got {re.escape(shown)}$"
+    )
+    raw = {"count": 2, "flaky": value}
+    with pytest.raises(ValueError, match=message):
+        sample_flaky(raw)
+    with pytest.raises(ValueError, match=message):
+        check_sample_settings(raw)
+    with pytest.raises(ValueError, match=message):
+        search_from_config(raw, odd=_weather_odd())
+    with pytest.raises(ValueError, match=message):
+        sampler_from_config(raw, odd=_weather_odd())
+
+
+@pytest.mark.parametrize(("value", "searches"), [("true", True), ("false", False)])
+def test_a_flaky_switch_given_as_text_means_what_it_says(
+    value: str, searches: bool
+) -> None:
+    _sampler, search, _count = search_from_config(
+        {"count": 1, "flaky": value}, odd=_weather_odd()
+    )
+    assert (search is not None) is searches
 
 
 def test_a_run_reads_its_case_back_from_the_override() -> None:

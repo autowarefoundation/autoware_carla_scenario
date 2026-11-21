@@ -1895,6 +1895,9 @@ def test_the_undecided_model_is_openodd_s_sentinel() -> None:
             getattr(odd.UNDECIDED, method)()
         ], method
     assert odd_model.Undecided is type(odd.UNDECIDED)
+    # Re-exported where the model declares it, so a scenario that imports it
+    # from odd runs as it compiles (#2269).
+    assert odd.Undecided is odd_model.Undecided
     with pytest.raises(TypeError):
         odd_model.Undecided()
 
@@ -1910,6 +1913,17 @@ def test_the_odd_case_models_are_stand_ins() -> None:
     assert [ast.unparse(c.func) for c in calls if isinstance(c, ast.Call)] == [
         "compile_error"
     ]
+    # ParameterSpace, the case's other half, alike: openodd's flaky search
+    # builds it, and the package re-exports openodd's class (#2269).
+    space = _definitions("odd")["ParameterSpace"][0]
+    assert isinstance(space, ast.ClassDef)
+    init = _methods(space)["__init__"]
+    assert _model_params(init, drop_first=True) == []
+    calls = [s.value for s in init.body if isinstance(s, ast.Expr)]
+    assert [ast.unparse(c.func) for c in calls if isinstance(c, ast.Call)] == [
+        "compile_error"
+    ]
+    assert odd.ParameterSpace is typing.get_args(odd.OddCase)[1]
     case = _definitions("odd")["OddCase"][0]
     assert isinstance(case, ast.ClassDef)
     assert [ast.unparse(d) for d in case.decorator_list] == ["tuple"]
@@ -2239,6 +2253,12 @@ def test_the_advice_for_an_unmodelled_module_runs_in_python(module: str) -> None
 _COMPARED_APART = {
     "AutowareLauncher": "test_the_launcher_model_is_the_protocol_s_methods",
     "TrafficBackendFactory": "test_the_traffic_backend_factory_model_is_a_stand_in",
+    # The class of openodd's sentinel, which odd re-exports from odd.model
+    # (#2269): a Rust extension's class, with no signature to compare.
+    "Undecided": "test_the_undecided_model_is_openodd_s_sentinel",
+    # openodd.flaky's space, which odd re-exports (#2269): an opaque class the
+    # flaky search builds, as OddSample is the sampler's.
+    "ParameterSpace": "test_the_odd_case_models_are_stand_ins",
 }
 
 

@@ -1,10 +1,13 @@
 """Validate a scenario config's ``controls`` and report problems with their config path.
 
-:func:`~.sampler.controls_from_mapping` raises on the first problem it meets and
-names the knob, not the place in the config.  :func:`validate_controls` checks
-every control and returns :class:`ControlDiagnostic` s instead, each with the
-path in the config (``controls.vehicle_ahead_gap_m.range``), so that
-``scenario-check`` and ``scenario-expand`` can print one line per problem.
+:func:`validate_controls` checks every control and returns
+:class:`ControlDiagnostic` s, each with the path in the config
+(``controls.vehicle_ahead_gap_m.range``), so that ``scenario-check`` and
+``scenario-expand`` can print one line per problem.
+:func:`~.sampler.controls_from_mapping` refuses the errors among them
+(:func:`control_errors`) with a :class:`ControlsError` that reports every
+problem, each with its full config path (``<key>.<name>.<field>``), before
+openodd reads the knobs.
 
 An unknown *measure* name is only a warning: a scenario may register measures
 of its own (:meth:`~autoware_carla_scenario.BaseScenario.register_measure`) at
