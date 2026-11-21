@@ -17,6 +17,7 @@ from .maps.pack import MapPack
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
 from .run_outputs import remove_run_outputs
+from .run_timeout import check_run_timeout
 from .t4 import T4Recorder
 from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
@@ -256,8 +257,12 @@ class ScenarioQueue:
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
-                or *world_reset* is neither ``"reload"`` nor ``"soft"``.
+                or *world_reset* is neither ``"reload"`` nor ``"soft"``, or
+                *timeout_seconds* is not positive and finite.
         """
+        # Refused before the server is made, not once each case has spawned
+        # its ego -- and on every retry -- where it is registered (#2287).
+        check_run_timeout(timeout_seconds, key="timeout_seconds")
         if server is not None:
             self._server = server
             self._owns_server = False
@@ -343,7 +348,13 @@ class ScenarioQueue:
             file_stem: The stem its output files are named by; ``None``
                 names them by its class, numbered past the runs already in the
                 output directory (:meth:`ScenarioRunner.run_scenario`).
+
+        Raises:
+            ValueError: *timeout_seconds* is not positive and finite; the
+                scenario is not added.
         """
+        if timeout_seconds is not None:
+            check_run_timeout(timeout_seconds, key="timeout_seconds")
         self._scenarios.append(scenario)
         if self._backends is not None and self._runner is not None:
             # Added after the queue started (a SLURM task's cases join one at
@@ -360,6 +371,16 @@ class ScenarioQueue:
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
+
+    def _forget(self, key: int) -> None:
+        """Forget what :meth:`add` kept for the scenario of ``id()`` *key*:
+        its timeout, its case and its file stem."""
+        if key in self._timeouts:
+            del self._timeouts[key]
+        if key in self._cases:
+            del self._cases[key]
+        if key in self._stems:
+            del self._stems[key]
 
     def run_all(
         self,
@@ -449,12 +470,7 @@ class ScenarioQueue:
             if release:
                 # Keyed by id(): a released scenario's id may be the next
                 # scenario's, so nothing is left keyed by it.
-                if key in self._timeouts:
-                    del self._timeouts[key]
-                if key in self._cases:
-                    del self._cases[key]
-                if key in self._stems:
-                    del self._stems[key]
+                self._forget(key)
             # The stem every attempt writes under: the one given, or the one
             # the runner names the first attempt by (the first free in the
             # output directory), settled right before that attempt runs, after
@@ -575,13 +591,7 @@ class ScenarioQueue:
                         # The cases not run yet are out of the queue already:
                         # leave nothing keyed by their ids either.
                         for rest in pending:
-                            rest_key = id(rest)
-                            if rest_key in self._timeouts:
-                                del self._timeouts[rest_key]
-                            if rest_key in self._cases:
-                                del self._cases[rest_key]
-                            if rest_key in self._stems:
-                                del self._stems[rest_key]
+                            self._forget(id(rest))
                     # All attempts exhausted — re-raise the last error.
                     raise RuntimeError(
                         f"Scenario {type(scenario).__name__} failed after "

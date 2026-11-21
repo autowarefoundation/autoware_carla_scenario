@@ -1052,16 +1052,12 @@ class BaseScenario(ABC):
         samples what happens importance-sampled
         (:attr:`BaseAction.importance_sampled`), else ``None`` -- a run that
         samples nothing is no weighted run, though its weight is 1."""
-        weight = 1.0
-        sampled = False
         for action in (
             self._init_actions + self._pre_tick_actions + self._post_tick_actions
         ):
-            weight *= action.importance_sampling_weight
-            sampled = sampled or action.importance_sampled
-        if not sampled:
-            return None
-        return weight
+            if action.importance_sampled:
+                return self.importance_sampling_weight
+        return None
 
     @property
     def measures(self) -> dict[str, Measure]:
