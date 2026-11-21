@@ -13,7 +13,10 @@ policy step is therefore swept once a policy step (``sweep_interval_s``), not on
 the ticks between, whose sweeps nobody would read.
 
 The sweep a caller is handed carries the world's rain and fog as they are when
-it is taken (:mod:`.lidar_weather`).
+it is first read (:mod:`.lidar_weather`): on the frame it was taken on, or up to
+one sweep interval after it, whose weather it then carries (#2265).  The
+weather is read on the caller's thread: reading it in CARLA's listener would
+be an RPC on the delivery thread, racing the next tick's weather all the same.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from ..seed import check_seed, check_whole_number, resolve_seed
-from .base import sensor_tick_s
+from .base import drain, put_dropping_oldest, sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
@@ -317,15 +320,7 @@ class CarlaLidarSensor:
             else:
                 raw = np.frombuffer(measurement.raw_data, dtype=np.float32)
             sweep = (int(measurement.frame), raw.reshape(-1, 4).copy())
-            while True:
-                try:
-                    self._sweeps.put_nowait(sweep)
-                    break
-                except queue.Full:
-                    try:
-                        self._sweeps.get_nowait()
-                    except queue.Empty:
-                        pass
+            put_dropping_oldest(self._sweeps, sweep)
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("failed to receive a LiDAR sweep")
 
@@ -338,7 +333,9 @@ class CarlaLidarSensor:
         self._world = None
         # Attached again, the sensor starts over: its first read counts from
         # the new attach, as on the first one, and no sweep of the old actor
-        # is taken for one of the new.
+        # is taken for one of the new: neither the newest nor one still
+        # queued (#2265).
+        drain(self._sweeps)
         self._newest = None
         self._weathered_frame = -1
         self._missed = -1
@@ -350,7 +347,9 @@ class CarlaLidarSensor:
         """The newest sweep as of simulator frame *frame*: ``(its frame, raw [N, 4])``.
 
         The buffer is in the sensor frame, with the world's rain and fog on it
-        (:meth:`_weather`).  A sweep is due on *frame* when the
+        as they are when it is first read (:meth:`_weather`), on *frame*:
+        weather changed since the sweep was taken, within its interval, is
+        put on it too.  A sweep is due on *frame* when the
         newest one is a whole interval old; then this waits up to
         :data:`_SWEEP_TIMEOUT` seconds for it.  When none comes, no read waits
         again until a sweep does (one already queued is still taken).  Between

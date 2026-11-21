@@ -456,6 +456,26 @@ def test_attached_again_the_first_read_waits_for_no_sweep(
     assert time.monotonic() - started >= 0.04
 
 
+def test_destroy_drops_the_sweeps_still_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sweep the old actor queued and nobody read is not taken for one of
+    the actor attached next (#2265): its first read on a LiDAR sweeping every
+    tick waits for the new actor's sweep."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    weather = SimpleNamespace(precipitation=0.0, fog_density=0.0, fog_distance=0.0)
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.05)
+    _attached(lidar, weather)
+    lidar._receive(_measurement(10))  # noqa: SLF001
+    lidar.destroy()
+    assert lidar._sweeps.empty()  # noqa: SLF001
+    _attached(lidar, weather)
+    assert lidar.latest_sweep(10) is None
+    lidar._receive(_measurement(11))  # noqa: SLF001
+    latest = lidar.latest_sweep(11)
+    assert latest is not None and latest[0] == 11
+
+
 def test_sweeps_stay_bounded_while_the_bridged_stack_boots() -> None:
     """The driver entity attaches its LiDARs, then waits for the stack's handshake
     without reading them; the sweeps of that wait must not pile up (#983)."""

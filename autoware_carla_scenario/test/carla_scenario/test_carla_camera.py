@@ -212,6 +212,19 @@ def test_the_listener_drops_the_oldest_frame_instead_of_blocking() -> None:
     assert sensor._frame_queue.empty()
 
 
+def test_destroy_drops_the_frames_still_queued() -> None:
+    """A frame the old actor queued and nobody read is not taken for one of
+    the actor attached next (#2265)."""
+    sensor = _sensor()
+    sensor._on_sensor_data(_rendered(10, 1))  # type: ignore[arg-type]
+    sensor._on_sensor_data(_rendered(11, 2))  # type: ignore[arg-type]
+    sensor.destroy()
+    assert sensor._frame_queue.empty()
+    sensor._on_sensor_data(_rendered(500, 3))  # type: ignore[arg-type]
+    latest = sensor.latest_image(500)
+    assert latest is not None and latest[0] == 500
+
+
 # ---------------------------------------------------------------------------
 # Frame timing (#951)
 # ---------------------------------------------------------------------------

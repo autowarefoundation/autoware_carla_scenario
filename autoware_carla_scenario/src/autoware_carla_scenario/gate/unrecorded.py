@@ -69,7 +69,7 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     only once its run had ended, wrote no gate record, and of its pending
     ones (``"pending": true``: a batch cut short never finished them); how
     many cases it has; and ``None``.  Or no names, ``0`` and why the summary
-    cannot be read, instead.  (:func:`~.evaluate._summary_unrecorded` returns
+    cannot be read, instead.  (:func:`~.evaluate._scan_batches` turns it into
     the one or the other, a value of either type, which Codon cannot hold.)
 
     An errored case whose entry names its stem (``stem``, written since

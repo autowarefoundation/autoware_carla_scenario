@@ -6,7 +6,7 @@ raise: the batches under a directory (``_batch_dirs``), whether a directory
 holds a gate record or a run's result (``_has_gate_record``,
 ``_has_result``, ``_has_result_since``), the gate record at a summary entry's
 stem (``_recorded_at_stem``), a local batch's unrecorded cases
-(``_summary_unrecorded``), a sweep's given-up jobs (``_errored_jobs``) and
+(``_summary_cases``), a sweep's given-up jobs (``_errored_jobs``) and
 its jobs that never started (``_unstarted_jobs``), and what
 ``unrecorded_cases()`` and ``batch_read_errors()`` make of them.
 
@@ -95,6 +95,14 @@ def _old_summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
         or entry.get("pending") is True
     ]
     return unrecorded, len(entries)
+
+
+def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
+    """What evaluate._scan_batches() reads of a local batch's summary
+    (``_summary_cases``): its unrecorded cases and how many it has, or why it
+    cannot be read."""
+    names, total, why = evaluate._summary_cases(directory)
+    return (names, total) if why is None else why
 
 
 def _old_has_gate_record(directory: Path) -> bool:
@@ -409,7 +417,7 @@ def _compare_tree(root: Path) -> None:
         _same(_old_batch_dirs, evaluate._batch_dirs, path)
         _same(_old_has_gate_record, evaluate._has_gate_record, path)
         _same(_old_has_result, evaluate._has_result, path)
-        _same(_old_summary_unrecorded, evaluate._summary_unrecorded, path)
+        _same(_old_summary_unrecorded, _summary_unrecorded, path)
         _same(_old_errored_jobs, evaluate._errored_jobs, path)
         _same(_old_unstarted_jobs, evaluate._unstarted_jobs, path)
         _same(_old_scan_batches, evaluate._scan_batches, path)
@@ -447,16 +455,16 @@ def test_every_summary_entry_is_read_as_before(tmp_path: Path) -> None:
     (directory / BATCH_RESULTS).write_text(json.dumps(entries), encoding="utf-8")
     # An entry that is no object makes the summary unreadable (#2231): it
     # raised AttributeError (its `.get()`).
-    _same(_old_summary_unrecorded, evaluate._summary_unrecorded, directory)
-    assert evaluate._summary_unrecorded(directory) == (
+    _same(_old_summary_unrecorded, _summary_unrecorded, directory)
+    assert _summary_unrecorded(directory) == (
         f"{directory / BATCH_RESULTS}: not a batch summary (not a JSON array of "
         "objects)"
     )
     _same(_old_scan_batches, evaluate._scan_batches, tmp_path)
     objects = [e for e in entries if isinstance(e, dict)]
     (directory / BATCH_RESULTS).write_text(json.dumps(objects), encoding="utf-8")
-    _same(_old_summary_unrecorded, evaluate._summary_unrecorded, directory)
-    found = evaluate._summary_unrecorded(directory)
+    _same(_old_summary_unrecorded, _summary_unrecorded, directory)
+    found = _summary_unrecorded(directory)
     assert not isinstance(found, str)
     # The flags count only when `true`, and a false name is the case's index.
     assert (

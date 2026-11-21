@@ -343,6 +343,36 @@ class TestTheEnvironmentConfig:
         ):
             run.check_run_config(cfg)
 
+    @pytest.mark.parametrize("value", [80, None])
+    def test_an_unknown_key_is_refused_naming_it(self, value: object) -> None:
+        # `rain` let through to EnvironmentAction's TypeError (#2265).
+        with pytest.raises(
+            ValueError,
+            match=r"^environment\.rain is no environment setting.*precipitation",
+        ):
+            self._add({"rain": value})
+
+    def test_every_shipped_key_is_known(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        from .test_video_removed import _shipped
+
+        cfg = _shipped([])
+        assert run.environment_settings(cfg) == {}
+
+    def test_a_run_is_refused_for_an_unknown_key_before_anything_is_built(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        from .test_video_removed import _shipped
+
+        cfg = _shipped(["+environment.rain=80"])
+        with pytest.raises(
+            run.RunConfigError, match=r"^environment\.rain is no environment setting"
+        ):
+            run.check_run_config(cfg)
+
     def test_finite_values_are_taken(self) -> None:
         (action,) = self._add(
             {"rainfall_rate_mm_h": 25, "wetness": 40, "tire_friction": 0.8}

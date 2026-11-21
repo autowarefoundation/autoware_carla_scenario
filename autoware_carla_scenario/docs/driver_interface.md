@@ -554,7 +554,8 @@ random) from 0 to 1, `weather_noise` not negative, `noise_seed` a whole number
 
 CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (`precipitation`) and fog (`fog_density`, beyond `fog_distance`) put on it, read when the
-sweep is taken -- what the weather rules render a run's rainfall rate and fog
+sweep is first read (the frame it is first sent on, at most one sweep interval after
+the frame it was taken on: weather changed between the two is put on it) -- what the weather rules render a run's rainfall rate and fog
 visibility as, `environment.precipitation` and `environment.fog_density`, and
 an `EnvironmentAction` mid-run set it alike
 (`sensor/lidar_weather.py`):
@@ -591,7 +592,7 @@ driver:
   lidars:
     - {logical_id: lidar_top, weather_noise: 1.5}
 environment:
-  rain: 80        # heavy rain: sparser, noisier sweeps
+  precipitation: 80   # heavy rain: sparser, noisier sweeps
 server:
   fog_density_scale: 0.01   # fog the cameras and the LiDARs both see
 ```

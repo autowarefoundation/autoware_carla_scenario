@@ -3634,7 +3634,8 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     runs, and each runs under its own rules, not the last case's (#1936).
 
     Raises:
-        ValueError: An ``environment.<key>`` is not a number, or is one
+        ValueError: An ``environment.<key>`` is no setting
+            (:func:`environment_settings`), is not a number, or is one
             :class:`~autoware_carla_scenario.EnvironmentAction` refuses (not
             finite, or outside the range its argument takes); the message
             names the key.
@@ -3679,8 +3680,14 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     ``night``, ``dawn``; ``clear``, ``partly_cloudy``, ``overcast``).
 
     Raises:
-        ValueError: naming the key, as :func:`add_environment` documents.
+        ValueError: naming the key, as :func:`add_environment` documents,
+            and for a key that is none of these (``environment.rain``), which
+            ``EnvironmentAction(**settings)`` would refuse only with a
+            ``TypeError`` once the scenario was built (#2265).
     """
+    import inspect  # noqa: PLC0415
+
+    from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
     from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
         _refusal,
     )
@@ -3695,8 +3702,20 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
     raw.pop("rules", None)
+    # What the action takes, but its own (when and how it runs), and what
+    # the weather rules read before it (add_environment).
+    known = {
+        name
+        for name in inspect.signature(EnvironmentAction.__init__).parameters
+        if name not in ("self", "condition", "timing", "label", "once")
+    } | {"time_of_day", "visibility_quantile"}
     settings: dict[str, Any] = {}
     for key, value in raw.items():
+        if key not in known:
+            raise ValueError(
+                f"environment.{key} is no environment setting, got {value!r}: "
+                f"the settings are rules, {', '.join(sorted(known))}"
+            )
         if value is None:
             continue
         if key in label_settings:

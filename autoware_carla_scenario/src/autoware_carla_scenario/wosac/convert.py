@@ -250,7 +250,8 @@ def trajectory_log_to_rollout(
     Args:
         log_path: A run's ``{stem}.trajectory.jsonl``.
         scenario_id: The ``ScenarioRollouts.scenario_id``: what its runs have
-            in common.  Default: :func:`scenario_id_of` the log's stem.
+            in common, a non-empty string.  Default: :func:`scenario_id_of`
+            the log's stem.
         current_index: The current row, counted at 10 Hz from the log's first
             tick (WOSAC's ``current_time_index``, 10).
         steps: The rows after the current one in the rollout (WOSAC's 80);
@@ -273,9 +274,17 @@ def trajectory_log_to_rollout(
     Raises:
         ValueError: If the log cannot be read, is too short for *steps* (and
             not *pad*) or has nothing on the current row, two agents share a
-            role or an object id, or an option is out of range.
+            role or an object id, two *object_ids* keys are one role, or an
+            option is out of range (an empty *scenario_id*).
     """
     path = Path(log_path)
+    if scenario_id is not None and (
+        not isinstance(scenario_id, str) or not scenario_id
+    ):
+        # An empty id is stored as none, which pack() refuses later.
+        raise ValueError(
+            f"scenario_id must be a non-empty string or None, not {scenario_id!r}"
+        )
     current_index = checked_count(current_index, "current_index", 0)
     if steps is not None:
         steps = checked_count(steps, "steps", 1)

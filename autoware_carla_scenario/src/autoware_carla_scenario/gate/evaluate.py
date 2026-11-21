@@ -68,7 +68,7 @@ from .criteria import (
     find_gate_records,
     station_values,
 )
-from .record import GATE_RECORD_SUFFIX, GateRecord, read_gate_record
+from .record import GateRecord, read_gate_record
 
 # The scans of a set of runs are the checked gate.unrecorded's, the same
 # objects (docs/typecheck.md).
@@ -243,21 +243,11 @@ def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
             and not record.errored
         ):
             continue
-        stem = case.get("stem")
-        if stem and (directory / f"{stem}{GATE_RECORD_SUFFIX}").is_file():
+        # A stem of its own only, as a local batch's (#2265).
+        if _recorded_at_stem(directory, case):
             continue
         unrecorded.append(str(case.get("label") or case.get("scenario") or index))
     return unrecorded, len(cases)
-
-
-def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
-    """The names of a local batch's errored and pending cases that left no
-    gate record, and how many cases it has; why the summary cannot be read,
-    instead (:func:`.unrecorded._summary_cases`, which reads it)."""
-    names, total, unreadable = _summary_cases(directory)
-    if unreadable is not None:
-        return unreadable
-    return names, total
 
 
 def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
@@ -271,7 +261,8 @@ def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
         if (directory / "slurm" / "manifest.json").is_file():
             found = _slurm_unrecorded(directory)
         else:
-            found = _summary_unrecorded(directory)
+            names, total, why = _summary_cases(directory)
+            found = (names, total) if why is None else why
         if isinstance(found, str):
             unreadable.append(found)
             continue
@@ -496,7 +487,7 @@ def judge_all(
 ) -> list[GateVerdict]:
     """Judge every logical scenario *records* are runs of, one verdict each,
     sorted by id; only *scenario* when it is given."""
-    groups = _by_scenario(records, scenario)
+    groups = records_by_scenario(records, scenario)
     return [judge(groups[name], gate) for name in sorted(groups)]
 
 
@@ -674,18 +665,14 @@ def compare_all(
 ) -> list[GateComparison]:
     """Compare every logical scenario either side ran, one comparison each,
     sorted by id; only *scenario* when it is given."""
-    before, after = _by_scenario(baseline, scenario), _by_scenario(candidate, scenario)
+    before, after = (
+        records_by_scenario(baseline, scenario),
+        records_by_scenario(candidate, scenario),
+    )
     return [
         compare(before.get(name, []), after.get(name, []), gate)
         for name in sorted(before.keys() | after.keys())
     ]
-
-
-def _by_scenario(
-    records: Sequence[GateRecord], scenario: Optional[str] = None
-) -> dict[str, list[GateRecord]]:
-    """*records* grouped by scenario id; only *scenario*'s when it is given."""
-    return records_by_scenario(records, scenario)
 
 
 # ---------------------------------------------------------------------------

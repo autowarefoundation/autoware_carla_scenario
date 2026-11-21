@@ -38,6 +38,10 @@ from typing import Any
 
 from ..atomic_file import write_text_atomically
 
+# A member laid out as in the object json.dumps() writes, as gate.errored
+# lays out its marker.
+from ..batch_report import json_member as _member
+
 __all__ = [
     "SWEEP_PLAN",
     "SWEEP_PLAN_SCHEMA",
@@ -73,14 +77,26 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
 
     Raises:
         OSError: When it cannot be read.
-        ValueError: When it is not a plan (not JSON, not an object holding a
-            ``jobs`` list of objects with a ``dir`` string).
+        ValueError: When it is not a plan (not JSON, not an object of the
+            schema :data:`SWEEP_PLAN_SCHEMA` holding a ``jobs`` list of
+            objects with a ``dir`` string).  A plan of another schema is
+            refused, as a gate record of another is: its jobs may not be
+            read as this one's are (#2265).
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except RecursionError as exc:
         raise ValueError(str(exc)) from None
-    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+    if not isinstance(data, dict):
+        raise ValueError("not a sweep plan (not a JSON object)")
+    schema = data.get("schema")
+    # `str(schema)`: Codon holds the str json.loads() read as a JSON value,
+    # which compares with no str (gate.unrecorded's _recorded_at_stem()).
+    if not isinstance(schema, str) or str(schema) != SWEEP_PLAN_SCHEMA:
+        raise ValueError(
+            f"not a sweep plan (schema {schema!r}, expected {SWEEP_PLAN_SCHEMA!r})"
+        )
+    if not isinstance(data.get("jobs"), list):
         raise ValueError("not a sweep plan (no list of jobs)")
     entries = []
     for job in data["jobs"]:
@@ -88,6 +104,11 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"a job without a directory ({job!r})")
         entries.append(job)
     return entries
+
+
+def _indented(text: str, indent: str) -> str:
+    """*text* with *indent* before each of its lines."""
+    return "\n".join(indent + line for line in text.split("\n"))
 
 
 def write_sweep_plan(sweep_dir: Path, jobs: list[PlannedJob]) -> Path:
@@ -100,20 +121,47 @@ def write_sweep_plan(sweep_dir: Path, jobs: list[PlannedJob]) -> Path:
     """
     sweep_dir.mkdir(parents=True, exist_ok=True)
     path = sweep_dir / SWEEP_PLAN
-    new: dict[str, dict[str, Any]] = {}
+    # The object `json.dumps(..., indent=2, ensure_ascii=False)` writes, a
+    # member and an entry at a time: the plan's values are of mixed types,
+    # which one dict of them all could not be in Codon (docs/typecheck.md),
+    # as gate.errored's write_case_errored() writes its marker.  Each entry
+    # is laid out as the object it is, then indented to where it sits.
+    keys: list[str] = []
+    entries: list[str] = []
     for job_dir, overrides in jobs:
         key = _entry_dir(sweep_dir, job_dir)
-        new[key] = {"dir": key, "overrides": [str(o) for o in overrides]}
-    merged: list[dict[str, Any]] = []
+        listed = [str(o) for o in overrides]
+        entry = (
+            "{\n"
+            + _member(json.dumps({"dir": key}, indent=2, ensure_ascii=False))
+            + ",\n"
+            + _member(json.dumps({"overrides": listed}, indent=2, ensure_ascii=False))
+            + "\n}"
+        )
+        # A directory given twice keeps its first place and its last
+        # overrides, as a dict keyed by it would.
+        if key in keys:
+            entries[keys.index(key)] = entry
+        else:
+            keys.append(key)
+            entries.append(entry)
+    kept: list[str] = []
     if path.is_file():
         try:
             earlier = _read_entries(path)
         except (OSError, ValueError):
             earlier = []
-        merged = [e for e in earlier if e["dir"] not in new]
-    merged.extend(new.values())
-    data: dict[str, Any] = {"schema": SWEEP_PLAN_SCHEMA, "jobs": merged}
-    write_text_atomically(path, json.dumps(data, indent=2, ensure_ascii=False))
+        for job in earlier:
+            if str(job["dir"]) not in keys:
+                kept.append(json.dumps(job, indent=2, ensure_ascii=False))
+    items = [_indented(entry, "    ") for entry in kept + entries]
+    jobs_member = '  "jobs": []'
+    if items:
+        jobs_member = '  "jobs": [\n' + ",\n".join(items) + "\n  ]"
+    schema_member = _member(
+        json.dumps({"schema": SWEEP_PLAN_SCHEMA}, indent=2, ensure_ascii=False)
+    )
+    write_text_atomically(path, "{\n" + schema_member + ",\n" + jobs_member + "\n}")
     return path
 
 
@@ -123,7 +171,8 @@ def read_sweep_plan(path: Path) -> list[PlannedJob]:
 
     Raises:
         OSError: When it cannot be read.
-        ValueError: When it is not a plan.
+        ValueError: When it is not a plan, or one of another schema
+            (:func:`_read_entries`).
     """
     jobs: list[PlannedJob] = []
     for entry in _read_entries(path):
