@@ -286,8 +286,10 @@ the ego's -- a negative bumper-to-bumper headway, a collision -- as one behind
 overlapping it with its centre ahead of the ego's, or level with it, as
 touching: HW and THW `0` and, while the ego closes on it, TTC `0`, ALongReq
 `-inf`, BTN `inf`, and ALatReq and STN `inf`, so a condition such as
-`crime_ttc_s < 1` holds on the frames of a collision. Only one whose centre is
-behind the ego's reads HW `inf`. The lanelets the worker keeps are those within
+`crime_ttc_s < 1` holds on the frames of a collision. One whose centre is
+behind the ego's, or one beside the ego whose box does not touch it (CriMe
+counts a road user sharing any lanelet with the ego as in its lane, a car
+straddling a lane line or the ego changing lanes), still reads HW `inf`. The lanelets the worker keeps are those within
 `radius_m` of the ego anywhere along their centre line, and always those it
 is on, so a long straight lanelet stays in from its middle. The reachable set (the drivable
 area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the

@@ -529,6 +529,44 @@ def test_a_car_overlapping_the_ego_and_pulling_away(evaluator: Evaluator) -> Non
     }
 
 
+def test_a_car_overlapping_the_ego_from_ahead_and_aside_is_a_collision(
+    evaluator: Evaluator,
+) -> None:
+    """#2290: boxes overlapping by a corner, 1 m apart sideways."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    values, errors = evaluator.evaluate(ego, [on_road(52, 2.75, 5.0, 2)], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values["crime_hw_m"] == 0.0
+    assert values["crime_ttc_s"] == 0.0
+    assert values["crime_btn"] == math.inf
+
+
+@pytest.mark.parametrize(
+    ("ego_right", "other_distance", "other_right"),
+    [(1.75, 52.0, 3.7), (3.0, 51.0, 5.25), (3.3, 50.0, 5.25)],
+    ids=["straddling-the-line", "ego-changing-lanes", "level"],
+)
+def test_a_car_beside_the_ego_in_a_shared_lanelet_is_no_collision(
+    evaluator: Evaluator, ego_right: float, other_distance: float, other_right: float
+) -> None:
+    """#2290 review: CriMe takes a road user in the ego's lane by any lanelet
+    their boxes share, so a car beside the ego, its centre ahead and the
+    boxes apart sideways, has a negative headway too: no contact."""
+    ego = on_road(50, ego_right, 15.0, 1)
+    other = on_road(other_distance, other_right, 5.0, 2)
+    values, errors = evaluator.evaluate(ego, [other], OVERLAP_MEASURES)
+    assert errors == {}
+    assert values == {
+        "crime_hw_m": math.inf,
+        "crime_thw_s": math.inf,
+        "crime_ttc_s": math.inf,
+        "crime_a_long_req_mps2": 0.0,
+        "crime_btn": 0.0,
+        "crime_a_lat_req_mps2": 0.0,
+        "crime_stn": 0.0,
+    }
+
+
 @pytest.mark.parametrize("centre_gap", [-2.0, -4.0, -20.0], ids=["overlap", "deep", "far"])
 def test_a_car_behind_the_ego_is_still_no_conflict(evaluator: Evaluator, centre_gap: float) -> None:
     """#2290: only a road user whose centre is behind the ego's -- one hitting

@@ -96,8 +96,11 @@ of the ego's (or level with it) as touching: HW and THW `0`, and TTC, ALongReq
 and BTN as for a gap closed to `0` -- while the ego closes on it TTC `0`,
 ALongReq `-inf`, BTN `inf`, and ALatReq and STN, which take TTC, `inf`. `0`
 rather than the negative gap, which TTC's contact time would read as a gap
-still to close once the other pulls away. Only a road user whose centre is
-behind the ego's reads HW `inf`.
+still to close once the other pulls away. The boxes must touch: CriMe counts
+a road user sharing any lanelet with the ego as in its lane, so one beside the
+ego (straddling a lane line, or the ego changing lanes) overlaps it along the
+lane without a contact, and reads HW `inf` as before, as does a road user
+whose centre is behind the ego's.
 
 A lanelet is kept when its centre line comes within `radius_m` of the ego
 anywhere along it, not only at a vertex (a straight lanelet is just its two end

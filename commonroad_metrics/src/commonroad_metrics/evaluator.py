@@ -964,11 +964,13 @@ def _signed_crime_measures() -> dict[str, type]:
     CriMe's HW and THW read ``inf`` -- a road user behind -- for one whose
     box overlaps the ego's from ahead (a negative bumper-to-bumper headway):
     a collision read as no conflict.  Here HW and THW read ``0`` for it (its
-    centre ahead of the ego's along the lane), and TTC and ALongReq, which
-    take HW, read the gap as closed: TTC ``0``, ALongReq ``-inf`` and BTN
-    ``inf`` while the ego closes on it, as for a gap closing to ``0``, and
-    ALatReq and STN, which take TTC, ``inf``.  Only a road user whose centre
-    is behind the ego's reads HW ``inf``.
+    centre ahead of the ego's along the lane, their boxes touching), and TTC
+    and ALongReq, which take HW, read the gap as closed: TTC ``0``, ALongReq
+    ``-inf`` and BTN ``inf`` while the ego closes on it, as for a gap closing
+    to ``0``, and ALatReq and STN, which take TTC, ``inf``.  A road user
+    whose centre is behind the ego's, or one beside it whose box does not
+    touch the ego's (CriMe takes any lanelet their boxes share as the same
+    lane), still reads HW ``inf``.
     """
     import commonroad_crime.utility.general as utils_gen
     import commonroad_crime.utility.solver as utils_sol
@@ -994,31 +996,46 @@ def _signed_crime_measures() -> dict[str, type]:
         return _along_lane(x, y, heading)
 
     def overlapping_ahead(measure: Any, bumpers: bool) -> bool:
-        # Whether the other's centre is not behind the ego's along the ego's
-        # lane (CriMe's curvilinear frame) -- and, with *bumpers*, the ego's
-        # front bumper past the other's rear one, as CriMe's THW reads them;
-        # HW has found its bumper-to-bumper headway negative already.
+        # Whether the other's box touches or overlaps the ego's, its centre
+        # not behind the ego's along the ego's lane (CriMe's curvilinear
+        # frame) -- and, with *bumpers*, the ego's front bumper past the
+        # other's rear one, as CriMe's THW reads them.  A negative headway
+        # alone is no contact: CriMe takes a road user in the ego's lane by
+        # any lanelet their boxes share, so one beside the ego (straddling a
+        # lane line, or the ego changing lanes) overlaps it along the lane
+        # without touching it.
         time_step = measure.time_step
         try:
             ego_position = measure.ego_vehicle.state_at_time(time_step).position
             other_position = measure.other_vehicle.state_at_time(time_step).position
             ego_s, _ = measure.clcs.convert_to_curvilinear_coords(*ego_position)
             other_s, _ = measure.clcs.convert_to_curvilinear_coords(*other_position)
-            ego_front = ego_s + measure._compute_vehicle_add_on(measure.ego_vehicle)
-            other_rear = other_s - measure._compute_vehicle_add_on(measure.other_vehicle)
+            ego_add_on = measure._compute_vehicle_add_on(measure.ego_vehicle)
+            other_add_on = measure._compute_vehicle_add_on(measure.other_vehicle)
         except ValueError:  # out of the projection's domain, or no box
             return False
-        return bool(other_s >= ego_s and (not bumpers or ego_front > other_rear))
+        if other_s < ego_s or (bumpers and ego_s + ego_add_on <= other_s - other_add_on):
+            return False
+        ego_occupancy = measure.ego_vehicle.occupancy_at_time(time_step)
+        other_occupancy = measure.other_vehicle.occupancy_at_time(time_step)
+        if ego_occupancy is None or other_occupancy is None:
+            return False
+        # CriMe's HW moves each centre by half the length along x and y both,
+        # which in a frame turned _TILT off the lane overshoots the bumpers by
+        # that much: boxes this close read a negative headway too.
+        touching = (ego_add_on + other_add_on) * 2.0 * _TILT + 1e-6
+        gap = ego_occupancy.shape.shapely_object.distance(other_occupancy.shape.shapely_object)
+        return bool(gap <= touching)
 
     class SignedHW(HW):
-        # CriMe's HW, but for a road user overlapping the ego from ahead:
-        # CriMe reads its negative bumper-to-bumper headway as one behind
-        # (inf, no conflict), here it is 0 -- touching -- so TTC reads 0,
-        # ALongReq -inf and BTN inf for a collision, as they do for a gap
-        # closing to 0 (_contact_time).  0 rather than the negative gap: a
-        # negative gap opening would read as a contact still to come.  CriMe
-        # reads inf for a negative headway alone (a projection failing, or
-        # a road user in no lane of the ego's, never reaches cal_headway).
+        # CriMe's HW, but for a road user overlapping the ego from ahead
+        # (their boxes touching, overlapping_ahead): CriMe reads its negative
+        # bumper-to-bumper headway as one behind (inf, no conflict), here it
+        # is 0 -- touching -- so TTC reads 0, ALongReq -inf and BTN inf for a
+        # collision, as they do for a gap closing to 0 (_contact_time).  0
+        # rather than the negative gap: a negative gap opening would read as
+        # a contact still to come.  CriMe's other infs (a projection failing,
+        # a road user beside the ego or behind it) stay inf.
         def cal_headway(self, verbose: bool = True) -> Any:
             headway = super().cal_headway(verbose=verbose)
             if headway == math.inf and overlapping_ahead(self, bumpers=False):
