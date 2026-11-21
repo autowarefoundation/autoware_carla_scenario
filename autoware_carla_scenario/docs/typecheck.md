@@ -2509,9 +2509,10 @@ probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `odd.traffic_probes`, which builds openodd's knobs), the gate package's
 `__init__`, its per-run record and probe, finding and writing the markers
-of the `--multirun` jobs given up, and finding the plans of the sweeps
-(`gate.errored` and `gate.sweep_plan`, #1967; not writing the plans or
-reading either, JSON objects of mixed value types), what a set of runs
+of the `--multirun` jobs given up, and finding and writing the plans of
+the sweeps (`gate.errored` and `gate.sweep_plan`, #1967; a plan written a
+member at a time, as a marker is, #2265; not reading either, JSON objects
+of mixed value types), what a set of runs
 left unrecorded (`gate.unrecorded`, #2124: the batches under a directory, a
 local batch's summary read for its errored and pending cases, and the
 `--multirun` jobs given up or never started; not a SLURM batch's manifest,

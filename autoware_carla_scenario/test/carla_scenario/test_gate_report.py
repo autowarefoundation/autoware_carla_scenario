@@ -18,12 +18,11 @@ from autoware_carla_scenario.gate.evaluate import (
     CriterionResult,
     GateComparison,
     GateVerdict,
-    _by_scenario,
     compare,
     compare_all,
 )
 from autoware_carla_scenario.gate.record import GateCase, GateRecord
-from autoware_carla_scenario.gate.report import criterion_cell
+from autoware_carla_scenario.gate.report import criterion_cell, records_by_scenario
 
 
 def _rec(
@@ -408,7 +407,7 @@ class TestCompare:
 class TestByScenario:
     def test_groups_in_first_seen_order(self) -> None:
         a1, b1, a2 = _rec(scenario="a"), _rec(scenario="b"), _rec(scenario="a")
-        groups = _by_scenario([b1, a1, a2])
+        groups = records_by_scenario([b1, a1, a2])
         assert list(groups) == ["b", "a"]
         assert groups["a"][0] is a1
         assert groups["a"][1] is a2
@@ -416,13 +415,13 @@ class TestByScenario:
 
     def test_only_the_scenario(self) -> None:
         a1, b1 = _rec(scenario="a"), _rec(scenario="b")
-        groups = _by_scenario([a1, b1], "b")
+        groups = records_by_scenario([a1, b1], "b")
         assert list(groups) == ["b"]
         assert groups["b"][0] is b1
-        assert _by_scenario([a1], "c") == {}
+        assert records_by_scenario([a1], "c") == {}
 
     def test_empty(self) -> None:
-        assert _by_scenario([]) == {}
+        assert records_by_scenario([]) == {}
 
     def test_compare_all_uses_it(self) -> None:
         result = compare_all(

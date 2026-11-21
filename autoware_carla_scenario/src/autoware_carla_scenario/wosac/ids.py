@@ -69,10 +69,24 @@ def checked_count(
 
 
 def _checked_object_ids(object_ids: Mapping[str, int]) -> dict[str, int]:
-    """*object_ids* keyed by canonical role name, every id an int32 >= 0."""
+    """*object_ids* keyed by canonical role name, every id an int32 >= 0.
+
+    Raises:
+        ValueError: If an id is out of range, or two keys are one role
+            (``ego`` and ``hero`` are both ``Ego``), naming both.
+    """
     checked: dict[str, int] = {}
+    keys: dict[str, str] = {}
     for role, object_id in object_ids.items():
-        checked[canonical_role_name(str(role))] = checked_count(
+        key = str(role)
+        canonical = canonical_role_name(key)
+        if canonical in keys:
+            raise ValueError(
+                f"the object ids {keys[canonical]!r} and {key!r} are both of "
+                f"the role {canonical!r}: give it one"
+            )
+        keys[canonical] = key
+        checked[canonical] = checked_count(
             object_id, f"the object id of {role!r}", 0, _INT32_MAX
         )
     return checked
