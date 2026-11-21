@@ -119,7 +119,7 @@ from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import HIDDEN_BELOW_M, actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
 from ...utils.vehicles import is_emergency_vehicle_type
-from ...visibility import driver_quantile, sight_speed_at, world_visibility
+from ...visibility import world_visibility
 from ...world_reset import episode_of
 from ..base import (
     crossing_safe_speed,
@@ -156,6 +156,16 @@ from .geometry import (
     origin_to_box_centre,
     sumo_to_carla,
     sumo_xy_to_carla,
+)
+
+# Re-exported: the backend's pure helpers live in the checked .geometry
+# (#2306); hybrid and the tests import them from here.
+from .geometry import (
+    _lane_step as _lane_step,
+    _safe_weights_prefix as _safe_weights_prefix,
+    _sight_cap as _sight_cap,
+    _sumo_velocity as _sumo_velocity,
+    world_opendrive as world_opendrive,
 )
 from .network import (
     SignalTable,
@@ -326,36 +336,6 @@ _BACKGROUND_ROUTE_EDGES = 40
 _PERSON_EDGE_RADIUS_M = 50.0
 
 
-def _sight_cap(sumo_id: str, seen: float, held: tuple[float, float, float]) -> float:
-    """The maximum speed (m/s) *sumo_id*'s driver keeps in *seen* metres,
-    from *held*: its own maximum speed, deceleration and tau -- the weather
-    rules' ``sight_speed`` at the driver's own quantile, scaled to the
-    vehicle's braking and reaction."""
-    own, decel, tau = held
-    limit = sight_speed_at(seen, driver_quantile(sumo_id), decel, tau)
-    # Never to a standstill: a car in thick fog still creeps on.  Nor above
-    # its own: a background vehicle capped below the creep keeps its cap
-    # (#967).
-    return min(own, max(limit, 1.0))
-
-
-def _safe_weights_prefix(net_file: Path) -> Path:
-    """The prefix of the safe-weight files beside *net_file*, as roadgen names
-    them: ``network.safe`` (``network.safe.src.xml`` ...) beside
-    ``network.net.xml`` (:func:`.network.build_network`)."""
-    name = net_file.name
-    if name.endswith(".net.xml"):
-        return net_file.with_name(name[: -len(".net.xml")] + ".safe")
-    return net_file.with_suffix(".safe")
-
-
-def _sumo_velocity(speed: float, angle_deg: float) -> tuple[float, float]:
-    """A velocity in SUMO's frame from a speed and SUMO's angle (degrees
-    clockwise from north)."""
-    heading = math.radians(angle_deg)
-    return speed * math.sin(heading), speed * math.cos(heading)
-
-
 def _load_traci(use_libsumo: bool) -> Any:
     if use_libsumo:
         try:
@@ -442,11 +422,6 @@ def _runs_along(shape: Any, offset: float, heading: float) -> bool:
 #: length is what sets how fast it crosses (a vehicle's own default to 1 m/s).
 _CROSSING_MAX_LATERAL_SPEED_MPS = 10.0
 _CROSSING_LATERAL_ACCEL_MPS2 = 100.0
-
-
-def _lane_step(direction: LaneChangeDirection) -> int:
-    """The lane index one lane to *direction*: SUMO counts from the right kerb."""
-    return 1 if direction is LaneChangeDirection.LEFT else -1
 
 
 class _LaneChangeRequest:
@@ -5451,23 +5426,6 @@ class SumoTrafficBackend(TrafficBackend):
             self._config.warmup_s,
             len(self._ambient),
         )
-
-
-def world_opendrive(context: TrafficContext, who: str) -> str:
-    """The OpenDRIVE of *context*'s world: its file, else the world's map.
-
-    Raises:
-        TrafficBackendUnavailable: The run has neither (*who* needs it).
-    """
-    if context.xodr_path is not None and Path(context.xodr_path).is_file():
-        return Path(context.xodr_path).read_text()
-    if context.world is None:
-        raise TrafficBackendUnavailable(
-            f"{who} needs the world's OpenDRIVE, and the run has neither a world "
-            "nor an OpenDRIVE file"
-        )
-    # The run's map where one is held: get_map() builds a whole new one.
-    return str(run_carla_map(context.world).to_opendrive())
 
 
 def _carla_road_height(world: Any, x: float, y: float) -> Optional[float]:

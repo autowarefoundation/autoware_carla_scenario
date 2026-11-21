@@ -4257,7 +4257,14 @@ What Codon 0.19 needs that Python does not, beyond
   `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source
   keeps its `frozenset`. An empty one is `frozenset[str]()`: a bare
   `frozenset()` is a set of no element type in Codon
-  (`scenario_runner._destroy_all_dynamic_actors()`).
+  (`scenario_runner._destroy_all_dynamic_actors()`). A parameter that takes
+  either (`exclude: set[str] | frozenset[str] = frozenset()`) is a union,
+  which Codon cannot express: take `Optional[set[str]] = None` and read
+  `None` as the empty set (`sweeper.job_status._remove_run_stems()`, #2306).
+- **Whether a directory has an entry** is `any(True for _ in p.iterdir())`,
+  not `any(p.iterdir())`: Codon's `any()` asks each item's `__bool__`, which
+  a `Path` has not (CPython's neither: every path is true), so the two read
+  the same (`run_dirs._batch_output_dir_refusal()`, #2306).
 - **A variable-length tuple attribute is checked as a list**: a class-level
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays
