@@ -1471,6 +1471,27 @@ def test_an_authored_parameter_reads_a_numbers_text_as_the_editor_does() -> None
     )
 
 
+def test_an_authored_parameter_takes_any_number_float_reads() -> None:
+    # A numpy scalar, a Decimal or a Fraction float() reads, as before the
+    # fields were checked: only bools and what is no number are refused.
+    from decimal import Decimal
+    from fractions import Fraction
+
+    import numpy as np
+
+    from autoware_carla_scenario.traffic.authoring import authored_bicycle_parameters
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    for mean, std in [
+        (np.int64(2), np.float32(0.5)),
+        (Decimal("2"), Fraction(1, 2)),
+    ]:
+        assert authored_bicycle_parameters(
+            bicycle_accel_mean=mean,  # type: ignore[arg-type]
+            bicycle_accel_std=std,  # type: ignore[arg-type]
+        ) == BicycleParameters(accel=Spread(2.0, 0.5))
+
+
 @pytest.mark.parametrize("traffic", ["traffic_manager", "sumo"])
 def test_the_run_check_reads_the_bool_fields_before_anything_starts(
     traffic: str,

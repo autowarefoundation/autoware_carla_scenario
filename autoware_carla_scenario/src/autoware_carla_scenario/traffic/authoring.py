@@ -33,6 +33,9 @@ def _number(value: Optional[float], key: str) -> Optional[float]:
     The editor's compiler hands these fields over as floats already (it reads
     a number field's text with ``float()``); a caller passing text is read the
     same way, a number's text taken and anything else refused by *key*.
+    Every other value ``float()`` reads is taken as it was before these
+    fields were checked: a numpy scalar, a ``Decimal`` or a ``Fraction`` a
+    script passes as well as an int.
 
     Raises:
         ValueError: naming *key*, if *value* is a bool (which ``float()``
@@ -43,11 +46,10 @@ def _number(value: Optional[float], key: str) -> Optional[float]:
         return None
     if isinstance(value, bool):
         raise ValueError(f"{key} must be a number, not a bool (got {value!r})")
-    if isinstance(value, (int, float, str)):
-        try:
-            return float(value.strip() if isinstance(value, str) else value)
-        except (ValueError, OverflowError):
-            pass
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        pass
     raise ValueError(f"{key} must be a number (got {shown(value)})")
 
 
