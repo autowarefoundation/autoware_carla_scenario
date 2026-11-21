@@ -694,7 +694,9 @@ runtime does not know is logged and ignored.
 Because the indicators are the CARLA vehicle's own lights, a scenario checks them with
 `TurnIndicatorCondition` -- the policy signals left before it turns, say -- and sets
 another vehicle's with `TurnIndicatorAction` (a car ahead signalling that it pulls
-out). An action aimed at the policy's ego holds only until the policy's next command.
+out). An action aimed at the policy's ego holds only until the policy's next command,
+as one aimed at an Autoware (`ego.entity=autoware`) or ROS 2 (`ego.entity=ros2`) ego
+holds only until the stack commands other indicators.
 
 ```python
 from autoware_carla_scenario import (

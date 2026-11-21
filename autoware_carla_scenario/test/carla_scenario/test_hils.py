@@ -2874,6 +2874,9 @@ def test_the_communication_loss_action_asks_the_bridge() -> None:
         CommunicationLossAction(direction="send")
     with pytest.raises(ValueError, match="duration must be positive"):
         CommunicationLossAction(duration=0.0)
+    for boolean in (True, False):  # True would read as 1 s (#2273).
+        with pytest.raises(ValueError, match=rf"duration .*got {boolean!r}"):
+            CommunicationLossAction(duration=boolean)
     action = CommunicationLossAction(
         "can",
         messages="VehicleSpeed, scan,VehicleSpeed",

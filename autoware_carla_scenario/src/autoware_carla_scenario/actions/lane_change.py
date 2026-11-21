@@ -76,6 +76,7 @@ class LaneChangeAction(BaseAction):
         direction: :class:`LaneChangeDirection` — ``LEFT`` or ``RIGHT``.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
+        label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
         overrides: Take over a control domain of the entity another action
             holds (:attr:`~BaseAction.overrides`).
@@ -85,6 +86,10 @@ class LaneChangeAction(BaseAction):
             cross, m.  ``0.0`` (default): at once.
         lane_change_length_m: How far to drive while crossing, m.  ``0.0``
             (default): as far as the backend takes.
+
+    Raises:
+        ValueError: *start_after_m* or *lane_change_length_m* is a boolean,
+            negative or not finite.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -109,11 +114,20 @@ class LaneChangeAction(BaseAction):
     ) -> None:
         # #2077: NaN passed `< 0` and changed lanes at once; infinity held
         # the vehicle (and its lateral domain) for the rest of the run.
-        if not math.isfinite(start_after_m) or start_after_m < 0.0:
+        # A boolean would read as 0 or 1 m (#2273).
+        if (
+            isinstance(start_after_m, bool)
+            or not math.isfinite(start_after_m)
+            or start_after_m < 0.0
+        ):
             raise ValueError(
                 f"start_after_m must be finite and not negative, not {start_after_m!r}"
             )
-        if not math.isfinite(lane_change_length_m) or lane_change_length_m < 0.0:
+        if (
+            isinstance(lane_change_length_m, bool)
+            or not math.isfinite(lane_change_length_m)
+            or lane_change_length_m < 0.0
+        ):
             raise ValueError(
                 "lane_change_length_m must be finite and not negative, "
                 f"not {lane_change_length_m!r}"

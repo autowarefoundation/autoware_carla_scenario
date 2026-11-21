@@ -194,6 +194,16 @@ class TestRefusedValues:
     """A value CARLA or the weather rules cannot use fails at construction,
     naming the argument, not later inside the run (#1322)."""
 
+    @pytest.mark.parametrize("name", (*_NUMERIC_ARGUMENTS, "wind_speed_kmh"))
+    @pytest.mark.parametrize("value", [True, False])
+    def test_a_boolean_is_refused(self, name: str, value: bool) -> None:
+        # True would read as 1 (#2273).
+        with pytest.raises(
+            ValueError,
+            match=rf"EnvironmentAction: {name} must be a number, not {value!r}",
+        ):
+            EnvironmentAction(**_given(name, value))
+
     @pytest.mark.parametrize("name", _NUMERIC_ARGUMENTS)
     @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
     def test_a_non_finite_value_is_refused(self, name: str, value: float) -> None:
