@@ -113,6 +113,8 @@ from autoware_carla_scenario.rerun import (
 from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.run_dirs import (
+    _batch_output_dir_refusal as _batch_output_dir_refusal,
+    _remove_if_empty as _remove_if_empty,
     asks_for_no_job,
     is_multirun_mode_override as _is_multirun_mode_override,
     lanelet_sweeper_requested_in_argv as _lanelet_sweeper_requested_in_argv,
@@ -122,8 +124,9 @@ from autoware_carla_scenario.run_dirs import (
 )
 
 # _lanelet_sweeper_requested_in_argv() and _result_json_line() are
-# run_dirs' and run_outputs', which the library check compiles; RESULT_SUFFIX
-# stays importable from here, as it was.
+# run_dirs' and run_outputs', which the library check compiles, as are
+# _batch_output_dir_refusal() and _remove_if_empty() (#2306); RESULT_SUFFIX
+# and those two stay importable from here, as they were.
 from autoware_carla_scenario.run_outputs import (
     RESULT_SUFFIX,  # noqa: F401
     remove_run_outputs,
@@ -2517,15 +2520,6 @@ def _reserve_hydra_output_dir(argv: list[str]) -> tuple[list[str], Path | None]:
     return [*argv, f"{key}={reserved.as_posix()}"], reserved
 
 
-def _remove_if_empty(directory: Path) -> None:
-    """Remove *directory* when nothing was written in it (Hydra refused the
-    overrides before its job started); keep it otherwise."""
-    try:
-        directory.rmdir()
-    except OSError:
-        pass
-
-
 def _batch_queue(
     first_cfg: DictConfig,
     map_paths: Any,
@@ -4721,29 +4715,6 @@ def _extract_batch_output_dir(
         print(f"Error: {wanted}= names no directory", file=sys.stderr)  # noqa: T201
         sys.exit(2)
     return Path(text), kept
-
-
-def _batch_output_dir_refusal(output_dir: Path, resume_into: Path | None) -> str | None:
-    """Why *output_dir*, the directory a batch was told to write to
-    (``hydra.run.dir=``), cannot be the batch's; ``None`` when it can.
-
-    A batch's directory is its alone, as the one it reserves is
-    (:func:`_make_batch_output_dir`): an existing directory must be empty,
-    or the batch would mix its summary and stems with another run's.  A
-    batch resumed into its own directory (``--resume-into``) names no other.
-    """
-    if resume_into is not None:
-        return (
-            f"--resume-into {resume_into} resumes the batch in its own "
-            f"directory; it takes no output directory ({output_dir})"
-        )
-    if output_dir.exists() and (not output_dir.is_dir() or any(output_dir.iterdir())):
-        return (
-            f"{output_dir}: a batch writes to a directory of its own, and this "
-            "one is not empty; name a new directory, or resume the batch "
-            f"there with --resume-into {output_dir}"
-        )
-    return None
 
 
 def _warn_if_sweep_not_expanded(scenario: str | None, overrides: list[str]) -> None:

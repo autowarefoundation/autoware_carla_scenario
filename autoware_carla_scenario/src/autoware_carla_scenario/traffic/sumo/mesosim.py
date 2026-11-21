@@ -50,11 +50,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Callable, Iterator, Mapping, Optional, Sequence
 
-from ...kinematics.angle import normalize_angle_deg
 from ..base import TrafficBackendError
 from ..fidelity import MesoscopicConfig
 from ..mesoscopic import _STANDING_MS, MesoLink, MesoscopicTraffic, MesoVehicle
 from .geometry import Pose2D
+
+# Re-exported: the model's pure helpers live in the checked .geometry
+# (#2306); the tests import them from here.
+from .geometry import (
+    _angle_between as _angle_between,
+    _height_at as _height_at,
+    segment_count as segment_count,
+)
 
 __all__ = [
     "MesoRoads",
@@ -89,20 +96,6 @@ _VAR_ROAD_ID = 0x50
 _VAR_LANEPOSITION = 0x56
 _VAR_SPEED = 0x40
 _VAR_ROUTE_INDEX = 0x69
-
-
-def segment_count(length: float, segment_length: float) -> int:
-    """How many segments SUMO's mesoscopic model cuts a road of *length* into.
-
-    As ``MELoop::numSegmentsFor``: the road's length over the segment length,
-    rounded half up, and at least one.  A length that is no finite number --
-    the ``inf`` :meth:`SumoMesoscopicTraffic.position` takes for a road it has
-    no :class:`MesoLink` of -- is one segment, not the ``OverflowError`` (or,
-    for NaN, ``ValueError``) of flooring it (#2283).
-    """
-    if segment_length <= 0.0 or not math.isfinite(length):
-        return 1
-    return max(int(math.floor(length / segment_length + 0.5)), 1)
 
 
 @dataclass
@@ -862,31 +855,5 @@ def _shape(lane: Any) -> tuple[list[tuple[float, float]], list[float]]:
     )
 
 
-def _height_at(
-    shape: Sequence[tuple[float, float]], heights: Sequence[float], offset: float
-) -> float:
-    """The height *offset* metres along *shape* (measured across the ground,
-    as sumolib measures a shape offset), interpolated between the heights of
-    the points either side."""
-    if not heights:
-        return 0.0
-    walked = 0.0
-    for i in range(1, len(shape)):
-        (x0, y0), (x1, y1) = shape[i - 1], shape[i]
-        length = math.hypot(x1 - x0, y1 - y0)
-        if walked + length >= offset:
-            if length <= 0.0:
-                return heights[i]
-            t = min(max((offset - walked) / length, 0.0), 1.0)
-            return heights[i - 1] + (heights[i] - heights[i - 1]) * t
-        walked += length
-    return heights[-1]
-
-
 def _cell(value: float) -> int:
     return int(math.floor(value / _CELL_M))
-
-
-def _angle_between(a: float, b: float) -> float:
-    """How far apart two headings are, degrees, 0 to 180."""
-    return abs(normalize_angle_deg(a - b))
