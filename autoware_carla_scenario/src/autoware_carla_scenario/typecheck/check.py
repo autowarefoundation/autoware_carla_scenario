@@ -2563,6 +2563,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
+        # Each error's own frames only: a (file, line) one error's trace
+        # leaves ambiguous, another's may tell apart.
+        ambiguous.clear()
         # Codon prints the innermost frame first: the one after a frame says
         # which function that frame is in ("during the realization of f").
         realizing = [_realized_name(outer[3]) for outer in frames[1:]] + [None]

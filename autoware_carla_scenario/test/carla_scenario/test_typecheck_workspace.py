@@ -425,3 +425,21 @@ def test_scenario_check_library_fails_on_an_excluded_module(
     out = capsys.readouterr().out
     assert out.startswith("[FAILED] ")
     assert f"{_EXCLUDED_MODULE} is EXCLUDED in typecheck/library.py" in out
+
+
+def test_an_ambiguous_frame_of_one_error_leaves_another_error_alone(
+    tmp_path: Path,
+) -> None:
+    # util.py:3 is ambiguous in the first error, b/util.py's bad() in the
+    # second: the second names one file, with no list of candidates (#2288).
+    ws = _shared_basename_workspace(tmp_path)
+    p = check._PRELUDE_LINES
+    output = (
+        f"util.py:{p + 3} (5): error: first\n"
+        f"util.py:{p + 3} (5): error: second\n"
+        f"╰─ odds.py:{p + 5} (5-8): error: during the realization of bad(x: int)\n"
+    )
+    first, second = check._parse_output(output, ws)
+    assert first.message.startswith("first (Codon names the file util.py only")
+    assert second.path == "/user/acs_dupbase/b/util.py"
+    assert second.message == "second"

@@ -91,8 +91,8 @@ others (logged as "<name>: reusing the static check made for
 types, so it is the same program to Codon"); a failure refuses each of them. `scenario-check` checks
 configs side by side, and one whose program is being compiled when it
 starts waits for that compile rather than starting its own. What changes the shape
-compiles again: another key or order of keys (a mapping's keys too, which
-are in the config paths an error names), a value of another type (an
+compiles again: another key or order of keys (a mapping's keys too where
+its values are dataclasses, whose config paths an error names), a value of another type (an
 int where the first case had a float in a field not typed `float`, `None`
 where it had a value), another length of a list, a mapping the config
 converts in one case and not in another. A value whose literal Codon could
