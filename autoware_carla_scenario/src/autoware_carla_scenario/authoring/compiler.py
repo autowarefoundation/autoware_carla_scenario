@@ -188,6 +188,8 @@ class CompiledScenario:
         actions: Compiled actions in document order.
         pass_conditions: Compiled PASS assertions.
         fail_conditions: Compiled FAIL assertions.
+        warnings: The validator's warnings about the document (advisory; an
+            error would have stopped compilation).
     """
 
     document: ScenarioDocument

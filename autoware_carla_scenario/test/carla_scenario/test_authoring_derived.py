@@ -68,6 +68,8 @@ class TestValidation:
         assert binding.to_sweep_dict() == {
             "type": "route_through",
             "depth": 2,
+            # The default the inspector shows, filled in (#2281).
+            "through_junction": False,
             "last_only": True,
         }
 
