@@ -382,7 +382,8 @@ class MapManager:
     def mgrs_offset(self) -> Tuple[float, float]:
         raise NotImplementedError()
 
-    # The (lat, lon, alt) origin of the OpenDRIVE map's geoReference.
+    # The (lat, lon, alt) origin the map is anchored at: map_projector_info.yaml's
+    # where it gives one, else the OpenDRIVE geoReference's.
     @property
     def geo_origin(self) -> Tuple[float, float, float]:
         raise NotImplementedError()

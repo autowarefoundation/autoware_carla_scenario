@@ -1250,13 +1250,16 @@ graph LR
     CW["CarlaWorldPose<br/>(x, y, z, yaw)"]
 
     L2 -->|"to_opendrive()"| OD
-    OD -->|"to_carla_location()"| CW
+    L2 -->|"to_carla_world()"| CW
+    OD -->|"to_carla_world()"| CW
     CW -->|"to_lanelet2()"| L2
     OD -->|"snap_to_carla_road()"| CW
     CW -->|"to_opendrive()"| OD
 ```
 
 **`MapManager`** is a singleton that holds the `LaneletMap`, `RoadNetwork`, and a precomputed z-offset (averaged from CARLA spawn points, leaving out those matched to a lanelet on another level of stacked roads). It is initialized once per `ScenarioQueue.start()` when both `xodr_path` and `lanelet2_path` are provided.
+
+`to_carla_world()` returns a `CarlaWorldPose`; `to_carla_location()` takes any of the three (or a `carla.Location`) and returns the `carla.Location` of its `CarlaWorldPose`.
 
 **`snap_to_carla_road()`** uses CARLA's ray-cast API to project an OpenDRIVE position onto the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world.
 

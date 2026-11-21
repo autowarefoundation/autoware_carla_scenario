@@ -785,13 +785,9 @@ def _carla_to_opendrive_via_waypoint(
     od_heading = -math.radians(pose.yaw)
 
     arc_lengths = _road_arc_lengths(mm.road_network, road_id)
-    diffs = ref_line - np.array([od_x, od_y])
-    dists = np.linalg.norm(diffs, axis=1)
-    nearest_idx = int(np.argmin(dists))
-
-    s = float(arc_lengths[nearest_idx])
-    heading_ref = _heading_at_s(ref_line, arc_lengths, s)
-    t = _signed_perp_distance(od_x, od_y, ref_line, nearest_idx, heading_ref)
+    _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
+        ref_line, np.array([od_x, od_y]), arc_lengths
+    )
     heading_diff = normalize_angle_rad(od_heading - heading_ref)
 
     return OpenDrivePose(
