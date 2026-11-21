@@ -26,7 +26,9 @@ __all__ = [
     "parse_address",
 ]
 
-#: Bumped on an incompatible change; both ends check it.
+#: Bumped on an incompatible change.  The bridge announces it (``hello``) and
+#: the run checks it: a run of another version ends rather than misread the
+#: bridge.
 PROTOCOL_VERSION = 1
 
 #: The port the bridge listens on unless told otherwise.

@@ -271,7 +271,12 @@ class StepSpec:
     def describe(self) -> str:
         if self.kind == "sleep":
             return f"sleep {self.seconds} s"
-        what = self.name if self.name is not None else f"frame {self.frame_id}"
+        if self.name is not None:
+            what = self.name
+        elif self.frame_id is not None:
+            what = f"frame {self.frame_id}"
+        else:
+            what = "a raw frame"
         if self.kind == "wait":
             return f"wait for {what} from {self.device} (up to {self.seconds} s)"
         return f"send {what} to {self.device}"
