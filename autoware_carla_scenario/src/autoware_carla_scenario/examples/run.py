@@ -2211,13 +2211,24 @@ def _has_sweep(cfg: DictConfig) -> bool:
 
     Raises:
         ValueError: If its ``sweep`` is neither null nor a mapping
-            (:func:`~autoware_carla_scenario.sweeper.expand.sweep_section`),
+            (:func:`~autoware_carla_scenario.sweeper.expand.check_sweep_shape`),
             which :func:`check_batch_configs` refuses before anything runs
             (#2279).
     """
-    from ..sweeper.expand import sweep_section  # noqa: PLC0415 -- loads Lanelet2
+    from ..sweeper.expand import check_sweep_shape  # noqa: PLC0415 -- loads Lanelet2
 
-    sweep = sweep_section(OmegaConf.select(cfg, "sweep")) or {}
+    sweep = OmegaConf.select(cfg, "sweep")
+    # Its shape only: an interpolation inside it, which only expanding the
+    # sweep reads, is left unresolved, as a run that does not expand it
+    # always left it.
+    check_sweep_shape(sweep)
+    if sweep is None:
+        return False
+    if isinstance(sweep, DictConfig):
+        return any(
+            OmegaConf.select(sweep, key)
+            for key in ("constraints", "route", "odd_sample")
+        )
     return any(sweep.get(key) for key in ("constraints", "route", "odd_sample"))
 
 

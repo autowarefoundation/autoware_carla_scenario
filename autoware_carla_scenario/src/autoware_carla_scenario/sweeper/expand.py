@@ -527,6 +527,25 @@ def _refuse_overridden(
     )
 
 
+def check_sweep_shape(sweep_cfg: Any) -> None:
+    """Refuse a config's ``sweep`` value (``OmegaConf.select(cfg, "sweep")``)
+    that is neither null nor a mapping, resolving nothing in it.
+
+    What a run that does not expand the sweep checks of it (``examples/run.py``,
+    the lanelet sweeper before its step 0): an interpolation inside a sweep
+    that only expanding it reads is not resolved, as before (#2279).
+
+    Raises:
+        ValueError: If *sweep_cfg* is neither null nor a mapping.
+    """
+    if sweep_cfg is None or isinstance(sweep_cfg, (DictConfig, Mapping)):
+        return
+    raise ValueError(
+        "sweep must be a mapping (constraints, route, odd_sample, ...), "
+        f"got {_shape(sweep_cfg)}"
+    )
+
+
 def sweep_section(sweep_cfg: Any) -> dict[str, Any] | None:
     """A config's ``sweep`` value (``OmegaConf.select(cfg, "sweep")``) as a
     plain dict, resolved; ``None`` when the config has no sweep.
@@ -538,19 +557,16 @@ def sweep_section(sweep_cfg: Any) -> dict[str, Any] | None:
     (``examples/run.py``) and the lanelet sweeper all read it this way.
 
     Raises:
-        ValueError: If *sweep_cfg* is neither null nor a mapping.
+        ValueError: If *sweep_cfg* is neither null nor a mapping
+            (:func:`check_sweep_shape`).
     """
+    check_sweep_shape(sweep_cfg)
     if sweep_cfg is None:
         return None
     if isinstance(sweep_cfg, DictConfig):
         container = OmegaConf.to_container(sweep_cfg, resolve=True)
-    elif isinstance(sweep_cfg, Mapping):
-        container = dict(sweep_cfg)
     else:
-        raise ValueError(
-            "sweep must be a mapping (constraints, route, odd_sample, ...), "
-            f"got {_shape(sweep_cfg)}"
-        )
+        container = dict(sweep_cfg)
     assert isinstance(container, dict)  # a DictConfig's container is a dict
     return {str(key): value for key, value in container.items()}
 
@@ -1081,6 +1097,7 @@ __all__ = [
     "expand_route",
     "expand_sweep",
     "scenario_controls",
+    "check_sweep_shape",
     "scenario_rules",
     "sweep_section",
 ]

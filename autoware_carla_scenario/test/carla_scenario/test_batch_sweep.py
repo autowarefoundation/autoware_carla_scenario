@@ -202,6 +202,28 @@ def test_a_batch_without_multirun_refuses_a_sweep_that_is_not_a_mapping(
     assert batch.configs == []
 
 
+def test_checking_a_sweep_resolves_nothing_in_it() -> None:
+    """A run that does not expand the sweep checks its shape only: an
+    interpolation that only expanding it reads (``${hydra:...}`` in a batch
+    composed without Hydra's runtime, say) is not resolved, as before (#2279)."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+
+    cfg = OmegaConf.create(
+        {
+            "sweep": {
+                "odd_sample": {"count": 2},
+                "extra": "${hydra:runtime.output_dir}",
+                "missing": "${no.such.key}",
+            }
+        }
+    )
+
+    assert run._has_sweep(cfg)
+    run._check_seeds(cfg)
+
+
 def test_resuming_an_expanded_batch_keeps_each_case_its_number(batch: _Batch) -> None:
     from autoware_carla_scenario.examples import run
 

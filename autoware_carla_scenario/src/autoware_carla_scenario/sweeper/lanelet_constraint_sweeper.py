@@ -95,6 +95,7 @@ from .expand import (
     EMPTY_SWEEP_MESSAGE,
     _config_seed,
     check_constraint_keys,
+    check_sweep_shape,
     environment_rules,
     expand_sweep,
     load_sweep_map,
@@ -709,8 +710,10 @@ class LaneletConstraintSweeper(Sweeper):
         # A `sweep` that is not a mapping is the sweep's own refusal, as in
         # step 1, before step 0 refuses it as a config value a run refuses
         # (exit 2, naming no scenario) (#2279).
+        # Its shape only: an interpolation in it is resolved, as before, by
+        # step 1.
         try:
-            sweep_section(OmegaConf.select(cfg, "sweep"))
+            check_sweep_shape(OmegaConf.select(cfg, "sweep"))
         except ValueError as exc:
             _refuse_invalid_sweep(cfg, exc)
 
