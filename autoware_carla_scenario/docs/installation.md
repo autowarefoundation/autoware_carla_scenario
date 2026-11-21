@@ -147,11 +147,13 @@ converter separately when you need to generate a map.
 
 Configure your environment by exporting the variables consumed by the
 package, or by loading a `.env` file (the package depends on
-`python-dotenv`). The most common variables:
+`python-dotenv`): the first `.env` found from the working directory up
+is loaded when `autoware_carla_scenario.server` is imported, wherever the
+package is installed, and an exported variable wins over the file. The most common variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither. |
+| `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither and no server answers at their host. |
 | `AUTOWARE_CARLA_SCENARIO_HOME` | optional | Moves `~/.autoware_carla_scenario`, where `scenario-setup` installs CARLA (`bin/carla`). |
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
 | `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |

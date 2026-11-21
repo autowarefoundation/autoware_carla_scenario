@@ -156,9 +156,30 @@ def test_a_launched_server_listens_on_the_configured_port(
     assert _launched(monkeypatch, tmp_path, free_port) == [
         f"-carla-rpc-port={free_port}"
     ]
-    assert _launched(monkeypatch, tmp_path, free_port, ["-carla-rpc-port=3000"]) == [
-        "-carla-rpc-port=3000"
-    ]
+    # A -carla-rpc-port= that names the server's port is passed on as it is.
+    same = [f"-carla-rpc-port={free_port}"]
+    assert _launched(monkeypatch, tmp_path, free_port, same) == same
+
+
+@pytest.mark.parametrize(
+    "arg", ["-carla-rpc-port=3000", "-carla-rpc-port=", "-carla-rpc-port=2x"]
+)
+def test_a_carla_rpc_port_other_than_the_port_is_refused_before_launching(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int, arg: str
+) -> None:
+    """CARLA would listen on the extra argument's port while the manager
+    waited on its own until the timeout (#2300): refused, naming both, and
+    nothing is launched."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(
+        port=free_port, extra_args=[arg], reuse_if_running=False
+    )
+    with pytest.raises(ValueError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert repr(arg) in message and str(free_port) in message, message
+    assert not mark.exists()
+    assert manager._process is None
 
 
 def test_without_a_display_the_server_renders_off_screen(
@@ -199,7 +220,9 @@ def test_a_remote_host_that_does_not_answer_launches_nothing(
     with pytest.raises(RuntimeError) as raised:
         manager.start()
     message = str(raised.value)
-    assert message.startswith(f"No CARLA server reachable at {host}:2000"), message
+    # An IPv6 address is named in brackets, however it was given.
+    where = f"[{host.strip('[]')}]" if ":" in host else host
+    assert message.startswith(f"No CARLA server reachable at {where}:2000"), message
     assert "only launches CARLA for a local host" in message
     assert not mark.exists()
     assert manager._process is None
@@ -384,3 +407,94 @@ def test_a_port_freed_while_it_is_pinged_is_launched_on(
     # The marking launcher exits 3: it was launched, then failed as itself.
     assert "exited with code 3" in str(raised.value)
     assert mark.exists()
+
+
+# ---------------------------------------------------------------------------
+# A bracketed IPv6 host is connected to without its brackets (#2300)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("host", ["[::1]", "::1"])
+def test_a_bracketed_ipv6_host_is_connected_to_unbracketed(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    """getaddrinfo() resolves no "[::1]": the TCP probe and the CARLA client
+    are given "::1", so a server running there is found and reused."""
+    connected: list[tuple[str, int]] = []
+    clients: list[tuple[str, int]] = []
+
+    class _Connection:
+        def close(self) -> None:
+            pass
+
+    def create_connection(
+        address: tuple[str, int], timeout: Optional[float] = None
+    ) -> _Connection:
+        connected.append(address)
+        return _Connection()
+
+    class _Client:
+        def __init__(self, client_host: str, port: int) -> None:
+            clients.append((client_host, port))
+
+        def set_timeout(self, seconds: float) -> None:
+            pass
+
+        def get_server_version(self) -> str:
+            return "0.10.0"
+
+    monkeypatch.setattr(server_module.socket, "create_connection", create_connection)
+    monkeypatch.setattr(server_module.carla, "Client", _Client)
+    manager = CarlaServerManager(host=host, port=2000)
+    assert manager.host == "::1"
+    manager.start()
+    assert manager.reused
+    assert connected == [("::1", 2000)]
+    assert clients == [("::1", 2000)]
+
+
+def test_an_ipv6_host_is_named_in_brackets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = CarlaServerManager(host="[::1]", port=2000, timeout=0.0)
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    with pytest.raises(RuntimeError, match=r"at \[::1\]:2000"):
+        manager._wait_until_ready()
+
+
+# ---------------------------------------------------------------------------
+# The working directory's .env is loaded (#2300)
+# ---------------------------------------------------------------------------
+
+
+def test_the_working_directorys_dotenv_is_loaded(tmp_path: Path) -> None:
+    """The .env nearest the working directory is loaded on import, not the
+    one nearest the package, and the environment wins over it."""
+    import os
+    import subprocess
+    import sys
+
+    (tmp_path / ".env").write_text(
+        "ACS_DOTENV_FROM_CWD=loaded\nACS_DOTENV_SET=from-file\n"
+    )
+    run_dir = tmp_path / "sub" / "dir"
+    run_dir.mkdir(parents=True)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ACS_DOTENV_FROM_CWD", "PYTHON_DOTENV_DISABLED")
+    }
+    env["ACS_DOTENV_SET"] = "from-env"
+    code = (
+        "import os, autoware_carla_scenario.server; "
+        "print(os.environ.get('ACS_DOTENV_FROM_CWD'), os.environ['ACS_DOTENV_SET'])"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=run_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert out == ["loaded", "from-env"]

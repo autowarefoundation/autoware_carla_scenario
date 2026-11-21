@@ -29,8 +29,8 @@ This package provides a framework for creating and running automated scenario te
   recording
 - `scenario-setup` downloads CARLA's nightly build, which the runner then
   launches by itself
-- pytest integration via `CarlaScenarioFixture` (auto-skip when there is no
-  CARLA to launch)
+- pytest integration via `CarlaScenarioFixture` (auto-skip when no CARLA
+  server answers and there is none to launch)
 
 ## Quick Links
 

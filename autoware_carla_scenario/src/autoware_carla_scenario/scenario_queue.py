@@ -21,7 +21,7 @@ from .run_timeout import check_run_timeout
 from .t4 import T4Recorder
 from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
-from .server import CarlaServerManager
+from .server import CarlaServerManager, _unbracketed_host
 from .traffic.base import TrafficBackend
 from .world_reset import RESET_RELOAD, check_world_reset
 
@@ -178,7 +178,7 @@ class ScenarioQueue:
                 OpenDRIVE) work.
             map_name: Built-in CARLA map name to load on start (optional).
                 Used alone or together with *xodr_path*.
-            host: CARLA RPC host.
+            host: CARLA RPC host (an IPv6 address bracketed or not).
             port: CARLA RPC port.
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default per-scenario timeout, for a scenario
@@ -279,7 +279,8 @@ class ScenarioQueue:
         self._opendrive_path = opendrive_path
         self._lanelet2_path = lanelet2_path
         self._map_name = map_name
-        self._host = host
+        # Unbracketed, as the runner and a map pack connect to it ("[::1]").
+        self._host = _unbracketed_host(host)
         self._port = port
         self._tm_port = tm_port
         self._timeout_seconds = timeout_seconds
@@ -928,10 +929,13 @@ class ScenarioQueue:
     ) -> Callable[[], Generator["ScenarioQueue", None, None]]:
         """Return a session-scoped pytest fixture that manages this queue.
 
-        The generated fixture automatically skips when there is no CARLA to
-        launch (``CARLA_EXECUTABLE`` unset and nothing installed) or when the
-        CARLA session cannot be started (:meth:`start` raises), so callers do
-        not need to add a manual ``pytest.skip`` guard.
+        The generated fixture automatically skips when the CARLA session
+        cannot be started (:meth:`start` raises): among other reasons, when
+        no server answers at *host* and there is none to launch
+        (``CARLA_EXECUTABLE`` unset and nothing installed, or a remote
+        *host*), so callers do not need to add a manual ``pytest.skip``
+        guard.  Whether a CARLA is installed here is not asked first: a
+        remote server, or one already running here, needs none.
 
         Once started, it runs every scenario with
         ``run_all(continue_on_error=True)``: a scenario that raises on every
@@ -977,11 +981,9 @@ class ScenarioQueue:
 
         @pytest.fixture(scope="session", name=fixture_name)
         def _queue_fixture() -> Generator["ScenarioQueue", None, None]:
-            if CarlaServerManager.executable() is None:
-                pytest.skip(
-                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set "
-                    "and no CARLA is installed. Skipping CARLA integration tests."
-                )
+            # No pre-check for a CARLA to launch: a remote host, or a server
+            # already running here, needs none, and start() raises -- and the
+            # fixture skips -- when there is no server and none to launch.
             try:
                 queue.start()
             except Exception as exc:
