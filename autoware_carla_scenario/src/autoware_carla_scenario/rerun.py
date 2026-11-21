@@ -36,7 +36,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Optional, Union
 
 # How a conversion went, and the run's summary of them, are the checked
 # rerun_report's (#2124); the names they had here stay importable from here.
@@ -90,7 +90,7 @@ class RerunUnavailableError(RuntimeError):
 
 class RerunStrictUnsupportedError(RerunUnavailableError, ValueError):
     """``rerun.strict`` is set, but the converter does not know every record
-    type (or field) the framework writes, so it would fail every log.
+    type the framework writes, so it would fail every log.
 
     A :class:`ValueError` (a config value the run refuses) and a
     :class:`RerunUnavailableError`, so a run refuses it before it starts as it
@@ -115,12 +115,10 @@ def check_strict_coverage(converter: Any) -> None:
     """Refuse a strict conversion by *converter* that would fail every log.
 
     The converter's ``RECORD_TYPES`` must name every record type the
-    framework writes (:func:`written_records`), and, when it exposes them,
-    its ``RECORD_FIELDS`` (record type -> field names) every field of each.
-    ``autoware-carla-scenario-rerun`` 0.3 exposes the record types only, so
-    a field it does not know (``collision.start_frame``) still fails a
-    strict conversion when the log holds it.  A converter exposing neither
-    is not checked.
+    framework writes (:func:`written_records`).  Converters expose no list
+    of the fields they know, so a field one does not know
+    (``collision.start_frame``) still fails a strict conversion of a log
+    holding it.  A converter without ``RECORD_TYPES`` is not checked.
 
     Raises:
         RerunStrictUnsupportedError: naming ``rerun.strict`` and what the
@@ -129,16 +127,8 @@ def check_strict_coverage(converter: Any) -> None:
     known_types = getattr(converter, "RECORD_TYPES", None)
     if known_types is None:
         return
-    written = written_records()
     known = {str(t) for t in known_types}
-    missing = sorted(t for t in written if t not in known)
-    known_fields = getattr(converter, "RECORD_FIELDS", None)
-    if isinstance(known_fields, Mapping):
-        for record_type, fields in sorted(written.items()):
-            if record_type not in known or record_type not in known_fields:
-                continue
-            knows = {str(f) for f in known_fields[record_type]}
-            missing += [f"{record_type}.{f}" for f in sorted(fields - knows)]
+    missing = sorted(t for t in written_records() if t not in known)
     if not missing:
         return
     version = getattr(converter, "__version__", None)

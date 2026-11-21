@@ -1049,11 +1049,9 @@ is), naming `rerun.strict` and the types:
 rerun.strict is set, but autoware-carla-scenario-rerun 0.3.0 does not know run, which the framework writes, so every strict conversion would fail: set rerun.strict=false, or upgrade autoware-carla-scenario-rerun to a version that knows them
 ```
 
-The check is of record types only, unless the converter also lists the
-fields it knows (`RECORD_FIELDS`, record type to field names), which
-`autoware-carla-scenario-rerun` 0.3 does not. So a converter that knows every
-record type but not a field added to one later (`collision.start_frame`)
-passes the check, and a strict conversion of a log holding that field still
+The check is of record types only: a converter lists the record types it
+knows, not the fields. So a converter that knows every record type but not a
+field added to one later (`collision.start_frame`) passes the check, and a strict conversion of a log holding that field still
 fails, as any other failed conversion does (above). `autoware-carla-scenario-rerun`
 0.3, the version the `rerun` extra installs, knows neither the `run` record
 nor `collision.start_frame`: with it, `rerun.strict=true` is refused, and

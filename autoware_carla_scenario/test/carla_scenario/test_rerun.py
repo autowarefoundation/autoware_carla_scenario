@@ -458,20 +458,17 @@ def test_a_strict_converter_knowing_every_record_type_is_accepted(
     assert fake.calls[0][2] is True
 
 
-def test_a_strict_converter_missing_a_field_it_exposes_is_refused() -> None:
-    fields = {t: sorted(f) for t, f in written_records().items()}
-    fields["collision"].remove("start_frame")
+def test_a_strict_converter_s_version_is_named_in_the_refusal() -> None:
     fake = _FakeConverter()
-    fake.RECORD_TYPES = list(fields)  # type: ignore[attr-defined]
-    fake.RECORD_FIELDS = fields  # type: ignore[attr-defined]
+    fake.RECORD_TYPES = [t for t in written_records() if t != "run"]  # type: ignore[attr-defined]
     fake.__version__ = "9.9.9"  # type: ignore[attr-defined]
     with pytest.raises(
         RerunStrictUnsupportedError,
-        match=r"^rerun\.strict is set, but autoware-carla-scenario-rerun 9\.9\.9 does not know collision\.start_frame, ",
+        match=r"^rerun\.strict is set, but autoware-carla-scenario-rerun 9\.9\.9 does not know run, ",
     ):
         check_strict_coverage(fake)
-    fields["collision"].append("start_frame")
-    check_strict_coverage(fake)
+    # A converter without RECORD_TYPES is not checked.
+    check_strict_coverage(_FakeConverter())
 
 
 def test_a_run_asking_for_strict_recordings_the_converter_cannot_make_is_refused(
