@@ -155,6 +155,11 @@ def fake_slurm(
     monkeypatch.setattr(run, "resolve_map_paths", fake_world.fake_map_paths)
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
     monkeypatch.setattr(run, "use_canvas", fake_world.fake_use_canvas)
+    # As fake_world.install does in the tasks: what a batch decides is under
+    # test, not whether the installed converter could convert strictly.
+    monkeypatch.setattr(
+        "autoware_carla_scenario.rerun.check_strict_coverage", lambda _converter: None
+    )
     monkeypatch.setattr(
         run,
         "_compose_config",

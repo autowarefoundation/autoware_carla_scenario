@@ -14,7 +14,10 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   once, when recording starts.
 * ``{"type": "map", "name", "source", "lanelet2", "opendrive",
   "projector_info", "projector_type", "mgrs_offset", "z_offset"}`` -- once,
-  next: the map files the run read, each with its path and SHA-256.
+  next: the map files the run read, each with its path and SHA-256, and
+  ``source``, where the map came from (``map.directory``,
+  ``carla-pack:OWNER/REPO/PACK@VERSION`` for a content pack, or
+  ``map.source``).
 * ``{"type": "actor", "id", "type_id", "role", "extent": [x,y,z],
   "center": [x,y,z]}`` -- the first time a vehicle/walker is seen; ``extent`` is
   the bounding box's half size, ``center`` its offset from the actor origin.
@@ -315,7 +318,8 @@ class TrajectoryRecorder:
     Args:
         path: The ``.jsonl`` file to write.
         map_source: Where the map came from (the run's ``map.directory``,
-            else its ``map.source``), for
+            else ``carla-pack:OWNER/REPO/PACK@VERSION`` for a map read from
+            a content pack, ``map.pack``, else its ``map.source``), for
             the ``map`` record, which holds it with any credentials in it
             redacted (:func:`~.maps.source.redacted_url`).
         lanelet2_path: The Lanelet2 map the run read.
@@ -795,7 +799,9 @@ class TrajectoryRecorder:
         try:
             self._emit(record)
         except orjson.JSONEncodeError:
-            # A projector file holding what JSON has no type for (a YAML date).
+            # A projector file holding what orjson cannot write: a mapping
+            # with keys that are not strings (YAML's `1: x`), or a set (YAML's
+            # `!!set`).  orjson writes a YAML date, as an ISO 8601 string.
             logger.warning(
                 "Trajectory recording: map_projector_info.yaml of %s is not "
                 "JSON; the map record leaves it out",

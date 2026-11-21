@@ -20,13 +20,16 @@ from autoware_carla_scenario.rerun import (
     INSTALL_HINT,
     RerunConversion,
     RerunConverter,
+    RerunStrictUnsupportedError,
     RerunUnavailableError,
+    check_strict_coverage,
     convert_outputs,
     latest,
     main,
     recording_path,
     report,
     require_converter,
+    written_records,
 )
 
 from .test_scenario_runner import _make_runner, _Stop
@@ -390,12 +393,147 @@ def test_a_strict_conversion_fails_on_a_field_it_does_not_know(
     assert unknown.pop("world.from_the_future") == 1
     assert set(unknown) <= {"tick.angular_velocity"}
 
-    with RerunConverter(strict=True) as strict:
+    # The installed converter may not know every record type the framework
+    # writes, which a strict RerunConverter refuses up front (#2298): it
+    # converts here as one that knows them would.
+    import autoware_carla_scenario_rerun as real
+
+    covering = _Covering(real)
+    with RerunConverter(strict=True, converter=covering) as strict:
         strict.submit(log, "S")
     [failed] = strict.close()
     assert not failed.ok
     assert failed.error is not None
     assert failed.error.startswith("UnknownFieldError:")
+
+
+class _Covering:
+    """A converter knowing every record type the framework writes, which
+    converts with *module* (the real converter, in a test)."""
+
+    def __init__(self, module: Any = None) -> None:
+        self.RECORD_TYPES = sorted(written_records())
+        self._module = module
+
+    def convert(self, jsonl: str, out_rrd: str, **kwargs: Any) -> Any:
+        return self._module.convert(jsonl, out_rrd, **kwargs)
+
+
+def test_written_records_are_the_schema_s_record_types() -> None:
+    from autoware_carla_scenario.trajectory_recorder import SCHEMA_PATH
+
+    schema = json.loads(SCHEMA_PATH.read_text())
+    records = written_records()
+    assert sorted(records) == sorted(schema["discriminator"]["mapping"])
+    assert {"run", "collision", "world", "result"} <= set(records)
+    assert "start_frame" in records["collision"]
+    assert {"seed", "scenario_hash", "type"} <= records["run"]
+
+
+def test_a_strict_converter_missing_a_record_type_is_refused_up_front() -> None:
+    fake = _FakeConverter()
+    fake.RECORD_TYPES = [t for t in written_records() if t != "run"]  # type: ignore[attr-defined]
+    with pytest.raises(RerunStrictUnsupportedError) as raised:
+        RerunConverter(strict=True, converter=fake)
+    message = str(raised.value)
+    assert message.startswith(
+        "rerun.strict is set, but the converter does not know run,"
+    )
+    assert "rerun.strict=false" in message and "upgrade" in message
+    # A config value the run refuses, and refused as a missing converter is:
+    # one line, exit code 2.
+    assert isinstance(raised.value, ValueError)
+    assert isinstance(raised.value, RerunUnavailableError)
+    # Not strict: nothing to refuse, the unknown record is skipped.
+    RerunConverter(converter=fake).close()
+
+
+def test_a_strict_converter_knowing_every_record_type_is_accepted(
+    tmp_path: Path,
+) -> None:
+    fake = _FakeConverter()
+    fake.RECORD_TYPES = [*written_records(), "from_the_future"]  # type: ignore[attr-defined]
+    with RerunConverter(strict=True, converter=fake) as converter:
+        converter.submit(tmp_path / "A.trajectory.jsonl", "A")
+    assert fake.calls[0][2] is True
+
+
+def test_a_strict_converter_s_version_is_named_in_the_refusal() -> None:
+    fake = _FakeConverter()
+    fake.RECORD_TYPES = [t for t in written_records() if t != "run"]  # type: ignore[attr-defined]
+    fake.__version__ = "9.9.9"  # type: ignore[attr-defined]
+    with pytest.raises(
+        RerunStrictUnsupportedError,
+        match=r"^rerun\.strict is set, but autoware-carla-scenario-rerun 9\.9\.9 does not know run, ",
+    ):
+        check_strict_coverage(fake)
+    # A converter without RECORD_TYPES is not checked.
+    check_strict_coverage(_FakeConverter())
+
+
+def test_a_run_asking_for_strict_recordings_the_converter_cannot_make_is_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    fake = _FakeConverter()
+    fake.RECORD_TYPES = ["world", "tick", "result"]  # type: ignore[attr-defined]
+    cfg = _shipped(["rerun.enabled=true", "rerun.strict=true"])
+    with patch("autoware_carla_scenario.rerun.require_converter", return_value=fake):
+        with pytest.raises(RerunStrictUnsupportedError, match=r"rerun\.strict"):
+            run.build_rerun_converter(cfg)
+        # Without strict the same converter is used, skipping what it does
+        # not know with a warning.
+        converter = run.build_rerun_converter(_shipped(["rerun.enabled=true"]))
+        assert converter is not None
+        converter.close()
+
+
+def test_a_real_strict_conversion_of_a_recorder_written_log_converts_or_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A log as a run writes it -- its ``run`` record, a collision with its
+    ``start_frame`` -- converts strictly, or the converter is refused up
+    front; never a strict converter that fails every log (#2298)."""
+    pytest.importorskip("autoware_carla_scenario_rerun")
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.trajectory_recorder import TrajectoryRecorder
+
+    world = _World()
+    recorder = TrajectoryRecorder(tmp_path / "S.trajectory.jsonl")
+    recorder.start(world)
+    recorder.record_run(7, "ab" * 32)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    recorder.record_collision(
+        SimpleNamespace(
+            frame=100,
+            t=0.0,
+            actors=["npc1", "npc2"],
+            ids=[3, 4],
+            impulse=1.0,
+            ego=False,
+            phase="end",
+            duration=0.5,
+            start_frame=90,
+        )
+    )
+    recorder.record_result(ScenarioResult(True, "ok", 0.05))
+    recorder.close()
+    text = recorder.path.read_text()
+    assert '"type":"run"' in text and '"start_frame":90' in text
+    try:
+        strict = RerunConverter(strict=True)
+    except RerunStrictUnsupportedError as exc:
+        assert "rerun.strict" in str(exc)
+        return
+    with strict:
+        strict.submit(recorder.path, "S")
+    [conversion] = strict.close()
+    assert conversion.ok, conversion.error
 
 
 # ---------------------------------------------------------------------------
