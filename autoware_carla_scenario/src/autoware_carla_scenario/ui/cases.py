@@ -358,14 +358,17 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
 def _stale(layout: BatchLayout, index: int) -> str | None:
     """Why case *index*'s outcome is stale (``slurm.collect.stale_reason``),
     if it is; ``None`` too when the batch's records cannot be read, which
-    must not break the page."""
+    must not break the page: a submission record whose ``chunks`` hold a
+    number or ``null`` raises a :class:`TypeError`
+    (``SubmissionRecord.task_of``), which would break the session list of
+    every session (#2285)."""
     try:
         record = layout.read_result(index)
         if record is None:
             return None
         outcome: CaseOutcome = record
         return stale_reason(layout, index, outcome)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return None
 
 

@@ -259,7 +259,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `collect_mem` | `2G` | its `--mem` |
 | `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; at least 0 |
 | `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_base` at least 1024, `port_slots` at least 1, and every slot's ports within 65535 |
-| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>`, else `/tmp`: per user, so slots are exclusive among your own tasks only; users sharing nodes set one group directory ([Ports](#ports)) |
+| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>` (per user, so slots are exclusive among your own tasks only), else `/tmp`; users sharing nodes set one group directory ([Ports](#ports)) |
 
 Each value is checked before anything is written, and one of the wrong type is
 refused with an error naming its key (`launcher.<key>`), never quietly read
@@ -442,8 +442,9 @@ SLURM gives each job a private one (`job_container/tmpfs`): it is
 ephemeral ports.
 
 The default lock directory is per user, so slots and [ROS domains](#ros-domains)
-are exclusive among **your own** tasks only. Another user's task on the same
-node may take the same slot: the check that none of its ports is bound stops
+are exclusive among **your own** tasks only (unless `/dev/shm` cannot be
+used and it falls back to `/tmp`, which every user shares). Another user's
+task on the same node may take the same slot: the check that none of its ports is bound stops
 that only once the other task's CARLA has bound them, tens of seconds after
 it took the slot. Users who share nodes set `launcher.port_lock_dir` to one
 directory they all write to, for example a group's own:

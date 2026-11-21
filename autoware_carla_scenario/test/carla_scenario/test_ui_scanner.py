@@ -440,3 +440,52 @@ def test_the_session_list_and_the_session_page_count_alike(
     assert "All passed" not in page
     items = scanner.load_session(tmp_path, session_type, DATE, GOOD)
     assert [(i.index, i.passed, i.pending) for i in items] == want_items
+
+
+@pytest.mark.parametrize("chunks", [[5], 5, [None]], ids=["number", "not-list", "null"])
+def test_a_slurm_batch_whose_later_submission_record_is_malformed_still_lists(
+    tmp_path: Path, chunks: object
+) -> None:
+    """#2285: whether a SLURM case's outcome is stale reads the later
+    submissions' records, and one whose ``chunks`` hold no list raises a
+    TypeError there; the outcome is then shown as it is, and the session list
+    still lists every session."""
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSION, BatchLayout
+    from autoware_carla_scenario.ui import cases
+
+    _with_good_session(tmp_path)
+    layout = BatchLayout(tmp_path / "outputs" / DATE / BAD)
+    for path, document in (
+        (
+            layout.manifest,
+            {
+                "version": MANIFEST_VERSION,
+                "cases": [{"index": 0, "label": "a"}],
+                "launcher": {},
+            },
+        ),
+        (layout.submission(0), {"index": 0, "chunks": [[0]]}),
+        (layout.submission(1), {"index": 1, "chunks": chunks}),
+        (
+            layout.result(0),
+            {
+                "submission": 0,
+                "result": {
+                    "passed": True,
+                    "message": "ok",
+                    "elapsed_seconds": 1.0,
+                    "condition_statuses": [],
+                },
+            },
+        ),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document))
+
+    found = cases.batch_entries(layout.batch_dir)
+
+    assert found is not None
+    assert [e["passed"] for e in found[0]] == [True]
+    sessions = {s.time: s for s in scanner.scan_sessions(tmp_path)}
+    assert sessions[GOOD].passed_count == 1
+    assert (sessions[BAD].passed_count, sessions[BAD].total_count) == (1, 1)
