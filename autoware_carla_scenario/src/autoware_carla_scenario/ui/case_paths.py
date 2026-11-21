@@ -264,6 +264,19 @@ def _only_case(directory: Path) -> CaseFiles | None:
     return CaseFiles(directory, stems[0]) if stems else None
 
 
+def _shared_overrides(jobs: list[list[str]]) -> set[str]:
+    """The overrides every one of *jobs* (each job's overrides) holds, leaving
+    out a job whose overrides could not be read (an empty list); none when no
+    job's could (``ui.cases.session_overrides``)."""
+    read = [overrides for overrides in jobs if overrides]
+    if not read:
+        return set()
+    shared = set(read[0])
+    for overrides in read[1:]:
+        shared &= set(overrides)
+    return shared
+
+
 def _mtime(path: Path) -> float:
     try:
         return path.stat().st_mtime

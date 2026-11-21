@@ -58,6 +58,8 @@ from .wire import (
     format_address,
     parse_address,
 )
+from .wire import _PREVIEW_BYTES as _PREVIEW_BYTES
+from .wire import _preview as _preview
 
 __all__ = [
     "COMMAND_FIELDS",
@@ -78,16 +80,6 @@ __all__ = [
 #: The longest line :class:`LineReader` buffers, bytes: a peer that sends more
 #: without a newline is refused rather than buffered without bound.
 MAX_LINE_BYTES = 1 << 20
-
-#: How much of a refused line a :class:`LineReader` error quotes, bytes.
-_PREVIEW_BYTES = 200
-
-
-def _preview(line: bytes) -> str:
-    """The start of *line*, for an error message."""
-    if len(line) > _PREVIEW_BYTES:
-        return f"{line[:_PREVIEW_BYTES]!r}... ({len(line)} bytes)"
-    return repr(line)
 
 
 def _parse(line: bytes) -> Dict[str, Any]:

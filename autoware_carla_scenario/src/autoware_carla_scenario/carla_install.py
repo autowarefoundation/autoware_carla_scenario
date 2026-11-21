@@ -64,6 +64,7 @@ from .carla_install_paths import (
     _staging,
     _swap_into_place,
 )
+from .carla_install_paths import _cannot_install as _cannot_install
 from .carla_install_paths import _UNPACKED_PER_PACKED as _UNPACKED_PER_PACKED
 from .carla_install_paths import _UNWRITABLE_ERRNOS as _UNWRITABLE_ERRNOS
 from .carla_install_paths import HOME_ENV as HOME_ENV
@@ -208,16 +209,6 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
     _swap_into_place(staging, target)
     return target / LAUNCHER
-
-
-def _cannot_install(target: Path) -> RuntimeError:
-    """The error of a run that can only check *target* but would have to install."""
-    state = "out of date" if (target / LAUNCHER).is_file() else "not installed"
-    return RuntimeError(
-        f"CARLA at {target} is {state}, and this run cannot write there "
-        f"({_lock_path(target)} cannot be opened for writing); run scenario-setup "
-        "as a user who can write to it, or pass --dir to install elsewhere"
-    )
 
 
 #: The errors of a ``flock`` the file system does not support (some NFS mounts).

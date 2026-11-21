@@ -83,6 +83,7 @@ from .sensor_spec import (
     checked_signal,
 )
 from .sensor_spec import _attribute_number as _attribute_number  # noqa: F401 - re-exported
+from .sensor_spec import _decimal as _decimal
 from .signals import SIGNALS as SIGNALS  # noqa: F401 - re-exported
 from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
 from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
@@ -414,17 +415,6 @@ def _key_text(key: Any, where: str) -> str:
     if isinstance(key, int) and not isinstance(key, bool):
         return _decimal(key, f"{where}: key")
     return str(key)
-
-
-def _decimal(value: int, where: str) -> str:
-    """The decimal text of the integer *value*, or a :class:`HilsConfigError`
-    naming *where* when it has too many digits for ``str()``."""
-    try:
-        return str(value)
-    except ValueError:
-        raise HilsConfigError(
-            f"{where}: expected an integer of fewer digits, got {_huge(value)}"
-        ) from None
 
 
 def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
