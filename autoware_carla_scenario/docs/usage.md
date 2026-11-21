@@ -1427,7 +1427,7 @@ ahead and placing NPC1 by the measured gap).
 | `scenario.npc_lanelet_id` | int | `0` | per config (above) | The lanelet beside the ego's spawn lanelet NPC1 starts on; a sweep binds it to the lane beside the pick |
 | `scenario.npc_ahead_m` | float | `10.0` | `10.0` | How far ahead of the ego NPC1 starts, along its lanelet (m) |
 | `scenario.npc_gap_m` | float \| null | null | — | The starting gap as `vehicle_ahead_gap_m` measures it (bumper to bumper, m); replaces `npc_ahead_m` when set |
-| `scenario.npc_vehicle_type` | str | `"vehicle.mini.cooper"` | — | NPC1's blueprint |
+| `scenario.npc_vehicle_type` | str | `"vehicle.mini.cooper"` | `"vehicle.mini.cooper"` | NPC1's blueprint |
 | `scenario.npc_initial_speed_kmh` | float | `30.0` | `30.0` | NPC1's starting speed (km/h) |
 | `scenario.cut_in_after_seconds` | float | `2.0` | `2.0` | NPC1 changes into the ego's lane this long after the start |
 | `scenario.hold_seconds` | float | `3.0` | `3.0` | The run passes once NPC1 has been on the ego's lane this long without a collision |
@@ -1466,7 +1466,7 @@ which also covers the pedestrian who turns back).
 | `scenario.turn_back_ttc_s` | float \| null | null | — | Turn back to the kerb when a vehicle's time to collision with the pedestrian is at most this (s); `null`: not by TTC |
 | `scenario.turn_back_distance_m` | float \| null | null | — | Turn back when a vehicle is at most this far from the pedestrian along the road (m); `null`: not by distance |
 | `scenario.turn_back_within_m` | float | `1.0` | `1.0` | How far onto the road, from the kerb, the pedestrian may be and still turn back (m) |
-| `scenario.walker_type` | str | `"walker.pedestrian.0015"` | — | The pedestrian's blueprint |
+| `scenario.walker_type` | str | `"walker.pedestrian.0015"` | `"walker.pedestrian.0015"` | The pedestrian's blueprint |
 | `scenario.pass_beyond_m` | float | `10.0` | `10.0` | The run passes once the ego is this far past the pedestrian's crossing line, on its own lanelet (m) |
 | `scenario.timeout_seconds` | float | `25.0` | `25.0` | Maximum scenario duration |
 
@@ -1482,6 +1482,11 @@ Stages one adversarial action of an NPC or a pedestrian against the ego, picked
 by `scenario.kind`. Each case and its full parameter table are in
 [Adversities](scenarios/adversity.md); the actions themselves are in
 [Adversarial Actions and NADE](adversity.md).
+
+Unlike the other examples these are concrete cases on Town10HD_Opt: run them
+with `map=town10hd_opt` (`uv run scenario scenario=adversity/brake_check
+map=town10hd_opt`). On the default map their lanelet ids name other lanelets
+or none.
 
 | Config | `kind` | The adversity |
 |--------|--------|---------------|

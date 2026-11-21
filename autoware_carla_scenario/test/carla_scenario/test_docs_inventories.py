@@ -39,9 +39,16 @@ def _usage() -> str:
 
 
 def _section(text: str, heading: str) -> str:
-    """The body of the Markdown section *heading* (up to the next heading)."""
+    """The body of the Markdown section *heading* (up to the next heading).
+
+    Fenced code blocks are dropped first, so a ``# comment`` in one is not
+    taken for a heading.
+    """
+    text = re.sub(r"^```.*?^```[^\n]*$", "", text, flags=re.MULTILINE | re.DOTALL)
     match = re.search(
-        rf"^#+ {re.escape(heading)}\n(.*?)(?=^#+ )", text, re.MULTILINE | re.DOTALL
+        rf"^#+ {re.escape(heading)}\n(.*?)(?=^#+ |\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
     )
     assert match, f"docs/usage.md has no section {heading!r}"
     return match.group(1)
