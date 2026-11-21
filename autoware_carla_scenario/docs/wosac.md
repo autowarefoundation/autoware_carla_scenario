@@ -59,7 +59,10 @@ write_submission(build_submission(scenarios, {"unique_method_name": "..."}), "su
 A log too short for the rows asked for is refused, naming how many it has: a
 run ends with its verdict, which can be well before 9 s. A log whose last
 line is cut off is read without it, as for a [T4 Scene](t4_scene.md); a
-log that fails does not stop the others, and the command exits 1.
+log that fails does not stop the others, and the command exits 1. An
+option out of range (`--current-index` below 0, `--steps` below 1, an empty
+`--scenario-id`) is refused before any log is read, naming the option. Two
+`--object-ids` keys of one role (`ego` and `hero`) are refused.
 
 ### `pack`
 
@@ -79,7 +82,8 @@ prints how many rollouts each scenario got, then the files it wrote. A
 scenario is refused, and nothing is written, when its runs are not rollouts
 of it ([below](#are-they-rollouts)), when its rollouts simulate different
 agents (without `--common-agents`), when two of its trajectories differ in
-length, or when it has not `--rollouts` rollouts.
+length, or when it has not `--rollouts` rollouts. `--rollouts` or
+`--shards` below 1 is refused before anything is read, naming the option.
 
 The metadata are the submission's fields the challenge asks for:
 
@@ -163,6 +167,11 @@ current row.
   `--scenario-id`.
 - **A seed of its own**: two runs of one seed are one rollout run twice,
   and are refused.
+- **One grid in one frame**: every run has the first run's `frame`,
+  `offset`, `step_s` and `current_index`. A run exported with another
+  `--map-frame` or `--current-index` is refused, naming both files and the
+  field: its rollout would be scored on other rows, or kilometres from the
+  others.
 - **One initial state**: each agent starts its future -- the current row --
   where it does in the first run, within `--position-tolerance` and
   `--heading-tolerance`. The history before it is simulated too, so a stack
