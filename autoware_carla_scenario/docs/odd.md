@@ -1734,7 +1734,10 @@ sweep:
       scenario: CutInScenario      # learn from this scenario's runs only (all, when left out)
 ```
 
-`flaky: true` takes the defaults. Its other fields are `FlakySearch`'s:
+`flaky: true` takes the defaults; `false`, null or leaving it out is no
+flaky search. A switch is read as `tire_friction`'s is, so `"true"`, `1`,
+`"false"` and `0` mean what they say, and anything else that is not a
+mapping is refused. The mapping's other fields are `FlakySearch`'s:
 `pool`, `coverage_depth`, `threshold`, `epsilon`, `perturbations`, `draws`
 and `directions`. The space holds every parameter of a case: the attributes
 drawn, the weather effects' quantiles, and where in its range the grip and
