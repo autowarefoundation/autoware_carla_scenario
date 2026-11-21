@@ -156,13 +156,16 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         self._closed: bool = False
         self._max_workers = max_workers
         self._server: Optional[grpc.Server] = None
+        #: The server's handler pool, which grpc.Server.stop() leaves running.
+        self._executor: Optional[futures.ThreadPoolExecutor] = None
         self._port: Optional[int] = None
         if autostart:
             self.start()
 
     def _new_server(self) -> grpc.Server:
+        self._executor = futures.ThreadPoolExecutor(max_workers=self._max_workers)
         server = grpc.server(
-            futures.ThreadPoolExecutor(max_workers=self._max_workers),
+            self._executor,
             # so_reuseport=0 disables gRPC's default SO_REUSEPORT so that binding
             # an already-used port fails (returns 0) instead of silently sharing
             # the port with another server and splitting RPCs between them.
@@ -376,5 +379,9 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             # Never bound: there is nothing listening to stop.
             return
         # grace=None stops immediately; only one short-lived client ever connects.
-        self._server.stop(grace=None)
+        # Wait for it to have stopped, then end the handler pool, which stop()
+        # does not: no thread of the server outlives close() (#2257).
+        self._server.stop(grace=None).wait()
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
         logger.info("AutowareBridge server on port %d stopped", self._port)
