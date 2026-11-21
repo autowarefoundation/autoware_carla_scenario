@@ -15,6 +15,7 @@ import pytest
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import BaseScenario, EgoConfig
+from autoware_carla_scenario.actions.base import BaseAction
 from autoware_carla_scenario.authoring.registry import (
     METRIC_OPTIONS,
     get_condition_spec,
@@ -40,6 +41,7 @@ from autoware_carla_scenario.metrics import (
     COLLISION_LATERAL,
     COLLISION_REAR,
     BUILT_IN_METRICS,
+    IMPORTANCE_SAMPLING_WEIGHT,
     LATERAL_REVERSALS,
     LATERAL_WOBBLE_M,
     MIN_DISTANCE_TO_LANE_BOUNDARY_M,
@@ -293,6 +295,19 @@ def test_the_importance_sampling_weight_is_the_one_the_runner_publishes() -> Non
         assert read_metric("importance_sampling_weight", _world()) == 0.125  # type: ignore[arg-type]
     finally:
         set_importance_sampling_weight(None)
+
+
+def test_the_importance_sampling_weight_reads_without_an_ego() -> None:
+    # Unlike every metric of the ego, which reads nothing in a frame without
+    # one (the metrics module's docstring, docs/metrics.md; #2287).
+    from autoware_carla_scenario.metric_frames import Frame
+
+    frames = [Frame(1, 0.05, 0.25, ()), Frame(2, 0.10, 0.5, ())]
+    series = evaluate_metrics(
+        frames, _TWO_WAY, [IMPORTANCE_SAMPLING_WEIGHT, MIN_DISTANCE_TO_OBSTACLE_M]
+    )
+    assert series[IMPORTANCE_SAMPLING_WEIGHT].values == [0.25, 0.5]
+    assert series[MIN_DISTANCE_TO_OBSTACLE_M].values == [None, None]
 
 
 def test_a_metric_is_not_a_measure() -> None:
@@ -1528,6 +1543,27 @@ def test_a_metric_condition_composes_with_nothing() -> None:
     scenario.register_fail_condition(condition)
     with pytest.raises(ValueError, match="max_ng_seconds"):
         MetricCondition(OFFROAD, max_ng_seconds=-1.0, label="x")
+
+
+class _Fires(BaseAction):
+    def execute(self, world: Any) -> None:
+        del world
+
+
+def test_an_action_refuses_a_metric_condition_as_its_trigger_or_until() -> None:
+    # An action reads both every tick, where a MetricCondition reads nothing:
+    # it would stay in STANDBY, or never end (#2287).
+    condition = MetricCondition(COLLISION_ANY, label="any collision")
+    with pytest.raises(
+        ValueError,
+        match=r"^_Fires 'on metric': condition: .*judged once the run is over",
+    ):
+        _Fires("on metric", condition=condition)
+    with pytest.raises(
+        ValueError,
+        match=r"^_Fires 'until metric': until: .*judged once the run is over",
+    ):
+        _Fires("until metric", until=condition)
 
 
 def test_an_unknown_metric_is_refused() -> None:

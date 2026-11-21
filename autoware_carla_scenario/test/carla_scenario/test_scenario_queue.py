@@ -237,6 +237,35 @@ class TestScenarioQueueUnit:
         with pytest.raises(ValueError, match="cooldown_max_retries must be >= 0"):
             ScenarioQueue(cooldown_max_retries=-1)
 
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+    def test_a_default_timeout_that_never_fires_is_refused(
+        self, seconds: float
+    ) -> None:
+        # Before the server is made, not once each case (and each retry) has
+        # spawned its ego (#2287).
+        with (
+            patch(
+                "autoware_carla_scenario.scenario_queue.CarlaServerManager"
+            ) as server,
+            pytest.raises(
+                ValueError, match=r"^timeout_seconds must be positive and finite"
+            ),
+        ):
+            ScenarioQueue(timeout_seconds=seconds)
+        server.assert_not_called()
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+    def test_a_case_timeout_that_never_fires_is_refused_and_not_added(
+        self, seconds: float
+    ) -> None:
+        queue = ScenarioQueue()
+        with pytest.raises(
+            ValueError, match=r"^timeout_seconds must be positive and finite"
+        ):
+            queue.add(_NullScenario(_make_ego_config()), timeout_seconds=seconds)
+        assert len(queue) == 0
+        assert queue._timeouts == {}
+
     def test_empty_queue_len_is_zero(self) -> None:
         queue = ScenarioQueue()
         assert len(queue) == 0
@@ -466,7 +495,7 @@ class TestScenarioQueueUnit:
         for k in range(3):
             queue.add(
                 _HeavyScenario(_make_ego_config()),
-                timeout_seconds=float(k),
+                timeout_seconds=float(k + 1),
                 case=MagicMock(),
             )
 

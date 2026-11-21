@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -661,21 +662,25 @@ class TestRecordRun:
 
 
 def test_only_an_importance_sampled_run_has_an_outcome_weight() -> None:
-    from types import SimpleNamespace
-
     from autoware_carla_scenario import AdversarialTrafficAction, BaseScenario
     from autoware_carla_scenario.actions import SetSpeedAction
 
-    outcome_weight = BaseScenario.outcome_weight.fget  # type: ignore[attr-defined]
-    actions = SimpleNamespace(
-        _init_actions=[],
-        _pre_tick_actions=[SetSpeedAction("npc1", 1.0)],
-        _post_tick_actions=[],
-    )
-    assert outcome_weight(actions) is None
+    class _Actions:
+        """BaseScenario's two weights, over action lists set by hand."""
+
+        outcome_weight = BaseScenario.outcome_weight
+        importance_sampling_weight = BaseScenario.importance_sampling_weight
+
+        def __init__(self) -> None:
+            self._init_actions: list[Any] = []
+            self._pre_tick_actions: list[Any] = [SetSpeedAction("npc1", 1.0)]
+            self._post_tick_actions: list[Any] = []
+
+    actions = _Actions()
+    assert actions.outcome_weight is None  # type: ignore[misc]
     # NADE samples, even before it has sampled anything (weight 1).
     actions._post_tick_actions.append(AdversarialTrafficAction([]))
-    assert outcome_weight(actions) == 1.0
+    assert actions.outcome_weight == 1.0  # type: ignore[misc]
 
 
 def test_what_the_odds_measures_read_is_built_before_the_first_tick(
@@ -825,6 +830,63 @@ class TestTheRunsSeed:
             pytest.raises(_Stop),
         ):
             runner.run_scenario(scenario, reset_world=False)
+
+        next_world.assert_called_once()
+
+
+class TestTheRunsTimeout:
+    """The default timeout is checked when it is given -- to the runner, or to
+    run_scenario -- not once a run has spawned its ego and registers it
+    (#2287)."""
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan"), float("inf")])
+    def test_a_runner_refuses_a_timeout_that_is_not_positive_and_finite(
+        self, seconds: float
+    ) -> None:
+        with (
+            patch("autoware_carla_scenario.scenario_runner.carla.Client") as client,
+            pytest.raises(
+                ValueError, match=r"^timeout_seconds must be positive and finite"
+            ),
+        ):
+            ScenarioRunner(MagicMock(), timeout_seconds=seconds)
+        client.assert_not_called()
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+    def test_run_scenario_refuses_one_before_the_world_is_touched(
+        self, seconds: float
+    ) -> None:
+        runner = _make_runner(None)
+        client = runner._client
+        built = list(client.mock_calls)  # type: ignore[attr-defined]
+        world = MagicMock()
+        runner._world = world
+        scenario = _mock_scenario()
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(
+                ValueError, match=r"^timeout_seconds must be positive and finite"
+            ),
+        ):
+            runner.run_scenario(scenario, timeout_seconds=seconds, reset_world=False)
+
+        next_world.assert_not_called()
+        scenario.create_ego.assert_not_called()
+        scenario.setup.assert_not_called()
+        world.apply_settings.assert_not_called()
+        assert client.mock_calls == built  # type: ignore[attr-defined]
+
+    def test_a_valid_timeout_runs_on(self) -> None:
+        runner = _make_runner(None)
+        scenario = _mock_scenario()
+        scenario.create_ego.side_effect = _Stop
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, timeout_seconds=0.5, reset_world=False)
 
         next_world.assert_called_once()
 

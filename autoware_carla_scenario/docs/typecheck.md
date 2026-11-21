@@ -86,11 +86,13 @@ replaced by its type (a bool, a float, an int, a string, an enum's class),
 since Codon types it statically and reads no value at compile time. The
 cases of a sweep that differ only in their values are therefore one program,
 compiled for the first case and reused, verdict and diagnostics, for the
-others (logged as "reusing the static check made for the config with the
-same types"); a failure refuses each of them. `scenario-check` checks
+others (logged as "<name>: reusing the static check made for
+<the first case's values> for <this case's values>: the config has the same
+types, so it is the same program to Codon"); a failure refuses each of them. `scenario-check` checks
 configs side by side, and one whose program is being compiled when it
 starts waits for that compile rather than starting its own. What changes the shape
-compiles again: another key or order of keys, a value of another type (an
+compiles again: another key or order of keys (a mapping's keys too where
+its values are dataclasses, whose config paths an error names), a value of another type (an
 int where the first case had a float in a field not typed `float`, `None`
 where it had a value), another length of a list, a mapping the config
 converts in one case and not in another. A value whose literal Codon could
@@ -155,8 +157,8 @@ one from run to run, so a run compiles only the programs whose inputs changed.
 ### Builds wait for their memory
 
 Codon's peak memory grows with what it compiles: about 1.9 GB for a scenario
-or a module of the framework, about 9.3 GB for the whole library check
-(2.8 million characters of source). Builds started side by side -- the xdist
+or a module of the framework, and 2.8 GB more for each million characters of
+source, about 14 GB for the whole library check (4.3 million characters). Builds started side by side -- the xdist
 workers of the test suite, the checker's own pool of four -- would otherwise
 together outgrow a 16 GB machine, and the out-of-memory killer would take a
 build (a SIGKILL, above) or, on a CI runner, the runner itself ("The runner has
@@ -1242,7 +1244,7 @@ scenario has to do itself:
     only after an `is None` test), so a local named after a crash is a
     candidate, not a verdict: the crash may have another cause. A Codon
     killed with SIGKILL (exit status -9: the out-of-memory killer, as when
-    two library checks of about 8 GB each run at once) is no crash of the
+    two library checks of about 14 GB each run at once) is no crash of the
     code: the check says so, names no local, and should be run again with
     more memory free. Like a timeout, it is not kept as the verdict, so the
     next check of the same program in the process compiles it again (#694).
@@ -1289,6 +1291,9 @@ scenario has to do itself:
   ```
 
   An import under `if TYPE_CHECKING:` is exempt: Python never runs it.
+  One in its `else` branch, or in the body of `if not TYPE_CHECKING:`, is
+  checked this way only: Codon never compiles it, so it needs no Codon model
+  and what it imports is not compiled (#2288).
 - **Define every abstract method of what you build** (#215). Codon has no
   `@abstractmethod`, and the model gives `BaseScenario.is_done()`,
   `BaseCondition.check()` and `BaseAction.execute()` bodies (its built-in

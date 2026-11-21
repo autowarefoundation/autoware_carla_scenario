@@ -27,7 +27,11 @@ __all__ = [
 DEFAULT_RUN_TIMEOUT_SECONDS: float = 60.0
 
 
-def check_run_timeout(seconds: float, written: Optional[str] = None) -> float:
+def check_run_timeout(
+    seconds: float,
+    written: Optional[str] = None,
+    key: str = "scenario.timeout_seconds",
+) -> float:
     """*seconds* as ``scenario.timeout_seconds``, which must be positive and finite.
 
     Hydra reads ``scenario.timeout_seconds=nan`` (or ``inf``) as a float, and
@@ -40,14 +44,19 @@ def check_run_timeout(seconds: float, written: Optional[str] = None) -> float:
     so that ``timeout_seconds: 0`` is refused as ``got 0``, not ``got 0.0``
     (#2231).
 
+    *key* is the name the message gives the value: ``timeout_seconds`` for
+    :class:`~autoware_carla_scenario.ScenarioRunner`'s, ``run_scenario()``'s
+    and :class:`~autoware_carla_scenario.ScenarioQueue`'s parameter of that
+    name, which check it before anything is started, so that a timeout that
+    never fires (or fires at once) is not found only once the ego is up
+    (#2287).
+
     Raises:
         ValueError: naming the key, when it is not positive and finite.
     """
     if not math.isfinite(seconds) or seconds <= 0:
         shown_value = repr(seconds) if written is None else written
-        raise ValueError(
-            f"scenario.timeout_seconds must be positive and finite, got {shown_value}"
-        )
+        raise ValueError(f"{key} must be positive and finite, got {shown_value}")
     return seconds
 
 
