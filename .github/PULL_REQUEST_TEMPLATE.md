@@ -65,6 +65,10 @@ Pre-commit checks:
 - [ ] mypy (type checking)
 - [ ] pytest (unit tests)
 
+Before merging:
+- [ ] Exactly one version bump label: `bump patch`, `bump minor` or `bump major`
+- [ ] Every commit is signed off for the DCO (`git commit -s`)
+
 Manual testing:
 <!-- Describe manual testing performed -->
 
@@ -105,8 +109,3 @@ Manual testing:
 - Fixes #456
 - Related to #789
 -->
-
----
-
-<!-- Auto-generated co-author attribution -->
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>

@@ -15,7 +15,8 @@
 #                      the site root) moves to it only when it is the version
 #                      master is at; an older version is published beside the
 #                      others and `latest` stays. Without a `version`, the same
-#                      as a push.
+#                      as a push, and dispatched from master only: from any
+#                      other ref it fails rather than publish that ref as `dev`.
 #
 # Pages must be set, once, to deploy from the `gh-pages` branch (Settings ->
 # Pages -> Build and deployment -> Deploy from a branch). This workflow creates
@@ -43,7 +44,7 @@ on:
         description: >
           Publish the selected ref's docs as this version (e.g. 3.1.2); it
           becomes `latest` only if it is the version master is at. Leave empty
-          to deploy master's docs as `dev`.
+          to deploy master's docs as `dev` (run from master only).
         required: false
         type: string
         default: ""
@@ -75,6 +76,13 @@ jobs:
           set -euo pipefail
           pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
           if [ -z "${REQUESTED}" ]; then
+            # `dev` is master's docs. A push runs on master only; a dispatch
+            # from a feature branch or an old tag without a `version` would
+            # overwrite the public `dev` docs with that ref's (#2302).
+            if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
+              echo "::error::Without a version this deploys master's docs as dev; run it from master, or give the version ${GITHUB_REF_NAME} carries (${pkg})"
+              exit 1
+            fi
             echo "version=dev" >> "$GITHUB_OUTPUT"
             echo "mode=dev" >> "$GITHUB_OUTPUT"
             echo "Deploying ${GITHUB_REF_NAME} (package ${pkg}) as dev"

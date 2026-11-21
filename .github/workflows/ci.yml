@@ -10,6 +10,12 @@ on:
     - cron: '0 17 * * *'
   workflow_dispatch:
 
+# The default token reads the repository and nothing else: these jobs install
+# the dev group (git dependencies included) and run a pull request's test code.
+# A job that needs more widens it itself (#2302).
+permissions:
+  contents: read
+
 # A new push to a pull request makes its running CI moot: cancel it rather than
 # let it hold runners that the organisation's other runs are queued behind.
 concurrency:
@@ -80,6 +86,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        persist-credentials: false
         # The merge commit and its parents: codon-selftests diffs the pull
         # request's merge against its base.
         fetch-depth: 2
@@ -187,6 +194,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Setup environment
       uses: ./.github/actions/setup-env
@@ -246,6 +255,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        persist-credentials: false
         fetch-depth: 2  # See the 'test' job.
 
     - name: Setup environment
@@ -337,6 +347,8 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Setup environment
       uses: ./.github/actions/setup-env
@@ -353,6 +365,8 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Setup environment
       uses: ./.github/actions/setup-env
@@ -406,6 +420,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        persist-credentials: false
         fetch-depth: 0
 
     - name: Setup environment
@@ -453,6 +468,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Setup environment
       uses: ./.github/actions/setup-env
