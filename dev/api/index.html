@@ -3052,11 +3052,19 @@ and composite conditions reset their children.</p>
 </tbody>
 </table>
 <h3 id="composition-conditions-autoware_carla_scenarioconditionscomposition">Composition conditions (<code>autoware_carla_scenario.conditions.composition</code>)<a class="headerlink" href="#composition-conditions-autoware_carla_scenarioconditionscomposition" title="Permanent link">&para;</a></h3>
-<p>These build on <code>CompositionCondition</code>, which composes a child condition
-tree internally:</p>
+<p>These build on <code>CompositionCondition</code>, which guards each on its entity
+(the condition does not hold while the entity is absent or parked under the
+map) and, for <code>StandstillCondition</code> and <code>TemporaryStopCondition</code>, composes a
+child condition tree internally:</p>
 <ul>
 <li><code>EntityLanePositionCondition</code></li>
+<li><code>EntityLaneOfCondition</code> -- the entity is on the lane of a position, beside it, or on its road</li>
+<li><code>EntityDistanceCondition</code>, <code>RelativeDistanceType</code>, <code>DistanceCoordinateSystem</code></li>
+<li><code>EntityPositionDistanceCondition</code> -- the distance from an entity to a place on the map</li>
+<li><code>TimeToCollisionCondition</code>, <code>TimeHeadwayCondition</code></li>
+<li><code>RelativeSpeedCondition</code></li>
 <li><code>SpeedCondition</code>, <code>SpeedDirection</code>, <code>SpeedCoordinateSystem</code></li>
+<li><code>AccelerationCondition</code>, <code>AccelerationDirection</code> -- a walker's acceleration is differentiated from its measured velocity (<code>WalkerVelocities</code>), since CARLA reports 0 for a walker on its controller</li>
 <li><code>StandstillCondition</code></li>
 <li><code>TurnIndicatorCondition</code>, <code>TurnIndicatorState</code> -- the turn indicators a vehicle shows (OFF / LEFT / RIGHT / HAZARD), read off its CARLA light state</li>
 <li><code>TemporaryStopCondition</code></li>
@@ -3975,7 +3983,7 @@ packages, in <code>autoware_carla_scenario.examples.run</code> unless noted:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 05:07:42 UTC"><span class="timeago" datetime="2026-11-21T05:07:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 05:07:42 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 06:10:41 UTC"><span class="timeago" datetime="2026-11-21T06:10:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 06:10:41 UTC">2026-11-21</span>
   </span>
 
     

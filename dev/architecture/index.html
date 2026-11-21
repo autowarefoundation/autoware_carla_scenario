@@ -3568,9 +3568,21 @@ raised. A <code>KeyboardInterrupt</code> (Ctrl-C) propagates at once, with no re
     class EntityExistenceCondition
     class OffRoadFractionCondition
     class PlaceClearCondition
+    class EntityCountCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
+    class RouteProgressCondition
+    class ActionStateCondition
+    class TrajectoryTimeCondition
+    class LaneChangeSettledCondition
+    class MetricCondition
+    class AdversityFeasibleCondition
+    class AdversityActiveCondition
 
+    class CompositionCondition {
+        &lt;&lt;abstract&gt;&gt;
+        +_check(world, elapsed) ScenarioResult | None
+    }
     class EntityLanePositionCondition
     class EntityDistanceCondition
     class EntityPositionDistanceCondition
@@ -3581,7 +3593,9 @@ raised. A <code>KeyboardInterrupt</code> (Ctrl-C) propagates at once, with no re
     class AccelerationCondition
     class StandstillCondition
     class TemporaryStopCondition
+    class TurnIndicatorCondition
     class WaypointCondition
+    class EntityLaneOfCondition
 
     class AndCondition
     class OrCondition
@@ -3596,19 +3610,30 @@ raised. A <code>KeyboardInterrupt</code> (Ctrl-C) propagates at once, with no re
     BaseCondition &lt;|-- EntityExistenceCondition
     BaseCondition &lt;|-- OffRoadFractionCondition
     BaseCondition &lt;|-- PlaceClearCondition
+    BaseCondition &lt;|-- EntityCountCondition
     BaseCondition &lt;|-- TrafficSignalCondition
     BaseCondition &lt;|-- TrafficSignalControllerCondition
-    BaseCondition &lt;|-- EntityLanePositionCondition
-    BaseCondition &lt;|-- EntityDistanceCondition
-    BaseCondition &lt;|-- EntityPositionDistanceCondition
-    BaseCondition &lt;|-- TimeToCollisionCondition
-    BaseCondition &lt;|-- TimeHeadwayCondition
-    BaseCondition &lt;|-- RelativeSpeedCondition
-    BaseCondition &lt;|-- SpeedCondition
-    BaseCondition &lt;|-- AccelerationCondition
-    BaseCondition &lt;|-- StandstillCondition
-    BaseCondition &lt;|-- TemporaryStopCondition
-    BaseCondition &lt;|-- WaypointCondition
+    BaseCondition &lt;|-- RouteProgressCondition
+    BaseCondition &lt;|-- ActionStateCondition
+    BaseCondition &lt;|-- TrajectoryTimeCondition
+    BaseCondition &lt;|-- LaneChangeSettledCondition
+    BaseCondition &lt;|-- MetricCondition
+    BaseCondition &lt;|-- AdversityFeasibleCondition
+    BaseCondition &lt;|-- AdversityActiveCondition
+    BaseCondition &lt;|-- CompositionCondition
+    CompositionCondition &lt;|-- EntityLanePositionCondition
+    CompositionCondition &lt;|-- EntityDistanceCondition
+    CompositionCondition &lt;|-- EntityPositionDistanceCondition
+    CompositionCondition &lt;|-- TimeToCollisionCondition
+    CompositionCondition &lt;|-- TimeHeadwayCondition
+    CompositionCondition &lt;|-- RelativeSpeedCondition
+    CompositionCondition &lt;|-- SpeedCondition
+    CompositionCondition &lt;|-- AccelerationCondition
+    CompositionCondition &lt;|-- StandstillCondition
+    CompositionCondition &lt;|-- TemporaryStopCondition
+    CompositionCondition &lt;|-- TurnIndicatorCondition
+    CompositionCondition &lt;|-- WaypointCondition
+    EntityLanePositionCondition &lt;|-- EntityLaneOfCondition
     BaseCondition &lt;|-- AndCondition
     BaseCondition &lt;|-- OrCondition
     BaseCondition &lt;|-- NotCondition
@@ -3634,13 +3659,13 @@ raised. A <code>KeyboardInterrupt</code> (Ctrl-C) propagates at once, with no re
 </tr>
 <tr>
 <td><strong>Safety</strong></td>
-<td><code>CollisionCondition</code>, <code>EntityExistenceCondition</code>, <code>OffRoadFractionCondition</code>, <code>PlaceClearCondition</code></td>
-<td>Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, and a place clear of road users</td>
+<td><code>CollisionCondition</code>, <code>EntityExistenceCondition</code>, <code>OffRoadFractionCondition</code>, <code>PlaceClearCondition</code>, <code>EntityCountCondition</code></td>
+<td>Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, a place clear of road users, and how many road users of a kind are where</td>
 </tr>
 <tr>
 <td><strong>Position</strong></td>
-<td><code>EntityLanePositionCondition</code>, <code>WaypointCondition</code></td>
-<td>Road/lane position, waypoint crossing</td>
+<td><code>EntityLanePositionCondition</code>, <code>EntityLaneOfCondition</code>, <code>WaypointCondition</code>, <code>RouteProgressCondition</code></td>
+<td>Road/lane position (a named lane, or the lane of a position), no road ahead within a distance (<code>WaypointCheckType.IS_EMPTY</code>), distance along the route</td>
 </tr>
 <tr>
 <td><strong>Relative</strong></td>
@@ -3649,13 +3674,28 @@ raised. A <code>KeyboardInterrupt</code> (Ctrl-C) propagates at once, with no re
 </tr>
 <tr>
 <td><strong>Motion</strong></td>
-<td><code>SpeedCondition</code>, <code>AccelerationCondition</code>, <code>StandstillCondition</code>, <code>TemporaryStopCondition</code></td>
-<td>Speed and acceleration thresholds, standstill detection, stop-and-go</td>
+<td><code>SpeedCondition</code>, <code>AccelerationCondition</code>, <code>StandstillCondition</code>, <code>TemporaryStopCondition</code>, <code>TurnIndicatorCondition</code></td>
+<td>Speed and acceleration thresholds, standstill detection, stop-and-go, turn indicators</td>
 </tr>
 <tr>
 <td><strong>Traffic</strong></td>
 <td><code>TrafficSignalCondition</code>, <code>TrafficSignalControllerCondition</code></td>
 <td>One light's state, or a whole junction's phase</td>
+</tr>
+<tr>
+<td><strong>Actions</strong></td>
+<td><code>ActionStateCondition</code>, <code>TrajectoryTimeCondition</code>, <code>LaneChangeSettledCondition</code></td>
+<td>Another action's lifecycle state, a trajectory's clock, a lane change settled</td>
+</tr>
+<tr>
+<td><strong>Adversity</strong></td>
+<td><code>AdversityFeasibleCondition</code>, <code>AdversityActiveCondition</code></td>
+<td>Whether an adversity can be carried out here, and whether one is in progress</td>
+</tr>
+<tr>
+<td><strong>Metric</strong></td>
+<td><code>MetricCondition</code></td>
+<td>A metric NG for longer than allowed</td>
 </tr>
 <tr>
 <td><strong>Composition</strong></td>
@@ -4829,7 +4869,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 16:07:17 UTC"><span class="timeago" datetime="2026-11-20T16:07:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 16:07:17 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 06:10:41 UTC"><span class="timeago" datetime="2026-11-21T06:10:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 06:10:41 UTC">2026-11-21</span>
   </span>
 
     
