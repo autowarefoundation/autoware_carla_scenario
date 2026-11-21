@@ -88,6 +88,17 @@ a little towards it, a car rolling back) needs no more than the ego stopping
 short of it. TTC has no horizon, as CriMe's. A road user behind the ego gives
 no ALongReq.
 
+CriMe reads a negative bumper-to-bumper headway -- a road user whose box
+overlaps the ego's, a collision -- as a road user behind: HW, THW and TTC
+`inf`, ALongReq and BTN `0`, the least critical reading for the most critical
+frames. The worker reads a road user overlapping the ego with its centre ahead
+of the ego's (or level with it) as touching: HW and THW `0`, and TTC, ALongReq
+and BTN as for a gap closed to `0` -- while the ego closes on it TTC `0`,
+ALongReq `-inf`, BTN `inf`, and ALatReq and STN, which take TTC, `inf`. `0`
+rather than the negative gap, which TTC's contact time would read as a gap
+still to close once the other pulls away. Only a road user whose centre is
+behind the ego's reads HW `inf`.
+
 A lanelet is kept when its centre line comes within `radius_m` of the ego
 anywhere along it, not only at a vertex (a straight lanelet is just its two end
 points), and always when the ego is on it. The reachable set is that of the
@@ -103,8 +114,10 @@ own copying run). On a frame of ten road users the eight measures from TTC to
 ALatReq take about 95 ms together, against 520 ms as CriMe runs them; BTN and
 STN, which compute ALongReq and ALatReq again, about 170 ms more. The drivable area is
 CommonRoad-Reach's C++ computation: about 155 ms over a 3 s horizon, 45 ms
-over 2 s (`horizon_steps`); its grid size changes neither the time nor the
-area.
+over 2 s (`horizon_steps`). Its grid (`reachable_set.size_grid`, 0.2 m by
+default) changes both: a coarser grid is faster and over-approximates the
+area -- on the test lane, behind a slower lead, 791 m^2 at 0.2 m, 833 m^2 at
+0.5 m and 889 m^2 at 1 m -- and can move WTTR by a step.
 
 WTTR is not CriMe's class, which loads CommonRoad-Reach's scenario from a
 file, but its algorithm on the frame: the ego goes on along its predicted
@@ -173,4 +186,8 @@ comes), `-Infinity` (ALongReq when no braking avoids a contact within the
 horizon; BTN is `Infinity` then) or `null` (nothing to measure from); a measure that failed is `null`
 with its error. While the ego is on no lanelet every measure is `null`.
 `settings` takes `reach_settings` too: overrides of CommonRoad-Reach's
-configuration by section and key (`{"planning": {"size_grid": 0.3}}`).
+configuration by section and key (`{"reachable_set": {"size_grid": 0.3}}`). A
+section or key the configuration does not have -- `planning.size_grid` for
+`reachable_set.size_grid`, a misspelling -- is refused: `init` answers
+`{"ok": false, "error": "ValueError: reach_settings['planning']['size_grid']: ..."}`
+rather than every frame's Reach measures failing.
