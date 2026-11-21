@@ -1011,6 +1011,66 @@ def test_a_fixture_whose_queue_fails_to_start_stops_its_server(
     assert events == ["prepare", "start", "runner", "close", "stop"]
 
 
+def _remote_fixture_queue(
+    monkeypatch: pytest.MonkeyPatch, answers: bool
+) -> tuple[ScenarioQueue, list[str]]:
+    """A queue for as_fixture() of a remote host, on a machine with no CARLA
+    installed, whose start() starts its own (real) server manager."""
+    from autoware_carla_scenario.server import CarlaServerManager
+
+    monkeypatch.setattr(CarlaServerManager, "executable", classmethod(lambda cls: None))
+    monkeypatch.setattr(CarlaServerManager, "_ping", lambda self: answers)
+    events: list[str] = []
+    queue = ScenarioQueue(host="192.0.2.10", cooldown_max_retries=0)
+
+    def start() -> None:
+        queue._server.start()
+        events.append("start")
+        queue._runner = MagicMock()
+
+    monkeypatch.setattr(queue, "start", start)
+    monkeypatch.setattr(queue, "stop", lambda: events.append("stop"))
+    return queue, events
+
+
+def test_a_fixture_uses_a_remote_server_with_no_carla_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No CARLA installed here does not skip a fixture whose server answers
+    at a remote host (#2300): it is tried, and reused."""
+    queue, events = _remote_fixture_queue(monkeypatch, answers=True)
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        yielded = next(generator)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"the fixture skipped: {exc}")
+    assert yielded is queue
+    assert queue._server.reused
+    with pytest.raises(StopIteration):
+        next(generator)
+    assert events == ["start", "stop"]
+
+
+def test_a_fixture_whose_remote_server_does_not_answer_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no server at the remote host, start() raises and the fixture
+    skips, naming the host."""
+    queue, events = _remote_fixture_queue(monkeypatch, answers=False)
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    with pytest.raises(pytest.skip.Exception, match="192.0.2.10:2000"):
+        next(generator)
+    assert events == []
+
+
+def test_a_bracketed_ipv6_host_reaches_the_runner_unbracketed() -> None:
+    """The runner and a map pack connect to the queue's host, so "[::1]" is
+    kept as "::1", as its server manager keeps it (#2300)."""
+    queue = ScenarioQueue(host="[::1]")
+    assert queue._host == "::1"
+    assert queue._server.host == "::1"
+
+
 def _fixture_queue(
     monkeypatch: pytest.MonkeyPatch, tmp_path: object, runner: object
 ) -> tuple[ScenarioQueue, list[str]]:

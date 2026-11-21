@@ -147,13 +147,16 @@ it builds the digest of its config, `scenario_hash`
 class and of the sections of the config that say what is simulated --
 `scenario`, `map`, `ego`, `entity`, `environment`, `controls`,
 `scenario_rules`, `background_traffic`, `traffic`, `odd` and `odd_case` --
-without `seed`, and without the settings that say where a run connects
-(hosts, addresses, ports, ROS domains: what a SLURM task moves to its own
-slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
+and of `server.fog_density_scale` when it is set (it scales how thick
+`environment.fog_density` renders, to the cameras and the LiDARs' fog alike;
+left `null`, the server's own scale, it is not digested), without `seed`, and
+without the settings that say where a run connects (hosts, addresses, ports,
+ROS domains: what a SLURM task moves to its own slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
 under test, not the scenario, and how a run is recorded does not change what
 is simulated: neither is in it. Every top-level section of the `scenario`
 command's config is listed as hashed or not (`SCENARIO_SECTIONS`,
-`OTHER_SECTIONS`), and a test keeps it so, so a new section cannot be left
+`OTHER_SECTIONS`; the settings of the latter that are hashed all the same are
+`SCENARIO_SETTINGS`), and a test keeps it so, so a new section cannot be left
 out of the hash unseen. The runner writes the run's seed and its
 hash into the trajectory log (its [`run`](trajectory_log.md#records)
 record), and `export` into the `.wosac.json`, with each agent's pose on the

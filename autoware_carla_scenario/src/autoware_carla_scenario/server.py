@@ -15,11 +15,15 @@ from typing import ClassVar, List, Optional
 
 import typesafe_carla.carla as carla
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from .carla_install_paths import installed_executable
 
-load_dotenv(override=False)
+# The run's own ``.env``: the nearest one from the working directory up, not
+# the one nearest this file (find_dotenv()'s default), which is no file in a
+# global, Docker or ``uv tool`` install and the framework checkout's in an
+# editable one.  The environment wins over it.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +120,54 @@ def _dying_with_this_process(argv: List[str]) -> List[str]:
         str(os.getpid()),
         str(_WATCHDOG_GRACE_S),
     ] + argv
+
+
+def _unbracketed_host(host: str) -> str:
+    """*host* without the brackets of an IPv6 literal (``"[::1]"`` is
+    ``"::1"``), as the socket API and ``carla.Client`` take it; any other
+    host as it is."""
+    if len(host) >= 2 and host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def _host_port(host: str, port: int) -> str:
+    """*host*:*port* for a message, an IPv6 address in brackets
+    (``[::1]:2000``)."""
+    if ":" in host:
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
+
+
+#: The ``CarlaUnreal.sh`` argument that sets the port CARLA listens on.
+_RPC_PORT_ARG = "-carla-rpc-port="
+
+
+def _check_rpc_port_args(extra_args: List[str], port: int) -> None:
+    """Refuse an argument of *extra_args* that moves the port CARLA listens on
+    away from *port*.
+
+    Unreal reads ``-carla-rpc-port=`` case-insensitively, so it is matched
+    whatever its case, and with a second leading ``-``
+    (``--carla-rpc-port=``) too.
+
+    Raises:
+        ValueError: If one of them names another port, or no port: CARLA
+            would listen there while the manager waited at *port*.
+    """
+    for arg in extra_args:
+        spelled = arg.lower()
+        dashes = 1 if spelled.startswith("-" + _RPC_PORT_ARG) else 0
+        if not spelled[dashes:].startswith(_RPC_PORT_ARG):
+            continue
+        value = arg[dashes + len(_RPC_PORT_ARG) :]
+        digits = value != "" and all(c in "0123456789" for c in value)
+        if not (digits and int(value) == port):
+            raise ValueError(
+                f"extra_args has {arg!r}, but the server's port is {port}: CARLA "
+                f"would listen on {value!r} while the manager waits on {port}. "
+                "Set the port (server.port) instead, or make them the same."
+            )
 
 
 def _is_loopback_literal(name: str) -> bool:
@@ -246,18 +298,24 @@ class CarlaServerManager:
         """Initialize the server manager.
 
         Args:
-            host: Hostname to connect / bind the CARLA server to.
+            host: Hostname to connect / bind the CARLA server to.  An IPv6
+                address may be bracketed (``"[::1]"``); :attr:`host` holds it
+                without the brackets, as a client connects to it.
             port: TCP port for the CARLA RPC server.
             timeout: Seconds to wait for the server to become reachable
                 after launching it.  Defaults to 120 s (UE5 can be slow
                 on first boot).
             extra_args: Additional CLI arguments passed to ``CarlaUnreal.sh``.
+                A ``-carla-rpc-port=`` among them (in any case, or as
+                ``--carla-rpc-port=``) must name *port*: one that names
+                another makes :meth:`start` raise ``ValueError`` rather than
+                wait for a server on the wrong port.
             reuse_if_running: When ``True`` (default), :meth:`start` skips
                 launching a new process if a CARLA server is already
                 reachable on *host*:*port*.  :meth:`stop` is also a no-op
                 in that case so the externally-managed server is left alive.
         """
-        self.host = host
+        self.host = _unbracketed_host(host)
         self.port = port
         self.timeout = timeout
         self.extra_args = []
@@ -299,6 +357,9 @@ class CarlaServerManager:
         launched): a run it drops fails as on any reused server.
 
         Raises:
+            ValueError: If a ``-carla-rpc-port=`` in *extra_args* names a
+                port other than *port* (checked only when a server is to be
+                launched).
             RuntimeError: If *host* is remote and no server answers there,
                 the port is taken by a process that is not a CARLA server
                 to reuse, there is no launcher (when a new process must be
@@ -314,7 +375,7 @@ class CarlaServerManager:
             return
         if remote:
             raise RuntimeError(
-                f"No CARLA server reachable at {self.host}:{self.port}; the runner "
+                f"No CARLA server reachable at {_host_port(self.host, self.port)}; the runner "
                 "only launches CARLA for a local host (localhost, a loopback "
                 "address or this machine's own name or address). Start the server "
                 "there, or check server.host and server.port."
@@ -343,10 +404,13 @@ class CarlaServerManager:
                     "choose another server.port."
                 )
 
+        # Refused before anything is launched: a server told to listen
+        # elsewhere would never answer where it is waited for.
+        _check_rpc_port_args(self.extra_args, self.port)
         exe_path = self.executable()
         if exe_path is None:
             raise RuntimeError(
-                f"No CARLA server to use at {self.host}:{self.port}: "
+                f"No CARLA server to use at {_host_port(self.host, self.port)}: "
                 f"'{self.ENV_VAR}' is not set and no CARLA is installed. Start the "
                 "server (on an x86_64 host if this machine is not one, then point "
                 "server.host at it), run `scenario-setup` to download one, or set "
@@ -357,9 +421,13 @@ class CarlaServerManager:
         self._launcher = exe_path
 
         cmd = [str(exe_path)] + self.extra_args
-        # The server listens where the client will look for it, unless told otherwise.
-        if not any(arg.startswith("-carla-rpc-port=") for arg in self.extra_args):
-            cmd.append(f"-carla-rpc-port={self.port}")
+        # The server listens where the client will look for it.  Spelled
+        # exactly so, even when extra_args names the same port otherwise
+        # (-CARLA-RPC-PORT=, a leading zero): it is the marker the SLURM
+        # cleanup finds this server's processes by (slurm.ports, slurm.scripts).
+        rpc_port_arg = f"{_RPC_PORT_ARG}{self.port}"
+        if rpc_port_arg not in self.extra_args:
+            cmd.append(rpc_port_arg)
         # Without a display UE crashes opening its window; it renders off-screen then.
         headless = not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         if headless and "-RenderOffScreen" not in self.extra_args:
@@ -493,7 +561,7 @@ class CarlaServerManager:
         if process is not None and process.poll() is not None:
             raise RuntimeError(
                 f"CARLA server exited with code {process.returncode} "
-                f"before it became reachable at {self.host}:{self.port}"
+                f"before it became reachable at {_host_port(self.host, self.port)}"
                 f"{self._log_hint()}"
             )
 
@@ -502,10 +570,9 @@ class CarlaServerManager:
         self._reused = True
         if self.extra_args:
             logger.warning(
-                "Reusing the CARLA server at %s:%d: it was not started with %s; "
+                "Reusing the CARLA server at %s: it was not started with %s; "
                 "start it with them for them to apply",
-                self.host,
-                self.port,
+                _host_port(self.host, self.port),
                 " ".join(self.extra_args),
             )
 
@@ -569,5 +636,5 @@ class CarlaServerManager:
             time.sleep(1.0)
         raise RuntimeError(
             f"CARLA server did not become reachable within {self.timeout}s "
-            f"at {self.host}:{self.port}"
+            f"at {_host_port(self.host, self.port)}"
         )

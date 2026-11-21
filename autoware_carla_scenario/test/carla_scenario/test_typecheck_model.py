@@ -2076,8 +2076,14 @@ def _public(definitions: dict[str, list[ast.stmt]]) -> list[str]:
     return sorted(name for name in definitions if not name.startswith("_"))
 
 
-def test_the_dotenv_model_is_load_dotenv_as_in_the_package() -> None:
-    assert _public(_definitions("__init__", _DOTENV_MODEL)) == ["load_dotenv"]
+def test_the_dotenv_model_is_find_and_load_dotenv_as_in_the_package() -> None:
+    assert _public(_definitions("__init__", _DOTENV_MODEL)) == [
+        "find_dotenv",
+        "load_dotenv",
+    ]
+    _assert_declared_as_in_python(
+        "find_dotenv", "__init__", dotenv.find_dotenv, root=_DOTENV_MODEL
+    )
     _assert_declared_as_in_python(
         "load_dotenv", "__init__", dotenv.load_dotenv, root=_DOTENV_MODEL
     )

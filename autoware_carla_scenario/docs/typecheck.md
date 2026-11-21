@@ -970,7 +970,7 @@ What `test_typecheck_model.py` compares, model by model:
   re-export, and the `__init__` of a checked subpackage, which models
   nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
-  `load_dotenv`, packaging's `Version` and `InvalidVersion`, eclipse-sumo's
+  `find_dotenv` and `load_dotenv`, packaging's `Version` and `InvalidVersion`, eclipse-sumo's
   `SUMO_HOME` (where it is installed), pyxodr's `RoadNetwork` and lxml's
   element.
 
@@ -3822,6 +3822,8 @@ What Codon 0.19 needs that Python does not, beyond
 - **python-dotenv is modelled** as far as `server` uses it, with the
   installed package's signatures, which `test_typecheck_model.py` compares:
   `codon/dotenv/` declares
+  `find_dotenv(filename=".env", raise_error_if_not_found=False,
+  usecwd=False)`, returning a `str`, and
   `load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
   interpolate=True, encoding="utf-8")`, of a path that is `None`, a `str` or
   an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not

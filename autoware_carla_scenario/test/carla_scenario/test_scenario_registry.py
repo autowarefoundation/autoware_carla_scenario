@@ -1046,6 +1046,31 @@ class TestConfDirCollisions:
             registry.register_conf_dir(tmp_path / "missing")
         assert not self._warnings(caplog)
 
+    def test_the_framework_directory_comes_first_however_registered(
+        self, tmp_path: Path
+    ) -> None:
+        """get_conf_dirs() lists the directories in the order Hydra searches
+        them, so the batch plan names the YAML Hydra composes (#2300)."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+        from autoware_carla_scenario.examples.run import (  # noqa: PLC0415
+            _find_scenario_yaml,
+        )
+
+        pkg = _conf_dir(
+            tmp_path, "pkg", {"scenario/lane_change/left.yaml": "name: shadow\n"}
+        ).resolve()
+        other = _conf_dir(tmp_path, "other", {"scenario/x/a.yaml": "{}\n"}).resolve()
+        registry._CONF_DIRS.clear()
+        registry.register_conf_dir(pkg)
+        # Without the framework's directory registered, none is added.
+        assert registry.get_conf_dirs() == [pkg]
+        registry.register_conf_dir(registry._FRAMEWORK_CONF_DIR)
+        registry.register_conf_dir(other)
+        assert registry.get_conf_dirs() == [registry._FRAMEWORK_CONF_DIR, pkg, other]
+        assert _find_scenario_yaml("lane_change/left") == (
+            registry._FRAMEWORK_CONF_DIR / "scenario" / "lane_change" / "left.yaml"
+        )
+
     def test_each_directory_is_scanned_once(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
