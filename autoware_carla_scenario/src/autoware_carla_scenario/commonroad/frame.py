@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import find_actor_in_world
-from ..utils.clearance import HIDDEN_BELOW_M, _vertical_span, on_another_level
+from ..utils.clearance import (
+    HIDDEN_BELOW_M,
+    actor_box_centre,
+    actor_vertical_span,
+    on_another_level,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -95,9 +100,7 @@ def _kinematics(actor: "carla.Actor") -> _Kinematics:
     yaw = math.radians(transform.rotation.yaw)
     box = actor.bounding_box
     # The box's centre, which may sit off the actor's origin.
-    off_x, off_y = float(box.location.x), float(box.location.y)
-    cx = transform.location.x + off_x * math.cos(yaw) - off_y * math.sin(yaw)
-    cy = transform.location.y + off_x * math.sin(yaw) + off_y * math.cos(yaw)
+    cx, cy = actor_box_centre(actor, transform)
     x, y = to_commonroad(cx, cy)
     velocity = actor.get_velocity()
     try:
@@ -123,11 +126,31 @@ def _kinematics(actor: "carla.Actor") -> _Kinematics:
     )
 
 
-def _state(actor: "carla.Actor", commonroad_id: int) -> ActorState:
-    k = _kinematics(actor)
+class _RoadUser:
+    """One road user as the worker is sent it, typed: its CommonRoad id, its
+    kind and its kinematics (:func:`_state` makes the worker's object of it)."""
+
+    commonroad_id: int
+    kind: str
+    kinematics: _Kinematics
+
+    def __init__(self, commonroad_id: int, kind: str, kinematics: _Kinematics) -> None:
+        self.commonroad_id = commonroad_id
+        self.kind = kind
+        self.kinematics = kinematics
+
+
+def _road_user(actor: "carla.Actor") -> _RoadUser:
+    """*actor* as a road user; its id is CARLA's, which is positive, as
+    CommonRoad's must be."""
+    return _RoadUser(int(actor.id), _kind(actor), _kinematics(actor))
+
+
+def _state(user: _RoadUser) -> ActorState:
+    k = user.kinematics
     return {
-        "id": commonroad_id,
-        "kind": _kind(actor),
+        "id": user.commonroad_id,
+        "kind": user.kind,
         "x": k.x,
         "y": k.y,
         "yaw": k.yaw,
@@ -157,7 +180,7 @@ def _road_users_near(
     near: list["carla.Actor"] = []
     placed = ego.get_transform()
     centre = placed.location
-    ego_span = _vertical_span(ego, placed)
+    ego_span = actor_vertical_span(ego, placed)
     for actor in world.get_actors():
         type_id = str(actor.type_id)
         if actor.id == ego.id or not (
@@ -172,20 +195,32 @@ def _road_users_near(
         planar = math.hypot(location.x - centre.x, location.y - centre.y)
         if planar > radius_m:
             continue
-        if on_another_level(ego_span, _vertical_span(actor, transform), planar):
+        if on_another_level(ego_span, actor_vertical_span(actor, transform), planar):
             continue
         near.append(actor)
     return near
 
 
-def read_frame(world: "carla.World", radius_m: float) -> Optional[Frame]:
-    """The ego and the road users within *radius_m* of it; ``None`` without an
-    ego.  Ids are CARLA's, which are positive, as CommonRoad's must be."""
+def _read_road_users(
+    world: "carla.World", radius_m: float
+) -> Optional[tuple[_RoadUser, list[_RoadUser]]]:
+    """The ego and the road users within *radius_m* of it
+    (:func:`_road_users_near`), typed; ``None`` without an ego."""
     ego = find_actor_in_world(world, EGO_ROLE_NAME)
     if ego is None:
         return None
-    ego_state = _state(ego, int(ego.id))
-    others: list[ActorState] = [
-        _state(actor, int(actor.id)) for actor in _road_users_near(world, ego, radius_m)
+    ego_user = _road_user(ego)
+    others: list[_RoadUser] = [
+        _road_user(actor) for actor in _road_users_near(world, ego, radius_m)
     ]
-    return Frame(ego_state, others)
+    return ego_user, others
+
+
+def read_frame(world: "carla.World", radius_m: float) -> Optional[Frame]:
+    """The ego and the road users within *radius_m* of it; ``None`` without an
+    ego.  Ids are CARLA's, which are positive, as CommonRoad's must be."""
+    read = _read_road_users(world, radius_m)
+    if read is None:
+        return None
+    ego, others = read
+    return Frame(_state(ego), [_state(user) for user in others])

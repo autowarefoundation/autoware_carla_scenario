@@ -76,7 +76,7 @@ from .drive_metrics import box as _box
 from .drive_metrics import box_distance as _box_distance
 
 # Below this height (m) a road user is parked under the map, out of the scene.
-from ..utils.clearance import HIDDEN_BELOW_M, _level_gap
+from ..utils.clearance import HIDDEN_BELOW_M, level_gap
 
 __all__ = [
     "CaseResult",
@@ -334,7 +334,7 @@ class _TrajectoryMetrics:
             span = self._span(other, state)
             level = 0.0
             if ego_span is not None and span is not None:
-                level = _level_gap(ego_span, span)
+                level = level_gap(ego_span, span)
             planar = _box_distance(
                 ego_box,
                 _box(
@@ -352,8 +352,8 @@ class _TrajectoryMetrics:
 
     def _span(self, actor: int, state: Any) -> tuple[float, float] | None:
         """The bottom and top (m) of *actor*'s box at its tick *state*, as
-        ``utils.clearance._vertical_span`` reads them off a live actor, pitch
-        and roll ignored; ``None`` where its log records no height."""
+        ``utils.clearance.actor_vertical_span`` reads them off a live actor,
+        pitch and roll ignored; ``None`` where its log records no height."""
         height = self.heights.get(actor)
         if height is None:
             return None

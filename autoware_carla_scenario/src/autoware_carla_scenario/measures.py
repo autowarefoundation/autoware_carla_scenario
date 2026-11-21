@@ -110,7 +110,7 @@ from .coordinate.transform import (
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from .metrics import is_metric
-from .utils.clearance import _vertical_span, on_another_level
+from .utils.clearance import actor_vertical_span, on_another_level
 from .utils.stop_line import regulatory_element_stop_lines
 
 if TYPE_CHECKING:
@@ -397,7 +397,7 @@ def _pedestrians_around(
     falling away is around
     (:func:`~autoware_carla_scenario.utils.clearance.on_another_level`)."""
     transform = ego.get_transform()
-    ego_span = _vertical_span(ego, transform)
+    ego_span = actor_vertical_span(ego, transform)
     found: list[_Around] = []
     for actor in actors:
         if actor.id == ego.id or not actor.type_id.startswith("walker."):
@@ -407,7 +407,7 @@ def _pedestrians_around(
         velocity = _WALKERS.walker(actor, elapsed, location)
         ahead, lateral = in_ego_frame(transform, location)
         if on_another_level(
-            ego_span, _vertical_span(actor, placed), math.hypot(ahead, lateral)
+            ego_span, actor_vertical_span(actor, placed), math.hypot(ahead, lateral)
         ):
             continue
         found.append(
@@ -1384,7 +1384,7 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
             ego = _moving(ego_actor)
             ego_placed = ego_actor.get_transform()
             ego_z = float(ego_placed.location.z)
-            ego_span = _vertical_span(ego_actor, ego_placed)
+            ego_span = actor_vertical_span(ego_actor, ego_placed)
             reach = AHEAD_RANGE_M + 2 * _REACH_MARGIN_M
             others: list[_Vehicle] = []
             for actor in actors:
@@ -1404,7 +1404,7 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
                     ego_z,
                     ego_span,
                     float(location.z),
-                    _vertical_span(actor, placed),
+                    actor_vertical_span(actor, placed),
                     planar,
                 ):
                     continue

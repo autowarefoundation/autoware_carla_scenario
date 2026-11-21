@@ -51,17 +51,28 @@ def set_scenario_route(
     match: RouteMatch,
     lanelet_map: Optional[LaneletMap] = None,
     routing_graph: Optional[RoutingGraph] = None,
+    *,
+    frame: Optional["RouteFrame"] = None,
 ) -> None:
     """Make *match* the scenario's route.
 
     *lanelet_map* and *routing_graph* lay it on a given map; left out, it is
     laid on the loaded one (:class:`~autoware_carla_scenario.coordinate.MapManager`)
-    when first asked for.
+    when first asked for.  *frame*, *match* already laid on a map (a
+    :class:`~.frame.RouteFrame` of it), is taken as the route's frame instead
+    of building it again (#2266).
+
+    Raises:
+        ValueError: If *frame* is of another match than *match*.
     """
     global _ROUTE, _FRAME
+    if frame is not None and frame.match is not match:
+        raise ValueError("set_scenario_route: the frame is of another route match")
     _ROUTE = match
     _FRAME = None
-    if lanelet_map is not None:
+    if frame is not None:
+        _FRAME = frame
+    elif lanelet_map is not None:
         from .frame import RouteFrame  # noqa: PLC0415
 
         if routing_graph is None:

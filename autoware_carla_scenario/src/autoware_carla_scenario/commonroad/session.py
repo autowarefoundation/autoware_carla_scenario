@@ -117,6 +117,21 @@ def _check_workers(workers: Any) -> int:
     return count
 
 
+def _check_heavy_metrics(heavy: Any) -> bool:
+    """*heavy* as a ``bool``: a bool (a NumPy one too); ``None`` is the
+    default (:func:`~..heavy_metrics._heavy_metrics_default`).  Not a string
+    or a number: ``"false"`` is truthy, and would leave TTR on (#2266)."""
+    if heavy is None:
+        return _heavy_metrics_default()
+    if isinstance(heavy, bool):
+        return heavy
+    if getattr(getattr(heavy, "dtype", None), "kind", None) == "b" and (
+        getattr(heavy, "ndim", None) == 0
+    ):
+        return bool(heavy)
+    raise ValueError(f"heavy_metrics must be a bool, got {heavy!r}")
+
+
 def _check_command(command: Any) -> Optional[tuple[str, ...]]:
     """*command*, ``None`` (find the worker) or the command line starting a
     worker -- a tuple or list of strings, none of them empty, not empty
@@ -169,7 +184,8 @@ class CommonRoadSettings:
             evaluated at all; off, a metric condition on one is not judged.
             On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``
             (or the ``scenario`` command decided otherwise,
-            :data:`HEAVY_METRICS_DECIDED_ENV`).
+            :data:`HEAVY_METRICS_DECIDED_ENV`), which ``None`` also is.  A
+            bool (a NumPy one too); anything else is refused.
         workers: How many workers evaluate frames at once; at least 1.
         dt: The time step of the CommonRoad scenario a frame becomes (s);
             positive and finite.
@@ -228,6 +244,9 @@ class CommonRoadSettings:
                     f"({', '.join(COMMONROAD_METRICS)})"
                 )
             _check_period(f"metric_periods_s[{key!r}]", period)
+        object.__setattr__(
+            self, "heavy_metrics", _check_heavy_metrics(self.heavy_metrics)
+        )
         object.__setattr__(self, "workers", _check_workers(self.workers))
         _check_period("dt", self.dt)
         _check_period("horizon_s", self.horizon_s)

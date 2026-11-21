@@ -891,6 +891,30 @@ def test_the_heavy_metrics_are_on_unless_the_environment_says(
     assert cr_session.CommonRoadSettings().evaluates(CRIME_TTR_S)
 
 
+@pytest.mark.parametrize("value", ["false", "", 0, 1, 0.0, np.array([True])])
+def test_heavy_metrics_must_be_a_bool(value: Any) -> None:
+    """#2266: ``"false"`` is truthy, so TTR still ran."""
+    with pytest.raises(ValueError) as error:
+        cr_session.CommonRoadSettings(heavy_metrics=value)
+    assert str(error.value) == f"heavy_metrics must be a bool, got {value!r}"
+
+
+def test_heavy_metrics_takes_a_bool_and_null_is_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    cases: list[tuple[Any, bool]] = [
+        (True, True),
+        (False, False),
+        (None, False),
+        (np.bool_(True), True),
+        (np.bool_(False), False),
+    ]
+    for value, expected in cases:
+        settings = cr_session.CommonRoadSettings(heavy_metrics=value)
+        assert settings.heavy_metrics is expected
+
+
 def test_the_heavy_metrics_settings_are_heavy_metrics_reexported() -> None:
     # Moved to the checked heavy_metrics (#1689); session keeps the names.
     for name in (
