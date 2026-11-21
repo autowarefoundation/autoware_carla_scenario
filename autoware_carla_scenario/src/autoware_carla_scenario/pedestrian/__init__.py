@@ -11,6 +11,10 @@
   motion (:class:`~autoware_carla_scenario.pedestrian.poser.WalkerPoser`):
   found by role, posed frame by frame, placed, and handed back to its
   animation.
+- :mod:`~autoware_carla_scenario.pedestrian.contract`: the motion
+  generator contract's frame and values, without grpc;
+  :mod:`~autoware_carla_scenario.pedestrian.motion_client` speaks the
+  contract over grpc and re-exports them.
 
 ``PlayMotionAction`` plays a file through them;
 ``SmartPedestrianControllerAction`` a motion generated as the run goes.
