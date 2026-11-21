@@ -1193,7 +1193,6 @@ def test_cli_takes_a_log_as_named_and_every_log_under_a_directory_sorted(
         runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl",
         runs / "Ä" / "V.trajectory.jsonl",
         missing,
-        given,
     ]
     assert all(output is None for _, output in calls)
     out = capsys.readouterr().out
@@ -1290,19 +1289,26 @@ def test_cli_refuses_two_logs_of_one_stem_byte_for_byte(
     assert [log for log, _ in calls] == paths
 
 
-def test_cli_refuses_one_log_named_twice_into_one_directory(
+@pytest.mark.parametrize("output", [None, "rel"], ids=["beside", "-o"])
+def test_cli_converts_one_log_named_twice_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    output: Optional[str],
 ) -> None:
-    _recording_cli(monkeypatch)
+    # Named itself and under its directory, or by two spellings: refused
+    # with -o as two logs of one stem, converted twice without (#2283).
+    calls = _recording_cli(monkeypatch)
+    monkeypatch.chdir(tmp_path)
     log = tmp_path / "Run.trajectory.jsonl"
     log.write_text("")
-    line = _cli_error(capsys, [str(log), str(tmp_path), "-o", "rel"])
-    assert line == (
-        f"scenario-t4scene: error: {log} and {log} would both be written to "
-        "rel/Run.*; convert them without -o\n"
-    )
+    other = tmp_path / "Other.trajectory.jsonl"
+    other.write_text("")
+    argv = [str(log), str(tmp_path), "./Run.trajectory.jsonl", str(log)]
+    if output is not None:
+        argv += ["-o", output]
+    assert main(argv) == 0
+    expected = None if output is None else Path(output)
+    assert calls == [(log, expected), (other, expected)]
 
 
 def test_the_grid_finds_the_logs_and_the_stems_that_collide(tmp_path: Path) -> None:
@@ -1322,6 +1328,12 @@ def test_the_grid_finds_the_logs_and_the_stems_that_collide(tmp_path: Path) -> N
         tmp_path / "b" / f"Run{LOG_SUFFIX}",
     ]
     assert trajectory_logs([]) == []
+    # A log named twice, as itself and under a directory or by another
+    # spelling of its path, is one log, where it is first named (#2283).
+    assert trajectory_logs(
+        [logs[2], tmp_path / "a", tmp_path / "a" / ".." / "a" / f"Run{LOG_SUFFIX}"]
+    ) == [logs[2], logs[1]]
+    assert trajectory_logs([tmp_path, logs[3]]) == logs[1:]
     assert stem_collision(logs[:3], tmp_path) is None
     assert stem_collision(logs, Path("out")) == (
         f"{logs[2]} and {logs[3]} would both be written to out/Run.*; "
