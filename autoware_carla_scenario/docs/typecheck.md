@@ -4015,7 +4015,7 @@ What Codon 0.19 needs that Python does not, beyond
   constructor leaves it out as Python's does.
 - **A dataclass field may hold a union or a free-form mapping**: the library
   check constructs a dataclass once per member of a union field
-  (`ScenarioRunConfig.scenario`, one of six scenario configs), as it calls a
+  (`ScenarioRunConfig.scenario`, one of seven scenario configs), as it calls a
   function once per member of a union parameter. A field with a default whose
   annotation names `Any` (`SweepConfig.constraints: dict[str, Any]`, a Hydra
   mapping of any values) keeps its declaration, its empty default is built as
