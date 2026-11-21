@@ -58,6 +58,22 @@ def _check_number(key: str, value: float) -> None:
         raise ValueError(f"{key} must be a number, got {value!r}")
 
 
+def _is_host_port(address: str) -> bool:
+    """Whether *address* is ``host:port``: a host, a colon, and a port of
+    ASCII digits from 0 to 65535.  Split at the last colon, so a bracketed
+    IPv6 host (``[::1]:50052``) is one; a bare one is not: gRPC reads
+    ``::1`` as that host at port 443, and ``::1:50052`` as no address."""
+    host, colon, port = address.rpartition(":")
+    if not colon or not host.strip() or not port or len(port) > 5:
+        return False
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        return False
+    for char in port:
+        if char not in "0123456789":
+            return False
+    return int(port) <= 65535
+
+
 @dataclass(frozen=True)
 class AutowareBridgeConfig:
     """Connection settings for a concrete :class:`AutowareBridge`.
@@ -131,7 +147,9 @@ class AutowareBridgeConfig:
 
     Raises:
         ValueError: Naming the field and the value, when ``address`` is not a
-            non-empty string, ``ready_timeout_ticks`` is not a positive whole
+            ``host:port`` string with a port from 0 to 65535 (``localhost:0``
+            binds an ephemeral port; an IPv6 host is bracketed,
+            ``[::1]:50052``), ``ready_timeout_ticks`` is not a positive whole
             number (``1200``, or ``1200.0`` kept as the int ``1200``),
             ``timeout_s`` (when given) or ``boot_timeout_s`` is not positive
             and finite, ``boot_tick_period_s`` or ``liveness_timeout_s`` is
@@ -159,9 +177,14 @@ class AutowareBridgeConfig:
         # (``autoware.``), and reads a null setting as the default
         # (:func:`~autoware_carla_scenario.utils.config.null_as_default`).
         address = self.address
-        if not isinstance(address, str) or not address.strip():
-            # Else refused only when the gRPC server starts, with the ego.
-            raise ValueError(f"address must be a host:port to bind to, got {address!r}")
+        if not isinstance(address, str) or not _is_host_port(address):
+            # Else refused only when the gRPC server starts, with the ego; or
+            # not at all: gRPC binds ``localhost`` at port 443 and
+            # ``localhost:99999`` at 99999 modulo 65536 (#2275).
+            raise ValueError(
+                "address must be a host:port to bind to, with a port from 0 "
+                f"to 65535, got {address!r}"
+            )
         # Kept as an int: the entity compares ticks with it.
         given_ticks = self.ready_timeout_ticks
         _check_number("ready_timeout_ticks", given_ticks)

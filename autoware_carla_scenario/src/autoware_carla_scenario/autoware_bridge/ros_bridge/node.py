@@ -604,10 +604,12 @@ class ScenarioBridgeNode(Node):
     def _issue(self, client, request, latch: str, label: str) -> None:
         """Set *latch*, fire *request*; its response clears *latch* iff rejected.
 
-        Shared by all three startup steps.  The latch is set before the call so a
-        concurrent pass won't re-issue the same request; :meth:`_on_step_response`
-        clears it again only on rejection, so an accepted step stays latched (never
-        re-sent) while a failed one is retried on the next pass.  Called under
+        Shared by all five startup steps (initializing localization, setting the
+        route, changing it, clearing it, and engaging).  The latch is set before
+        the call so a concurrent pass won't re-issue the same request;
+        :meth:`_on_step_response` clears it again only on rejection, so an
+        accepted step stays latched (never re-sent) while a failed one is
+        retried on the next pass.  Called under
         ``_lock``; ``call_async`` never completes synchronously, so the callback
         runs later.
         """

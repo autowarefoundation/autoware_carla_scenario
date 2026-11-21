@@ -252,7 +252,8 @@ refused when the ego is built, with an error naming it:
 `+autoware.boot_timout_s=30` fails the run rather than leaving the default
 timeout in place. The values are checked too, naming the key and showing the
 value: a null setting is its default, as an absent one is; `address` is a
-non-empty `host:port`; `ready_timeout_ticks` a positive whole number (`1200`,
+`host:port` with a port from 0 to 65535 (`localhost:0` binds an ephemeral
+port; an IPv6 host is bracketed, `[::1]:50052`); `ready_timeout_ticks` a positive whole number (`1200`,
 or `1200.0`, kept as the int); and the seconds and `base_link_offset_m` are
 numbers, an int or a float. A boolean or a quoted number is refused rather
 than read as 0, 1 or the number: `autoware.liveness_timeout_s=false` does not
@@ -335,7 +336,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never`; `null` is the default |
 | `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep`; `null` is the default |
-| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)). For both launcher types, the mapping is merged over the default, and null or absent is the default: `{auto_engage: false}` keeps `use_sim_time: true`, which `use_sim_time: false` turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (`reroute_max_attempts: 10.0`) as the int, as the node declares them; a fraction for an integer one, or a boolean for a number, is refused |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)). For both launcher types, the mapping is merged over the default, and null or absent is the default: `{auto_engage: false}` keeps `use_sim_time: true`, which `use_sim_time: false` turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (`reroute_max_attempts: 10.0`) as the int, as the node declares them; a fraction for an integer one, a boolean or a string (`'5'`) for a number, a NaN or an infinity for a seconds parameter, and a `rpc_timeout_s`, `mission_poll_timeout_s`, `step_timeout_s` or `tick_period_s` that is not above 0 are refused, naming the parameter (`route_watch_period_s` of 0 or less turns the re-route watch off) |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |

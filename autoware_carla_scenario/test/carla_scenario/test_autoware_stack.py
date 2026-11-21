@@ -28,6 +28,7 @@ from autoware_carla_scenario.autoware_stack.bridge_node import (
     ROUTE_WATCH_PERIOD_S,
     DOUBLE_PARAMETERS,
     INTEGER_PARAMETERS,
+    POSITIVE_PARAMETERS,
     bridge_package_dir,
     bridge_ros_args,
     host_python_root,
@@ -1571,7 +1572,7 @@ def test_the_dependency_image_commit_gets_the_longer_timeout(
     monkeypatch.setattr(docker_module.subprocess, "run", run)
     monkeypatch.setattr(launcher, "_stream", lambda argv, log_name, env=None: 0)
     launcher._container = launcher._resolve_container()
-    launcher._dependency_image("img:1")
+    launcher._dependency_image("img:1", launcher._dependency_tag("img:1"))
     assert timeouts["commit"] == docker_module._DOCKER_COMMIT_TIMEOUT_S
     assert timeouts["image"] == timeouts["rm"] == docker_module._DOCKER_TIMEOUT_S
     assert docker_module._DOCKER_COMMIT_TIMEOUT_S > docker_module._DOCKER_TIMEOUT_S
@@ -1682,6 +1683,17 @@ def test_docker_config_rejects_a_text_field_that_is_no_text(
             launch=("a",),
             **{field: value},  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.parametrize("stop_timeout_s", [True, False, "20", None])
+def test_command_launcher_rejects_a_stop_timeout_that_is_no_number_naming_it(
+    stop_timeout_s: object,
+) -> None:
+    """#2275: True was a 1 s wait, and "20" a TypeError naming no field."""
+    with pytest.raises(
+        ValueError, match=rf"^stop_timeout_s must be a number, got {stop_timeout_s!r}$"
+    ):
+        CommandAutowareLauncher(["true"], stop_timeout_s=stop_timeout_s)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
@@ -2258,7 +2270,7 @@ def test_the_smallest_liveness_timeout_takes_one_lost_poll() -> None:
         {"use_sim_time": True},
         {"route_watch_period_s": 14.0},
         {"route_watch_period_s": 0},
-        {"route_watch_period_s": "not a number"},  # the node refuses it itself
+        {"route_watch_period_s": "not a number"},  # bridge_ros_args() refuses it
         {"route_watch_period_s": True},
         {"route_watch_period_s": float("nan")},
     ],
@@ -2268,7 +2280,7 @@ def test_a_liveness_timeout_the_node_cannot_trip_is_no_problem(parameters) -> No
 
 
 def test_a_liveness_timeout_the_node_would_trip_is_a_problem() -> None:
-    problem = liveness_timeout_problem(30.0, {"route_watch_period_s": "60"})
+    problem = liveness_timeout_problem(30.0, {"route_watch_period_s": 60})
     assert problem is not None
     assert "route_watch_period_s (60 s)" in problem
     assert "122 s" in problem
@@ -2315,6 +2327,79 @@ def test_a_boolean_for_a_number_parameter_is_refused_naming_it(
     assert name in INTEGER_PARAMETERS + DOUBLE_PARAMETERS
     with pytest.raises(ValueError, match=rf"^{name} must be a number, .* got {value}"):
         bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("value", ["60", True, float("nan")])
+def test_a_seconds_parameter_bridge_ros_args_refuses_reads_as_the_default(
+    value: object,
+) -> None:
+    """#2275: as bridge_ros_args() refuses it, with an error of its own."""
+    assert liveness_timeout_problem(4.0, {"route_watch_period_s": value}) is None
+    assert liveness_timeout_problem(3.0, {"route_watch_period_s": value}) is not None
+
+
+@pytest.mark.parametrize("name", ["reroute_max_attempts", "rpc_timeout_s"])
+@pytest.mark.parametrize("value", ["5", "5.0", ""])
+def test_a_string_for_a_number_parameter_is_refused_naming_it(
+    name: str, value: str
+) -> None:
+    """#2275: ``rpc_timeout_s:=5`` reached ROS as an INTEGER, which rclpy
+    refuses for a DOUBLE, and the run waited out boot_timeout_s."""
+    with pytest.raises(
+        ValueError, match=rf"^{name} must be a number, .* got {value!r}$"
+    ):
+        bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("name", DOUBLE_PARAMETERS)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_a_double_parameter_that_is_not_finite_is_refused_naming_it(
+    name: str, value: float
+) -> None:
+    with pytest.raises(ValueError, match=rf"^{name} must be finite, got {value!r}$"):
+        bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("name", POSITIVE_PARAMETERS)
+@pytest.mark.parametrize("value", [0, 0.0, -1, -0.5])
+def test_a_wait_or_period_that_is_not_positive_is_refused_naming_it(
+    name: str, value: float
+) -> None:
+    """#2275: a negative rpc_timeout_s never let a readiness report through, a
+    step_timeout_s of 0 re-sent every startup request on each pass, and a
+    tick_period_s of 0 reached create_timer."""
+    with pytest.raises(ValueError, match=rf"^{name} must be positive, got {value!r}$"):
+        bridge_ros_args("h:1", {name: value})
+
+
+def test_the_positive_parameters_are_double_parameters() -> None:
+    assert set(POSITIVE_PARAMETERS) == set(DOUBLE_PARAMETERS) - {"route_watch_period_s"}
+
+
+@pytest.mark.parametrize("value", [0, -1.0])
+def test_a_route_watch_period_of_zero_or_less_turns_the_watch_off(
+    value: float,
+) -> None:
+    """Not refused: the node stops polling once ready, as it did before
+    re-routing (ros_bridge/node.py)."""
+    args = bridge_ros_args("h:1", {"route_watch_period_s": value})
+    assert args[3:] == ["-p", f"route_watch_period_s:={float(value)}"]
+
+
+def test_the_nodes_defaults_pass() -> None:
+    args = bridge_ros_args(
+        "h:1",
+        {
+            "use_sim_time": True,
+            "rpc_timeout_s": 5.0,
+            "mission_poll_timeout_s": 1.0,
+            "step_timeout_s": 10.0,
+            "route_watch_period_s": 1.0,
+            "reroute_max_attempts": 10,
+            "tick_period_s": 0.5,
+        },
+    )
+    assert len(args) == 3 + 2 * 7
 
 
 def test_a_null_bridge_parameter_is_the_nodes_default() -> None:

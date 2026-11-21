@@ -952,8 +952,9 @@ def _launcher_bridge_parameters(settings: dict[str, Any]) -> dict[str, Any]:
 
     Raises:
         ValueError: naming the key, for a value that is no mapping, or a
-            parameter the node would refuse as it starts (a fraction for an
-            integer one, :func:`~autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args`).
+            parameter the node would refuse or misbehave with as it starts (a
+            fraction for an integer one, a string for a number, a timeout that
+            is not positive, :func:`~autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args`).
     """
     from autoware_carla_scenario.autoware_stack.bridge_node import (  # noqa: PLC0415
         bridge_ros_args,

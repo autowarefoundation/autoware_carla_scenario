@@ -1922,6 +1922,38 @@ class TestBuildAutowareLauncher:
         ):
             build_autoware_launcher(cfg)
 
+    @pytest.mark.parametrize("kind", ["docker", "command"])
+    @pytest.mark.parametrize(
+        ("parameters", "wanted"),
+        [
+            ({"rpc_timeout_s": "5"}, r"rpc_timeout_s must be a number, .* got '5'"),
+            ({"step_timeout_s": 0}, r"step_timeout_s must be positive, got 0"),
+            ({"tick_period_s": float("nan")}, r"tick_period_s must be finite, got nan"),
+            (
+                {"reroute_max_attempts": "10"},
+                r"reroute_max_attempts must be a number, .* got '10'",
+            ),
+        ],
+    )
+    def test_a_bridge_parameter_the_node_would_misread_is_refused(
+        self, kind: str, parameters: dict, wanted: str
+    ) -> None:
+        """#2275: refused naming the key before anything starts, not by the
+        node, after the run has waited out boot_timeout_s."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+            bridge_parameters=parameters,
+        )
+        with pytest.raises(
+            ValueError, match=rf"^autoware\.launcher\.bridge_parameters\.{wanted}$"
+        ):
+            build_autoware_launcher(cfg)
+
     def test_a_config_refusal_names_the_group(self) -> None:
         """DockerAutowareConfig's own refusals are prefixed with the group."""
         from autoware_carla_scenario.examples.run import build_autoware_launcher
