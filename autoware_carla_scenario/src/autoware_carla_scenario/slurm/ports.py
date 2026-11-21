@@ -15,7 +15,8 @@ of :data:`PORT_SLOT_WIDTH` consecutive ports from ``launcher.port_base``:
 
 The slot to try first comes from the job: ``SLURM_ARRAY_JOB_ID`` plus
 ``SLURM_ARRAY_TASK_ID``, so the tasks of one array start on different slots.
-A slot is taken only when no other task holds it -- an exclusive ``flock`` on
+A slot is taken only when no other task using the same lock directory holds
+it -- an exclusive ``flock`` on
 ``<lock dir>/autoware_carla_scenario-port-<first port>.lock``, released when the
 task's process ends, however it ends -- and none of its ports is bound;
 otherwise the next one is tried.  The lock directory must be one every job on
@@ -24,11 +25,23 @@ the node sees: not ``/tmp`` where a cluster gives each job a private one, so
 ``launcher.port_lock_dir``.  The default 20000-29999 stays below Linux's ephemeral
 range (32768-60999), so an outgoing connection never takes a slot's port.
 
+The default directory is per user, so slots (and ROS domains, below) are
+exclusive among one user's tasks only.  Another user's task on the node may
+take the same slot: only :func:`_port_free` stands in its way, and only once
+that task's CARLA has bound its ports, tens of seconds after the slot was
+taken.  Users who share nodes set ``launcher.port_lock_dir`` to one directory
+they can all write to -- a group's own (e.g. mode 2770) -- and keep a umask
+that leaves the lock files readable by the group (docs/slurm.md, "Ports").
+Not a world-writable one, where any user on the node could create or hold
+every lock file: that is why the default is not shared.
+
 A task's ROS domains are held the same way (:class:`RosDomains`): each domain
 id the task's config names is mapped to the first id from it on that no other
 task on the node holds (``<lock dir>/autoware_carla_scenario-ros-domain-<id>.lock``),
-so the Autoware stacks and ROS 2 egos of tasks sharing a node never share a
-DDS domain.  Not part of the port slot: a slot's index runs to
+so the Autoware stacks and ROS 2 egos of tasks sharing a node and a lock
+directory never share a DDS domain.  Nothing checks whether a domain is in
+use, so another user's tasks with a lock directory of their own may pick the
+same one.  Not part of the port slot: a slot's index runs to
 ``launcher.port_slots`` (1000 by default), past the 233 domains ROS 2 has.
 The worker reads a domain id an environment holds with :func:`_env_domain_id`
 and checks the range of one before it takes it with :func:`_take_domain`.

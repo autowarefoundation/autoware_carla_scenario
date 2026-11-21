@@ -32,7 +32,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..slurm.manifest import verdict_of_document
+from ..slurm.collect import stale_reason
+from ..slurm.manifest import BatchLayout, CaseOutcome, verdict_of_document
 
 # The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
@@ -304,10 +305,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     has no ``batch_results.json`` yet. A case without an outcome yet has
     ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
     verdict, or a result that cannot be reported (``verdict_of_document``,
-    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
+    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it.
+    A stale outcome, an earlier submission's that the last one to give the
+    case stopped before replacing (``slurm.collect.stale_reason``, #2247),
+    is not the case's: it is pending too, with a message saying why, as
+    ``status`` and the SLURM panel count it, never its old verdict (#2285)."""
     cases = _manifest_cases(directory)
     if cases is None:
         return None
+    layout = BatchLayout(directory)
     entries: list[dict[str, Any]] = []
     for case in cases:
         overrides = case.get("case_overrides")
@@ -318,7 +324,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             "scenario": case.get("label") or case.get("scenario") or "unknown",
             "overrides": list(overrides) if isinstance(overrides, list) else [],
         }
-        if isinstance(record, dict) and isinstance(record.get("result"), dict):
+        stale = _stale(layout, int(case["index"])) if isinstance(record, dict) else None
+        if stale is not None:
+            entry.update(
+                passed=None,
+                message=f"Stale result: {stale}",
+                elapsed_seconds=None,
+                pending=True,
+            )
+        elif isinstance(record, dict) and isinstance(record.get("result"), dict):
             entry.update(record["result"])
             if record.get("errored"):
                 entry["error"] = True
@@ -339,6 +353,23 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             )
         entries.append(entry)
     return entries
+
+
+def _stale(layout: BatchLayout, index: int) -> str | None:
+    """Why case *index*'s outcome is stale (``slurm.collect.stale_reason``),
+    if it is; ``None`` too when the batch's records cannot be read, which
+    must not break the page: a submission record whose ``chunks`` hold a
+    number or ``null`` raises a :class:`TypeError`
+    (``SubmissionRecord.task_of``), which would break the session list of
+    every session (#2285)."""
+    try:
+        record = layout.read_result(index)
+        if record is None:
+            return None
+        outcome: CaseOutcome = record
+        return stale_reason(layout, index, outcome)
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:

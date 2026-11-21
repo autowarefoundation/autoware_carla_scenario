@@ -259,7 +259,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `collect_mem` | `2G` | its `--mem` |
 | `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; at least 0 |
 | `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_base` at least 1024, `port_slots` at least 1, and every slot's ports within 65535 |
-| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>`, else `/tmp` ([Ports](#ports)) |
+| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>` (per user, so slots are exclusive among your own tasks only), else `/tmp`; users sharing nodes set one group directory ([Ports](#ports)) |
 
 Each value is checked before anything is written, and one of the wrong type is
 refused with an error naming its key (`launcher.<key>`), never quietly read
@@ -432,7 +432,7 @@ ports from `port_base`:
 
 The slot a task tries first is its array job id plus its task id, so the tasks
 of an array start on different slots. It takes one only when no other task
-holds it (an exclusive lock,
+using the same lock directory holds it (an exclusive lock,
 `<lock dir>/autoware_carla_scenario-port-<base>.lock`, which goes when the
 task's process does) and none of its ports is bound; else the next. The lock
 directory must be one every job on the node sees, which `/tmp` is not where
@@ -440,6 +440,26 @@ SLURM gives each job a private one (`job_container/tmpfs`): it is
 `/dev/shm/acs-slurm-ports-<uid>` (or `/tmp` where that cannot be made), or
 `launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
 ephemeral ports.
+
+The default lock directory is per user, so slots and [ROS domains](#ros-domains)
+are exclusive among **your own** tasks only (unless `/dev/shm` cannot be
+used and it falls back to `/tmp`, which every user shares). Another user's
+task on the same node may take the same slot: the check that none of its ports is bound stops
+that only once the other task's CARLA has bound them, tens of seconds after
+it took the slot. Users who share nodes set `launcher.port_lock_dir` to one
+directory they all write to, for example a group's own:
+
+```bash
+mkdir -p /dev/shm/acs-slurm-ports-mygroup
+chgrp mygroup /dev/shm/acs-slurm-ports-mygroup
+chmod 2770 /dev/shm/acs-slurm-ports-mygroup   # group-only, setgid, no sticky bit
+```
+
+The lock files are created `0644` less your umask, so keep a umask that
+leaves them readable by the group (`022`, `002` or `027`). Do not use a
+world-writable directory: anyone on the node could then create or hold the
+lock files and keep your tasks off every slot. That is also why the default
+is not shared.
 
 The TrafficManager's port is always the slot's, whatever the config says: the traffic
 groups interpolate the backend's own (`traffic.options.port`, sumo's
@@ -490,7 +510,8 @@ The domains are not part of the port slot: a slot's index runs to
 `array_parallelism` times the domains a task uses well below that, and below
 102 on Linux (0 to 101 is what the ROS 2 documentation calls safe). The locks
 are per user (the lock directory is), so another user's tasks on the node
-may still pick the same domain.
+may still pick the same domain, and nothing checks whether a domain is in
+use: users who share nodes share a lock directory ([Ports](#ports)).
 
 ### Autoware stacks
 

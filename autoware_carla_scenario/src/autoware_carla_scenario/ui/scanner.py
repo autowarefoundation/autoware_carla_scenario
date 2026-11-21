@@ -225,17 +225,21 @@ def _scan_multirun_session(
         return None
 
     passed_count = 0
+    pending_count = 0
     total_count = len(job_dirs)
     scenario_names: set[str] = set()
 
     for job_dir in job_dirs:
         result_file = result_path(job_dir)
+        data = _read_result_json(result_file) if result_file is not None else None
         if result_file is not None:
-            data = _read_result_json(result_file)
-            if data and _passed(data.get("passed")):
-                passed_count += 1
             scenario_names.add(_extract_scenario_name(data, job_dir))
-        # Missing result counts as failed (no increment)
+        if not data:
+            # A missing or unreadable result: without a result, as the
+            # session page counts it (#2285).
+            pending_count += 1
+        elif _passed(data.get("passed")):
+            passed_count += 1
 
     scenario_label = ", ".join(sorted(scenario_names)) if scenario_names else "unknown"
 
@@ -246,6 +250,7 @@ def _scan_multirun_session(
         scenario_name=scenario_label,
         passed_count=passed_count,
         total_count=total_count,
+        pending_count=pending_count,
     )
 
 
@@ -287,6 +292,9 @@ def _scan_outputs_session(
         scenario_name=scenario_name,
         passed_count=1 if passed else 0,
         total_count=1,
+        # An unreadable result: without a result, as the session page
+        # counts it (#2285).
+        pending_count=0 if data else 1,
     )
 
 
@@ -404,6 +412,7 @@ def load_session(
                             elapsed_seconds=None,
                             overrides=overrides,
                             message="Failed to read result JSON",
+                            pending=True,
                         )
                     )
             else:
@@ -416,6 +425,7 @@ def load_session(
                         elapsed_seconds=None,
                         overrides=overrides,
                         message="No result file found",
+                        pending=True,
                     )
                 )
 
@@ -436,6 +446,7 @@ def load_session(
                     elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
                     overrides=overrides,
                     message=_text(entry.get("message")),
+                    pending=entry.get("pending") is True,
                 )
             )
 
@@ -455,6 +466,22 @@ def load_session(
                         elapsed_seconds=_seconds(data.get("elapsed_seconds")),
                         overrides=overrides,
                         message=_text(data.get("message")),
+                    )
+                )
+            else:
+                # Listed, as a multirun job's is, so that the page counts it
+                # as the session list does, never "All passed" (#2285);
+                # read again until it can be.
+                final = False
+                items.append(
+                    SessionItem(
+                        index=0,
+                        scenario_name=_extract_scenario_name(None, directory),
+                        passed=None,
+                        elapsed_seconds=None,
+                        overrides=overrides,
+                        message="Failed to read result JSON",
+                        pending=True,
                     )
                 )
 
