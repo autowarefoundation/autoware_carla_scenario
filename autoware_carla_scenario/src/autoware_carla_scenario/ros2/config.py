@@ -166,6 +166,10 @@ class CommandSourceConfig:
     pair_window_s: Optional[float] = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise ValueError(
+                f"command source: name must be a string, got {self.name!r}"
+            )
         if not self.name:
             raise ValueError("a command source needs a name")
         if self.kind not in COMMAND_KINDS:
@@ -274,11 +278,19 @@ class CommandSourceConfig:
         one (``pair_window_s``) keeps null as its value.
 
         Raises:
-            ValueError: If *mapping* holds a key this config does not define.
+            ValueError: If *mapping* holds a key this config does not define,
+                or leaves ``name`` or ``kind``, which have no default, absent
+                or null.
         """
         from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**null_as_default(cls, checked_options(cls, mapping)))
+        checked = checked_options(cls, mapping)
+        # Absent or null, a required key would leave the constructor to raise
+        # a TypeError, which the pre-run checks do not catch (#2261).
+        for key in ("name", "kind"):
+            if checked.get(key) is None:
+                raise ValueError(f"command source: {key} is required, got None")
+        return cls(**null_as_default(cls, checked))
 
 
 @dataclass(frozen=True)
@@ -295,12 +307,13 @@ class Ros2CameraConfig:
     Attributes:
         topic: The image topic.  CARLA's own interface names it
             ``/carla/<role name>/<sensor ros_name>/image``.
-        frame_id: ``header.frame_id`` of the published images; the
+        frame_id: ``header.frame_id`` of the published images, a string; the
             :attr:`logical_id` when empty.
-        logical_id: The camera's name in logs.
+        logical_id: The camera's name in logs; a non-empty string.
 
     Raises:
-        ValueError: If the topic is not a ROS 2 topic name, the image size
+        ValueError: If the logical_id is not a non-empty string, the frame_id
+            not a string, the topic not a ROS 2 topic name, the image size
             is not a positive whole number (``960``, or ``960.0`` kept as the
             int ``960``; not ``960.5``, a bool or a string), the fps is not
             positive and finite, the ``fov`` is outside (0, 180) degrees, or
@@ -322,6 +335,19 @@ class Ros2CameraConfig:
     yaw: float = 0.0
 
     def __post_init__(self) -> None:
+        # The camera's name heads every message below, and is the images'
+        # frame when frame_id is empty: "" would publish no frame (#2261).
+        if not isinstance(self.logical_id, str) or not self.logical_id:
+            raise ValueError(
+                f"camera: logical_id must be a non-empty string, got {self.logical_id!r}"
+            )
+        # Empty is the logical_id; false would be read as empty too, and a
+        # number would fail only in the sensor thread, once the ego has spawned.
+        if not isinstance(self.frame_id, str):
+            raise ValueError(
+                f"camera {self.logical_id!r}: frame_id must be a string, "
+                f"got {self.frame_id!r}"
+            )
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
         owner = f"camera {self.logical_id!r}"

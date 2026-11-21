@@ -478,3 +478,58 @@ def test_write_in_place_keeps_mode_and_handles_short_writes(
     assert loaded["map"]["no_3d_model_lanelet_ids"] == _IDS
     assert loaded["map"]["comment"] == "a much longer old value"
     assert path.stat().st_mode & 0o777 == 0o640
+
+
+# ---------------------------------------------------------------------------
+# What follows the key on its own line (#2261)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "ids", "expected"),
+    [
+        (
+            "map:\n  name: M\n  no_3d_model_lanelet_ids:  # keep me\n"
+            "    - 1\n    - 2\n  other: 3\n",
+            [7, 8],
+            "map:\n  name: M\n  no_3d_model_lanelet_ids:  # keep me\n"
+            "    - 7\n    - 8\n  other: 3\n",
+        ),
+        (
+            "map:\n  name: M\n  no_3d_model_lanelet_ids:  # keep me\n"
+            "    - 1\n  other: 3\n",
+            [],
+            "map:\n  name: M\n  no_3d_model_lanelet_ids: []  # keep me\n  other: 3\n",
+        ),
+        (
+            "map:\n  name: M\n  no_3d_model_lanelet_ids: &ids  # keep me\n" "    - 1\n",
+            [7, 8],
+            "map:\n  name: M\n  no_3d_model_lanelet_ids: &ids  # keep me\n"
+            "    - 7\n    - 8\n",
+        ),
+        (
+            "map:\n  name: M\n  no_3d_model_lanelet_ids: &ids  # keep me\n" "    - 1\n",
+            [],
+            "map:\n  name: M\n  no_3d_model_lanelet_ids: &ids []  # keep me\n",
+        ),
+        (
+            "map:\r\n  name: M\r\n  no_3d_model_lanelet_ids:  # keep me\r\n"
+            "    [1, 2]\r\n",
+            [7, 8],
+            "map:\r\n  name: M\r\n  no_3d_model_lanelet_ids: [7, 8]  # keep me\r\n",
+        ),
+    ],
+)
+def test_a_comment_or_anchor_on_the_keys_line_is_kept(
+    text: str, ids: list[int], expected: str
+) -> None:
+    """The value starts on a later line, so the replaced span began at the key
+    and took the rest of its line -- a comment, an anchor -- with it."""
+    assert update_no_3d_model_lanelet_ids_text(text, ids) == expected
+
+
+def test_a_comment_after_a_value_on_the_keys_line_is_still_kept() -> None:
+    text = "map:\n  name: M\n  no_3d_model_lanelet_ids: [1]  # keep me\n"
+    assert update_no_3d_model_lanelet_ids_text(text, [7, 8]) == (
+        "map:\n  name: M\n  no_3d_model_lanelet_ids: [7, 8]  # keep me\n"
+    )
