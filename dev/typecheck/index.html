@@ -4996,8 +4996,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 343 of the package's 473
-modules (73%; about 107,400 of
-180,400 lines) are <code>CHECKED</code>: the kinematics, the
+modules (73%; about 107,600 of
+180,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6488,8 +6488,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>203 functions and methods of those modules are <code>UNCALLED</code>
-(62 of them protected helpers, see <em>What is
+<p>204 functions and methods of those modules are <code>UNCALLED</code>
+(63 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6501,7 +6501,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 203 UNCALLED functions and methods, and why</summary>
+<summary>The 204 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6515,9 +6515,9 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>autoware_stack.bridge_node.bridge_ros_args</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with</li>
 <li><code>autoware_stack.bridge_node.launcher_bridge_parameters</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with, and reads them off any launcher (<code>object</code>) with getattr(); BridgeHandshake.__init__() calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>autoware_stack.bridge_node.liveness_timeout_problem</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with; BridgeHandshake.__init__() calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>; the comparison itself is the checked min_liveness_timeout_s()'s</li>
-<li><code>commonroad.frame._state</code>: builds a road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express; its geometry and motion are the checked _kinematics()'s</li>
-<li><code>commonroad.frame.read_frame</code>: builds the ego's and the other road users' states with _state(), JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; which road users are near the ego is the checked _road_users_near()'s</li>
-<li><code>commonroad.map.commonroad_map</code>: imports roadgen (the <code>map</code> extra) inside it, which has no Codon model</li>
+<li><code>commonroad.frame._state</code>: builds a road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express; the road user it is made of, its id, kind, geometry and motion, is the checked _road_user()'s (#2266)</li>
+<li><code>commonroad.frame.read_frame</code>: builds the ego's and the other road users' states with _state(), JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; the ego and the road users near it, typed, are the checked _read_road_users()'s (#2266)</li>
+<li><code>commonroad.map.commonroad_map</code>: imports roadgen (the <code>map</code> extra) inside it, which has no Codon model; where a map is cached (the root and the hash naming its directory) is the checked _cache_place()'s (#2266)</li>
 <li><code>conditions.adversity_active.AdversityActiveCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.and_condition.AndCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.base.BaseCondition.__init_subclass__</code>: wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for</li>
@@ -6619,6 +6619,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>route.model._distance</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a route search's ego_spawn_s or ego_goal_margin); only parse_route_search, itself uncalled, calls it</li>
 <li><code>route.model._parse_paths</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a junction segment's paths); only _parse_segment, itself uncalled, calls it</li>
 <li><code>route.model._parse_segment</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (one segment of a route search); only parse_route_search, itself uncalled, calls it</li>
+<li><code>route.model._search_number</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a route search's match_index, max_matches or seed: null, or a value to refuse when blank, #2266); only parse_route_search, itself uncalled, calls it</li>
 <li><code>route.model._tristate</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a segment's opposite_lane, stop_line, ... flags); only _parse_segment, itself uncalled, calls it</li>
 <li><code>route.model._whole_number</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a route search's match_index, max_matches or seed, the ODD sample count, and every whole-number setting a run reads through odd.sampler's whole_number_setting(): the run, ODD sample and background_traffic seeds and the server and background_traffic counts); only parse_route_search and RouteMatch.from_config, themselves uncalled, and the excluded odd.sampler call it</li>
 <li><code>route.model.parse_route_search</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
