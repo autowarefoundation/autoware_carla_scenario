@@ -224,9 +224,13 @@ def _pinned(need: Resources, host: HostResources) -> list[int]:
     go on any GPU."""
     if need.every_gpu:
         return [gpu.index for gpu in host.gpus]
-    if need.gpus:
-        return list(need.gpus)
     pinned: list[int] = []
+    if need.gpus:
+        # An index named twice is one GPU, booked once (#2263).
+        for index in need.gpus:
+            if index not in pinned:
+                pinned.append(index)
+        return pinned
     gpu = need.gpu
     if gpu is not None:
         pinned.append(gpu)
