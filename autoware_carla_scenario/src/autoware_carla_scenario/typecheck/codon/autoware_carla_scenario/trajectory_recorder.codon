@@ -1,5 +1,5 @@
 # Model of autoware_carla_scenario.trajectory_recorder (docs/typecheck.md),
-# which writes JSON lines of mixed value types with json: what the checked
+# which writes JSON lines of mixed value types with orjson: what the checked
 # scenario_runner uses of it, with the signatures of the Python class (but
 # for the framework's types, below).
 

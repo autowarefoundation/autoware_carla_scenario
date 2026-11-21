@@ -1141,9 +1141,12 @@ def _ego_entity_setting(cfg: Any) -> Any:
     unknown entity ``'None'``.  Every reader of the key -- a run's, a batch's
     check and a Slurm task's -- reads it through this; :func:`ego_entity_name`
     checks it.
+
+    Raises:
+        ValueError: naming ``ego``, for a block that is not a mapping
+            (:func:`_block`, #2298).
     """
-    ego_cfg = cfg.get("ego") or {}
-    value = ego_cfg.get("entity")
+    value = _block(cfg, "ego").get("entity")
     return "autopilot" if value is None else value
 
 
@@ -1735,19 +1738,40 @@ def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:
     )
 
 
+def _block(cfg: DictConfig, name: str) -> Any:
+    """*cfg*'s ``name`` block: an empty mapping when it is absent or null
+    (the default, nothing set), the block itself when it is a mapping.
+
+    One that is not a mapping (``rerun: true``, ``false``, ``0``, ``''``) is
+    refused, as ``metrics`` is (:func:`metrics_heavy`), rather than read as
+    unset -- ``false`` turned the block's switches off without a word -- or
+    crash on ``.get`` (``rerun: true``, #2298).
+
+    Raises:
+        ValueError: naming the block, for a value that is not a mapping.
+    """
+    value = cfg.get(name)
+    if value is None:
+        return {}
+    if not isinstance(value, (DictConfig, Mapping)):
+        raise ValueError(f"{name} must be a mapping, got {shown(value)}")
+    return value
+
+
 def _switch(cfg: DictConfig, block: str, key: str) -> bool:
     """The true/false switch ``<block>.<key>`` of *cfg*, off when absent or
-    null (#2188).
+    null (#2188), as is every switch of a block that is absent or null.
 
     A boolean or its spelling (``"false"``, ``"yes"``, ``0``: what an
     ``${oc.env:VAR,false}`` or a quoted override gives), not its truthiness:
     ``bool("false")`` was true, and so was a typo (#1753).
 
     Raises:
-        ValueError: naming the key, for a value that spells neither
+        ValueError: naming the block, for a block that is not a mapping
+            (:func:`_block`), or the key, for a value that spells neither
             (:func:`~autoware_carla_scenario.config_flags.check_flag`).
     """
-    settings = cfg.get(block) or {}
+    settings = _block(cfg, block)
     return check_flag(f"{block}.{key}", _given(settings, key, False))
 
 
@@ -1768,9 +1792,10 @@ def _rerun_draw_radius(cfg: DictConfig) -> float | None:
     than the ``OverflowError`` of ``math.isfinite()`` (#1928).
 
     Raises:
-        ValueError: It is not a finite distance.
+        ValueError: It is not a finite distance, or ``rerun`` is not a
+            mapping (:func:`_block`).
     """
-    settings = cfg.get("rerun") or {}
+    settings = _block(cfg, "rerun")
     value = settings.get("draw_radius_m", None)
     if value is None:
         return None
@@ -1781,23 +1806,28 @@ def _rerun_draw_radius(cfg: DictConfig) -> float | None:
     return float(value)
 
 
+#: ``rerun.lidar_max_points`` when it is absent or null: the default the
+#: shipped config sets and docs/usage.md documents.
+_DEFAULT_LIDAR_MAX_POINTS = 65536
+
+
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise.
 
-    0 (or ``null``, or no value) keeps every point of a sweep.  An integral
-    float (``1e5`` in YAML) or a string of an integer (what ``${oc.env:...}``
-    gives) counts as that integer, as ``int()`` read them before (#1226).
+    Absent or null is the default, :data:`_DEFAULT_LIDAR_MAX_POINTS` (65536);
+    an explicit 0 keeps every point of a sweep (#2298: null kept every point).
+    An integral float (``1e5`` in YAML) or a string of an integer (what
+    ``${oc.env:...}`` gives) counts as that integer, as ``int()`` read them
+    before (#1226).
 
     Raises:
-        ValueError: It is not a non-negative integer (a bool is not one), or
-            ``rerun.lidar`` is not true or false (:func:`_switch`).
+        ValueError: It is not a non-negative integer (a bool is not one),
+            ``rerun.lidar`` is not true or false (:func:`_switch`), or
+            ``rerun`` is not a mapping (:func:`_block`).
     """
     if not _switch(cfg, "rerun", "lidar"):
         return None
-    rerun_cfg = cfg.get("rerun") or {}
-    value = rerun_cfg.get("lidar_max_points", 0)
-    if value is None:
-        return 0
+    value = _given(_block(cfg, "rerun"), "lidar_max_points", _DEFAULT_LIDAR_MAX_POINTS)
     points: int | None = None
     if isinstance(value, bool):
         points = None
@@ -3936,7 +3966,9 @@ def _float_of_text(value: Any) -> float:
 
 def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     """The numbers of the config's ``background_traffic``, checked; ``None``
-    when it is off (``enabled`` false or the block absent), when none is read.
+    when it is off (``enabled`` false or the block absent or null), when none
+    is read.  A block that is not a mapping (``true``, ``false``, ``0``,
+    ``''``) is refused (:func:`_block`, #2298).
 
     ``seed``, ``source.initial_vehicles`` and ``source.max_vehicles`` are
     whole numbers, not negative (``2`` or ``2.0``; not ``1.9``, a boolean or

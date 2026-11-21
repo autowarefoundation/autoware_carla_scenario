@@ -169,6 +169,74 @@ class TestSwitchNull:
             )
 
 
+#: The blocks whose switches _switch reads (#2298), and a switch of each.
+_SWITCH_BLOCKS = [
+    ("rerun", "enabled"),
+    ("t4", "enabled"),
+    ("t4scene", "enabled"),
+    ("background_traffic", "enabled"),
+    ("ego", "native_autoware_interface"),
+]
+
+
+class TestBlockNotAMapping:
+    """A switch's block that is no mapping is refused, naming the block, as
+    ``metrics`` is; absent or null is the default (#2298)."""
+
+    @pytest.mark.parametrize(("block", "key"), _SWITCH_BLOCKS)
+    @pytest.mark.parametrize("value", [True, "yes", False, 0, ""])
+    def test_it_is_refused_before_the_run(
+        self, block: str, key: str, value: object
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+        from autoware_carla_scenario.value_text import shown
+
+        message = f"^{block} must be a mapping, got {re.escape(shown(value))}$"
+        with pytest.raises(ValueError, match=message):
+            run._switch(OmegaConf.create({block: value}), block, key)
+        cfg = _shipped([])
+        OmegaConf.set_struct(cfg, False)
+        cfg[block] = value
+        # The one-line refusal before anything starts, not a traceback.
+        with pytest.raises(run.RunConfigError, match=message):
+            run.check_run_config(cfg)
+
+    @pytest.mark.parametrize(("block", "key"), _SWITCH_BLOCKS)
+    def test_null_or_absent_is_the_default(self, block: str, key: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        assert run._switch(OmegaConf.create({block: None}), block, key) is False
+        assert run._switch(OmegaConf.create({}), block, key) is False
+        assert run._block(OmegaConf.create({block: None}), block) == {}
+
+    @pytest.mark.parametrize("value", [True, "yes", False, 0, ""])
+    def test_the_rerun_readers_refuse_it_too(self, value: object) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = OmegaConf.create({"rerun": value})
+        for read in (run._rerun_draw_radius, run._rerun_lidar_max_points):
+            with pytest.raises(ValueError, match=r"^rerun must be a mapping, got "):
+                read(cfg)
+
+    def test_a_mapping_is_read_as_before(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = OmegaConf.create(
+            {
+                "rerun": {"enabled": "yes", "lidar": True, "draw_radius_m": 5},
+                "t4": {"enabled": False},
+                "background_traffic": {"enabled": True},
+                "ego": {"native_autoware_interface": None},
+            }
+        )
+        assert run._switch(cfg, "rerun", "enabled") is True
+        assert run._switch(cfg, "t4", "enabled") is False
+        assert run._switch(cfg, "background_traffic", "enabled") is True
+        assert run._switch(cfg, "ego", "native_autoware_interface") is False
+        assert run._rerun_draw_radius(cfg) == 5.0
+        assert run._rerun_lidar_max_points(cfg) == 65536
+
+
 class TestPlannedRouteDerivedGoal:
     @staticmethod
     def _cfg(expected: list[Any]) -> Any:
