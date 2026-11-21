@@ -1,8 +1,8 @@
 """``scenario-expand``: print the concrete scenarios of a scenario as JSON.
 
-Takes the same arguments as ``scenario`` -- ``scenario=<name>`` plus any Hydra
-overrides, e.g. ``map=<group>`` -- composes the config exactly as a run would
-(external scenario packages included), and prints::
+Takes ``scenario=<name>`` plus any Hydra overrides, e.g. ``map=<group>``, as
+``scenario`` does -- composes the config exactly as a run would (external
+scenario packages included), and prints::
 
     {"scenario": "<name>", "cases": [["ego.spawn_lanelet_id=242", ...], ...]}
 
@@ -29,6 +29,13 @@ from its listing alone: each is the cases the batch run of the same glob runs.
 As for ``scenario`` (and Hydra), the last ``scenario=`` wins when it is
 given more than once.
 
+Of ``scenario``'s flags, ``--multirun`` (``-m``) is taken and ignored: the
+listing is the cases a ``--multirun`` batch runs, with it or without.  Any
+other argument that starts with ``-`` (``--resume-from``, ``--cfg``, ...) is
+refused with ``Error: scenario-expand does not take <flag>`` and exit 2:
+nothing is run, so there is nothing to resume, and Hydra would read it as an
+override.
+
 The exit status is 0 when every scenario expanded, 1 when one is composed on
 another map than its document names (an exported scenario on a map of its own
 run without ``map=<id>_map``, refused before any map is read), the
@@ -37,8 +44,8 @@ run without ``map=<id>_map``, refused before any map is read), the
 parse, constraints for more than one key, a Lanelet2 map that is missing,
 unreadable or cannot be resolved, ...) or its sweep expands to no case
 (its constraints, route or ODD sample match nothing on the map; a scenario
-without a sweep is one case), and 2 when the command line does not compose: no
-``scenario=``, no config matches it, or an override names a key a config does
+without a sweep is one case), and 2 when the command line does not compose: a
+flag it does not take, no ``scenario=``, no config matches it, or an override names a key a config does
 not have (the message suggests the closest config or key; ``+key=value`` adds
 a new one). Every scenario's problems are reported, and the higher status wins.
 ``HYDRA_FULL_ERROR=1`` shows the traceback of a command line that does not
@@ -62,6 +69,14 @@ def main(argv: list[str] | None = None) -> int:
     if any(a in ("-h", "--help") for a in args):
         print(__doc__)  # noqa: T201
         return 0
+    # --multirun changes nothing here: the cases listed are the ones a
+    # --multirun batch runs.  Any other flag would reach Hydra as an override.
+    args = [a for a in args if a not in ("--multirun", "-m")]
+    for arg in args:
+        if arg.startswith("-"):
+            flag = arg.split("=", 1)[0]
+            print(f"Error: scenario-expand does not take {flag}", file=sys.stderr)
+            return 2
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,

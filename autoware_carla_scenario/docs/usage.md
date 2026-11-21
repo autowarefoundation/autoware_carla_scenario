@@ -616,9 +616,13 @@ wait). The sweep then exits 130 (Ctrl-C) or 143 (`SIGTERM`) and names the case
 to resume from.
 
 To get the concrete scenarios without running them (for example, to fan them
-out over a cluster), use `scenario-expand`. It takes the same arguments as
-`scenario` and prints JSON with one list of Hydra overrides per concrete
-scenario. These are the same cases, in the same order, that the sweeper runs:
+out over a cluster), use `scenario-expand`. It takes `scenario=` and Hydra
+overrides as `scenario` does and prints JSON with one list of Hydra overrides
+per concrete scenario. These are the same cases, in the same order, that the
+sweeper runs. Of `scenario`'s flags, `--multirun` (`-m`) is taken and ignored,
+as the listing is a `--multirun` batch's cases either way; any other
+(`--resume-from`, `--cfg`, ...) is refused with
+`Error: scenario-expand does not take <flag>` and exit 2:
 
 ```bash
 uv run scenario-expand scenario=traffic_light_compliance/traffic_light_compliance
