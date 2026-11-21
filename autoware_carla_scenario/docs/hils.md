@@ -174,7 +174,16 @@ PCs), run the playbooks with the variables `--setup-vars` prints.
 
 The bridge waits for a CARLA server that is not up yet, and for runs, for as
 long as it runs; Ctrl-C or SIGTERM end a running scenario (its `scenario_end`
-steps), run the `shutdown` steps and close the devices. A systemd unit keeps it
+steps), run the `shutdown` steps and close the devices. A step that waits (a
+`wait` or a `sleep`) in any phase but `shutdown` ends at once on SIGTERM rather
+than wait out its timeout: a stop during `startup` ends the startup steps (the
+bridge does not reach CARLA), one during `scenario_start` or `warmup` fails the
+run's start, and in `scenario_end` the waits left are skipped while its sends
+still go. The `shutdown` steps always run whole.
+The bridge takes the `runner.listen` address before the `startup` steps: one
+it cannot listen at (a port in use) ends `scenario-hils` with status 1 and a
+one-line error before anything reaches the ECUs, and no `shutdown` step is sent
+either. A systemd unit keeps it
 up across reboots:
 
 ```ini
@@ -505,7 +514,9 @@ A `send` has either a `name` (and `fields`) or raw `data` (and `id`), never
 keys of both: only a missing or null key counts as absent.
 
 A `wait` is satisfied by a matching message received since its phase began, so
-an ECU that answers a `send` at once is not missed. While steps run the bridge
+an ECU that answers a `send` at once is not missed, nor is a matching message
+that later ones of its name do not match (a one-frame `Ready: 1` pulse among
+periodic `Ready: 0` status frames). While steps run the bridge
 does not follow the world, and with `clock: simulation` its clock follows the
 wall clock instead, so periodic messages keep flowing to an ECU that is being
 waited on. `startup` and `shutdown` steps have no ego, so their fields are

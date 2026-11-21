@@ -2531,6 +2531,157 @@ def test_a_failing_startup_step_stops_the_bridge(world: _World, dbc: Path) -> No
         bridge.close()
 
 
+def test_a_stop_ends_a_long_startup_step_and_still_shuts_down(
+    world: _World, dbc: Path
+) -> None:
+    """A SIGTERM during a startup step does not wait it out: run() returns at
+    once, without reaching CARLA, and close() still sends the shutdown steps
+    whole (#2277)."""
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    url = _mem()
+    ecu = _Ecu(url, dbc)
+    document = _hils_config(url, dbc)
+    document["lifecycle"]["startup"] = [{"sleep": 30.0}]
+    document["lifecycle"]["shutdown"] = [
+        {"sleep": 0.05},
+        {"send": "can", "id": 0x7FF, "data": "DE AD"},
+    ]
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    threading.Timer(0.2, bridge.stop).start()
+    start = time.monotonic()
+    try:
+        bridge.run()
+        assert time.monotonic() - start < 2.0
+        assert bridge._world is None
+    finally:
+        bridge.close()
+    assert _until(lambda: 0x7FF in ecu.names())
+    ecu.close()
+
+
+@pytest.mark.parametrize("phase", ["scenario_start", "scenario_end"])
+def test_a_stop_ends_a_waiting_scenario_step(
+    world: _World, dbc: Path, phase: str
+) -> None:
+    """A wait in a scenario's steps ends once the bridge stops; in
+    scenario_end the sends after it still go (#2277)."""
+    from autoware_carla_scenario.hils.bridge import HilsStepError
+
+    url = _mem()
+    ecu = _Ecu(url, dbc, answers=False)
+    document = _hils_config(url, dbc)
+    wait = {"wait": "can", "name": "EcuStatus", "timeout": 30}
+    if phase == "scenario_start":
+        document["lifecycle"]["scenario_start"] = [wait]
+    else:
+        document["lifecycle"]["scenario_start"] = []
+        document["lifecycle"]["scenario_end"] = [
+            wait,
+            {"send": "can", "name": "Wake", "fields": {"On": 0}},
+        ]
+    bridge = _bridge(document, world)
+    try:
+        if phase == "scenario_end":
+            bridge._begin(world.actors[0], "t")
+        threading.Timer(0.2, bridge.stop).start()
+        start = time.monotonic()
+        if phase == "scenario_start":
+            with pytest.raises(
+                HilsStepError, match="scenario_start: the bridge is stopping"
+            ):
+                bridge._begin(world.actors[0], "t")
+        else:
+            bridge._finish()
+            assert _until(lambda: ("Wake", {"On": 0}) in ecu.names())
+        assert time.monotonic() - start < 2.0
+    finally:
+        bridge.close()
+        ecu.close()
+
+
+def test_a_busy_runner_port_fails_before_the_ecus_hear_anything(
+    dbc: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """runner.listen is taken before the startup steps: a port in use ends
+    scenario-hils with one line and status 1, and neither the startup nor the
+    shutdown steps reach the ECUs (#2277)."""
+    import socket
+
+    import yaml
+
+    url = _mem()
+    ecu = _Ecu(url, dbc)
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        document = _hils_config(url, dbc)
+        document["runner"]["listen"] = f"127.0.0.1:{port}"
+        path = tmp_path / "hils.yaml"
+        path.write_text(yaml.safe_dump(document))
+        try:
+            assert main([str(path)]) == 1
+        finally:
+            time.sleep(0.2)
+            ecu.close()
+    err = capsys.readouterr().err
+    assert err.startswith(f"scenario-hils: runner.listen 127.0.0.1:{port}: ")
+    assert len(err.strip().splitlines()) == 1
+    assert "Traceback" not in err
+    assert ecu.received == []
+
+
+def test_a_wait_counts_a_match_followed_by_other_messages(dbc: Path) -> None:
+    """A wait is satisfied by any matching message since its phase began, not
+    only the newest of its name: a one-message Ready=1 pulse followed by
+    Ready=0 still counts (#2277)."""
+    import queue
+
+    from autoware_carla_scenario.hils.bridge import _HISTORY, _Receiver
+    from autoware_carla_scenario.hils.config import DeviceSpec
+
+    class Channel:
+        def __init__(self) -> None:
+            self.queue: "queue.Queue[Any]" = queue.Queue()
+
+        def recv(self, timeout: float) -> Any:
+            try:
+                return self.queue.get(timeout=timeout)
+            except queue.Empty:
+                return None
+
+    def status(ready: int) -> Any:
+        return types.SimpleNamespace(name="EcuStatus", fields={"Ready": ready})
+
+    spec = DeviceSpec(name="can", url="mem://x")
+    for patterns in ((), [("EcuStatus", {"Ready": 1})]):
+        channel = Channel()
+        since = time.monotonic()
+        receiver = _Receiver(
+            spec,
+            channel,  # type: ignore[arg-type]
+            lambda s, m: None,
+            patterns,
+        )
+        try:
+            channel.queue.put(status(1))
+            # Past the history kept of a name: only a pattern the receiver was
+            # told of is followed through any number of messages.
+            more = 3 if not patterns else _HISTORY + 10
+            for _ in range(more):
+                channel.queue.put(status(0))
+            assert _until(lambda: channel.queue.empty())
+            time.sleep(0.05)
+            assert receiver.seen("EcuStatus", {"Ready": 1}, since)
+            assert receiver.seen("EcuStatus", {"Ready": 0}, since)
+            assert not receiver.seen("EcuStatus", {"Ready": 1}, time.monotonic())
+            assert not receiver.seen("EcuDrive", {}, since)
+            assert len(receiver._history["EcuStatus"]) <= _HISTORY
+        finally:
+            receiver.close()
+
+
 def test_a_communication_loss_stops_its_data_while_it_runs(
     world: _World, dbc: Path
 ) -> None:
@@ -3725,3 +3876,16 @@ def test_a_run_whose_send_fails_closes_its_link(
         for conn in accepted:
             conn.close()
         server.close()
+
+
+def test_a_raw_send_without_an_id_describes_itself() -> None:
+    """A raw frame with no id is "a raw frame" in the log, not "frame None"
+    (#2277)."""
+    from autoware_carla_scenario.hils.config import StepSpec
+
+    assert StepSpec(kind="send", device="d", data=b"\x01").describe() == (
+        "send a raw frame to d"
+    )
+    assert StepSpec(kind="send", device="d", data=b"\x01", frame_id=7).describe() == (
+        "send frame 7 to d"
+    )

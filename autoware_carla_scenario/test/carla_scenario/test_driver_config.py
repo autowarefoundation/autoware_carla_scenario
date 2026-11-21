@@ -8,6 +8,7 @@ rather than at the start of a simulation run.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -744,6 +745,117 @@ def test_a_lens_number_that_is_no_number_is_refused(key: str) -> None:
         DriverCameraLens.from_mapping(lens)
     with pytest.raises(ValueError, match=rf"^lens\.{key} must be a number"):
         DriverCameraLens(**lens)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "principal_point",
+        "pixeldist_to_angle_poly",
+        "angle_to_pixeldist_poly",
+        "linear_cde",
+        "max_angle",
+    ],
+)
+def test_a_lens_number_that_is_not_finite_is_refused(key: str, value: float) -> None:
+    """A NaN or an infinity in a lens is refused naming lens.<key> (#2277)."""
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    lens: dict[str, Any] = {
+        "principal_point": [480.0, 302.0],
+        "pixeldist_to_angle_poly": [0.0, 0.002],
+        "angle_to_pixeldist_poly": [0.0, 500.0],
+        "max_angle": 1.5,
+        "linear_cde": [1.0, 0.0, 0.0],
+    }
+    if key == "max_angle":
+        lens[key] = value
+    else:
+        lens[key] = [*lens[key][:-1], value]
+    with pytest.raises(ValueError, match=rf"^lens\.{key} must be finite, got "):
+        DriverCameraLens.from_mapping(lens)
+    with pytest.raises(ValueError, match=r"^driver\.cameras\[0\] .*lens\."):
+        DriverClientConfig.from_mapping({"cameras": [{"lens": lens}]})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("warmup_s", -3.0, "must not be negative, got -3.0"),
+        ("traffic_light_sight_distance_m", -1.0, "must not be negative, got -1.0"),
+        ("actor_horizon_m", -1.0, "must not be negative, got -1.0"),
+        ("actor_horizon_m", -math.inf, "must not be negative, got -inf"),
+        ("route_horizon_m", 0.0, "must be positive, got 0.0"),
+        ("route_horizon_m", -5.0, "must be positive, got -5.0"),
+        ("route_resolution_m", 0.0, "must be positive, got 0.0"),
+        ("route_resolution_m", -2, "must be positive, got -2"),
+        ("t4_scene_wheel_base_m", -2.0, "must be positive, or null"),
+        ("t4_scene_wheel_base_m", 0.0, "must be positive, or null"),
+    ],
+)
+def test_a_driver_distance_or_duration_out_of_its_domain_is_refused(
+    key: str, value: float, message: str
+) -> None:
+    """Each length and duration is refused out of its domain, naming the key
+    (#2277), as t4_scene_history_s is."""
+    with pytest.raises(ValueError, match=rf"^driver\.{key} {re.escape(message)}"):
+        DriverClientConfig.from_mapping({key: value})
+
+
+def test_a_driver_distance_at_its_documented_zero_is_kept() -> None:
+    """0 keeps its meaning where it has one: no run-up, CARLA's own light
+    trigger, no road user reported; an infinite horizon is every one."""
+    config = DriverClientConfig.from_mapping(
+        {
+            "warmup_s": 0.0,
+            "traffic_light_sight_distance_m": 0.0,
+            "actor_horizon_m": 0,
+            "t4_scene_wheel_base_m": 2.7,
+        }
+    )
+    assert config.warmup_s == 0.0 and config.actor_horizon_m == 0
+    assert config.traffic_light_sight_distance_m == 0.0
+    assert DriverClientConfig(actor_horizon_m=math.inf).actor_horizon_m == math.inf
+    assert DriverClientConfig() == DriverClientConfig.from_mapping({})
+
+
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        ({"stop_brake": 2.0}, r"^stop_brake must be in \[0, 1\], got 2\.0$"),
+        ({"stop_brake": -0.5}, r"^stop_brake must be in \[0, 1\], got -0\.5$"),
+        ({"throttle_deadband": 1.5}, r"^throttle_deadband must be in \[0, 1\]"),
+        ({"throttle_deadband": -0.1}, r"^throttle_deadband must be in \[0, 1\]"),
+        ({"accel_lowpass_gain": 1.5}, r"^accel_lowpass_gain must be in \[0, 1\]"),
+        ({"lpf_vel_error_gain": -0.1}, r"^lpf_vel_error_gain must be in \[0, 1\]"),
+        ({"lpf_acc_error_gain": 2}, r"^lpf_acc_error_gain must be in \[0, 1\]"),
+        ({"max_steer_rate": 0.0}, r"^max_steer_rate must be positive, got 0\.0$"),
+        ({"max_steer_rate": -1.0}, r"^max_steer_rate must be positive"),
+        ({"lookahead_gain_s": -1.0}, r"^lookahead_gain_s must not be negative"),
+    ],
+)
+def test_control_mapping_refuses_pedals_gains_and_rates_out_of_range(
+    mapping: dict, message: str
+) -> None:
+    """A brake of 2 or -0.5, a throttle floor above full throttle, a gain past
+    1 and a steering rate limit of 0 are refused (#2277)."""
+    with pytest.raises(ValueError, match=message):
+        ControlConfig.from_mapping(mapping)
+
+
+def test_control_mapping_keeps_the_ends_of_the_pedal_and_gain_ranges() -> None:
+    config = ControlConfig.from_mapping(
+        {
+            "stop_brake": 1.0,
+            "throttle_deadband": 0.0,
+            "accel_lowpass_gain": 0.0,
+            "lpf_vel_error_gain": 1,
+            "lookahead_gain_s": 0.0,
+        }
+    )
+    assert config.stop_brake == 1.0 and config.throttle_deadband == 0.0
+    assert config.lpf_vel_error_gain == 1.0
 
 
 @pytest.mark.parametrize(

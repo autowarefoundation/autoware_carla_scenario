@@ -181,6 +181,13 @@ the seconds and metres (`timeout_s`, `policy_timestep_s`, `warmup_s`,
 `t4_scene_wheel_base_m`), for every number of a camera, its lens and a LiDAR,
 and for `image_quality`, a whole number (see below) in 1-100: `90`, or `90.0`
 kept as `90`.
+Each is refused out of its domain too, naming the key
+(`driver.route_horizon_m must be positive, got 0.0`): `warmup_s`,
+`traffic_light_sight_distance_m` and `actor_horizon_m` must not be negative
+(0 is no run-up, CARLA's own light trigger, and no road user reported);
+`route_horizon_m`, `route_resolution_m` and `t4_scene_wheel_base_m` (when not
+`null`) must be positive; `timeout_s`, `policy_timestep_s` positive as well,
+and `t4_scene_history_s` not negative.
 
 The switches `send_ground_truth`, `send_renderer_data`,
 `send_actor_ground_truth` and `t4_scene` are each `true` or `false`, or one of
@@ -218,8 +225,12 @@ of the full lock's null, so `driver.control.max_steer_angle_rad=0.6` and
 What the controller divides by -- `wheelbase_m`,
 `max_steer_angle_deg` (or `_rad`), `steer_exponent`, `min_lookahead_m` and
 `velocity_lookahead_time` -- must be positive, and `max_lookahead_m` at least
-`min_lookahead_m`. A value out of these bounds is refused before the run
-starts, naming its key (`driver.control.steer_exponent must be positive, got
+`min_lookahead_m`. So must `max_steer_rate` (a steering rate limit of 0 would
+not steer at all; a large one barely limits). The pedal values `stop_brake` and
+`throttle_deadband` (0: no floor) and the low-pass gains `lpf_vel_error_gain`,
+`lpf_acc_error_gain` and `accel_lowpass_gain` are in [0, 1], and
+`lookahead_gain_s` is not negative. A value out of these bounds is refused
+before the run starts, naming its key (`driver.control.steer_exponent must be positive, got
 0.0`), not once the ego first steers.
 
 Each `driver.cameras` entry needs its own `logical_id`, a non-empty string;

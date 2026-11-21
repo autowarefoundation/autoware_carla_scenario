@@ -53,11 +53,13 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Deque,
     Dict,
     FrozenSet,
     List,
@@ -91,7 +93,13 @@ if TYPE_CHECKING:
     import hilspy
     import typesafe_carla.carla as carla
 
-__all__ = ["INSTALL_HINT", "HilsBridge", "HilsStepError", "HilsUnavailableError"]
+__all__ = [
+    "INSTALL_HINT",
+    "HilsBridge",
+    "HilsListenError",
+    "HilsStepError",
+    "HilsUnavailableError",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +134,11 @@ _SEND_WAIT_S = 5.0
 #: A failing send is logged the first time and then once in this many.
 _LOG_EVERY = 100
 
+#: How many of the newest messages of each name a receiver keeps for a
+#: ``wait`` it was not told of (:class:`_Receiver`); those it was told of are
+#: followed exactly, however many messages come.
+_HISTORY = 256
+
 Side = Literal["send", "recv"]
 
 #: A channel's two sides, which cuts stop separately.
@@ -149,6 +162,17 @@ class HilsUnavailableError(RuntimeError):
 
 class HilsStepError(RuntimeError):
     """A lifecycle step failed: a send was refused, or an ECU did not answer."""
+
+
+class HilsListenError(RuntimeError):
+    """The bridge could not listen for runs at ``runner.listen`` (the port is
+    taken, or the address is not the machine's); raised before any startup
+    step is sent."""
+
+
+class _Stopping(HilsStepError):
+    """A step that waits was cut short: the bridge is stopping
+    (:meth:`HilsBridge.stop`)."""
 
 
 def _require_hilspy() -> ModuleType:
@@ -213,8 +237,12 @@ class _Failures:
 class _Receiver:
     """Receives what an ECU sends on a device, on a thread of its own.
 
-    Each decoded message is remembered (the newest of each name, with when it
-    came, for a ``wait`` step) and handed to *on_message* (the inputs).
+    Each decoded message is handed to *on_message* (the inputs) and remembered
+    for the ``wait`` steps (:meth:`seen`): for each of the *patterns* (a
+    message's name and the field values a ``wait`` step looks for), when a
+    message last matched it, so that a matching message counts however many
+    messages of its name follow it; and, for any other name and fields asked
+    about, the newest :data:`_HISTORY` messages of each name (#2277).
     """
 
     def __init__(
@@ -222,11 +250,18 @@ class _Receiver:
         spec: DeviceSpec,
         channel: "hilspy.Channel",
         on_message: Callable[[DeviceSpec, Any], None],
+        patterns: Sequence[Tuple[str, Mapping[str, Any]]] = (),
     ) -> None:
         self.spec = spec
         self._channel = channel
         self._on_message = on_message
-        self._latest: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        #: Each pattern, and when a message last matched it (``None``: never).
+        self._patterns: List[Tuple[str, Dict[str, Any], Optional[float]]] = []
+        for name, match in patterns:
+            entry = (name, dict(match), None)
+            if all(p[:2] != entry[:2] for p in self._patterns):
+                self._patterns.append(entry)
+        self._history: Dict[str, Deque[Tuple[float, Dict[str, Any]]]] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -245,8 +280,7 @@ class _Receiver:
             if message is None or message.name is None:
                 continue
             fields = dict(message.fields)
-            with self._lock:
-                self._latest[message.name] = (time.monotonic(), fields)
+            self._remember(str(message.name), fields, time.monotonic())
             try:
                 self._on_message(self.spec, message)
             except Exception:  # noqa: BLE001 - a receiving thread must not die
@@ -254,11 +288,26 @@ class _Receiver:
                     "%s: failed to handle %s", self.spec.name, message.name
                 )
 
-    def seen(self, name: str, match: Mapping[str, Any], since: float) -> bool:
-        """Whether *name* with the *match*ing fields came at or after *since*."""
+    def _remember(self, name: str, fields: Dict[str, Any], now: float) -> None:
         with self._lock:
-            latest = self._latest.get(name)
-        return latest is not None and latest[0] >= since and _matches(latest[1], match)
+            for i, (pattern, match, _) in enumerate(self._patterns):
+                if pattern == name and _matches(fields, match):
+                    self._patterns[i] = (pattern, match, now)
+            history = self._history.get(name)
+            if history is None:
+                history = self._history[name] = deque(maxlen=_HISTORY)
+            history.append((now, fields))
+
+    def seen(self, name: str, match: Mapping[str, Any], since: float) -> bool:
+        """Whether a message *name* with the *match*ing fields came at or after
+        *since* (any such message, not only the newest of its name)."""
+        wanted = dict(match)
+        with self._lock:
+            for pattern, expected, last in self._patterns:
+                if pattern == name and expected == wanted:
+                    return last is not None and last >= since
+            history = list(self._history.get(name, ()))
+        return any(t >= since and _matches(f, wanted) for t, f in history)
 
     def close(self) -> None:
         self._stop.set()
@@ -739,12 +788,11 @@ class HilsBridge:
 
     def open_devices(self) -> None:
         """Open every device's channel, and receive on those that need it."""
-        waited = {
-            step.device
-            for phase in self.config.lifecycle.values()
-            for step in phase
-            if step.kind == "wait"
-        }
+        waited: Dict[str, List[Tuple[str, Mapping[str, Any]]]] = {}
+        for phase in self.config.lifecycle.values():
+            for step in phase:
+                if step.kind == "wait" and step.name is not None:
+                    waited.setdefault(step.device, []).append((step.name, step.match))
         for spec in self.config.devices:
             options: Dict[str, Any] = dict(spec.options)
             if self.clock is not None:
@@ -762,21 +810,36 @@ class HilsBridge:
             if spec.messages:
                 self._messages.append(_MessageDevice(spec, channel))
             if spec.inputs or spec.name in waited:
-                self._receivers[spec.name] = _Receiver(spec, channel, self._on_input)
+                self._receivers[spec.name] = _Receiver(
+                    spec, channel, self._on_input, waited.get(spec.name, ())
+                )
 
     def startup(self) -> None:
-        """Open the devices and run the ``startup`` steps.
+        """Listen for runs, open the devices and run the ``startup`` steps,
+        then serve the runs.
+
+        The link's address is taken first, so that one the bridge cannot
+        listen at fails before anything reaches the ECUs (nor do the
+        ``shutdown`` steps run then: no startup step did, #2277).
 
         Raises:
+            HilsListenError: The bridge cannot listen at ``runner.listen``.
             HilsStepError: A startup step failed.
         """
         if self._started:
             return
+        address = self.config.runner_listen
+        if address and self._link is None:
+            try:
+                self._link = RunnerLink(address, self._events)
+            except OSError as exc:
+                raise HilsListenError(
+                    f"runner.listen {address}: {exc.strerror or exc}"
+                ) from exc
         self._started = True
         self.open_devices()
         self._run_steps("startup", strict=True)
-        if self.config.runner_listen:
-            self._link = RunnerLink(self.config.runner_listen, self._events)
+        if self._link is not None:
             self._link.start()
 
     @property
@@ -822,8 +885,14 @@ class HilsBridge:
     def _run_steps(self, phase: str, strict: bool) -> None:
         """Run *phase*'s steps; the first failure raises when *strict*, else
         each is logged and the rest still run.  The ``warmup`` steps follow
-        the world while they wait (:meth:`_pump`)."""
+        the world while they wait (:meth:`_pump`).
+
+        Once the bridge is stopping (:meth:`stop`), a step that waits (a
+        ``wait`` or a ``sleep``) ends at once, as a failure of its own
+        (:class:`_Stopping`), but in the ``shutdown`` phase, whose steps run
+        whole: the bridge is stopping then."""
         live = phase == "warmup"
+        stoppable = phase != "shutdown"
         steps = self.config.steps(phase)
         if not steps:
             return
@@ -832,7 +901,11 @@ class HilsBridge:
         try:
             for step in steps:
                 try:
-                    self._run_step(step, since, live)
+                    self._run_step(step, since, live, stoppable)
+                except _Stopping as exc:
+                    if strict:
+                        raise _Stopping(f"{phase}: {exc}") from exc
+                    logger.info("%s: %s skipped (stopping)", phase, step.describe())
                 except HilsStepError as exc:
                     if strict:
                         raise HilsStepError(f"{phase}: {exc}") from exc
@@ -843,17 +916,26 @@ class HilsBridge:
                 # must not add the world time that passed as well.
                 self._last_time = None
 
-    def _run_step(self, step: StepSpec, since: float, live: bool = False) -> None:
+    def _run_step(
+        self,
+        step: StepSpec,
+        since: float,
+        live: bool = False,
+        stoppable: bool = True,
+    ) -> None:
         logger.info("  %s", step.describe())
         if step.kind == "sleep":
-            self._pump(lambda: False, step.seconds, live)
+            self._pump(lambda: False, step.seconds, live, stoppable)
             return
         if step.kind == "wait":
             receiver = self._receivers[step.device]
             assert step.name is not None
             name: str = step.name
             if not self._pump(
-                lambda: receiver.seen(name, step.match, since), step.seconds, live
+                lambda: receiver.seen(name, step.match, since),
+                step.seconds,
+                live,
+                stoppable,
             ):
                 expected = f" with {dict(step.match)}" if step.match else ""
                 raise HilsStepError(
@@ -871,7 +953,11 @@ class HilsBridge:
             raise HilsStepError(f"{step.describe()} failed: {exc}") from exc
 
     def _pump(
-        self, done: Callable[[], bool], seconds: float, live: bool = False
+        self,
+        done: Callable[[], bool],
+        seconds: float,
+        live: bool = False,
+        stoppable: bool = True,
     ) -> bool:
         """Wait up to *seconds* for *done*; the simulated clock follows the wall
         clock meanwhile, or, *live*, the world's ticks are served
@@ -880,11 +966,15 @@ class HilsBridge:
         Raises:
             HilsStepError: *live*, and the scenario ended meanwhile (its ego
                 went away).
+            _Stopping: *stoppable*, and the bridge is stopping (:meth:`stop`):
+                a SIGTERM does not wait out a long step (#2277).
         """
         start = last = time.monotonic()
         while True:
             if done():
                 return True
+            if stoppable and self._stop.is_set():
+                raise _Stopping("the bridge is stopping")
             now = time.monotonic()
             if now - start >= seconds:
                 return False
@@ -893,7 +983,11 @@ class HilsBridge:
                 if not self._active:
                     raise HilsStepError("the scenario ended")
                 continue
-            time.sleep(min(_STEP_POLL_S, seconds - (now - start)))
+            pause = min(_STEP_POLL_S, seconds - (now - start))
+            if stoppable:
+                self._stop.wait(pause)
+            else:
+                time.sleep(pause)
             now = time.monotonic()
             if self.clock is not None:
                 self.clock.advance(now - last)
@@ -1209,7 +1303,12 @@ class HilsBridge:
         try:
             self._begin(ego, str(message.get("scenario", "")))
         except HilsStepError as exc:
-            logger.error("%s", exc)
+            # A stop (SIGTERM) is no step failure: the run is still told.
+            logger.log(
+                logging.INFO if isinstance(exc, _Stopping) else logging.ERROR,
+                "%s",
+                exc,
+            )
             link.send({"type": "error", "message": str(exc)})
             return
         link.send({"type": "ready"})
@@ -1231,7 +1330,11 @@ class HilsBridge:
         try:
             self._begin(ego, "")
         except HilsStepError as exc:
-            logger.error("%s", exc)
+            logger.log(
+                logging.INFO if isinstance(exc, _Stopping) else logging.ERROR,
+                "%s",
+                exc,
+            )
 
     def _state(self, snapshot: "carla.WorldSnapshot") -> Optional[EgoState]:
         assert self._ego is not None and self._map is not None
@@ -1344,10 +1447,19 @@ class HilsBridge:
         A CARLA server that is not up yet is waited for (the startup steps
         have run by then).
 
+        A :meth:`stop` during the startup steps ends them (:meth:`_pump`), and
+        the bridge returns without reaching CARLA; :meth:`close` still runs
+        the ``shutdown`` steps.
+
         Raises:
+            HilsListenError: The bridge cannot listen at ``runner.listen``.
             HilsStepError: A startup step failed.
         """
-        self.startup()
+        try:
+            self.startup()
+        except _Stopping:
+            logger.info("stopped during the startup steps")
+            return
         attempts = 0
         while self._world is None and not self._stop.is_set():
             try:
@@ -1369,5 +1481,6 @@ class HilsBridge:
             self.step(_TICK_POLL_S)
 
     def stop(self) -> None:
-        """Have :meth:`run` return after the tick it is serving."""
+        """Have :meth:`run` return after the tick it is serving; a lifecycle
+        step waiting meanwhile (but a ``shutdown`` one) ends at once."""
         self._stop.set()

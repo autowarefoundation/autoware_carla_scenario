@@ -155,7 +155,7 @@ class ControlConfig:
     """
 
     max_steer_rate: float = 4.0
-    """Maximum change in normalised steering per second."""
+    """Maximum change in normalised steering per second; positive."""
 
     yaw_rate_ki: float = 3.0
     """Integral feedback on the yaw rate.
@@ -425,7 +425,7 @@ class ControlConfig:
     # -- Vehicle interface ----------------------------------------------------------
     throttle_deadband: float = 0.3
     """The least throttle a standing vehicle (below :attr:`standstill_speed_mps`) is
-    given when asked to speed up; ``0`` sets no floor.
+    given when asked to speed up, in [0, 1]; ``0`` sets no floor.
 
     Part of the vehicle interface, not of the controller: the powertrain model, like
     an accel map, has a standing car move at any throttle, while a standing Lincoln
@@ -443,7 +443,8 @@ class ControlConfig:
     """Below this speed the vehicle counts as standing, for :attr:`throttle_deadband`."""
 
     stop_brake: float = 0.6
-    """Brake applied with no plan to track (and, ``time_indexed``, when holding still)."""
+    """Brake applied with no plan to track (and, ``time_indexed``, when holding
+    still), in [0, 1]."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "ControlConfig":
@@ -464,6 +465,11 @@ class ControlConfig:
         controller divides by (``wheelbase_m``, ``max_steer_angle_rad``,
         ``steer_exponent``, ``min_lookahead_m``, ``velocity_lookahead_time``)
         must be positive, and ``max_lookahead_m`` at least ``min_lookahead_m``.
+        So must ``max_steer_rate`` (a rate limit of 0 would steer not at all;
+        a large one barely limits).  The pedal values (``stop_brake``,
+        ``throttle_deadband``) and the low-pass gains (``lpf_vel_error_gain``,
+        ``lpf_acc_error_gain``, ``accel_lowpass_gain``) are in [0, 1], and
+        ``lookahead_gain_s`` is not negative (#2277).
 
         Each error starts with the key it is for, the ``*_deg`` alias when the
         mapping gave that, and no section: the run reads this config from
@@ -551,6 +557,25 @@ class ControlConfig:
             if value <= 0.0:
                 shown_value = shown(given[name]) if name in given else value
                 raise ValueError(f"{keys[name]} must be positive, got {shown_value}")
+        for name in (
+            "stop_brake",
+            "throttle_deadband",
+            "lpf_vel_error_gain",
+            "lpf_acc_error_gain",
+            "accel_lowpass_gain",
+        ):
+            value = getattr(config, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{keys[name]} must be in [0, 1], got {value!r}")
+        if config.max_steer_rate <= 0.0:
+            raise ValueError(
+                f"max_steer_rate must be positive, got {config.max_steer_rate!r}"
+            )
+        if config.lookahead_gain_s < 0.0:
+            raise ValueError(
+                "lookahead_gain_s must not be negative, got "
+                f"{config.lookahead_gain_s!r}"
+            )
         if config.max_lookahead_m < config.min_lookahead_m:
             raise ValueError(
                 f"max_lookahead_m must be at least min_lookahead_m "
