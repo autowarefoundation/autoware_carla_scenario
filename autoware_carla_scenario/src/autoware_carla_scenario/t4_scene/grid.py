@@ -19,6 +19,7 @@ from typing import Optional
 
 from ..constants import EGO_ROLES, tick_multiple
 from ..rerun import TRAJECTORY_SUFFIX
+from ..run_outputs import trajectory_stem
 
 __all__ = [
     "checked_max_distance",
@@ -115,10 +116,10 @@ def checked_max_distance(
 
 def scene_stem(name: str) -> str:
     """The run's stem of a trajectory log's file *name*: the name without
-    ``.trajectory.jsonl``, or without its last suffix for any other name."""
-    if name.endswith(TRAJECTORY_SUFFIX):
-        return name[: -len(TRAJECTORY_SUFFIX)]
-    return Path(name).stem
+    ``.trajectory.jsonl``, or without its last suffix for any other name:
+    the checked run_outputs's rule (:func:`.run_outputs.trajectory_stem`,
+    #2298), which names the run's other outputs too."""
+    return trajectory_stem(Path(name))
 
 
 def files_under(paths: list[Path], suffix: str) -> list[Path]:

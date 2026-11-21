@@ -4,6 +4,7 @@
 # signatures of the Python class.
 
 from pathlib import Path
+from typing import Optional
 
 from ._tc import _keyword_only as _acs_keyword_only
 
@@ -16,6 +17,45 @@ TRAJECTORY_SUFFIX: str = ".trajectory.jsonl"
 
 def recording_path(trajectory: Path) -> Path:
     raise NotImplementedError()
+
+
+class RerunConversion:
+    # Codon would build it from no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("RerunConversion(): no constructor takes these arguments (required: label, trajectory, recording)")
+
+    # What the converter returned (`stats`), which Python holds as a dict of
+    # mixed values: taken as it comes, and not declared. Python's fields are
+    # read as properties: a field would change the constructor Codon
+    # generates.
+    def __init__(self, label: str, trajectory: Path, recording: Path,
+                 error: Optional[str] = None, stats = None,
+                 skipped: bool = False):
+        pass
+
+    @property
+    def label(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def trajectory(self) -> Path:
+        raise NotImplementedError()
+
+    @property
+    def recording(self) -> Path:
+        raise NotImplementedError()
+
+    @property
+    def error(self) -> Optional[str]:
+        raise NotImplementedError()
+
+    @property
+    def skipped(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def ok(self) -> bool:
+        raise NotImplementedError()
 
 
 class RerunConverter:
@@ -37,8 +77,7 @@ class RerunConverter:
     def submit(self, trajectory: Path, label: str) -> Path:
         raise NotImplementedError()
 
-    # Python returns the RerunConversion records, which are not modelled
-    # (their `stats` is a dict of mixed values): the checked scenario_queue
-    # drops them.
-    def wait(self) -> None:
+    # How each log submitted so far went, in submission order: the checked
+    # scenario_queue drops them.
+    def wait(self) -> list[RerunConversion]:
         raise NotImplementedError()

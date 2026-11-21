@@ -1001,10 +1001,10 @@ rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
-| `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
+| `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning ([Rerun strict](#rerun-strict)) |
 | `rerun.draw_radius_m` | float | `null` | Write only what comes this near the ego's trajectory, in metres: the map, the traffic lights and other actors (`autoware-carla-scenario-rerun` 0.3 or newer). `null` writes all of it |
 | `rerun.lidar` | bool | `false` | Put the LiDAR sweeps the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
-| `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all |
+| `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all, and a missing or null one is the default, `65536` |
 | `rerun.cameras` | bool | `false` | Put the camera frames the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
 
 With `rerun.enabled=true`:
@@ -1033,6 +1033,34 @@ With `rerun.enabled=true`:
   SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
   its own cases, and `scenario-slurm collect` reports their recordings as a
   local batch does.
+
+#### Rerun strict
+
+`rerun.strict=true` fails the conversion of a log holding a record type or a
+field the converter does not know. A run writes the record types the
+[trajectory log's schema](trajectory_log.md) lists as it has something for
+them, and some in every log (`world`, `map`, `run`, `warmup`, `tick`), so a
+converter that does not know one of those would fail every log. A run asking for strict recordings checks the installed converter
+up front: when its `RECORD_TYPES` leave out a record type the schema has, the
+run is refused before anything starts (exit code 2, as a missing converter
+is), naming `rerun.strict` and the types:
+
+```text
+rerun.strict is set, but autoware-carla-scenario-rerun 0.3.0 does not know run, which the framework writes, so every strict conversion would fail: set rerun.strict=false, or upgrade autoware-carla-scenario-rerun to a version that knows them
+```
+
+The check is of record types only, unless the converter also lists the
+fields it knows (`RECORD_FIELDS`, record type to field names), which
+`autoware-carla-scenario-rerun` 0.3 does not. So a converter that knows every
+record type but not a field added to one later (`collision.start_frame`)
+passes the check, and a strict conversion of a log holding that field still
+fails, as any other failed conversion does (above). `autoware-carla-scenario-rerun`
+0.3, the version the `rerun` extra installs, knows neither the `run` record
+nor `collision.start_frame`: with it, `rerun.strict=true` is refused, and
+`rerun.strict=false` (the default) converts every log, skipping what the
+converter does not know with a warning. `python -m autoware_carla_scenario.rerun
+--strict` does not check up front: each log that holds what the converter
+does not know is reported as a failed conversion.
 
 #### A T4 dataset of a run
 
@@ -1064,6 +1092,15 @@ and so is a missing or null one, its default. Anything else (`ture`, `2`,
 
 ```text
 rerun.enabled must be true or false, got 'ture'
+```
+
+Their blocks, `rerun`, `t4`, `t4scene`, `background_traffic` and `ego`, are
+each a mapping, or missing or null (every switch in it off, every setting
+its default). One that is not a mapping (`rerun: true`, `rerun: false`, `0`,
+`''`) is refused the same way, as `metrics` is, rather than read as unset:
+
+```text
+rerun must be a mapping, got True
 ```
 
 A sweep's `sweep.odd_sample.tire_friction` and `sweep.odd_sample.visibility`
