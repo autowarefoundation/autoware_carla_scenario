@@ -271,8 +271,8 @@ def _write_unfinished_marker(
     """Give a job the marker saying it did not finish
     (:func:`..gate.errored.write_case_unfinished`) before its attempt
     *attempt* (from 1); logged, never raised, when it cannot be.  Nothing
-    when its directory is not known (:meth:`LaneletConstraintSweeper._job_output_dir`
-    logged why)."""
+    when its directory is not known (the sweeper's
+    ``LaneletConstraintSweeper._job_output_dir`` logged why)."""
     if job_dir is None:
         return
     try:
