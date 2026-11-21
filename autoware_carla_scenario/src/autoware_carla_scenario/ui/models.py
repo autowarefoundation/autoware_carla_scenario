@@ -18,8 +18,9 @@ class SessionSummary(BaseModel):
     scenario_name: str
     passed_count: int
     total_count: int
-    #: Cases with no result yet (a SLURM batch's cases not collected), which
-    #: neither passed nor failed.
+    #: Cases with no result to read (a SLURM batch's cases not collected, a
+    #: job's missing or unreadable result file), which neither passed nor
+    #: failed: the session page's "without a result" (#2285).
     pending_count: int = 0
 
 
@@ -28,10 +29,18 @@ class SessionItem(BaseModel):
 
     index: int
     scenario_name: str
-    passed: bool | None  # None if result is missing
+    #: None when the case has no verdict: no result, or one whose ``passed``
+    #: is not a bool.
+    passed: bool | None
     elapsed_seconds: float | None
     overrides: list[str]
     message: str = ""
+    #: The case has no result to read (#2285): its result file is missing or
+    #: unreadable, or a batch lists it as pending (a SLURM case without an
+    #: outcome yet, or with a stale one).  Neither passed nor failed, as the
+    #: session list counts it (``SessionSummary.pending_count``); a result
+    #: without a verdict is not pending, and counts as failed.
+    pending: bool = False
 
 
 class ConditionNode(BaseModel):

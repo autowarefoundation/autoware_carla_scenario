@@ -57,9 +57,11 @@ def _listed(base: Path) -> dict[str, str]:
     [b"[1, 2]", b"\xff\xfe{", b'"text"', b"null"],
     ids=["list", "not-utf8", "string", "null"],
 )
-def test_a_single_result_that_is_no_json_object_lists_as_failed(
+def test_a_single_result_that_is_no_json_object_lists_without_a_result(
     tmp_path: Path, data: bytes
 ) -> None:
+    """Not passed, and without a result on the session list and the session
+    page alike (#2285)."""
     _with_good_session(tmp_path)
     _session(tmp_path, BAD, "X_result.json", data)
 
@@ -67,9 +69,21 @@ def test_a_single_result_that_is_no_json_object_lists_as_failed(
 
     assert sessions[GOOD].scenario_name == "Good"
     assert sessions[GOOD].passed_count == 1
+    assert sessions[GOOD].pending_count == 0
     assert sessions[BAD].scenario_name == "X"
-    assert sessions[BAD].passed_count == 0
-    assert scanner.load_session(tmp_path, "single", DATE, BAD) == []
+    assert (
+        sessions[BAD].passed_count,
+        sessions[BAD].pending_count,
+        sessions[BAD].total_count,
+    ) == (0, 1, 1)
+    (item,) = scanner.load_session(tmp_path, "single", DATE, BAD)
+    assert (item.index, item.scenario_name, item.passed, item.pending) == (
+        0,
+        "X",
+        None,
+        True,
+    )
+    assert item.message == "Failed to read result JSON"
     assert scanner.load_scenario(tmp_path, "single", DATE, BAD, 0) is None
 
 
@@ -361,3 +375,68 @@ def test_a_multirun_session_it_cannot_list_has_no_item_and_no_500(
     monkeypatch.undo()
     (item,) = scanner.load_session(tmp_path, "multirun", DATE, GOOD)
     assert item.scenario_name == "Good"
+
+
+def _counts_shown(client: TestClient, session_type: str, time: str) -> tuple[str, str]:
+    """The counts the session list shows for the session at *time*, and the
+    ones its own page shows, each as its text with the tags and spacing
+    taken out."""
+    import re
+
+    def text(html: str) -> str:
+        return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+
+    index = client.get("/")
+    assert index.status_code == 200, index.text
+    link = f"/session/{session_type}/{DATE}/{time}"
+    row = index.text[index.text.index(f'href="{link}"') :]
+    row = row[: row.index("</tr>")]
+    listed = re.search(r"\d+/\d+ passed( \d+ pending)?", text(row))
+    assert listed is not None, row
+    page = client.get(link)
+    assert page.status_code == 200, page.text
+    header = page.text[page.text.index('<div class="text-right">') :]
+    header = header[: header.index("<!-- Pass rate bar")]
+    return listed.group(0), text(header)
+
+
+@pytest.mark.parametrize("session_type", ["multirun", "single"])
+def test_the_session_list_and_the_session_page_count_alike(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, session_type: str
+) -> None:
+    """#2285: the session list counted a missing or unreadable result as
+    failed, the session page as without a result, and a single run whose
+    result is corrupt showed "0/0 All passed" on its page.  Both count it
+    as without a result now, the page lists it, and it is never all passed;
+    a result without a verdict counts as failed on both."""
+    if session_type == "multirun":
+        # A passing job, one that crashed (no result) and one whose result
+        # names no verdict.
+        session = tmp_path / "multirun" / DATE / GOOD
+        for index in (0, 1, 2):
+            (session / str(index) / ".hydra").mkdir(parents=True)
+        (session / "0" / "foo_result.json").write_text(
+            json.dumps({"scenario": "foo", "passed": True, "message": "ok"})
+        )
+        (session / "2" / "foo_result.json").write_text(
+            json.dumps({"scenario": "foo", "passed": "yes", "message": "?"})
+        )
+        want_list = "1/3 passed 1 pending"
+        want_page = "1/3 1 failed, 1 without a result"
+        want_items = [(0, True, False), (1, None, True), (2, None, False)]
+    else:
+        _session(tmp_path, GOOD, "foo_result.json", b"{truncated")
+        want_list = "0/1 passed 1 pending"
+        want_page = "0/1 1 without a result"
+        want_items = [(0, None, True)]
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
+
+    listed, page = _counts_shown(client, session_type, GOOD)
+
+    assert listed == want_list
+    assert page == want_page
+    assert "All passed" not in page
+    items = scanner.load_session(tmp_path, session_type, DATE, GOOD)
+    assert [(i.index, i.passed, i.pending) for i in items] == want_items

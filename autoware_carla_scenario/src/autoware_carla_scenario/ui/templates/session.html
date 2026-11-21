@@ -108,8 +108,8 @@
     </thead>
     <tbody class="bg-white divide-y divide-gray-200">
       {% for item in items %}
-      <tr class="hover:bg-gray-50 cursor-pointer transition-colors {% if item.passed == false %}bg-red-50{% endif %}"
-          data-result="{% if item.passed is none %}na{% elif item.passed %}pass{% else %}fail{% endif %}"
+      <tr class="hover:bg-gray-50 cursor-pointer transition-colors {% if not item.pending and not item.passed %}bg-red-50{% endif %}"
+          data-result="{% if item.pending %}na{% elif item.passed %}pass{% else %}fail{% endif %}"
           data-href="/session/{{ session_type|urlencode }}/{{ date|urlencode }}/{{ time|urlencode }}/{{ item.index|urlencode }}"
           onclick="window.location = this.dataset.href">
         <td class="px-6 py-4 whitespace-nowrap">
@@ -125,7 +125,7 @@
           {{ item.overrides | join(', ') }}
         </td>
         <td class="px-6 py-4 whitespace-nowrap">
-          {% if item.passed is none %}
+          {% if item.pending %}
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">N/A</span>
           {% elif item.passed %}
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">PASS</span>

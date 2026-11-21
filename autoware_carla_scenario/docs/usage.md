@@ -1895,6 +1895,24 @@ is recorded as failed, and the jobs after it do not start.
       and trick you into clicking Run, Rerun or a SLURM resubmit or cancel. The viewer never frames its own
       pages either.
 
+### How a session's cases are counted
+
+The session list and a session's page count a session's cases the same way
+(#2285):
+
+- **passed**: its result's `passed` is `true`;
+- **without a result** (*pending* on the session list): it has no result to
+  read -- a multirun job's or a single run's result file is missing or
+  unreadable (a job still running, or one that crashed), a batch lists it as
+  pending, or it is a SLURM case without an outcome yet or with a stale one,
+  as `scenario-slurm status` and the SLURM panel count it;
+- **failed**: every other case, a result whose `passed` is `false` or no
+  boolean at all (no verdict) among them.
+
+A session is *All passed* (green) only when every case passed; it is red
+when a case failed, and grey when the cases that did not pass are all
+without a result.
+
 ### Seeing a run in the viewer
 
 A scenario's page shows its run in Rerun's web viewer, embedded in the page:
