@@ -21,7 +21,7 @@ project's `pyproject.toml`:
 name = "my-policy-tests"
 version = "0.1.0"
 requires-python = ">=3.10,<3.15"
-dependencies = ["autoware-carla-scenario>=5"]
+dependencies = ["autoware-carla-scenario>=28"]
 ```
 
 ```bash
@@ -29,8 +29,9 @@ uv sync
 ```
 
 This also installs [`carla-driver-interface`](https://github.com/hakuturu583/carla_driver_interface)
-1.x, the policy side of the gRPC contract (versioned on its own; a policy depending on
-any 1.x shares the environment),
+2.x, the policy side of the gRPC contract (versioned on its own; the framework requires
+`carla-driver-interface>=2.4.2,<3`, so a policy accepting 2.4.2 or a later 2.x shares
+the environment),
 and the CARLA client, typesafe_carla. Its wheel carries a prebuilt CPython package.
 Where that package does not match the installed toolchain, the first run that
 imports the client builds it once instead (15-50 min, ~14 GB of memory, needs `cc`)

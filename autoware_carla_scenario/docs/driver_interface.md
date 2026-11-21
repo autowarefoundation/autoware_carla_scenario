@@ -503,7 +503,7 @@ point, as a serialized `carla_driver.v0.CarlaRendererData`:
     "no other road users" rather than an error. So `send_renderer_data: false` does not
     fail loudly. It silently disables every rule that depends on the world outside the
     ego. For a specification-driven policy such as
-    [stl_driver](https://github.com/hakuturu583/stl_driver), that is `stop_on_red`,
+    [stl_driver](https://github.com/autowarefoundation/autoware_carla_scenario/tree/master/stl_driver) (in this repository), that is `stop_on_red`,
     `collision_free` and `safe_headway` — the car keeps driving and the rules simply
     stop applying.
 

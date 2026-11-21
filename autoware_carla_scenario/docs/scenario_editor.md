@@ -419,8 +419,9 @@ Two implementation notes, both of which cost an afternoon to find:
 * A **set** of lanelets works the same way, toggling on each click, and saves
   when the picker is closed -- sending the form on every toggle would re-render
   the inspector and tear the map down mid-selection.
-* Which viewer layers a click may land on is part of the field's declaration
-  (`FieldSpec.picks`). The layers overlap: a click on a road usually lands on
+* Which viewer layers a click may land on is the editor's
+  `LANELET_PICK_LAYERS` (`editor/app.py`): the renderer's layer names, not
+  part of a field's declaration. The layers overlap: a click on a road usually lands on
   the direction arrow, and a hair to the side lands on a `bound`, **which
   reports the id of a linestring, not of either lanelet it separates**. Only
   the layers whose id is the lanelet's own are accepted.

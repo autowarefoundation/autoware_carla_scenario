@@ -10,8 +10,8 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 - [Hydra](https://hydra.cc/)-composed configurations for map, server, ego, entities, and scenario.
 - Glob-pattern batch execution of multiple scenarios in a single CARLA session.
 - Condition system: timing, collisions, traffic signals, speed/standstill, lane/area position, waypoint crossing, plus logical (`And`/`Or`/`Not`), latching (`Sticky`), and persistent combinators.
-- Action system: turns, lane changes, traffic-light state, on-demand camera attachment.
-- Pluggable traffic backends: CARLA's TrafficManager by default, `traffic=none` for an empty road, or a traffic simulator of your own through an entry point.
+- Action system: turns, lane changes, traffic-light state, speed and routing, spawning and despawning, adversarial NPCs and pedestrians.
+- Pluggable traffic backends: CARLA's TrafficManager by default, `traffic=sumo` (SUMO co-simulation), `traffic=hybrid` (the TrafficManager near the ego, a mesoscopic model far from it), `traffic=none` for an empty road, or a traffic simulator of your own through an entry point ([docs](docs/traffic_backends.md)).
 - Coordinate transforms between Lanelet2, OpenDRIVE, and CARLA world frames.
 - Hydra `lanelet_constraint` sweeper plugin for parametric map-driven sweeps (resolvable without CARLA).
 - FastAPI + Uvicorn web viewer for browsing results and triggering runs.
@@ -83,5 +83,5 @@ Full guides live under [`docs/`](docs/) and are served by MkDocs:
 - [`docs/installation.md`](docs/installation.md) — system requirements, CARLA setup, `uv` install steps.
 - [`docs/usage.md`](docs/usage.md) — every CLI command, configuration overrides, glob batch execution, viewer.
 - [`docs/architecture.md`](docs/architecture.md) — module layout, scenario lifecycle, condition/action system.
-- [`docs/api.md`](docs/api.md) — generated API reference.
+- [`docs/api.md`](docs/api.md) — API reference (hand-maintained).
 - [`docs/development.md`](docs/development.md) — contributing, testing, pre-commit, release flow.

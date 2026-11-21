@@ -6,7 +6,7 @@ This guide is for developers who want to contribute to the `autoware-carla-scena
 
 ### Prerequisites
 
-- Python 3.10
+- Python 3.10 to 3.14 (`>=3.10,<3.15`)
 - uv (version 0.9.7+)
 - Git
 - CARLA Simulator 0.10.0+
@@ -37,7 +37,7 @@ pre-commit install
 autoware_carla_scenario/
 ├── src/
 │   ├── autoware_carla_scenario/      # Main package
-│   │   ├── actions/                  # Trigger-driven side effects (turn, lane change, traffic signal, attach camera)
+│   │   ├── actions/                  # Trigger-driven side effects (turn, lane change, traffic signal, speed, spawn, adversarial, ...)
 │   │   ├── conditions/               # Pass/fail condition evaluators
 │   │   │   └── composition/          # Composed conditions (lane position, area, speed, waypoint, ...)
 │   │   ├── coordinate/               # Lanelet2 / OpenDRIVE / CARLA-world transforms, MapManager, snap
@@ -103,7 +103,7 @@ uv run pre-commit run --all-files
 
 ## Code Style and Quality
 
-This project follows the same coding standards as the parent repository:
+This project follows these coding standards:
 
 - **Type Hints**: All functions and methods must include type annotations
 - **Docstrings**: Use Google-style docstrings
