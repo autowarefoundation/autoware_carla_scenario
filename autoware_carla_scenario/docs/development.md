@@ -43,7 +43,7 @@ autoware_carla_scenario/
 │   │   ├── coordinate/               # Lanelet2 / OpenDRIVE / CARLA-world transforms, MapManager, snap
 │   │   ├── entity/                   # VehicleEntity, EgoVehicle, EgoConfig, the externally driven egos, spawn helpers
 │   │   ├── examples/                 # Built-in scenarios + Hydra config tree (conf/)
-│   │   ├── kinematics/               # Frame-tagged Vector3, velocity, acceleration
+│   │   ├── kinematics/               # Vector3, frame-tagged velocity and acceleration
 │   │   ├── sensor/                   # CameraSensorBase + CARLA RGB camera
 │   │   ├── sweeper/                  # Lanelet-constraint sweeper logic
 │   │   ├── tools/                    # detect-no-3d-model CLI

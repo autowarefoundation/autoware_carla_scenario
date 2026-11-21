@@ -2607,6 +2607,156 @@ def test_a_listed_member_is_still_public_and_unmodelled() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The kinematics operators: each one Python defines, with the same results
+# (#2259)
+# ---------------------------------------------------------------------------
+
+#: The kinematics classes, whose arithmetic a scenario uses (`ego_v - npc_v`).
+_KINEMATICS_CLASSES = (
+    "Vector3",
+    "AbsoluteVelocity",
+    "RelativeVelocity",
+    "FrenetVelocity",
+    "AbsoluteAcceleration",
+    "RelativeAcceleration",
+    "FrenetAcceleration",
+)
+
+#: Every arithmetic dunder: those Python defines on a kinematics class are
+#: what the model must declare (the member comparison above skips dunders).
+_ARITHMETIC_DUNDERS = frozenset(
+    f"__{prefix}{op}__"
+    for op in (
+        "add",
+        "sub",
+        "mul",
+        "matmul",
+        "truediv",
+        "floordiv",
+        "mod",
+        "divmod",
+        "pow",
+        "lshift",
+        "rshift",
+        "and",
+        "xor",
+        "or",
+    )
+    for prefix in ("", "r", "i")
+) | {"__neg__", "__pos__", "__abs__", "__invert__"}
+
+
+def _kinematics_model_class(name: str) -> ast.ClassDef:
+    # By its module: _COMPARED_CLASSES' "Vector3" is the bridge's.
+    node = _definitions("kinematics")[name][0]
+    assert isinstance(node, ast.ClassDef), name
+    return node
+
+
+#: What one operator returns for each operand type: ``{operand: result}``,
+#: the operand ``None`` for a unary one.
+_Results = dict[str | None, str]
+
+
+def _python_operator_results(python: type, dunder: str) -> _Results:
+    """What *python*'s *dunder* returns, by operand type, from its source:
+    each `@overload` stub's annotations where it has them (`Abs - Abs ->
+    Relative`, `Abs - Relative -> Abs`), the definition's otherwise."""
+    node = ast.parse(textwrap.dedent(inspect.getsource(python))).body[0]
+    assert isinstance(node, ast.ClassDef), python
+    defs = [s for s in node.body if isinstance(s, ast.FunctionDef) and s.name == dunder]
+    stubs = [d for d in defs if "overload" in _decorators(d)]
+    out: _Results = {}
+    for fn in stubs or defs:
+        params = fn.args.args[1:]
+        operand = params[0].annotation if params else None
+        assert fn.returns is not None, (python, dunder)
+        out[None if operand is None else ast.unparse(operand)] = ast.unparse(fn.returns)
+    return out
+
+
+def _model_operator_results(cls: ast.ClassDef, dunder: str) -> _Results:
+    """What the model's *dunder* returns, by operand type: a typed
+    definition's annotations, and for one that takes its operand untyped
+    (it names a class defined further down) each `isinstance(other, X)`
+    branch's constructor call."""
+    out: _Results = {}
+    for fn in (s for s in cls.body if isinstance(s, ast.FunctionDef)):
+        if fn.name != dunder:
+            continue
+        params = fn.args.args[1:]
+        if not params:
+            assert fn.returns is not None, (cls.name, dunder)
+            out[None] = ast.unparse(fn.returns)
+            continue
+        if params[0].annotation is not None:
+            assert fn.returns is not None, (cls.name, dunder)
+            out[ast.unparse(params[0].annotation)] = ast.unparse(fn.returns)
+            continue
+        branch: ast.stmt | None = fn.body[0]
+        while isinstance(branch, ast.If):
+            test = branch.test
+            assert (
+                isinstance(test, ast.Call)
+                and ast.unparse(test.func) == "isinstance"
+                and isinstance(test.args[0], ast.Name)
+                and test.args[0].id == params[0].arg
+            ), ast.unparse(test)
+            returned = branch.body[-1]
+            assert isinstance(returned, ast.Return), ast.unparse(branch)
+            assert isinstance(returned.value, ast.Call), ast.unparse(returned)
+            out[ast.unparse(test.args[1])] = ast.unparse(returned.value.func)
+            branch = branch.orelse[0] if branch.orelse else None
+        # What no branch takes is refused, as Python's NotImplemented is.
+        assert branch is not None and "compile_error" in ast.unparse(branch), (
+            cls.name,
+            dunder,
+        )
+    return out
+
+
+@pytest.mark.parametrize("name", _KINEMATICS_CLASSES)
+def test_a_kinematics_class_declares_the_arithmetic_python_defines(name: str) -> None:
+    # Python -> model: a scenario writing `ego_v - npc_v` or `v * 2` was
+    # refused because the model declared no operator at all (#2259).
+    python = getattr(kinematics, name)
+    defined = {d for d in _ARITHMETIC_DUNDERS if d in vars(python)}
+    assert {"__add__", "__sub__", "__mul__", "__neg__"} <= defined, name
+    cls = _kinematics_model_class(name)
+    declared = {s.name for s in cls.body if isinstance(s, ast.FunctionDef)}
+    assert defined == declared & _ARITHMETIC_DUNDERS, name
+    for dunder in sorted(defined):
+        assert _model_operator_results(cls, dunder) == _python_operator_results(
+            python, dunder
+        ), f"{name}.{dunder}"
+
+
+def test_the_operator_results_are_read_from_both_spellings() -> None:
+    # A typed overload pair (RelativeVelocity's `+`), an operator that
+    # dispatches on its untyped operand (AbsoluteVelocity's `-`), a unary one.
+    assert _model_operator_results(
+        _kinematics_model_class("RelativeVelocity"), "__add__"
+    ) == {
+        "RelativeVelocity": "RelativeVelocity",
+        "AbsoluteVelocity": "AbsoluteVelocity",
+    }
+    assert _model_operator_results(
+        _kinematics_model_class("AbsoluteVelocity"), "__sub__"
+    ) == {
+        "AbsoluteVelocity": "RelativeVelocity",
+        "RelativeVelocity": "AbsoluteVelocity",
+    }
+    assert _python_operator_results(acs.AbsoluteVelocity, "__sub__") == {
+        "AbsoluteVelocity": "RelativeVelocity",
+        "RelativeVelocity": "AbsoluteVelocity",
+    }
+    assert _python_operator_results(acs.Vector3, "__neg__") == {None: "Vector3"}
+    assert _python_operator_results(acs.FrenetVelocity, "__rmul__") == {
+        "float": "FrenetVelocity"
+    }
+
+
+# ---------------------------------------------------------------------------
 # Every model file is compared with Python, or exempt with the reason (#240)
 # ---------------------------------------------------------------------------
 

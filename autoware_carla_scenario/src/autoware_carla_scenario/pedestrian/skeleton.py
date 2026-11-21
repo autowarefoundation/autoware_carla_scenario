@@ -241,7 +241,10 @@ class _Rest:
 
 
 class WalkerRetarget:
-    """Poses a walker's skeleton after a :class:`SomaMotion`'s frames.
+    """Poses a walker's skeleton after a motion's frames of bone directions:
+    a SOMA ``.npz``'s
+    (:meth:`~autoware_carla_scenario.pedestrian.soma.SomaMotion.frame`) or a
+    motion generator's (:func:`directions_from_joints`).
 
     Built from the walker's bones as its animation holds them
     (``Walker.get_bones()``) and where it faces (``Walker.get_transform()``),

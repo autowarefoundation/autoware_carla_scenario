@@ -23,6 +23,24 @@ class Vector3:
         self.y = y
         self.z = z
 
+    def __add__(self, other: Vector3) -> Vector3:
+        raise NotImplementedError()
+
+    def __sub__(self, other: Vector3) -> Vector3:
+        raise NotImplementedError()
+
+    def __mul__(self, scalar: float) -> Vector3:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> Vector3:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> Vector3:
+        raise NotImplementedError()
+
+    def __neg__(self) -> Vector3:
+        raise NotImplementedError()
+
     def magnitude(self) -> float:
         raise NotImplementedError()
 
@@ -52,6 +70,34 @@ class AbsoluteVelocity:
         self.vector = vector
         self.frame = frame
 
+    # RelativeVelocity is defined below, so the operators that take one dispatch on
+    # the operand, as Python's do, and refuse any other (docs/typecheck.md).
+    def __add__(self, other):
+        if isinstance(other, RelativeVelocity):
+            return AbsoluteVelocity(self.vector, self.frame)
+        else:
+            compile_error("AbsoluteVelocity + x: x must be a RelativeVelocity")
+
+    def __sub__(self, other):
+        if isinstance(other, AbsoluteVelocity):
+            return RelativeVelocity(self.vector, self.frame)
+        elif isinstance(other, RelativeVelocity):
+            return AbsoluteVelocity(self.vector, self.frame)
+        else:
+            compile_error("AbsoluteVelocity - x: x must be an AbsoluteVelocity or a RelativeVelocity")
+
+    def __mul__(self, scalar: float) -> AbsoluteVelocity:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> AbsoluteVelocity:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> AbsoluteVelocity:
+        raise NotImplementedError()
+
+    def __neg__(self) -> AbsoluteVelocity:
+        raise NotImplementedError()
+
     def speed(self) -> float:
         raise NotImplementedError()
 
@@ -75,6 +121,27 @@ class RelativeVelocity:
     def __init__(self, vector: Vector3, frame: CoordinateFrame):
         self.vector = vector
         self.frame = frame
+
+    def __add__(self, other: RelativeVelocity) -> RelativeVelocity:
+        raise NotImplementedError()
+
+    def __add__(self, other: AbsoluteVelocity) -> AbsoluteVelocity:
+        raise NotImplementedError()
+
+    def __sub__(self, other: RelativeVelocity) -> RelativeVelocity:
+        raise NotImplementedError()
+
+    def __mul__(self, scalar: float) -> RelativeVelocity:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> RelativeVelocity:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> RelativeVelocity:
+        raise NotImplementedError()
+
+    def __neg__(self) -> RelativeVelocity:
+        raise NotImplementedError()
 
     def speed(self) -> float:
         raise NotImplementedError()
@@ -100,6 +167,24 @@ class FrenetVelocity:
         self.longitudinal = longitudinal
         self.lateral = lateral
 
+    def __add__(self, other: FrenetVelocity) -> FrenetVelocity:
+        raise NotImplementedError()
+
+    def __sub__(self, other: FrenetVelocity) -> FrenetVelocity:
+        raise NotImplementedError()
+
+    def __mul__(self, scalar: float) -> FrenetVelocity:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> FrenetVelocity:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> FrenetVelocity:
+        raise NotImplementedError()
+
+    def __neg__(self) -> FrenetVelocity:
+        raise NotImplementedError()
+
     def speed(self) -> float:
         raise NotImplementedError()
 
@@ -115,6 +200,34 @@ class AbsoluteAcceleration:
     def __init__(self, vector: Vector3, frame: CoordinateFrame):
         self.vector = vector
         self.frame = frame
+
+    # RelativeAcceleration is defined below, so the operators that take one dispatch on
+    # the operand, as Python's do, and refuse any other (docs/typecheck.md).
+    def __add__(self, other):
+        if isinstance(other, RelativeAcceleration):
+            return AbsoluteAcceleration(self.vector, self.frame)
+        else:
+            compile_error("AbsoluteAcceleration + x: x must be a RelativeAcceleration")
+
+    def __sub__(self, other):
+        if isinstance(other, AbsoluteAcceleration):
+            return RelativeAcceleration(self.vector, self.frame)
+        elif isinstance(other, RelativeAcceleration):
+            return AbsoluteAcceleration(self.vector, self.frame)
+        else:
+            compile_error("AbsoluteAcceleration - x: x must be an AbsoluteAcceleration or a RelativeAcceleration")
+
+    def __mul__(self, scalar: float) -> AbsoluteAcceleration:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> AbsoluteAcceleration:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> AbsoluteAcceleration:
+        raise NotImplementedError()
+
+    def __neg__(self) -> AbsoluteAcceleration:
+        raise NotImplementedError()
 
     def magnitude(self) -> float:
         raise NotImplementedError()
@@ -140,6 +253,27 @@ class RelativeAcceleration:
         self.vector = vector
         self.frame = frame
 
+    def __add__(self, other: RelativeAcceleration) -> RelativeAcceleration:
+        raise NotImplementedError()
+
+    def __add__(self, other: AbsoluteAcceleration) -> AbsoluteAcceleration:
+        raise NotImplementedError()
+
+    def __sub__(self, other: RelativeAcceleration) -> RelativeAcceleration:
+        raise NotImplementedError()
+
+    def __mul__(self, scalar: float) -> RelativeAcceleration:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> RelativeAcceleration:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> RelativeAcceleration:
+        raise NotImplementedError()
+
+    def __neg__(self) -> RelativeAcceleration:
+        raise NotImplementedError()
+
     def magnitude(self) -> float:
         raise NotImplementedError()
 
@@ -163,6 +297,24 @@ class FrenetAcceleration:
     def __init__(self, longitudinal: float, lateral: float):
         self.longitudinal = longitudinal
         self.lateral = lateral
+
+    def __add__(self, other: FrenetAcceleration) -> FrenetAcceleration:
+        raise NotImplementedError()
+
+    def __sub__(self, other: FrenetAcceleration) -> FrenetAcceleration:
+        raise NotImplementedError()
+
+    def __mul__(self, scalar: float) -> FrenetAcceleration:
+        raise NotImplementedError()
+
+    def __rmul__(self, scalar: float) -> FrenetAcceleration:
+        raise NotImplementedError()
+
+    def __truediv__(self, scalar: float) -> FrenetAcceleration:
+        raise NotImplementedError()
+
+    def __neg__(self) -> FrenetAcceleration:
+        raise NotImplementedError()
 
     def magnitude(self) -> float:
         raise NotImplementedError()
