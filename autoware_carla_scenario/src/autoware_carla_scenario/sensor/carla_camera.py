@@ -18,6 +18,8 @@ import numpy as np
 from .base import (
     CameraSensorBase,
     CameraSensorConfig,
+    drain,
+    put_dropping_oldest,
     sensor_interval_ticks,
     sensor_tick_s,
 )
@@ -405,15 +407,7 @@ class CarlaCameraSensor(CameraSensorBase):
             on_frame(image)
             return
         # Never block CARLA's delivery thread: drop the oldest frame when full.
-        while True:
-            try:
-                self._frame_queue.put_nowait(image)
-                return
-            except queue.Full:
-                try:
-                    self._frame_queue.get_nowait()
-                except queue.Empty:
-                    pass
+        put_dropping_oldest(self._frame_queue, image)
 
     def destroy(self) -> None:
         """Stop and destroy the CARLA sensor actor."""
@@ -422,6 +416,9 @@ class CarlaCameraSensor(CameraSensorBase):
             self._sensor.destroy()
             self._sensor = None
         self._attached = False
+        # Attached again, no frame of the old actor is taken for one of the
+        # new: neither the newest nor one still queued (#2265).
+        drain(self._frame_queue)
         self._newest = None
         self._anchor = -1
         logger.info("CarlaCameraSensor destroyed")
