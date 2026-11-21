@@ -468,14 +468,30 @@ class MapSource:
         """Return the source *uri* names.
 
         Raises:
-            MapSourceError: If *uri* is empty, names no repository, its
-                ref is not one git accepts (see :func:`_ref_problem`), or its
-                path has a control character or an empty, ``.`` or ``..``
-                component.
+            MapSourceError: If *uri* is empty, is not a URL at all (an
+                unclosed ``[``), names no repository, its ref is not one git
+                accepts (see :func:`_ref_problem`), or its path has a control
+                character or an empty, ``.`` or ``..`` component.
         """
         text = (uri or "").strip()
         if not text:
             raise MapSourceError("A map source needs a repository URL.")
+        try:
+            return cls._parse_text(uri, text)
+        except MapSourceError:
+            raise
+        except ValueError as exc:
+            # urlsplit's own complaint (an unclosed IPv6 '['), which this
+            # method's callers -- catching MapSourceError, as documented --
+            # would otherwise let escape as a bare ValueError (#2279).
+            raise MapSourceError(
+                f"{redacted_url(uri)!r} is not a URL a repository can be "
+                f"cloned from: {exc}"
+            ) from exc
+
+    @classmethod
+    def _parse_text(cls, uri: str, text: str) -> "MapSource":
+        """:meth:`parse` past its empty check; *text* is *uri* stripped."""
         written_as_source = text.startswith("git+")
         if written_as_source:
             text = text[len("git+") :]

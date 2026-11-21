@@ -2207,11 +2207,18 @@ def _compose_config(scenario_name: str, overrides: list[str]) -> DictConfig:
 
 
 def _has_sweep(cfg: DictConfig) -> bool:
-    """Whether *cfg* is a logical scenario: one with a sweep to expand."""
-    sweep = OmegaConf.select(cfg, "sweep")
-    return sweep is not None and any(
-        OmegaConf.select(sweep, key) for key in ("constraints", "route", "odd_sample")
-    )
+    """Whether *cfg* is a logical scenario: one with a sweep to expand.
+
+    Raises:
+        ValueError: If its ``sweep`` is neither null nor a mapping
+            (:func:`~autoware_carla_scenario.sweeper.expand.sweep_section`),
+            which :func:`check_batch_configs` refuses before anything runs
+            (#2279).
+    """
+    from ..sweeper.expand import sweep_section  # noqa: PLC0415 -- loads Lanelet2
+
+    sweep = sweep_section(OmegaConf.select(cfg, "sweep")) or {}
+    return any(sweep.get(key) for key in ("constraints", "route", "odd_sample"))
 
 
 def _expand_batch(
@@ -2751,7 +2758,8 @@ def check_batch_configs(
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
     reads them (:func:`_check_batch_writer_settings`); each case's timeout,
     ``typecheck`` mode (:func:`~autoware_carla_scenario.typecheck.mode.typecheck_mode`),
-    ``ego.entity`` (:func:`ego_entity_name`), seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
+    ``ego.entity`` (:func:`ego_entity_name`), seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``)
+    and the shape of ``sweep`` (a mapping or null),
     ``background_traffic`` (:func:`background_traffic_settings`),
     ``environment`` (:func:`environment_settings`) and the form of its
     ``rules`` (:func:`_check_weather_rules`), ``driver`` settings of an
@@ -3006,17 +3014,6 @@ def run_batch(
         sys.exit(1)
     configs = [_compose_config(name, case) for name, case in cases]
 
-    if not expand:
-        swept = [name for name, cfg in zip(labels, configs) if _has_sweep(cfg)]
-        if swept:
-            logger.warning(
-                "%s ha%s a sweep (sweep.constraints, sweep.route or "
-                "sweep.odd_sample) that a batch runs once, as configured; add "
-                "--multirun to run every case of it",
-                ", ".join(swept),
-                "s" if len(swept) == 1 else "ve",
-            )
-
     # Every value a case reads of its config before it starts -- that the
     # cases share a map, the queue is built on the first case's (#1241); that
     # each is on the map its document names; the ground-projection ray, a ray
@@ -3028,6 +3025,19 @@ def run_batch(
     # Raised, as RunConfigError: the CLI reports it as an ``Error:`` line,
     # headed by the case's name, and HYDRA_FULL_ERROR=1 raises it (_dispatch).
     check_batch_configs(configs, labels, documents=documents)
+
+    if not expand:
+        # After the configs are checked: a sweep that is not a mapping is
+        # refused there, naming its case (#2279).
+        swept = [name for name, cfg in zip(labels, configs) if _has_sweep(cfg)]
+        if swept:
+            logger.warning(
+                "%s ha%s a sweep (sweep.constraints, sweep.route or "
+                "sweep.odd_sample) that a batch runs once, as configured; add "
+                "--multirun to run every case of it",
+                ", ".join(swept),
+                "s" if len(swept) == 1 else "ve",
+            )
 
     # One launcher for the whole batch: the queue prepares it (and puts its
     # logs in the batch's output directory) and every ego starts its stacks
@@ -3312,10 +3322,13 @@ def _check_seeds(cfg: DictConfig) -> None:
     ``visibility`` unless each is true or false, naming the key, as expanding
     the sweep and building the scenario would refuse them.
 
+    And the sweep itself, unless it is null or a mapping (:func:`_has_sweep`).
+
     Raises:
         ValueError: naming the key of the value refused.
     """
     config_seed(cfg)
+    _has_sweep(cfg)  # before its odd_sample is looked up in it
     odd_sample = OmegaConf.select(cfg, "sweep.odd_sample")
     if isinstance(odd_sample, DictConfig):
         check_sample_settings(odd_sample)

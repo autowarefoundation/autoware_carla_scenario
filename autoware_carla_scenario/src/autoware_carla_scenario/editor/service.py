@@ -718,7 +718,8 @@ class EditorService:
         A rename carries: every phase state naming the old name is rewritten,
         as is every ``conflicts_with`` entry pointing at it -- the renamed
         group's own included, so a self-reference stays one for the validator
-        to report.  Leaving them to the validator would turn a rename into a
+        to report, also when the form, which has no box for the group itself,
+        posts its conflicts.  Leaving them to the validator would turn a rename into a
         screenful of errors about edits nobody made.  While another group is
         still called the old name, the references still resolve to it, so they
         are left alone: the editor never makes two groups share a name, but a
@@ -726,6 +727,14 @@ class EditorService:
         off what the other was driving.
         """
         group = self._signal_group(document, index)
+        # The form has no box for the group itself, so a self-reference is
+        # kept on purpose, under the group's new name, for the validator to
+        # report rather than dropped unseen (#2279).  While another group
+        # shares the name, the entry may mean that one, and is no self-reference.
+        self_conflict = group.name in group.conflicts_with and not any(
+            other is not group and other.name == group.name
+            for other in document.map.signal_groups
+        )
         if "name" in form:
             new_name = str(form["name"]).strip()
             if new_name and new_name != group.name:
@@ -753,6 +762,8 @@ class EditorService:
             group.conflicts_with = [
                 str(value) for value in values if str(value) in names
             ]
+            if self_conflict and group.name not in group.conflicts_with:
+                group.conflicts_with.append(group.name)
             self._drop_unticked_conflicts(document, group)
 
     @staticmethod
@@ -1068,10 +1079,9 @@ class EditorService:
                 return None
             try:
                 return MapSource.parse(ref.source)
-            except ValueError:
-                # MapSourceError, or a plain ValueError from urlsplit (an
-                # unclosed IPv6 bracket).  Unparsable, it is compared as text:
-                # the same map only as the very same string.
+            except MapSourceError:
+                # Unparsable, it is compared as text: the same map only as
+                # the very same string.
                 return ref.source
 
         def origin(ref: MapRef) -> tuple[object, ...]:

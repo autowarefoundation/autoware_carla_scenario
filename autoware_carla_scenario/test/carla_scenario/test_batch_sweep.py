@@ -175,6 +175,33 @@ def test_a_batch_without_multirun_runs_each_scenario_once_and_says_so(
     assert "add --multirun" in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("override", "shown"),
+    [
+        ("[]", "a list, []"),
+        ("[{}]", "a list, [{}]"),
+        ("false", "False"),
+        ("0", "0"),
+        ("''", "''"),
+    ],
+)
+def test_a_batch_without_multirun_refuses_a_sweep_that_is_not_a_mapping(
+    batch: _Batch, override: str, shown: str
+) -> None:
+    """Not a crash in the sweep warning: refused before anything runs, naming
+    the case, as every other config value is (#2279)."""
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(run.RunConfigError) as caught:
+        run.run_batch([_CONCRETE], [f"++sweep={override}"])
+
+    assert str(caught.value) == (
+        f"{_CONCRETE}: sweep must be a mapping (constraints, route, odd_sample, "
+        f"...), got {shown}"
+    )
+    assert batch.configs == []
+
+
 def test_resuming_an_expanded_batch_keeps_each_case_its_number(batch: _Batch) -> None:
     from autoware_carla_scenario.examples import run
 

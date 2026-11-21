@@ -658,6 +658,23 @@ class TestExpandConfig:
             "controls.ego_speed_mps.key",
         ]
 
+    def test_a_map_source_that_is_no_url_is_refused_naming_the_key(self) -> None:
+        # urlsplit's ValueError, as a MapSourceError naming map.source (#2279).
+        from autoware_carla_scenario.maps import MapSourceError
+
+        cfg = OmegaConf.create(
+            {
+                "map": {"source": "https://[github.com/x/y"},
+                "sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}},
+            }
+        )
+        with pytest.raises(
+            ValueError, match=r"^map\.source: 'https://\[github"
+        ) as caught:
+            expand_config(cfg)
+        assert "is not a URL a repository can be cloned from" in str(caught.value)
+        assert isinstance(caught.value.__cause__, MapSourceError)
+
     def test_a_map_cache_root_that_is_no_directory_is_refused(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:

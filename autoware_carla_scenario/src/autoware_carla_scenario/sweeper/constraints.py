@@ -488,12 +488,14 @@ class LaneletLengthConstraint(Constraint):
         return compare(length, rule_enum, self.value)
 
 
-def _check_length(value: Any) -> None:
-    """Refuse a ``lanelet_length`` value that is no finite number of metres.
+def _real_number(value: Any) -> float:
+    """*value* as a float when it is a real number, else ``nan``.
 
     An int or a float, or another real number (numpy's ``int64`` or
-    ``float32``, say), as ``compare`` takes one; never a bool.  An int too
-    large for a float is no finite length either.
+    ``float32``, say); never a bool, which would be 1 or 0 (#1951).  An int
+    too large for a float is ``inf``: no finite number either.  What
+    :func:`_check_length` and the stop-line bindings' offset check
+    (:func:`.bindings._check_offset`) read a number of metres with.
     """
     number = math.nan
     if isinstance(value, bool):
@@ -515,7 +517,17 @@ def _check_length(value: Any) -> None:
                 number = float(value)
             except OverflowError:
                 number = math.inf
-    if not math.isfinite(number):
+    return number
+
+
+def _check_length(value: Any) -> None:
+    """Refuse a ``lanelet_length`` value that is no finite number of metres.
+
+    An int or a float, or another real number (numpy's ``int64`` or
+    ``float32``, say), as ``compare`` takes one; never a bool
+    (:func:`_real_number`).
+    """
+    if not math.isfinite(_real_number(value)):
         raise ValueError(
             f"lanelet_length.value: a finite number of metres, got {shown(value)}"
         )
