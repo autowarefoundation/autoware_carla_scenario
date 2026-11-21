@@ -2692,7 +2692,16 @@ PCs), run the playbooks with the variables <code>--setup-vars</code> prints.</p>
 <h3 id="keeping-it-resident">Keeping it resident<a class="headerlink" href="#keeping-it-resident" title="Permanent link">&para;</a></h3>
 <p>The bridge waits for a CARLA server that is not up yet, and for runs, for as
 long as it runs; Ctrl-C or SIGTERM end a running scenario (its <code>scenario_end</code>
-steps), run the <code>shutdown</code> steps and close the devices. A systemd unit keeps it
+steps), run the <code>shutdown</code> steps and close the devices. A step that waits (a
+<code>wait</code> or a <code>sleep</code>) in any phase but <code>shutdown</code> ends at once on SIGTERM rather
+than wait out its timeout: a stop during <code>startup</code> ends the startup steps (the
+bridge does not reach CARLA), one during <code>scenario_start</code> or <code>warmup</code> fails the
+run's start, and in <code>scenario_end</code> the waits left are skipped while its sends
+still go. The <code>shutdown</code> steps always run whole.
+The bridge takes the <code>runner.listen</code> address before the <code>startup</code> steps: one
+it cannot listen at (a port in use) ends <code>scenario-hils</code> with status 1 and a
+one-line error before anything reaches the ECUs, and no <code>shutdown</code> step is sent
+either. A systemd unit keeps it
 up across reboots:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># /etc/systemd/system/scenario-hils.service</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">[Unit]</span>
@@ -3142,7 +3151,9 @@ bytes.
 A <code>send</code> has either a <code>name</code> (and <code>fields</code>) or raw <code>data</code> (and <code>id</code>), never
 keys of both: only a missing or null key counts as absent.</p>
 <p>A <code>wait</code> is satisfied by a matching message received since its phase began, so
-an ECU that answers a <code>send</code> at once is not missed. While steps run the bridge
+an ECU that answers a <code>send</code> at once is not missed, nor is a matching message
+that later ones of its name do not match (a one-frame <code>Ready: 1</code> pulse among
+periodic <code>Ready: 0</code> status frames). While steps run the bridge
 does not follow the world, and with <code>clock: simulation</code> its clock follows the
 wall clock instead, so periodic messages keep flowing to an ECU that is being
 waited on. <code>startup</code> and <code>shutdown</code> steps have no ego, so their fields are
@@ -3288,7 +3299,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 15:51:58 UTC"><span class="timeago" datetime="2026-11-20T15:51:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 15:51:58 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 09:06:14 UTC"><span class="timeago" datetime="2026-11-21T09:06:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 09:06:14 UTC">2026-11-21</span>
   </span>
 
     
