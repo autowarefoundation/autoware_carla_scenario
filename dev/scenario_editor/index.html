@@ -1171,6 +1171,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#areas-ground-chosen-by-what-it-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Areas: ground chosen by what it is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#an-abstract-scenario-draws-one-bound-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2616,6 +2627,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#areas-ground-chosen-by-what-it-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Areas: ground chosen by what it is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#an-abstract-scenario-draws-one-bound-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3086,6 +3108,57 @@ the picker its own field opens.</p>
 <p>A label reads away from its dot, except on the right half of the map, where it
 reads back towards the middle: that edge is also where the viewer keeps its own
 zoom buttons, and a label running under them is a label nobody can read.</p>
+<h3 id="areas-ground-chosen-by-what-it-is">Areas: ground chosen by what it is<a class="headerlink" href="#areas-ground-chosen-by-what-it-is" title="Permanent link">&para;</a></h3>
+<p>A <strong>Distance to an area</strong> card (<code>area_distance</code>, <code>EntityAreaDistanceCondition</code>)
+measures from an entity's body to an <em>area</em>. The area is not drawn by hand. It
+is chosen by what the ground is:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What it chooses</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ground</td>
+<td>Lanelets by subtype (crosswalks, walkways, road shoulders, roads), the lanes through a junction (tagged <code>turn_direction</code>), any lanelet, polygons of the map's polygon layer by type (Autoware's intersection, detection, no-stopping and no-parking areas, parking lots, any polygon), or the raised or grooved parts of the roads' surface, from the OpenDRIVE map's OpenCRG grids</td>
+</tr>
+<tr>
+<td>Only these lanelets</td>
+<td>Narrows lanelet ground to lanelets picked on the map, which must each be of the ground. Not for polygons</td>
+</tr>
+<tr>
+<td>Attributes</td>
+<td><code>key=value</code> tags every element must have, apart by commas: <code>turn_direction=left</code>, <code>location=urban</code>. A bare key asks only that the tag is there. Not for the road surface</td>
+</tr>
+<tr>
+<td>Surface counts from</td>
+<td>For the road surface: how far above or below its design the surface has to stand to count. Empty: 0.01 m</td>
+</tr>
+</tbody>
+</table>
+<p>The places panel outlines an area <strong>whole</strong> rather than pinning it: every
+lanelet it matches is outlined, and it is listed under the places with how many
+lanelets that is. A pin per crosswalk of a city would bury the places above.
+The viewer outlines lanelets only, so polygons of the polygon layer are counted
+and not drawn, and so are the raised and grooved parts of the road surface.
+Those come from the OpenDRIVE map, not the Lanelet2 one. They are counted on
+every render, without parsing the Lanelet2 map, and any OpenCRG grid that
+cannot be read is listed under the row. The match uses the framework's own matcher
+(<code>conditions.map_area.area_shapes</code>), so the outline is the ground the run
+measures to. Matching waits on the map being parsed, like binding a search
+pattern: <strong>Outline areas</strong> asks for it.</p>
+<p>Some mistakes only the map can show: a picked lanelet of another ground or
+missing from the map, or a ground the map has none of (a parking lot on a map
+with none). The panel says so on the area's row. The validator cannot see the
+map and accepts such a card. The run then says it once as a warning, and the
+condition never holds, with the problem in its details. The validator does
+refuse what no map could hold: picked lanelets for a ground of polygons, and
+an attribute written without its key or value.</p>
+<p>The run's result keeps the closest the entity came (<code>closest_m</code>, <code>closest_at_s</code>,
+and which lanelet or polygon it was nearest) in the card's details, whether or
+not the card fired.</p>
 <h3 id="an-abstract-scenario-draws-one-bound-pattern">An abstract scenario draws one bound pattern<a class="headerlink" href="#an-abstract-scenario-draws-one-bound-pattern" title="Permanent link">&para;</a></h3>
 <p>A scenario whose lanelet is a constraint search does not name a place: it names
 a <strong>set</strong>, and the sweeper runs it once per member. Outlining all 133 matches
@@ -3846,7 +3919,7 @@ entries repeat, such as NADE's adversities, where the first to fire wins:</p>
 </ul>
 <h3 id="compares-within-a-tolerance">"=" compares within a tolerance<a class="headerlink" href="#compares-within-a-tolerance" title="Permanent link">&para;</a></h3>
 <p>A card that measures a continuous quantity -- Speed, Acceleration, Relative
-speed, Distance, Distance to a place, TTC, TTC to a place, Time headway, Route
+speed, Distance, Distance to a place, Distance to an area, TTC, TTC to a place, Time headway, Route
 progress, Metric -- offers <code>=</code> among its predicates, and a measured value
 practically never lands exactly on a threshold. Each of these cards has an
 optional <strong>Tolerance (=)</strong> field, in the card's own unit: <code>=</code> holds while the
@@ -4400,7 +4473,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 22:35:52 UTC"><span class="timeago" datetime="2026-11-21T22:35:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 22:35:52 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 04:34:35 UTC"><span class="timeago" datetime="2026-11-22T04:34:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 04:34:35 UTC">2026-11-22</span>
   </span>
 
     

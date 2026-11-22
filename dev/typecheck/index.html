@@ -5001,9 +5001,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-343 of the package's 473
-modules (73%; about 108,700 of
-182,300 lines) are <code>CHECKED</code>: the kinematics, the
+347 of the package's 477
+modules (73%; about 110,100 of
+184,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5110,7 +5110,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 343 CHECKED modules</summary>
+<summary>The 347 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5444,6 +5444,10 @@ with the first paragraph of its docstring:</p>
 <td>How far apart two actors are, and what "apart" is being asked about.</td>
 </tr>
 <tr>
+<td><code>conditions.composition.entity_area_distance</code></td>
+<td>Distance from an entity's box to an area of the map, and the closest it came.</td>
+</tr>
+<tr>
 <td><code>conditions.composition.entity_distance</code></td>
 <td>Relative-distance condition between two entities.</td>
 </tr>
@@ -5506,6 +5510,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>conditions.lane_change_settled</code></td>
 <td>Condition satisfied once a commanded lane change has settled.</td>
+</tr>
+<tr>
+<td><code>conditions.map_area</code></td>
+<td>Areas of the map chosen by what the ground is: crosswalks, walkways, the lanes through a junction, Autoware's intersection areas, the raised and grooved parts of a road's surface.</td>
 </tr>
 <tr>
 <td><code>conditions.metric</code></td>
@@ -5898,6 +5906,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>maps.config</code></td>
 <td>Turn a <code>map</code> config into the paths the rest of the framework reads.</td>
+</tr>
+<tr>
+<td><code>maps.opencrg</code></td>
+<td>The raised and grooved parts of a road's surface, read from the ASAM OpenCRG grids an OpenDRIVE road refers to.</td>
 </tr>
 <tr>
 <td><code>maps.opendrive</code></td>
@@ -6444,6 +6456,10 @@ with the first paragraph of its docstring:</p>
 <td>The <code>&lt;host&gt;:&lt;pid&gt;</code> owner label on the containers a run starts.</td>
 </tr>
 <tr>
+<td><code>utils.polygon</code></td>
+<td>Shapes on the ground: a road user's box and the areas of a map, and how far apart two of them are.</td>
+</tr>
+<tr>
 <td><code>utils.powertrain</code></td>
 <td>The longitudinal response of a CARLA 0.10 vehicle, worked out from its physics control.</td>
 </tr>
@@ -6494,7 +6510,7 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>201 functions and methods of those modules are <code>UNCALLED</code>
+<p>202 functions and methods of those modules are <code>UNCALLED</code>
 (64 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -6507,7 +6523,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 201 UNCALLED functions and methods, and why</summary>
+<summary>The 202 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6535,6 +6551,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>conditions.comparison.ScalarComparisonRule.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.composition.acceleration.AccelerationCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.composition.base.CompositionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>conditions.composition.entity_area_distance.EntityAreaDistanceCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.composition.entity_distance.EntityDistanceCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.composition.entity_lane_position.EntityLaneOfCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.composition.entity_lane_position.EntityLanePositionCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
