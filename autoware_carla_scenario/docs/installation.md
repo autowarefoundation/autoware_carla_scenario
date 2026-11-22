@@ -155,6 +155,11 @@ root. Anywhere else, point at the files with `NISHISHINJUKU_LANELET2_PATH` and
 `NISHISHINJUKU_XODR_PATH` (see [Environment Configuration](#environment-configuration)),
 or pass `map.lanelet2_path=` and `map.xodr_path=` on the command line.
 
+The editor's new scenarios name the same relative files, never the variables'
+values: a scenario document is exported into packages that run on other
+machines. A run on the built-in map still reads the variables, because the
+`map` group, composed after the scenario, wins over the paths a document names.
+
 ## Environment Configuration
 
 Configure your environment by exporting the variables consumed by the

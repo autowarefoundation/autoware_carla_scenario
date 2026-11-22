@@ -70,21 +70,19 @@ class TestStarterDocuments:
         assert any(a.trigger is not None for a in document.actions)
 
     @pytest.mark.parametrize("make", [new_document, blank_document])
-    def test_map_paths_read_the_map_config_variables(
+    def test_map_paths_ignore_the_map_config_variables(
         self, make: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The same variables as conf/map/nishishinjuku.yaml (#2340)."""
-        monkeypatch.delenv("NISHISHINJUKU_LANELET2_PATH", raising=False)
-        monkeypatch.delenv("NISHISHINJUKU_XODR_PATH", raising=False)
-        document = make()
-        assert document.map.lanelet2_path == "data/nishishinjuku.osm"
-        assert document.map.xodr_path == "data/nishishinjuku_carla.xodr"
+        """The group's relative fallbacks, never this machine's paths (#2340).
 
+        A document travels in scenario packages; a run reads the variables
+        through conf/map/nishishinjuku.yaml, composed after the scenario.
+        """
         monkeypatch.setenv("NISHISHINJUKU_LANELET2_PATH", "/maps/n.osm")
         monkeypatch.setenv("NISHISHINJUKU_XODR_PATH", "/maps/n.xodr")
         document = make()
-        assert document.map.lanelet2_path == "/maps/n.osm"
-        assert document.map.xodr_path == "/maps/n.xodr"
+        assert document.map.lanelet2_path == "data/nishishinjuku.osm"
+        assert document.map.xodr_path == "data/nishishinjuku_carla.xodr"
 
 
 class TestNodeIds:
