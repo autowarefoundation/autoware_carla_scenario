@@ -42,9 +42,14 @@ from ..authoring.models import (
     SpawnSpec,
     condition_refs,
 )
+from ..maps import MapPaths
 from . import map_preview
 
-__all__ = ["MapPoint", "MapView", "build_map_view"]
+__all__ = ["MapAreaView", "MapPoint", "MapView", "build_map_view"]
+
+#: The builder an area card assembles its area with: a condition whose spec
+#: builds one is drawn as an area, whatever its type.
+_AREA_BUILDER = "..conditions:map_area_from_fields"
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,23 @@ class MapPoint:
         return self.lanelet_id > 0
 
 
+@dataclass(frozen=True)
+class MapAreaView:
+    """One area a condition measures to, as the map outlines it.
+
+    Attributes:
+        owner_id: The condition, which the inspector opens when it is clicked.
+        entity_id: The actor measured, for the colour, or ``None``.
+        title: The card's title ("Distance to an area").
+        preview: What it matches on the map.
+    """
+
+    owner_id: str
+    entity_id: Optional[str]
+    title: str
+    preview: map_preview.AreaPreview
+
+
 @dataclass
 class MapView:
     """The scenario as places on its map, with one search pattern bound.
@@ -121,6 +143,7 @@ class MapView:
     dropped: str = ""
     has_map: bool = False
     map_hint: str = ""
+    areas: list[MapAreaView] = field(default_factory=list)
 
     @property
     def highlight_ids(self) -> list[int]:
@@ -133,7 +156,16 @@ class MapView:
         for point in self.points:
             if point.placed and point.lanelet_id not in seen:
                 seen.append(point.lanelet_id)
+        for area in self.areas:
+            for lanelet_id in area.preview.lanelet_ids:
+                if lanelet_id not in seen:
+                    seen.append(lanelet_id)
         return seen
+
+    @property
+    def areas_unmatched(self) -> bool:
+        """Whether an area waits on the map being parsed to be outlined."""
+        return any(not area.preview.map_loaded for area in self.areas)
 
     @property
     def searching(self) -> bool:
@@ -296,4 +328,36 @@ def build_map_view(
                 bound=(bound and not view.dropped) or derived is not None,
             )
         )
+    view.areas = _areas(document, paths, load_map=load_map)
     return view
+
+
+def _areas(
+    document: ScenarioDocument,
+    paths: MapPaths,
+    *,
+    load_map: bool,
+) -> list[MapAreaView]:
+    """Every area a condition measures to, matched on the map when it is
+    parsed (or *load_map* asks for it)."""
+    from ..authoring.registry import get_condition_spec  # noqa: PLC0415
+
+    areas: list[MapAreaView] = []
+    for root in document.condition_roots():
+        for node in root.walk():
+            spec = get_condition_spec(node.type)
+            if spec is None or not any(b.target == _AREA_BUILDER for b in spec.builds):
+                continue
+            preview = map_preview.evaluate_area(
+                document, dict(node.params), load_map=load_map, paths=paths
+            )
+            refs = condition_refs(node, "entity")
+            areas.append(
+                MapAreaView(
+                    owner_id=node.id,
+                    entity_id=refs[0] if refs else None,
+                    title=spec.title,
+                    preview=preview,
+                )
+            )
+    return areas

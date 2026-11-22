@@ -378,6 +378,11 @@ class MapManager:
     def road_network(self) -> RoadNetwork:
         raise NotImplementedError()
 
+    # The OpenDRIVE file it was initialised with.
+    @property
+    def xodr_path(self) -> Path:
+        raise NotImplementedError()
+
     @property
     def mgrs_offset(self) -> Tuple[float, float]:
         raise NotImplementedError()

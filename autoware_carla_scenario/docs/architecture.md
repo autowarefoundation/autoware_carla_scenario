@@ -505,6 +505,7 @@ classDiagram
     class EntityLanePositionCondition
     class EntityDistanceCondition
     class EntityPositionDistanceCondition
+    class EntityAreaDistanceCondition
     class TimeToCollisionCondition
     class TimeHeadwayCondition
     class RelativeSpeedCondition
@@ -543,6 +544,7 @@ classDiagram
     CompositionCondition <|-- EntityLanePositionCondition
     CompositionCondition <|-- EntityDistanceCondition
     CompositionCondition <|-- EntityPositionDistanceCondition
+    CompositionCondition <|-- EntityAreaDistanceCondition
     CompositionCondition <|-- TimeToCollisionCondition
     CompositionCondition <|-- TimeHeadwayCondition
     CompositionCondition <|-- RelativeSpeedCondition
@@ -570,7 +572,7 @@ classDiagram
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
 | **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition`, `EntityCountCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, a place clear of road users, and how many road users of a kind are where |
 | **Position** | `EntityLanePositionCondition`, `EntityLaneOfCondition`, `WaypointCondition`, `RouteProgressCondition` | Road/lane position (a named lane, or the lane of a position), no road ahead within a distance (`WaypointCheckType.IS_EMPTY`), distance along the route |
-| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `EntityAreaDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity, to a place on the map, or from an entity's body to an area of the map chosen by its ground (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition`, `TurnIndicatorCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go, turn indicators |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Actions** | `ActionStateCondition`, `TrajectoryTimeCondition`, `LaneChangeSettledCondition` | Another action's lifecycle state, a trajectory's clock, a lane change settled |

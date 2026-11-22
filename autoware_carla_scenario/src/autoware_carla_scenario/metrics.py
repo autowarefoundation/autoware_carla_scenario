@@ -69,6 +69,14 @@ from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
 from .failure import FailureCategory
 from .utils.clearance import HIDDEN_BELOW_M, actor_vertical_span, level_gap
+from .utils.polygon import (
+    Box,
+    Point,
+    cross,
+    ground_box,
+    point_segment_distance,
+    segments_cross,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -288,11 +296,6 @@ _OFFROAD = 8
 _ANY_COLLISION = _FRONT | _REAR | _LATERAL
 _AT_FAULT = _FRONT | _LATERAL
 
-#: A point on the ground, ``(x, y)`` in CARLA's world frame.
-Point = tuple[float, float]
-#: An oriented box on the ground: its four corners, front left, front right,
-#: rear right, rear left.
-Box = list[Point]
 #: A point on a lane's centre line: ``(x, y, z, yaw, half_width)``, the yaw
 #: in degrees along the lane's direction of travel, the half width in metres.
 _LaneSample = tuple[float, float, float, float, float]
@@ -329,51 +332,6 @@ class Metric:
 # ---------------------------------------------------------------------------
 
 
-def _box_of(actor: "carla.Actor", transform: "carla.Transform") -> Box:
-    """*actor*'s bounding box on the ground, in the world frame, *transform*
-    being where the actor is."""
-    heading = math.radians(transform.rotation.yaw)
-    yaw = heading
-    extent_x, extent_y = 0.0, 0.0
-    offset_x, offset_y = 0.0, 0.0
-    # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
-    try:
-        box = actor.bounding_box
-        extent_x, extent_y = float(box.extent.x), float(box.extent.y)
-        offset_x, offset_y = float(box.location.x), float(box.location.y)
-        yaw += math.radians(box.rotation.yaw)
-    except AttributeError:
-        pass
-    # CARLA's frame is left-handed: +y is to the right of +x.
-    forward = (math.cos(yaw), math.sin(yaw))
-    right = (-forward[1], forward[0])
-    centre = (
-        transform.location.x
-        + offset_x * math.cos(heading)
-        - offset_y * math.sin(heading),
-        transform.location.y
-        + offset_x * math.sin(heading)
-        + offset_y * math.cos(heading),
-    )
-
-    def corner(along: float, across: float) -> Point:
-        return (
-            centre[0] + along * forward[0] + across * right[0],
-            centre[1] + along * forward[1] + across * right[1],
-        )
-
-    return [
-        corner(extent_x, -extent_y),
-        corner(extent_x, extent_y),
-        corner(-extent_x, extent_y),
-        corner(-extent_x, -extent_y),
-    ]
-
-
-def _cross(o: Point, a: Point, b: Point) -> float:
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
 def _inside(point: Point, box: Box) -> bool:
     """Whether *point* is in the convex *box* or on its edge.
 
@@ -383,7 +341,7 @@ def _inside(point: Point, box: Box) -> bool:
     """
     sign = 0.0
     for i in range(len(box)):
-        side = _cross(box[i], box[(i + 1) % len(box)], point)
+        side = cross(box[i], box[(i + 1) % len(box)], point)
         if abs(side) <= 1e-12:
             continue
         if sign == 0.0:
@@ -394,34 +352,10 @@ def _inside(point: Point, box: Box) -> bool:
         # Every side is in line with the point: the box is a point or a
         # segment (or the point is a corner of a box that is); on it or not.
         for i in range(len(box)):
-            if _point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
+            if point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
                 return True
         return False
     return True
-
-
-def _point_segment_distance(p: Point, a: Point, b: Point) -> float:
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    length2 = dx * dx + dy * dy
-    t = 0.0
-    if length2 > 0.0:
-        t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2))
-    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
-
-
-def _segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
-    """Whether segment *ab* meets segment *cd*, touching included."""
-    if (
-        _cross(c, d, a) * _cross(c, d, b) < 0.0
-        and _cross(a, b, c) * _cross(a, b, d) < 0.0
-    ):
-        return True
-    return (
-        _point_segment_distance(a, c, d) <= 1e-9
-        or _point_segment_distance(b, c, d) <= 1e-9
-        or _point_segment_distance(c, a, b) <= 1e-9
-        or _point_segment_distance(d, a, b) <= 1e-9
-    )
 
 
 def _edges(box: Box) -> list[tuple[Point, Point]]:
@@ -432,7 +366,7 @@ def _segment_meets_box(a: Point, b: Point, box: Box) -> bool:
     if _inside(a, box) or _inside(b, box):
         return True
     for c, d in _edges(box):
-        if _segments_cross(a, b, c, d):
+        if segments_cross(a, b, c, d):
             return True
     return False
 
@@ -453,10 +387,10 @@ def _box_distance(one: Box, other: Box) -> float:
     best = math.inf
     for p in one:
         for a, b in other_edges:
-            best = min(best, _point_segment_distance(p, a, b))
+            best = min(best, point_segment_distance(p, a, b))
     for p in other:
         for a, b in one_edges:
-            best = min(best, _point_segment_distance(p, a, b))
+            best = min(best, point_segment_distance(p, a, b))
     return best
 
 
@@ -644,7 +578,7 @@ def _read_frame(world: "carla.World") -> _Frame:
         # A road user parked under the map (hidden) is out of the scene.
         if placed.location.z < HIDDEN_BELOW_M:
             continue
-        others.append(_box_of(actor, placed))
+        others.append(ground_box(actor, placed))
         # One on another level of road -- on a bridge over the ego, in an
         # underpass beneath it -- may overlap the ego's box on the ground, but
         # is as far from it as the height between them.
@@ -652,7 +586,7 @@ def _read_frame(world: "carla.World") -> _Frame:
     return _Frame(
         transform.rotation.yaw,
         float(transform.location.z),
-        _box_of(ego, transform),
+        ground_box(ego, transform),
         others,
         others_gap,
     )
@@ -1037,7 +971,7 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         try:
             transform = ego.get_transform()
             waypoint = _driving_waypoint(
-                world, _centre(_box_of(ego, transform)), float(transform.location.z)
+                world, _centre(ground_box(ego, transform)), float(transform.location.z)
             )
         except Exception:
             waypoint = None

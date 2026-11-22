@@ -3950,6 +3950,140 @@ register_condition_spec(
     )
 )
 
+#: The grounds of a Distance to an area card, as :class:`~..conditions.AreaGround`
+#: names them: lanelets by subtype first, then the polygon layer's types.
+_AREA_GROUNDS = (
+    SelectOption("CROSSWALK", "Crosswalks"),
+    SelectOption("WALKWAY", "Walkways"),
+    SelectOption("ROAD_SHOULDER", "Road shoulders"),
+    SelectOption("ROAD", "Roads"),
+    SelectOption("JUNCTION", "Lanes through a junction"),
+    SelectOption("LANELET", "Any lanelet (pick or filter)"),
+    SelectOption("INTERSECTION_AREA", "Intersection areas (polygon)"),
+    SelectOption("DETECTION_AREA", "Detection areas (polygon)"),
+    SelectOption("NO_STOPPING_AREA", "No-stopping areas (polygon)"),
+    SelectOption("NO_PARKING_AREA", "No-parking areas (polygon)"),
+    SelectOption("PARKING_LOT", "Parking lots (polygon)"),
+    SelectOption("POLYGON", "Any polygon (filter)"),
+    SelectOption("SURFACE_RAISED", "Raised road surface (OpenCRG)"),
+    SelectOption("SURFACE_GROOVED", "Grooved road surface (OpenCRG)"),
+    SelectOption("SURFACE_RELIEF", "Raised or grooved road surface (OpenCRG)"),
+)
+
+register_condition_spec(
+    ConditionSpec(
+        type_id="area_distance",
+        title="Distance to an area",
+        category="Relative",
+        builder="build_area_distance_condition",
+        target="..conditions:EntityAreaDistanceCondition",
+        argmap=(("entity", "entity_name"), ("distance", "value")),
+        builds=(
+            BuiltArgument(
+                kwarg="area",
+                target="..conditions:map_area_from_fields",
+                parts=(
+                    BuiltPart(
+                        args=(
+                            ("ground", "ground"),
+                            ("lanelet_ids", "lanelet_ids"),
+                            ("attributes", "attributes"),
+                            ("relief_m", "relief_m"),
+                        )
+                    ),
+                ),
+            ),
+        ),
+        visual=ConditionVisual(
+            metric="Distance to area",
+            subject="entity",
+            target="ground",
+            target_prefix="Area",
+            rule="rule",
+            value="distance",
+            unit="m",
+            details=("lanelet_ids", "attributes", "relief_m"),
+        ),
+        fields=(
+            _entity_field("entity", "Subject"),
+            FieldSpec(
+                name="ground",
+                label="Ground",
+                kind="select",
+                default="CROSSWALK",
+                options=_AREA_GROUNDS,
+                help=(
+                    "What the area is: lanelets by their subtype, the lanes "
+                    "through a junction (tagged turn_direction), polygons "
+                    "of the map's polygon layer by their type, or the parts of "
+                    "the roads' surface raised or grooved past a threshold, "
+                    "from the OpenDRIVE map's OpenCRG grids."
+                ),
+            ),
+            FieldSpec(
+                name="lanelet_ids",
+                label="Only these lanelets",
+                kind="lanelet_list",
+                default=[],
+                required=False,
+                help=(
+                    "Narrows lanelet ground to the lanelets picked, each of "
+                    "which must be of the ground.  Empty: every one on the "
+                    "map.  Not for polygons."
+                ),
+            ),
+            FieldSpec(
+                name="attributes",
+                label="Attributes",
+                kind="text",
+                default="",
+                required=False,
+                help=(
+                    "key=value tags every element must have, apart by commas "
+                    "-- turn_direction=left, location=urban; a bare key asks "
+                    "only that it is there.  Empty: no further filter.  Not "
+                    "for the road surface."
+                ),
+            ),
+            FieldSpec(
+                name="relief_m",
+                label="Surface counts from",
+                kind="number",
+                default=None,
+                unit="m",
+                required=False,
+                exclusive_minimum=0.0,
+                help=(
+                    "For the road surface: how far above (raised) or below "
+                    "(grooved) its design the surface has to stand to count.  "
+                    "Empty: 0.01 m."
+                ),
+            ),
+            _rule_field(),
+            FieldSpec(
+                name="distance",
+                label="Distance",
+                kind="number",
+                default=0.5,
+                unit="m",
+                minimum=0.0,
+                help=(
+                    "From the subject's body (its bounding box) to the nearest "
+                    "outline of the area, on the ground: 0 once it is over it."
+                ),
+            ),
+            _tolerance_field("m", "0.05 m"),
+        ),
+        description=(
+            "How near an entity's body comes to an area of the map chosen by "
+            "its ground -- a crosswalk, the lanes through a junction, an "
+            "intersection area -- measured to the nearest outline, and the "
+            "closest it came, which the run's result keeps whether or not "
+            "the card fires."
+        ),
+    )
+)
+
 register_condition_spec(
     ConditionSpec(
         type_id="ttc",

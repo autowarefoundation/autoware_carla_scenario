@@ -110,6 +110,43 @@ A label reads away from its dot, except on the right half of the map, where it
 reads back towards the middle: that edge is also where the viewer keeps its own
 zoom buttons, and a label running under them is a label nobody can read.
 
+### Areas: ground chosen by what it is
+
+A **Distance to an area** card (`area_distance`, `EntityAreaDistanceCondition`)
+measures from an entity's body to an *area*. The area is not drawn by hand. It
+is chosen by what the ground is:
+
+| Field | What it chooses |
+| --- | --- |
+| Ground | Lanelets by subtype (crosswalks, walkways, road shoulders, roads), the lanes through a junction (tagged `turn_direction`), any lanelet, polygons of the map's polygon layer by type (Autoware's intersection, detection, no-stopping and no-parking areas, parking lots, any polygon), or the raised or grooved parts of the roads' surface, from the OpenDRIVE map's OpenCRG grids |
+| Only these lanelets | Narrows lanelet ground to lanelets picked on the map, which must each be of the ground. Not for polygons |
+| Attributes | `key=value` tags every element must have, apart by commas: `turn_direction=left`, `location=urban`. A bare key asks only that the tag is there. Not for the road surface |
+| Surface counts from | For the road surface: how far above or below its design the surface has to stand to count. Empty: 0.01 m |
+
+The places panel outlines an area **whole** rather than pinning it: every
+lanelet it matches is outlined, and it is listed under the places with how many
+lanelets that is. A pin per crosswalk of a city would bury the places above.
+The viewer outlines lanelets only, so polygons of the polygon layer are counted
+and not drawn, and so are the raised and grooved parts of the road surface.
+Those come from the OpenDRIVE map, not the Lanelet2 one. They are counted on
+every render, without parsing the Lanelet2 map, and any OpenCRG grid that
+cannot be read is listed under the row. The match uses the framework's own matcher
+(`conditions.map_area.area_shapes`), so the outline is the ground the run
+measures to. Matching waits on the map being parsed, like binding a search
+pattern: **Outline areas** asks for it.
+
+Some mistakes only the map can show: a picked lanelet of another ground or
+missing from the map, or a ground the map has none of (a parking lot on a map
+with none). The panel says so on the area's row. The validator cannot see the
+map and accepts such a card. The run then says it once as a warning, and the
+condition never holds, with the problem in its details. The validator does
+refuse what no map could hold: picked lanelets for a ground of polygons, and
+an attribute written without its key or value.
+
+The run's result keeps the closest the entity came (`closest_m`, `closest_at_s`,
+and which lanelet or polygon it was nearest) in the card's details, whether or
+not the card fired.
+
 ### An abstract scenario draws one bound pattern
 
 A scenario whose lanelet is a constraint search does not name a place: it names
@@ -856,7 +893,7 @@ FieldSpec(
 ### "=" compares within a tolerance
 
 A card that measures a continuous quantity -- Speed, Acceleration, Relative
-speed, Distance, Distance to a place, TTC, TTC to a place, Time headway, Route
+speed, Distance, Distance to a place, Distance to an area, TTC, TTC to a place, Time headway, Route
 progress, Metric -- offers `=` among its predicates, and a measured value
 practically never lands exactly on a threshold. Each of these cards has an
 optional **Tolerance (=)** field, in the card's own unit: `=` holds while the

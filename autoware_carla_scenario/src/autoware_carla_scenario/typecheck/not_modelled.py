@@ -195,6 +195,10 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "a scenario document's way to an EntityFilter (its generated "
             "builder); a scenario builds the EntityFilter itself"
         ),
+        "map_area_from_fields": (
+            "a scenario document's way to a MapArea (its generated "
+            "builder); a scenario builds the MapArea itself"
+        ),
     },
     f"{_PACKAGE}.constants": {
         "tick_multiple": (
