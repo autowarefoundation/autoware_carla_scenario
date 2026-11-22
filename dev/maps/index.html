@@ -2838,6 +2838,17 @@ moves lands at a <em>new path</em> rather than replacing the bytes under an old 
 Anything holding a parsed map keyed on its path therefore notices.</p>
 <p>A machine that cannot reach the remote falls back to the commit that ref last
 resolved to, so an offline run still works exactly as it did before.</p>
+<p>The OpenDRIVE roads pyxodr builds from a map (some 15 seconds of every run on
+a large map) are kept in the same root too, under <code>.derived/road_network/</code>,
+keyed on the file's content. Reading one runs code, so an entry is read only
+if both it and that directory are yours and neither your group nor others can
+write to them; any other is rebuilt, with a warning, and is never loaded. A
+<code>road_network/</code> of yours that your group can write to (made under a umask of
+<code>002</code>) is closed to it the next time the roads are stored, so it costs one
+rebuild. Where a root is shared with a group on purpose and <code>road_network/</code>
+is another user's, your roads go to <code>.derived/road_network-&lt;uid&gt;/</code> beside it,
+so each user caches their own; the other directories of the root are shared
+as before.</p>
 <h2 id="pinning-and-why-it-matters">Pinning, and why it matters<a class="headerlink" href="#pinning-and-why-it-matters" title="Permanent link">&para;</a></h2>
 <p>A source naming a branch means "whatever is on that branch today" -- and, since
 the branch is re-resolved on every fetch, it means it literally. Two runs of the
@@ -3052,7 +3063,7 @@ without one. A map whose CARLA assets need it installed is run with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 05:07:42 UTC"><span class="timeago" datetime="2026-11-21T05:07:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 05:07:42 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 10:11:44 UTC"><span class="timeago" datetime="2026-11-22T10:11:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 10:11:44 UTC">2026-11-22</span>
   </span>
 
     

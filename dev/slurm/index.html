@@ -2867,7 +2867,7 @@ command line (<code>launcher.mem=12G</code>), or in a config.</p>
 <tr>
 <td><code>port_lock_dir</code></td>
 <td><code>null</code></td>
-<td>where the slots' locks are; <code>null</code>: <code>/dev/shm/acs-slurm-ports-&lt;uid&gt;</code> (per user, so slots are exclusive among your own tasks only), else <code>/tmp</code>; users sharing nodes set one group directory (<a href="#ports">Ports</a>)</td>
+<td>where the slots' locks are; <code>null</code>: <code>/dev/shm/acs-slurm-ports-&lt;uid&gt;</code> (per user, so slots are exclusive among your own tasks only), else <code>/tmp/acs-slurm-ports-&lt;uid&gt;</code>, each used only if private; users sharing nodes set one group directory (<a href="#ports">Ports</a>)</td>
 </tr>
 </tbody>
 </table>
@@ -3057,12 +3057,11 @@ using the same lock directory holds it (an exclusive lock,
 task's process does) and none of its ports is bound; else the next. The lock
 directory must be one every job on the node sees, which <code>/tmp</code> is not where
 SLURM gives each job a private one (<code>job_container/tmpfs</code>): it is
-<code>/dev/shm/acs-slurm-ports-&lt;uid&gt;</code> (or <code>/tmp</code> where that cannot be made), or
-<code>launcher.port_lock_dir</code>. The default range, 20000-29999, is below Linux's
+<code>/dev/shm/acs-slurm-ports-&lt;uid&gt;</code> (or <code>/tmp/acs-slurm-ports-&lt;uid&gt;</code> where that
+cannot be made), or <code>launcher.port_lock_dir</code>. The default range, 20000-29999, is below Linux's
 ephemeral ports.</p>
 <p>The default lock directory is per user, so slots and <a href="#ros-domains">ROS domains</a>
-are exclusive among <strong>your own</strong> tasks only (unless <code>/dev/shm</code> cannot be
-used and it falls back to <code>/tmp</code>, which every user shares). Another user's
+are exclusive among <strong>your own</strong> tasks only. Another user's
 task on the same node may take the same slot: the check that none of its ports is bound stops
 that only once the other task's CARLA has bound them, tens of seconds after
 it took the slot. Users who share nodes set <code>launcher.port_lock_dir</code> to one
@@ -3076,6 +3075,15 @@ leaves them readable by the group (<code>022</code>, <code>002</code> or <code>0
 world-writable directory: anyone on the node could then create or hold the
 lock files and keep your tasks off every slot. That is also why the default
 is not shared.</p>
+<p>For the same reason a default directory is used only if it is private: a
+real directory (not a symlink) that you own and that neither your group nor
+others can write to. One another user made first, or one open to writing, is
+passed over with a warning for <code>/tmp/acs-slurm-ports-&lt;uid&gt;</code>, checked the same
+way; if that is not private either, the task stops with an error naming both.
+Have the node's administrator remove a directory another user made (<code>chmod
+go-w</code> one of your own), or set <code>launcher.port_lock_dir</code>. A
+configured <code>port_lock_dir</code> is taken as it is, as it may be shared on purpose.
+Lock files are never opened through a symlink.</p>
 <p>The TrafficManager's port is always the slot's, whatever the config says: the traffic
 groups interpolate the backend's own (<code>traffic.options.port</code>, sumo's
 <code>traffic.options.tm_port</code>) from <code>traffic_manager.port</code>, and one set outright
@@ -3211,7 +3219,7 @@ another's <code>auto</code> build uses it rather than build again.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 08:42:11 UTC"><span class="timeago" datetime="2026-11-22T08:42:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 08:42:11 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 10:11:44 UTC"><span class="timeago" datetime="2026-11-22T10:11:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 10:11:44 UTC">2026-11-22</span>
   </span>
 
     
