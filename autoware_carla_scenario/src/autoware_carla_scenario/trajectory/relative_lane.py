@@ -52,6 +52,11 @@ _CANDIDATES = 8
 _ON_TOLERANCE_M = 1e-3
 #: Arc lengths closer than this (m) to a lanelet's end are at its end.
 _EPSILON_M = 1e-9
+#: Arc lengths closer than this (m) to a centreline vertex are at the vertex.
+#: Lanelet2 sums a centreline's segments in its own order, so the ``s`` that
+#: ``toArcCoordinates`` gives for a point snapped to a vertex can fall an ulp
+#: or so short of the sum :func:`_heading_at` builds.
+_VERTEX_TOLERANCE_M = 1e-9
 #: How many lanelets a single ``ds`` may run through before it is taken to be
 #: going round a loop with no end.
 _MAX_HOPS = 10_000
@@ -71,13 +76,26 @@ def _length(lanelet: Union[ConstLanelet, Lanelet]) -> float:
 
 
 def _heading_at(points: list[tuple[float, float]], s: float) -> float:
-    """The centreline's direction (rad) at arc length *s*."""
+    """The centreline's direction (rad) at arc length *s*.
+
+    A vertex belongs to the segment that *starts* there, as in
+    :mod:`~autoware_carla_scenario.coordinate.transform`'s ``_interpolate_at_s``
+    and ``_heading_at_s``, up to :data:`_VERTEX_TOLERANCE_M`; at the last
+    point, or past it, the last segment's heading.  Zero-length segments have
+    no direction and are skipped.  A caller after the segment arriving at a
+    vertex asks a little before it (``s - 1e-6``).
+    """
     travelled = 0.0
+    last: Optional[float] = None
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         span = math.hypot(x1 - x0, y1 - y0)
-        if span > 0.0 and travelled + span >= s:
-            return math.atan2(y1 - y0, x1 - x0)
+        if span > 0.0:
+            last = math.atan2(y1 - y0, x1 - x0)
+            if travelled + span > s + _VERTEX_TOLERANCE_M:
+                return last
         travelled += span
+    if last is not None:
+        return last
     (x0, y0), (x1, y1) = points[-2], points[-1]
     return math.atan2(y1 - y0, x1 - x0)
 

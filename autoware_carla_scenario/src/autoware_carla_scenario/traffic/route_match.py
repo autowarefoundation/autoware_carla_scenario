@@ -37,6 +37,11 @@ _CANDIDATES = 6
 _LATERAL_SCALE_M = 1.0
 #: Heading error (rad) that costs as much as one unit.
 _HEADING_SCALE_RAD = 0.5
+#: Arc lengths closer than this (m) to a centreline vertex are at the vertex
+#: (Lanelet2 and :func:`_heading_at` sum a centreline's segments differently).
+_VERTEX_TOLERANCE_M = 1e-9
+#: How far (m) before *s* the segment arriving at a vertex is read.
+_ARRIVING_M = 1e-6
 #: What a transition costs, by how it is driven.
 _FOLLOW_COST = 0.0
 _LANE_CHANGE_COST = 2.0
@@ -166,7 +171,7 @@ def _candidates(
         arc = lanelet2.geometry.toArcCoordinates(centre, point)
         length = lanelet2.geometry.length(centre)
         s = min(max(float(arc.length), 0.0), float(length))
-        error = normalize_angle_rad(_heading_at(centre, s) - heading)
+        error = _heading_error(centre, s, heading)
         if abs(error) > math.radians(MATCH_HEADING_DEG):
             continue
         cost = (float(arc.distance) / _LATERAL_SCALE_M) ** 2 + (
@@ -230,12 +235,36 @@ def _length(lanelet: "lanelet2.core.ConstLanelet", lengths: dict[int, float]) ->
 
 
 def _heading_at(centre: "lanelet2.core.ConstLineString2d", s: float) -> float:
-    """The heading (rad) of polyline *centre* at *s* metres along it."""
+    """The heading (rad) of polyline *centre* at *s* metres along it.
+
+    A vertex belongs to the segment that starts there, as in
+    ``trajectory.relative_lane._heading_at`` and ``coordinate.transform``.
+    """
     points = [(p.x, p.y) for p in centre]
     travelled = 0.0
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         step = math.hypot(x1 - x0, y1 - y0)
-        if travelled + step >= s or (x1, y1) == points[-1]:
+        if travelled + step > s + _VERTEX_TOLERANCE_M or (x1, y1) == points[-1]:
             return math.atan2(y1 - y0, x1 - x0)
         travelled += step
     return 0.0
+
+
+def _heading_error(
+    centre: "lanelet2.core.ConstLineString2d", s: float, heading: float
+) -> float:
+    """How far (rad, signed) *heading* runs off polyline *centre* at *s*.
+
+    At an interior vertex the lane runs both its segments' ways, and every
+    point in the wedge outside a bend projects onto that vertex: a track
+    swinging wide through the wedge turns from the arriving segment's heading
+    to the leaving one's while it is there.  Measuring it against either
+    segment alone would count the whole bend against it over half the wedge,
+    so the segment nearer *heading* is measured against.  Off a vertex both
+    are the same segment.
+    """
+    leaving = normalize_angle_rad(_heading_at(centre, s) - heading)
+    arriving = normalize_angle_rad(
+        _heading_at(centre, max(0.0, s - _ARRIVING_M)) - heading
+    )
+    return leaving if abs(leaving) <= abs(arriving) else arriving
