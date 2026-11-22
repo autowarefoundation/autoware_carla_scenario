@@ -24,7 +24,7 @@
       <form hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
         <input type="hidden" name="selected" value="{{ slot.owner_id }}">
-        <button type="submit" class="ed-del" title="Remove">{{ ic.icon('x', 10) }}</button>
+        <button type="submit" class="ed-del" title="Remove" aria-label="Remove">{{ ic.icon('x', 10) }}</button>
       </form>
     </div>
 
@@ -36,6 +36,7 @@
             hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}"
             hx-trigger="change delay:200ms"
             hx-target="#editor-body" hx-swap="innerHTML">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <input type="hidden" name="selected" value="{{ slot.owner_id }}">
         {{ f.fields(spec.fields, node.params, document, '', draft) }}
       </form>
@@ -77,12 +78,12 @@
           class="ed-add-form">
       <input type="hidden" name="slot" value="{{ slot.key }}">
       <input type="hidden" name="parent_id" value="{{ parent_id }}">
-      <select name="type_id" class="ed-input-xs" style="flex:1">
+      <select name="type_id" class="ed-input-xs" style="flex:1" aria-label="Constraint type">
         {% for spec in constraint_specs() %}
           <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
         {% endfor %}
       </select>
-      <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+      <button type="submit" class="ed-btn-xs" aria-label="Add the constraint" title="Add">{{ ic.icon('plus', 11) }}</button>
     </form>
   </details>
 {% endmacro %}

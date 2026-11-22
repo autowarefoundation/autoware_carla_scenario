@@ -47,7 +47,7 @@
 
 
 {% macro delete_button(draft, node) %}
-  <button class="ed-del" title="Remove this condition"
+  <button class="ed-del" title="Remove this condition" aria-label="Remove this condition"
           hx-post="/draft/{{ draft.id }}/condition/{{ node.id }}/delete"
           hx-target="#editor-body" hx-swap="innerHTML">{{ ic.icon('x', 10) }}</button>
 {% endmacro %}
@@ -66,13 +66,13 @@
     <form hx-post="/draft/{{ draft.id }}/condition" hx-target="#editor-body" hx-swap="innerHTML"
           class="ed-add-form">
       <input type="hidden" name="slot" value="{{ slot }}">
-      <select name="type_id" class="ed-input-xs" style="flex:1">
+      <select name="type_id" class="ed-input-xs" style="flex:1" aria-label="Condition type">
         {% for spec in condition_specs()
                if slot == 'fail' or spec.type_id not in post_run_conditions %}
           <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
         {% endfor %}
       </select>
-      <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+      <button type="submit" class="ed-btn-xs" aria-label="Add the condition" title="Add">{{ ic.icon('plus', 11) }}</button>
     </form>
   </details>
 {% endmacro %}

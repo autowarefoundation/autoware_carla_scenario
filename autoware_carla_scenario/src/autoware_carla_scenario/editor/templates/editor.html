@@ -3,11 +3,7 @@
 {% block title %}{{ document.title }} · Scenario Editor{% endblock %}
 
 {% block crumb %}
-  <div class="ed-crumb">
-    <span class="ed-crumb-sep">/</span>
-    <span class="ed-crumb-name">{{ document.title }}</span>
-    <span class="ed-crumb-id">{{ document.id }}</span>
-  </div>
+  {% include "partials/crumb.html" %}
 {% endblock %}
 
 {% block actions %}

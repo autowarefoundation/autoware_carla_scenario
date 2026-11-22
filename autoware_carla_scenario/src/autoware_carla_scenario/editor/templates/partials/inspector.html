@@ -30,25 +30,26 @@
     {% set spec = get_action_spec(target.type) %}
     <form hx-post="/draft/{{ draft.id }}/action/{{ target.id }}"
           hx-trigger="change delay:200ms, submit" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <p class="ed-kicker">{{ spec.category if spec else 'Action' }}</p>
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
       {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
 
       <div class="ed-field">
-        <label class="ed-label">Label</label>
-        <input type="text" name="title" class="ed-input" value="{{ target.title }}">
+        <label class="ed-labelled"><span class="ed-label">Label</span>
+        <input type="text" name="title" class="ed-input" value="{{ target.title }}"></label>
       </div>
       {# No actor to choose for an environment action: nothing performs it, and
          offering the field would let the card be filed under a vehicle that has
          nothing to do with it. #}
       {% if spec and spec.scope == 'environment' %}
         <div class="ed-field">
-          <label class="ed-label">Acts on</label>
+          <div class="ed-label">Acts on</div>
           <p class="ed-static">{{ ic.icon('globe', 13) }} The environment, not a vehicle</p>
         </div>
       {% else %}
         <div class="ed-field">
-          <label class="ed-label">Actor</label>
+          <label class="ed-labelled"><span class="ed-label">Actor</span>
           <select name="actor" class="ed-input">
             <option value="" {% if not target.actor %}selected{% endif %}>— none —</option>
             {# Only the kinds the card is for (the validator refuses any
@@ -60,14 +61,14 @@
               </option>
               {% endif %}
             {% endfor %}
-          </select>
+          </select></label>
         </div>
       {% endif %}
       {% if spec %}{{ f.fields(spec.fields, target.params, document, '', draft) }}{% endif %}
       {# Options come from the registry, so a phase cannot exist in the IR and
          be missing from the only control that sets it. #}
       <div class="ed-field">
-        <label class="ed-label">Phase</label>
+        <label class="ed-labelled"><span class="ed-label">Phase</span>
         <select name="phase" class="ed-input">
           {% for option in action_phases %}
             {# An action that waits for something cannot move into a phase with
@@ -78,7 +79,7 @@
                     {% if target.phase == option.value %}selected{% endif %}
                     {% if blocked %}disabled{% endif %}>{{ option.label }}{% if blocked %} — remove the trigger first{% endif %}</option>
           {% endfor %}
-        </select>
+        </select></label>
         <p class="ed-help">{{ phase_help.get(target.phase, '') }}</p>
       </div>
       {% if target.type in once_actions %}
@@ -130,6 +131,7 @@
     {% endif %}
     <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}"
           hx-trigger="change delay:200ms, submit" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <p class="ed-kicker">{{ spec.category if spec else 'Predicate' }}</p>
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>
       {% if spec and spec.description %}<p class="ed-help" style="margin-bottom:14px">{{ spec.description }}</p>{% endif %}
@@ -157,6 +159,7 @@
     {% set spec = get_constraint_spec(target.type) %}
     <form hx-post="/draft/{{ draft.id }}/constraint/{{ target.id }}"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <input type="hidden" name="selected" value="{{ constraint_owner or selected }}">
       <p class="ed-kicker">{{ spec.category if spec else 'Constraint' }}</p>
       <h3 class="ed-heading">{{ spec.title if spec else target.type }}</h3>

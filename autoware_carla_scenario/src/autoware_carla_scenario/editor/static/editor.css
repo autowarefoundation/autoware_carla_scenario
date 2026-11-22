@@ -371,6 +371,10 @@ svg { display: block; }
   margin-bottom: 5px;
 }
 .ed-label .unit { color: var(--ink-faint); font-weight: 400; }
+/* A label wrapping its caption and its control, which ties the two together
+   without an id; its parts keep the layout they had side by side. */
+.ed-labelled { display: block; }
+.ed-summary { display: block; margin: 0 0 5px; }
 
 .ed-input,
 .ed-input-sm,

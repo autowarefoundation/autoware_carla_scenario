@@ -59,6 +59,23 @@ def _service(request: Request) -> EditorService:
     return request.app.state.service  # type: ignore[no-any-return]
 
 
+#: The hidden field every inspector form carries: the draft revision it was
+#: rendered from, which the edit is refused against when it is out of date.
+REVISION_FIELD = "draft_revision"
+
+#: The header ``editor.js`` sends with every request: a token naming the page
+#: (one tab's one load of the editor) the request comes from.
+CLIENT_HEADER = "X-Editor-Client"
+
+#: The longest client token kept; anything longer is cut, never refused.
+_MAX_CLIENT = 64
+
+
+def _client(request: Request) -> str:
+    """The page a request came from (:data:`CLIENT_HEADER`), or ``""``."""
+    return request.headers.get(CLIENT_HEADER, "")[:_MAX_CLIENT]
+
+
 def _templates(request: Request) -> Any:
     """Return the app's Jinja environment wrapper."""
     return request.app.state.templates
@@ -141,9 +158,15 @@ def _context(
 
 
 def _body(request: Request, context: dict[str, Any]) -> HTMLResponse:
-    """Render the editor body partial -- the htmx swap target for every edit."""
+    """Render the editor body partial -- the htmx swap target for every edit.
+
+    Marked ``partial``, so it also carries the tab title and the top bar's
+    crumb, which sit outside the body and are swapped in out of band.
+    """
     return _templates(request).TemplateResponse(
-        request=request, name="partials/editor_body.html", context=context
+        request=request,
+        name="partials/editor_body.html",
+        context={**context, "partial": True},
     )
 
 
@@ -179,6 +202,7 @@ def _apply(
     draft_id: str,
     selected: str,
     mutate: Any,
+    form: Optional[Mapping[str, Any]] = None,
 ) -> HTMLResponse:
     """Run *mutate* against the draft, persist it, and re-render the body.
 
@@ -190,11 +214,19 @@ def _apply(
     :meth:`~EditorService.editing`, so two edits of one draft served at once
     cannot each save a copy that misses the other.  *mutate* must therefore be
     quick; a slow operation goes through :func:`_map_action` instead.
+
+    A *form* that carries :data:`REVISION_FIELD` is an inspector form, which
+    posts every field it shows: one rendered from a draft that has been changed
+    elsewhere since is refused with :class:`StaleDraftError` (HTTP 409) before
+    *mutate* runs, rather than putting back what was changed there (#2345).
     """
     service = _service(request)
+    client = _client(request)
     error = ""
     with service.editing(draft_id):
         draft = service.require_draft(draft_id)
+        if form is not None and REVISION_FIELD in form:
+            service.check_revision(draft, form[REVISION_FIELD], client)
         try:
             result = mutate(draft.document)
         except EditorError as exc:
@@ -207,7 +239,7 @@ def _apply(
             error = describe_validation_error(exc)
             draft = service.require_draft(draft_id)
         else:
-            service.save(draft)
+            service.save(draft, client)
     if error:
         return _body(request, _context(request, draft, selected, error=error))
     focus = result if isinstance(result, str) else selected
@@ -343,10 +375,11 @@ async def _map_action(
     """
     service = _service(request)
     service.require_draft(draft_id)  # An unknown draft is a 404, not a notice.
+    client = _client(request)
 
     def _run() -> Response:
         try:
-            draft, result = service.run_map_operation(draft_id, act)
+            draft, result = service.run_map_operation(draft_id, act, client)
         except (EditorError, ValidationError) as exc:
             message = (
                 describe_validation_error(exc)
@@ -535,6 +568,7 @@ async def update_scenario(request: Request, draft_id: str) -> HTMLResponse:
         draft_id,
         "scenario",
         lambda doc: service.update_scenario(doc, form),
+        form=form,
     )
 
 
@@ -566,6 +600,7 @@ async def update_entity(
         draft_id,
         entity_id,
         lambda doc: service.update_entity(doc, entity_id, form),
+        form=form,
     )
 
 
@@ -617,6 +652,7 @@ async def set_lanelet_binding(request: Request, draft_id: str) -> HTMLResponse:
         draft_id,
         slot_key.rpartition(".")[0],
         lambda doc: service.set_lanelet_binding(doc, slot_key, form),
+        form=form,
     )
 
 
@@ -649,6 +685,7 @@ async def update_constraint(
         draft_id,
         selected,
         lambda doc: service.update_constraint(doc, node_id, form),
+        form=form,
     )
 
 
@@ -700,6 +737,7 @@ async def update_action(
         draft_id,
         action_id,
         lambda doc: service.update_action(doc, action_id, form),
+        form=form,
     )
 
 
@@ -741,6 +779,7 @@ async def move_vertex_condition(
         draft_id,
         action_id,
         lambda doc: service.move_vertex_condition(doc, action_id, index, vertex),
+        form=form,
     )
 
 
@@ -806,6 +845,7 @@ async def update_signal_group(
         draft_id,
         "environment",
         lambda doc: service.update_signal_group(doc, index, form),
+        form=form,
     )
 
 
@@ -844,6 +884,7 @@ async def update_signal_controller(
         draft_id,
         "environment",
         lambda doc: service.update_signal_controller(doc, index, form),
+        form=form,
     )
 
 
@@ -892,6 +933,7 @@ async def update_signal_phase(
         draft_id,
         "environment",
         lambda doc: service.update_signal_phase(doc, index, phase_index, form),
+        form=form,
     )
 
 
@@ -966,6 +1008,7 @@ async def update_condition(
         draft_id,
         node_id,
         lambda doc: service.update_condition(doc, node_id, form),
+        form=form,
     )
 
 
@@ -1098,7 +1141,7 @@ async def save_draft(request: Request, draft_id: str) -> HTMLResponse:
         title = str(form.get("title", "")).strip()
         if title:
             draft.document.title = title
-        service.save(draft)
+        service.save(draft, _client(request))
     return _templates(request).TemplateResponse(
         request=request,
         name="partials/status.html",

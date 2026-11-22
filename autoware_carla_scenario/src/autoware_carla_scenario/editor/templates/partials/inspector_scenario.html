@@ -2,26 +2,27 @@
 {% import "partials/icons.html" as ic %}
 <form hx-post="/draft/{{ draft.id }}/scenario"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <p class="ed-kicker">Scenario</p>
   <h3 class="ed-heading">{{ document.title }}</h3>
 
   <div class="ed-field">
-    <label class="ed-label">Title</label>
-    <input type="text" name="title" class="ed-input" value="{{ document.title }}">
+    <label class="ed-labelled"><span class="ed-label">Title</span>
+    <input type="text" name="title" class="ed-input" value="{{ document.title }}"></label>
   </div>
   <div class="ed-field">
-    <label class="ed-label">Identifier</label>
-    <input type="text" name="scenario_id" class="ed-input mono" value="{{ document.id }}">
+    <label class="ed-labelled"><span class="ed-label">Identifier</span>
+    <input type="text" name="scenario_id" class="ed-input mono" value="{{ document.id }}"></label>
     <p class="ed-help">lower_snake_case. Names the exported package and the Hydra config.</p>
   </div>
   <div class="ed-field">
-    <label class="ed-label">Description</label>
-    <textarea name="description" rows="2" class="ed-input">{{ document.description }}</textarea>
+    <label class="ed-labelled"><span class="ed-label">Description</span>
+    <textarea name="description" rows="2" class="ed-input">{{ document.description }}</textarea></label>
   </div>
   <div class="ed-field">
-    <label class="ed-label">Timeout <span class="unit">(s)</span></label>
+    <label class="ed-labelled"><span class="ed-label">Timeout <span class="unit">(s)</span></span>
     <input type="number" step="any" name="timeout_seconds" class="ed-input"
-           value="{{ document.timeout_seconds }}">
+           value="{{ document.timeout_seconds }}"></label>
   </div>
 </form>
 
@@ -47,11 +48,12 @@
 {% endif %}
 <form hx-post="/draft/{{ draft.id }}/scenario"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <div class="ed-field">
-    <label class="ed-label">Route search <span class="unit">YAML</span></label>
+    <label class="ed-labelled"><span class="ed-label">Route search <span class="unit">YAML</span></span>
     <textarea name="route_yaml" rows="8" class="ed-input mono" spellcheck="false"
               style="font-size:11.5px"
-              placeholder="segments:&#10;  - {kind: lane, length: {min: 30, max: 60}}&#10;  - {kind: junction, turn: left}&#10;  - {kind: lane, length: {max: 40}}">{{ route_yaml(document) }}</textarea>
+              placeholder="segments:&#10;  - {kind: lane, length: {min: 30, max: 60}}&#10;  - {kind: junction, turn: left}&#10;  - {kind: lane, length: {max: 40}}">{{ route_yaml(document) }}</textarea></label>
     <p class="ed-help">
       Segments in driving order: <code>lane</code> (length, lanes_left,
       lanes_right, opposite_lane, shape, stop_line, traffic_light_stop_line) and
@@ -99,6 +101,7 @@
 {% endif %}
 <form hx-post="/draft/{{ draft.id }}/scenario"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <input type="hidden" name="gate_form" value="1">
   <label class="ed-gate-name ed-gate-switch">
     <input type="checkbox" name="gate_enabled" value="1" {% if document.gate %}checked{% endif %}>
@@ -154,14 +157,15 @@
 
 <form hx-post="/draft/{{ draft.id }}/scenario"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <div class="ed-field">
-    <label class="ed-label">CARLA map name</label>
-    <input type="text" name="map_name" class="ed-input" value="{{ document.map.name }}">
+    <label class="ed-labelled"><span class="ed-label">CARLA map name</span>
+    <input type="text" name="map_name" class="ed-input" value="{{ document.map.name }}"></label>
     <p class="ed-help">The world CARLA loads. Taken from the map's directory when one is downloaded.</p>
   </div>
   <div class="ed-field">
-    <label class="ed-label">Hydra map group</label>
-    <input type="text" name="map_group" class="ed-input mono" value="{{ document.map.group }}">
+    <label class="ed-labelled"><span class="ed-label">Hydra map group</span>
+    <input type="text" name="map_group" class="ed-input mono" value="{{ document.map.group }}"></label>
     {% if run_map_group(document) != document.map.group %}
     <p class="ed-help">
       Not used: this scenario names its map by source or directory, so its
@@ -173,10 +177,10 @@
     {% endif %}
   </div>
   <div class="ed-field">
-    <label class="ed-label">Map directory <span class="unit">(local)</span></label>
+    <label class="ed-labelled"><span class="ed-label">Map directory <span class="unit">(local)</span></span>
     <input type="text" name="map_directory" class="ed-input mono" style="font-size:11.5px"
            value="{{ document.map.directory or '' }}"
-           placeholder="/path/to/autoware_maps/Town10HD_Opt">
+           placeholder="/path/to/autoware_maps/Town10HD_Opt"></label>
     <p class="ed-help">
       A map on this machine, read in place: its <code>.osm</code>,
       <code>map_projector_info.yaml</code> and any <code>.xodr</code>.
@@ -184,22 +188,22 @@
     </p>
   </div>
   <div class="ed-field">
-    <label class="ed-label">
+    <label class="ed-labelled"><span class="ed-label">
       Lanelet2 file (.osm)
       {% if document.map.source or document.map.directory %}<span class="unit">override</span>{% endif %}
-    </label>
+    </span>
     <input type="text" name="map_lanelet2_path" class="ed-input mono" style="font-size:11.5px"
            value="{{ document.map.lanelet2_path or '' }}"
-           placeholder="{{ map_status.lanelet2_path or '' }}">
+           placeholder="{{ map_status.lanelet2_path or '' }}"></label>
   </div>
   <div class="ed-field">
-    <label class="ed-label">
+    <label class="ed-labelled"><span class="ed-label">
       OpenDRIVE file (.xodr)
       {% if document.map.source or document.map.directory %}<span class="unit">override</span>{% endif %}
-    </label>
+    </span>
     <input type="text" name="map_xodr_path" class="ed-input mono" style="font-size:11.5px"
            value="{{ document.map.xodr_path or '' }}"
-           placeholder="{{ map_status.xodr_path or '' }}">
+           placeholder="{{ map_status.xodr_path or '' }}"></label>
     <p class="ed-help">
       {% if document.map.source or document.map.directory %}
         Both are resolved from the map above; set one here only to override it.
@@ -209,7 +213,7 @@
     </p>
   </div>
   <div class="ed-field">
-    <label class="ed-label">Excluded lanelet IDs</label>
+    <label class="ed-label" for="pick-map_no_3d_model_lanelet_ids">Excluded lanelet IDs</label>
     {# The readout; its map is below, outside this form. #}
     {{ f.lanelet_field('map_no_3d_model_lanelet_ids',
                        document.map.no_3d_model_lanelet_ids, draft, many=true) }}

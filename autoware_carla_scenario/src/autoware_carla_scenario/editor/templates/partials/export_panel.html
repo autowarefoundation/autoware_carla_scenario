@@ -18,7 +18,7 @@
         <code class="mono">pip</code> alone &mdash; no uv, git or network
       </div>
     </div>
-    <button class="ed-btn-ghost" onclick="toggleExportPanel()">{{ ic.icon('x', 14) }}</button>
+    <button class="ed-btn-ghost" onclick="toggleExportPanel()" aria-label="Close the export panel" title="Close">{{ ic.icon('x', 14) }}</button>
   </div>
   <form class="ed-panel-body"
         hx-post="/draft/{{ draft.id }}/export"

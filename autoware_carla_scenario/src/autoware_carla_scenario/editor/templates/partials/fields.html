@@ -138,19 +138,19 @@
     {# Rows of data rather than one value: a recording transcribes to hundreds
        of vertices, so they are edited as text, one per line, and the line
        above says what the text adds up to. #}
-    <p class="ed-help mono">{{ trajectory_summary(current) }}</p>
+    <span class="ed-help ed-summary mono">{{ trajectory_summary(current) }}</span>
     <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
               placeholder="x, y[, yaw]  -- one vertex per line">{{ format_vertices(current or []) }}</textarea>
   {% elif spec.kind == 'relative_lane_trajectory' %}
     {# The same text editing as a map-frame trajectory, with the columns of a
        lane-relative vertex. #}
-    <p class="ed-help mono">{{ relative_trajectory_summary(current) }}</p>
+    <span class="ed-help ed-summary mono">{{ relative_trajectory_summary(current) }}</span>
     <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
               placeholder="ds[, offset][, d_lane][, yaw]  -- one vertex per line">{{ format_relative_vertices(current or []) }}</textarea>
   {% elif spec.kind == 'route_trajectory' %}
     {# Vertices placed against the scenario's route: one per line, the kind
        first, then the kind's keys. #}
-    <p class="ed-help mono">{{ route_trajectory_summary(current) }}</p>
+    <span class="ed-help ed-summary mono">{{ route_trajectory_summary(current) }}</span>
     <textarea name="{{ name }}" class="ed-input mono" rows="8" spellcheck="false"
               placeholder="lane ds=10 d_lane=1  -- one vertex per line">{{ format_route_vertices(current or []) }}</textarea>
   {% elif spec.kind == 'record_list' %}
@@ -168,13 +168,13 @@
           <legend class="ed-record-head">
             <span class="mono">{{ loop.index }}</span>
             <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
-                    value="up:{{ loop.index0 }}" title="Move up"
+                    value="up:{{ loop.index0 }}" title="Move up" aria-label="Move up"
                     {% if loop.first %}disabled{% endif %}>↑</button>
             <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
-                    value="down:{{ loop.index0 }}" title="Move down"
+                    value="down:{{ loop.index0 }}" title="Move down" aria-label="Move down"
                     {% if loop.last %}disabled{% endif %}>↓</button>
             <button type="submit" class="ed-btn-xs" name="{{ name }}.__op"
-                    value="delete:{{ loop.index0 }}" title="Remove">{{ ic.icon('trash', 12) }}</button>
+                    value="delete:{{ loop.index0 }}" title="Remove" aria-label="Remove">{{ ic.icon('trash', 12) }}</button>
           </legend>
           {{ fields(spec.item_fields, row, document, row_prefix, draft) }}
         </fieldset>
@@ -283,7 +283,7 @@
             {% if many %}
               <button type="button" class="ed-btn-primary" data-close-picker>Done</button>
             {% endif %}
-            <button type="button" class="ed-btn-ghost" data-close-picker>
+            <button type="button" class="ed-btn-ghost" data-close-picker aria-label="Close the map" title="Close">
               {{ ic.icon('x', 14) }}
             </button>
           </div>
@@ -312,16 +312,33 @@
 {% endmacro %}
 
 
+{# Each control is tied to its label, so a screen reader names it and a click
+   on the label focuses it. By wrapping wherever the control is one element:
+   that needs no id, and an id made from the field's name would repeat -- two
+   constraints of one search both have a `lanelet_ids`. A lanelet's readout
+   is named by its id (`pick-<name>`), as its button sits beside it; a record
+   list is a group of labelled controls, so its heading labels none. #}
 {% macro field(spec, params, document, prefix='', draft=none) %}
   {%- set value = params.get(spec.name, spec.default) -%}
+  {%- set checkbox = spec.kind == 'bool' and not is_nullable_bool(spec) -%}
+  {%- set caption -%}
+    {{ spec.label }}{% if spec.unit %} <span class="unit">({{ spec.unit }})</span>{% endif %}
+  {%- endset -%}
   <div class="ed-field">
-    {%- set checkbox = spec.kind == 'bool' and not is_nullable_bool(spec) -%}
-    {% if not checkbox %}
-      <label class="ed-label">
-        {{ spec.label }}{% if spec.unit %} <span class="unit">({{ spec.unit }})</span>{% endif %}
+    {% if checkbox %}
+      {{ control(spec, value, document, prefix, draft, params) }}
+    {% elif spec.kind in ('lanelet', 'lanelet_list') %}
+      <label class="ed-label" for="pick-{{ prefix ~ spec.name }}">{{ caption }}</label>
+      {{ control(spec, value, document, prefix, draft, params) }}
+    {% elif spec.kind == 'record_list' %}
+      <div class="ed-label">{{ caption }}</div>
+      {{ control(spec, value, document, prefix, draft, params) }}
+    {% else %}
+      <label class="ed-labelled">
+        <span class="ed-label">{{ caption }}</span>
+        {{ control(spec, value, document, prefix, draft, params) }}
       </label>
     {% endif %}
-    {{ control(spec, value, document, prefix, draft, params) }}
     {% if spec.help and not checkbox %}<p class="ed-help">{{ spec.help }}</p>{% endif %}
   </div>
 {% endmacro %}
@@ -489,14 +506,16 @@
   {%- set binding_type = binding.type if binding else default_type -%}
   {%- set spec = get_binding_spec(binding_type) -%}
   <div class="ed-field">
-    <label class="ed-label">{{ label }}</label>
-    <select name="binding_type" class="ed-input">
-      {% for option in binding_specs(produces) %}
-        <option value="{{ option.type_id }}" {% if option.type_id == binding_type %}selected{% endif %}>
-          {{ option.title }}
-        </option>
-      {% endfor %}
-    </select>
+    <label class="ed-labelled">
+      <span class="ed-label">{{ label }}</span>
+      <select name="binding_type" class="ed-input">
+        {% for option in binding_specs(produces) %}
+          <option value="{{ option.type_id }}" {% if option.type_id == binding_type %}selected{% endif %}>
+            {{ option.title }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
     {% if spec and spec.description %}
       <p class="ed-help">{{ spec.description }}</p>
     {% endif %}

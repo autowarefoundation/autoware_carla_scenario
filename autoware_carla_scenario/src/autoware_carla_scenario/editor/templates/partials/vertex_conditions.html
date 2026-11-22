@@ -15,12 +15,13 @@
       <form hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}"
             hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
             class="ed-gate-vertex">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <span>depart vertex</span>
         <input type="number" name="vertex" min="1" step="1" value="{{ gate.vertex }}"
                class="ed-input-xs" aria-label="Vertex" style="width:4.5em">
         <span>{{ 'at' if gate.condition.type == 'trajectory_time' else 'when' }}</span>
       </form>
-      <button class="ed-btn-xs" title="Remove this waypoint condition"
+      <button class="ed-btn-xs" title="Remove this waypoint condition" aria-label="Remove this waypoint condition"
               hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}/delete"
               hx-target="#editor-body" hx-swap="innerHTML">{{ ic.icon('trash', 11) }}</button>
     </div>
@@ -30,7 +31,7 @@
 
 {% macro section(action, draft, selected, document) %}
   <div class="ed-field ed-gates" id="gates-{{ action.id }}">
-    <label class="ed-label">Waypoint conditions</label>
+    <div class="ed-label">Waypoint conditions</div>
     <p class="ed-help">
       What each vertex is departed on: a time on the trajectory's clock
       (<em>Trajectory time</em>) or any other condition -- one per vertex --
@@ -66,12 +67,12 @@
         <input type="hidden" name="slot" value="advance:{{ action.id }}">
         <input type="number" name="vertex" min="1" step="1" value="{{ ns.free }}"
                class="ed-input-xs" aria-label="Vertex" title="Vertex, counted from 1" style="width:4.5em">
-        <select name="type_id" class="ed-input-xs" style="flex:1">
+        <select name="type_id" class="ed-input-xs" style="flex:1" aria-label="Condition type">
           {% for spec in condition_specs() if spec.type_id not in post_run_conditions %}
             <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
           {% endfor %}
         </select>
-        <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+        <button type="submit" class="ed-btn-xs" aria-label="Add the waypoint condition" title="Add">{{ ic.icon('plus', 11) }}</button>
       </form>
     </details>
   </div>

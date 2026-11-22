@@ -170,6 +170,21 @@ def save_document(document: ScenarioDocument, path: str | Path) -> Path:
     return file_path
 
 
+def _revision(value: Any) -> int:
+    """A stored revision, or 0 for a draft written before there was one.
+
+    A hand-edited value that is not a whole number reads as 0 rather than
+    failing the read: the revision only tells saves apart, and the next save
+    numbers the draft afresh from there.
+    """
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class Draft:
     """A scenario document plus the editor's bookkeeping."""
@@ -179,6 +194,11 @@ class Draft:
     created_at: str
     updated_at: str
     document: ScenarioDocument
+    #: How many times the draft has been saved.  ``updated_at`` is stamped to
+    #: the second, so two saves in one second share it; this tells every save
+    #: apart, which is what lets the editor refuse a form rendered from an
+    #: older copy of the draft (#2345).
+    revision: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Return the on-disk representation."""
@@ -187,6 +207,7 @@ class Draft:
             "title": self.title,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "revision": self.revision,
             "document": self.document.to_yaml_dict(),
         }
 
@@ -200,6 +221,7 @@ class Draft:
             created_at=str(raw.get("created_at") or utc_timestamp()),
             updated_at=str(raw.get("updated_at") or utc_timestamp()),
             document=document,
+            revision=_revision(raw.get("revision")),
         )
 
 
@@ -311,8 +333,9 @@ class DraftStore:
         return draft
 
     def save(self, draft: Draft) -> Draft:
-        """Persist *draft*, refreshing its ``updated_at`` stamp."""
+        """Persist *draft*, stamping ``updated_at`` and bumping ``revision``."""
         draft.updated_at = utc_timestamp()
+        draft.revision += 1
         draft.title = draft.document.title or draft.title
         self._write(draft)
         return draft
