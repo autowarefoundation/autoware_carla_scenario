@@ -90,6 +90,18 @@ def encode(message: Mapping[str, Any]) -> bytes:
     return (json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+#: How much of a refused line an error of :mod:`.protocol`'s ``LineReader``
+#: quotes, bytes.
+_PREVIEW_BYTES = 200
+
+
+def _preview(line: bytes) -> str:
+    """The start of *line*, for an error message."""
+    if len(line) > _PREVIEW_BYTES:
+        return f"{line[:_PREVIEW_BYTES]!r}... ({len(line)} bytes)"
+    return repr(line)
+
+
 def _parse_port(text: str, address: str) -> int:
     """The port *text* of *address*: a whole number in 0..65535 (0 picks one)."""
     if not text:

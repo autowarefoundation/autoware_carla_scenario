@@ -87,6 +87,16 @@ def _lock_path(target: Path) -> Path:
     return target.with_name(target.name + ".lock")
 
 
+def _cannot_install(target: Path) -> RuntimeError:
+    """The error of a run that can only check *target* but would have to install."""
+    state = "out of date" if (target / _LAUNCHER).is_file() else "not installed"
+    return RuntimeError(
+        f"CARLA at {target} is {state}, and this run cannot write there "
+        f"({_lock_path(target)} cannot be opened for writing); run scenario-setup "
+        "as a user who can write to it, or pass --dir to install elsewhere"
+    )
+
+
 #: The errors of a lock file that cannot be created or written: a read-only
 #: file system, or a directory of another user's.
 _UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
