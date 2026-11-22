@@ -24,7 +24,7 @@
 # the same scenario are two runs against the same map. Move the pin
 # deliberately, and re-record any lanelet ids the scenarios name:
 #
-#   uv run scenario map=town10hd_opt map.source='...@<other commit>#autoware_maps/Town10HD_Opt'
+#   uv run scenario map=town10hd_opt "map.source='...@<other-commit>#autoware_maps/Town10HD_Opt'"
 #
 # There is no OpenDRIVE in the dataset, and none is wanted: the roads belong to
 # the CARLA town, so the framework reads them back out of CARLA and caches them
