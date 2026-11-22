@@ -1180,6 +1180,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#from-a-wheel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a Wheel
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2528,6 +2539,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#from-a-wheel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a Wheel
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2762,6 +2784,18 @@ as a prebuilt wheel, so <code>uv sync</code> needs no apt packages and no C++
 toolchain on any host, and the CARLA client's prebuilt CPython package
 means no <code>cc</code> either.</p>
 </div>
+<h3 id="from-a-wheel">From a Wheel<a class="headerlink" href="#from-a-wheel" title="Permanent link">&para;</a></h3>
+<p>A wheel installed outside a checkout (<code>pip install</code>, <code>uv pip install</code>) does
+not carry the built-in Nishishinjuku map's files. Its <code>map</code> config falls back
+to <code>data/nishishinjuku.osm</code> and <code>data/nishishinjuku_carla.xodr</code>, resolved
+against the current directory, so they are found only from the repository
+root. Anywhere else, point at the files with <code>NISHISHINJUKU_LANELET2_PATH</code> and
+<code>NISHISHINJUKU_XODR_PATH</code> (see <a href="#environment-configuration">Environment Configuration</a>),
+or pass <code>map.lanelet2_path=</code> and <code>map.xodr_path=</code> on the command line.</p>
+<p>The editor's new scenarios name the same relative files, never the variables'
+values: a scenario document is exported into packages that run on other
+machines. A run on the built-in map still reads the variables, because the
+<code>map</code> group, composed after the scenario, wins over the paths a document names.</p>
 <h2 id="environment-configuration">Environment Configuration<a class="headerlink" href="#environment-configuration" title="Permanent link">&para;</a></h2>
 <p>Configure your environment by exporting the variables consumed by the
 package, or by loading a <code>.env</code> file (the package depends on
@@ -2799,13 +2833,13 @@ trust. The most common variables:</p>
 </tr>
 <tr>
 <td><code>NISHISHINJUKU_XODR_PATH</code></td>
-<td>optional</td>
+<td>outside a checkout</td>
 <td>Override the default OpenDRIVE file resolved in <code>conf/map/nishishinjuku.yaml</code>.</td>
 </tr>
 <tr>
 <td><code>NISHISHINJUKU_LANELET2_PATH</code></td>
-<td>optional</td>
-<td>Override the default Lanelet2 <code>.osm</code> path.</td>
+<td>outside a checkout</td>
+<td>Override the default Lanelet2 <code>.osm</code> path (<code>data/nishishinjuku.osm</code>, relative to the current directory).</td>
 </tr>
 <tr>
 <td><code>VIEWER_BASE_PATH</code>, <code>VIEWER_HOST</code>, <code>VIEWER_PORT</code>, <code>VIEWER_CACHE_DIR</code>, <code>VIEWER_RERUN_WEB_VIEWER</code>, <code>VIEWER_RERUN_MAP_DIR</code></td>
@@ -2892,7 +2926,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 14:37:38 UTC"><span class="timeago" datetime="2026-11-22T14:37:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 14:37:38 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 18:11:24 UTC"><span class="timeago" datetime="2026-11-22T18:11:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 18:11:24 UTC">2026-11-22</span>
   </span>
 
     
