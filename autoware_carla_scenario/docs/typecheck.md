@@ -4503,7 +4503,8 @@ What Codon 0.19 needs that Python does not, beyond
   per set of keywords (`RoutingAction` passes `waypoints=` only when there
   are some, in a call of its own).
 - **`Literal["a", "b"]` is checked as the type of its values** (`str`), an
-  annotation and a module-level alias alike (`authoring.models`' `Tristate`):
+  annotation and a module-level alias alike (`autoware_stack.docker`'s
+  `BuildPolicy`, the type of `DockerAutowareConfig.build`):
   Codon's own `Literal` types a compile-time value of `int`, `bool` or `str`
   only, and the `typing` shim's `Literal` is `str` (its `TYPE_CHECKING` is
   declared with `Static[bool]`, Codon's other name for its `Literal`). A
