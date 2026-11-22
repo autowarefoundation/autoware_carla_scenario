@@ -157,13 +157,15 @@ def _plain(value: Any) -> Any:
 
     A Hydra config's ``DictConfig`` is a mapping, but the ``ListConfig`` and
     ``DictConfig`` values it holds are no JSON values (#2316): they become a
-    ``list`` and a ``dict`` (interpolations resolved), wherever they sit.
-    Anything else is returned as it is.
+    ``list`` and a ``dict`` (interpolations resolved), wherever they sit.  A
+    mandatory value left out (``???``) raises, as reading it does, rather
+    than reach the worker as the string ``"???"``.  Anything else is
+    returned as it is.
     """
     from omegaconf import DictConfig, ListConfig, OmegaConf  # noqa: PLC0415
 
     if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
+        return OmegaConf.to_container(value, resolve=True, throw_on_missing=True)
     if isinstance(value, Mapping):
         return {key: _plain(item) for key, item in value.items()}
     if isinstance(value, list):

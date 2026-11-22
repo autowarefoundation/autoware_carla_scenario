@@ -658,6 +658,23 @@ def test_omegaconf_reach_settings_are_plain() -> None:
     assert settings.metric_periods_s["crime_ttc_s"] == 0.5
 
 
+def test_a_missing_omegaconf_reach_setting_is_refused() -> None:
+    """A mandatory value left out (``???``) raises, as reading the config
+    does, rather than reach the worker as the string ``"???"``."""
+    from omegaconf import MissingMandatoryValue, OmegaConf
+
+    reach = OmegaConf.create({"planning": {"dt": "???"}})
+    with pytest.raises(MissingMandatoryValue):
+        cr_session.CommonRoadSettings(reach_settings=reach)  # type: ignore[arg-type]
+
+
+def test_plain_reach_settings_are_unchanged() -> None:
+    """Plain containers come out equal, OmegaConf or not."""
+    reach = {"planning": {"some_list": [1, (2, 3)], "dt": 0.1}}
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)
+    assert settings.reach_settings == reach
+
+
 def test_a_request_json_cannot_carry_is_a_worker_error(tmp_path: Path) -> None:
     """#2290: json.dumps' TypeError escaped request() bare; nothing is sent,
     and the worker still answers the next request."""

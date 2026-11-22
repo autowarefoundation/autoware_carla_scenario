@@ -195,8 +195,9 @@ def create_app(
         action_specs=registry.action_specs,
         acts_as=actor_kind,
         condition_specs=registry.condition_specs,
-        # Offered only as a whole pass or fail condition: one judged once the
-        # run is over is no trigger, waypoint condition or child (#2316).
+        # Offered only as a whole fail condition: one judged once the run is
+        # over is no trigger, waypoint condition, child or pass condition
+        # (#2316).
         post_run_conditions=POST_RUN_CONDITIONS,
         constraint_specs=registry.constraint_specs,
         binding_specs=registry.binding_specs,

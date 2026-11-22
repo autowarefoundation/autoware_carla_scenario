@@ -471,7 +471,10 @@ through on arrival.
   `ElapsedTimeCondition(30.0, label=...)` reads "not before the scenario is
   30 s old". (A `TrajectoryTimeCondition` *inside* a composition has no
   trajectory clock to read and compares the scenario's elapsed time; the
-  editor refuses it there.)
+  editor refuses it there.) A `MetricCondition` is the exception: it is
+  judged once the run is over and reads nothing while the entity waits, so
+  `TrajectoryVertex` refuses one with a `ValueError`, as an action's trigger
+  and every composition do.
 
 A vertex cannot carry two: a time and another condition are combined, if
 that is what is meant, by giving the vertex an `AndCondition` of an

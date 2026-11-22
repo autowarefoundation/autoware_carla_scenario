@@ -1305,11 +1305,11 @@ class TestPredicateEditing:
         assert "already has its" in response.text
         assert len(_condition(store, draft_id, wrapper.id).children) == 1
 
-    def test_a_metric_is_offered_only_as_a_pass_or_fail_condition(
+    def test_a_metric_is_offered_only_as_a_fail_condition(
         self, client: TestClient, draft_id: str
     ) -> None:
-        """#2316: a condition judged once the run is over is no trigger or
-        child of a composition, so those pickers leave it out."""
+        """#2316: a condition judged once the run is over is no trigger, child
+        of a composition or pass condition, so those pickers leave it out."""
         body = client.get(f"/draft/{draft_id}").text
         offered: dict[str, bool] = {}
         pickers = re.findall(
@@ -1319,7 +1319,8 @@ class TestPredicateEditing:
             slot = re.search(r'name="slot" value="([^"]*)"', form)
             assert slot is not None
             offered[slot.group(1).split(":")[0]] = 'value="metric"' in form
-        assert offered["pass"] and offered["fail"]
+        assert offered["fail"]
+        assert not offered["pass"]
         assert not offered["trigger"]
         assert not offered["node"]
 
