@@ -1031,6 +1031,7 @@ class EntityCountCondition(BaseCondition):
         raise NotImplementedError()
 
 
+@tuple
 class AreaGround:
     value: str
     CROSSWALK: ClassVar[AreaGround] = AreaGround("crosswalk")
