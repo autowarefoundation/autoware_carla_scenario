@@ -437,11 +437,16 @@ end as the same case. Each distinct case runs once, as the first of those
 picks gives it, and the log names the picks that were merged.
 
 A walk-back that runs out of predecessors stops at the start of the last
-lanelet it reached and logs how much of the offset it could not satisfy: on a
-pick with no lanelet before it, that is the stop line itself. The shipped
-`intersection_passing` and `temporary_stop` sweeps leave such picks out by
-requiring a lanelet before the pick (any lanelet, as `lanelet_length` of 0 m
-or more matches):
+lanelet it reached and logs how much of the offset it could not satisfy. On a
+pick with no lanelet before it, that is the pick's own start, which is the
+stop line itself where the line is at the start, as a junction lanelet's
+usually is. The shipped `intersection_passing` and `temporary_stop` sweeps
+leave such picks out by requiring a lanelet before the pick (any lanelet, as
+`lanelet_length` of 0 m or more matches). That drops every pick with nothing
+before it, including one whose line is far enough in that it falls only a
+little short, and it does not make the offset fit: at each step the walk-back
+takes the routing graph's first predecessor, and the lane it reaches can
+itself run out.
 
 ```yaml
 - type: following_of
