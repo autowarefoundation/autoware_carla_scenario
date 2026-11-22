@@ -21,7 +21,7 @@ from ..coordinate.map_manager import MapManager
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
 from ..coordinate.transform import _carla_to_lanelet2_frame
-from ..entity_role import _role_name
+from ..entity_role import _role_name_in
 from ..kinematics.vector import Vector3
 from ..kinematics.walker_motion import WalkerVelocities, is_walker, simulated_seconds
 from ..route.geometry import MapFeatures
@@ -222,7 +222,8 @@ def snapshot_world(world: carla.World) -> list[AgentSnapshot]:
                 if is_walker(actor):
                     _WALKERS.forget(int(actor.id))
                 continue
-            role = _role_name(actor)
+            # Read once an actor for the world's episode (#2336).
+            role = _role_name_in(world, actor)
             name = str(actor.id) if role is None else str(role)
             velocity = _velocity(actor, elapsed, location)
             agents.append(_snapshot(actor, transform, name, velocity))

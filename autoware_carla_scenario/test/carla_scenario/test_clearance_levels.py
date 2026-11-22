@@ -5,8 +5,11 @@ while one further along a climbing road still is."""
 from __future__ import annotations
 
 import itertools
+import random
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from autoware_carla_scenario.utils import clearance
 
@@ -190,3 +193,70 @@ def test_the_nearest_in_the_way_is_found_whatever_the_order() -> None:
         for actors, nearest in (({1: far, 2: near}, 2), ({1: near, 2: far}, 1)):
             found = look(_World(actors), 99, 0.0, 0.0, 0.0, "vehicle", 30.0, 1.0)
             assert found is not None and found.id == nearest
+
+
+# -- the per-frame list of road users (#2336) ---------------------------------
+
+_KINDS = (
+    "vehicle.tesla.model3",
+    "walker.pedestrian.0001",
+    "sensor.camera.rgb",
+    "traffic.traffic_light",
+    "static.prop.constructioncone",
+    "spectator",
+)
+
+
+def _random_world(rng: random.Random) -> _World:
+    actors: dict[int, tuple[str, float, float, float]] = {}
+    for actor_id in range(1, 60):
+        z = rng.choice([0.0, 0.0, 0.5, 8.0, -500.0])
+        actors[actor_id] = (
+            rng.choice(_KINDS),
+            rng.uniform(-30.0, 30.0),
+            rng.uniform(-30.0, 30.0),
+            z,
+        )
+    return _World(actors)
+
+
+def _answers(world: _World, rng: random.Random) -> list[Any]:
+    answers: list[Any] = []
+    for _query in range(40):
+        x, y = rng.uniform(-30.0, 30.0), rng.uniform(-30.0, 30.0)
+        heading = rng.uniform(-180.0, 180.0)
+        z = rng.choice([None, 0.0, 8.0])
+        self_id = rng.choice([99, rng.randrange(1, 60)])
+        for kind in ("vehicle", "walker", "", "sensor"):
+            for look in (clearance.first_in_way, clearance.first_box_in_way):
+                found = look(world, self_id, x, y, heading, kind, 15.0, 2.0, z=z)
+                answers.append(None if found is None else (found.id, found.ahead))
+        answers.append(clearance.overlaps(world, self_id, x, y, heading, 2.4, 1.0, z=z))
+    return answers
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_the_road_user_list_changes_no_answer(
+    monkeypatch: pytest.MonkeyPatch, seed: int
+) -> None:
+    """The queries find what they found looking through every actor."""
+    world = _random_world(random.Random(seed))
+    filtered = _answers(world, random.Random(seed + 1))
+    monkeypatch.setattr(clearance, "_road_users", clearance._states)
+    monkeypatch.setattr(clearance, "_of_kind", lambda w, kind: clearance._states(w))
+    unfiltered = _answers(_World(world.actors), random.Random(seed + 1))
+    assert filtered == unfiltered
+    assert any(answer is not None for answer in filtered)
+
+
+def test_the_road_user_list_holds_only_vehicles_and_walkers() -> None:
+    world = _World(
+        {
+            1: ("vehicle.parked", 5.0, 0.0, 0.0),
+            2: ("sensor.camera.rgb", 5.0, 0.0, 0.0),
+            3: ("walker.pedestrian.0001", 6.0, 0.0, 0.0),
+            4: ("traffic.traffic_light", 7.0, 0.0, 0.0),
+        }
+    )
+    assert [state[0] for state in clearance._road_users(world)] == [1, 3]  # type: ignore[arg-type]
+    assert [state[0] for state in clearance._states(world)] == [1, 2, 3, 4]  # type: ignore[arg-type]
