@@ -165,6 +165,49 @@ def _role_name(actor: "carla.Actor") -> Optional[str]:
     return canonical_role_name(attributes["role_name"])
 
 
+class _RoleNames:
+    """:func:`_role_name` of each actor, by id, for one world's episode.
+
+    ``actor.attributes`` builds a dict through the FFI on every read, and
+    the per-tick readers ask every actor (#2336).  An actor's role name is
+    a blueprint attribute, fixed at its spawn.  As ``metric_frames``'
+    ``FrameRecorder._static`` and ``utils.clearance``'s kinds, the cache
+    trusts an id within its scope, which is one world (held and compared
+    with ``is``: a world freed and another made may get the same ``id()``)
+    and that world's episode (``world.id``, which a world load changes):
+    another world -- the next run's -- or another episode starts it afresh.
+    """
+
+    world: Optional["carla.World"]
+    episode: int
+    names: dict[int, Optional[str]]
+
+    def __init__(self) -> None:
+        self.world = None
+        self.episode = -1
+        self.names = {}
+
+
+_ROLE_NAMES = _RoleNames()
+
+
+def _role_name_in(world: "carla.World", actor: "carla.Actor") -> Optional[str]:
+    """:func:`_role_name` of *actor*, one of *world*'s, read once for the
+    world's episode (:class:`_RoleNames`)."""
+    episode = int(world.id) if hasattr(world, "id") else 0
+    held = _ROLE_NAMES.world
+    if held is None or held is not world or episode != _ROLE_NAMES.episode:
+        _ROLE_NAMES.world = world
+        _ROLE_NAMES.episode = episode
+        _ROLE_NAMES.names = {}
+    key = int(actor.id)
+    if key in _ROLE_NAMES.names:
+        return _ROLE_NAMES.names[key]
+    name = _role_name(actor)
+    _ROLE_NAMES.names[key] = name
+    return name
+
+
 def find_actor_in_list(
     actors: Union[carla.ActorList, list[carla.Actor]],
     role_name: Union["EntityRole", str],

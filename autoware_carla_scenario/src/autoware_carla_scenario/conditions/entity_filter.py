@@ -31,7 +31,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..coordinate.poses import CarlaWorldPose
-from ..entity_role import _role_name, canonical_role_name
+from ..entity_role import _role_name_in, canonical_role_name
 from ..utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
@@ -191,7 +191,7 @@ class EntityFilter:
         wanted = self._reference_name()
         reference: Optional["carla.Actor"] = None
         for actor in actors:
-            if _name_of(actor) == wanted:
+            if _name_of(world, actor) == wanted:
                 reference = actor
                 break
         # A reference parked under the map is not in the scene: the same
@@ -226,7 +226,7 @@ class EntityFilter:
                 forward = (fx / norm, fy / norm)
         selected: list[SelectedEntity] = []
         for actor in actors:
-            entity = self._take(actor, reference, origin, forward)
+            entity = self._take(world, actor, reference, origin, forward)
             if entity is not None:
                 selected.append(entity)
         return selected
@@ -238,6 +238,7 @@ class EntityFilter:
 
     def _take(
         self,
+        world: "carla.World",
         actor: "carla.Actor",
         reference: Optional["carla.Actor"],
         origin: tuple[float, float, float],
@@ -252,7 +253,7 @@ class EntityFilter:
             return None
         if self.kind is RoadUserKind.PEDESTRIAN and not walker:
             return None
-        name = _name_of(actor)
+        name = _name_of(world, actor)
         if not name:
             return None
         if name == self._reference_name() and not self.include_reference:
@@ -369,10 +370,11 @@ def name_matches(pattern: str, name: str) -> bool:
     return p == len(pattern)
 
 
-def _name_of(actor: "carla.Actor") -> str:
+def _name_of(world: "carla.World", actor: "carla.Actor") -> str:
     # entity_role._role_name (the ego's is "Ego" under any of its role
-    # names), with "" for an actor that has none.
-    name = _role_name(actor)
+    # names), with "" for an actor that has none; read once an actor for
+    # the world's episode (_role_name_in, #2336).
+    name = _role_name_in(world, actor)
     if name is None:
         return ""
     # Annotated, so Codon unwraps the Optional (docs/typecheck.md).

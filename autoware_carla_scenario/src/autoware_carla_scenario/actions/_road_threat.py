@@ -16,8 +16,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Optional
 
-from ..coordinate.lane_distance import lane_closing_speed, lane_separation
-from ..coordinate.poses import CarlaWorldPose
+from ..coordinate.lane_distance import _NEAR_ZERO, _along_s, _project, _reach
+from ..coordinate.poses import CarlaWorldPose, OpenDrivePose
 from ..utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
@@ -62,10 +62,33 @@ def road_threat(
     the road, or at most *ttc_s* from it -- or ``None``.  Every vehicle in the
     world counts but one parked under the map (#853); with *near_m*, only
     those within that straight-line distance (to spare the lane search for
-    the far ones)."""
+    the far ones).
+
+    The separation and the closing speed are
+    :func:`~..coordinate.lane_distance.lane_separation`'s and
+    :func:`~..coordinate.lane_distance.lane_closing_speed`'s, worked out from
+    their own steps so that what does not change between vehicles is done
+    once a call (#2336): the pedestrian is projected onto the road once, and
+    its speed along the road read once, not for every vehicle; each vehicle
+    is projected once, and the chain between the two walked once, for both
+    the separation and the closing speed.  Every step is deterministic, so
+    the answers are the same.
+    """
     if distance_m is None and ttc_s is None:
         return None
     target = CarlaWorldPose(x=location.x, y=location.y, z=location.z, yaw=0.0)
+    # The pedestrian's projection and speed along the road, each worked out
+    # the first time a vehicle needs it.
+    target_projected = False
+    target_od: Optional[OpenDrivePose] = None
+    target_read = False
+    target_along: Optional[float] = None
+    # A bound on how fast any vehicle can close on it, for the TTC: a speed
+    # along the road is ``speed * cos(angle)`` (``_along_s``), never more than
+    # the speed in plan view, so the closing speed -- one along-road speed
+    # minus the other, each signed -- is never more than the two plan-view
+    # speeds summed (in floating point too: rounding is monotonic).
+    walking_speed = math.hypot(walking_x, walking_y)
     for vehicle in world.get_actors().filter("vehicle.*"):
         at = vehicle.get_location()
         # Parked under the map until its spawn: its lane projection (2D, or
@@ -76,20 +99,54 @@ def road_threat(
             reach: float = near_m
             if math.hypot(at.x - location.x, at.y - location.y) > reach:
                 continue
+        # Whether its time to collision can be within *ttc_s*: not when the
+        # two plan-view speeds sum to less than what counts as closing at
+        # all, below.  A NaN speed can.
+        can_close = False
+        driving_x = driving_y = 0.0
+        if ttc_s is not None:
+            driving = vehicle.get_velocity()
+            driving_x, driving_y = driving.x, driving.y
+            can_close = not (
+                math.hypot(driving_x, driving_y) + walking_speed
+                < _CLOSING_SPEED_EPSILON
+            )
+        if distance_m is None and not can_close:
+            continue  # nothing it could threaten by
+        if not target_projected:
+            target_od = _project(target)
+            target_projected = True
+        if target_od is None:
+            continue  # lane_separation: no measurement
+        on_road: OpenDrivePose = target_od
         source = CarlaWorldPose(x=at.x, y=at.y, z=at.z, yaw=0.0)
-        separation = lane_separation(source, target)
-        if separation is None:
+        source_od = _project(source)
+        if source_od is None:
             continue
+        found = _reach(source_od, on_road)
+        if found is None:
+            continue
+        separation = found.distance
         if distance_m is not None and separation <= distance_m:
             return f"vehicle {vehicle.id} {separation:.1f} m away along the road"
         if ttc_s is None or separation < _CLOSING_SPEED_EPSILON:
             continue
+        if not can_close:
+            continue
         threshold: float = ttc_s
-        driving = vehicle.get_velocity()
-        closing = lane_closing_speed(
-            source, driving.x, driving.y, target, walking_x, walking_y
-        )
-        if closing is None or closing < _CLOSING_SPEED_EPSILON:
+        # lane_closing_speed, from the same projections and chain.
+        if found.distance < _NEAR_ZERO:
+            continue
+        source_along = _along_s(source, driving_x, driving_y)
+        if not target_read:
+            target_along = _along_s(target, walking_x, walking_y)
+            target_read = True
+        if source_along is None or target_along is None:
+            continue
+        source_sign = 1.0 if found.forward else -1.0
+        target_sign = 1.0 if found.target_forward else -1.0
+        closing = source_sign * source_along - target_sign * target_along
+        if closing < _CLOSING_SPEED_EPSILON:
             continue
         ttc = separation / closing
         if ttc <= threshold:

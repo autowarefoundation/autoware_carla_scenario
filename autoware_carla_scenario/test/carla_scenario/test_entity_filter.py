@@ -302,3 +302,51 @@ class TestEntityCountCondition:
         condition = EntityCountCondition(EntityFilter(), count=whole, label="x")
         count = condition.get_details()["count"]
         assert count == 2 and type(count) is int
+
+
+class TestRoleNamesReadOnce:
+    """#2336: ``actor.attributes`` builds a dict through the FFI on every
+    read, so a role name is read once an actor, for the world's episode."""
+
+    @pytest.fixture
+    def reads(self, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        from autoware_carla_scenario import entity_role
+
+        read: list[int] = []
+        original = entity_role._role_name
+
+        def counting(actor: Any) -> Any:
+            read.append(int(actor.id))
+            return original(actor)
+
+        monkeypatch.setattr(entity_role, "_role_name", counting)
+        return read
+
+    def test_each_actor_s_role_name_is_read_once(self, reads: list[int]) -> None:
+        world = _world(EGO, AHEAD, BEHIND, LEFT, WALKER, HIDDEN, NAMELESS, SENSOR)
+        expected = ["npc1", "background4", "background7", "pedestrian1"]
+        for _tick in range(3):
+            assert _names(EntityFilter(), world) == expected
+            assert _names(EntityFilter(names=("npc*",)), world) == ["npc1"]
+        # Once each road user (a sensor is never named), though the
+        # reference is looked for and each one named on every select.
+        assert sorted(reads) == [1, 2, 3, 4, 5, 6, 7]
+
+    def test_an_id_used_again_in_another_world_is_read_again(
+        self, reads: list[int]
+    ) -> None:
+        first = _world(EGO, _Actor(2, "vehicle.lincoln.mkz", "npc1", 20.0, 0.0))
+        assert _names(EntityFilter(), first) == ["npc1"]
+        second = _world(EGO, _Actor(2, "vehicle.lincoln.mkz", "npc5", 20.0, 0.0))
+        assert _names(EntityFilter(), second) == ["npc5"]
+
+    def test_an_id_used_again_in_another_episode_is_read_again(
+        self, reads: list[int]
+    ) -> None:
+        actors = [EGO, _Actor(2, "vehicle.lincoln.mkz", "npc1", 20.0, 0.0)]
+        world = SimpleNamespace(id=1, get_actors=lambda: list(actors))
+        assert _names(EntityFilter(), world) == ["npc1"]
+        # The world loaded again: a new episode, its ids its own.
+        world.id = 2
+        actors[1] = _Actor(2, "vehicle.lincoln.mkz", "npc5", 20.0, 0.0)
+        assert _names(EntityFilter(), world) == ["npc5"]

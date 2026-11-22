@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import fnmatch
 import math
+import random
 from types import SimpleNamespace
 from typing import Any, List, Optional
 from unittest.mock import MagicMock
@@ -20,6 +21,7 @@ import typesafe_carla.carla as carla
 from carla_driver_interface.protocol import carla_driver_pb2
 from autoware_carla_scenario.driver.base import DriverClientConfig
 from autoware_carla_scenario.driver.geometry import Pose
+from autoware_carla_scenario.driver import renderer
 from autoware_carla_scenario.driver.renderer import RendererDataBuilder
 
 
@@ -674,3 +676,75 @@ def test_a_t4_scene_rides_along_even_without_ground_truth(
     message = carla_driver_pb2.CarlaRendererData()
     message.ParseFromString(builder.build(1_000, Pose.identity(), t4_scene=b"scene"))
     assert message.t4_scene == b"scene"
+
+
+# ---------------------------------------------------------------------------
+# The planar pre-check against the horizon (#2336)
+# ---------------------------------------------------------------------------
+
+
+def _scattered(seed: int, horizon: float) -> List[MagicMock]:
+    """Vehicles all round an ego at (12, -7, 3) facing 30 degrees, some
+    right at the bound: their box centre on the horizon, level with the
+    ego, and their origin further out by the box's offset, which points
+    straight at the ego -- where the pre-check's bound is exact."""
+    rng = random.Random(seed)
+    ego_x, ego_y, ego_z = 12.0, -7.0, 3.0  # the local frame (CARLA -y)
+    actors: List[MagicMock] = []
+    for i in range(60):
+        box = (rng.uniform(-2.0, 2.0), rng.uniform(-1.0, 1.0), rng.uniform(0.0, 1.5))
+        yaw = rng.uniform(-180.0, 180.0)
+        if i % 3 == 0:
+            box = (box[0], box[1], 0.0)
+            bearing = rng.uniform(-math.pi, math.pi)
+            reach = horizon + rng.choice([-1e-6, 0.0, 1e-6, 0.5, -0.5])
+            length = math.hypot(box[0], box[1])
+            # The offset is (box x, -box y) in the local frame, turned by
+            # -yaw: turned to point back along the bearing, at the ego.
+            heading = bearing + math.pi - math.atan2(-box[1], box[0])
+            yaw = -math.degrees(heading)
+            x = ego_x + (reach + length) * math.cos(bearing)
+            y = ego_y + (reach + length) * math.sin(bearing)
+            z = ego_z
+        else:
+            distance = rng.uniform(0.0, 3.0 * horizon)
+            bearing = rng.uniform(-math.pi, math.pi)
+            x = ego_x + distance * math.cos(bearing)
+            y = ego_y + distance * math.sin(bearing)
+            z = ego_z + rng.uniform(-5.0, 5.0)
+        actors.append(
+            _vehicle(i + 2, x, -y, z=z, yaw=yaw, box_location=box, vx=float(i))
+        )
+    return actors
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_the_horizon_pre_check_drops_no_actor_within_it(
+    monkeypatch: pytest.MonkeyPatch, seed: int
+) -> None:
+    horizon = 40.0
+    actors = _scattered(seed, horizon)
+    pose = Pose.from_xyz_yaw(12.0, -7.0, 3.0, math.radians(30.0))
+    checked = _build(_world(actors=actors), _ego(), pose, actor_horizon_m=horizon)
+    monkeypatch.setattr(renderer, "_HORIZON_MARGIN_M", math.inf)
+    unchecked = _build(_world(actors=actors), _ego(), pose, actor_horizon_m=horizon)
+    assert checked.actors == unchecked.actors
+    assert 0 < len(checked.actors) < len(actors)
+
+
+def test_no_pose_is_built_for_an_actor_beyond_the_horizon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: List[Any] = []
+    original = renderer.to_local_pose
+
+    def counting(transform: Any, *args: Any) -> Any:
+        built.append(transform)
+        return original(transform, *args)
+
+    monkeypatch.setattr(renderer, "to_local_pose", counting)
+    near = [_vehicle(2, x=40.0), _vehicle(3, x=-100.0, box_location=(5.0, 0, 0))]
+    far = [_vehicle(10 + i, x=200.0 + i, box_location=(1.3, 0, 0)) for i in range(50)]
+    message = _build(_world(actors=near + far), _ego(), actor_horizon_m=150.0)
+    assert [a.track_id for a in message.actors] == ["2", "3"]
+    assert len(built) == 2

@@ -82,6 +82,11 @@ DEFAULT_DESIRED_SPEED = 50.0 / 3.6
 _MAX_LATERAL_M = 2.5
 _MAX_HEADING_RAD = math.pi / 3.0
 
+#: How far (m) past :data:`_MAX_LATERAL_M` an agent may lie off the box of a
+#: lane chain's centrelines and still be located on the chain: none in exact
+#: arithmetic, this much for rounding (#2336).
+_CHAIN_BOX_MARGIN_M = 1.0
+
 
 class SignalState(Enum):
     """The state of a traffic light, as the triggers read it."""
@@ -327,7 +332,7 @@ class Scene:
     _lanes: dict[str, Optional[LanePosition]]
     _vehicles: dict[str, VehicleObservation]
     _pedestrians: dict[str, PedestrianObservation]
-    _by_lanelet: Optional[dict[int, list[str]]]
+    _boxes: dict[int, tuple[float, float, float, float]]
 
     def __init__(
         self,
@@ -343,7 +348,7 @@ class Scene:
         self._lanes = {}
         self._vehicles = {}
         self._pedestrians = {}
-        self._by_lanelet = None
+        self._boxes = {}
 
     # -- where the agents are ------------------------------------------------
 
@@ -374,16 +379,57 @@ class Scene:
         self._lanes[name] = found
         return found
 
-    def _on_lanelets(self) -> dict[int, list[str]]:
-        """The located vehicles, by the id of the lanelet each is on."""
-        if self._by_lanelet is None:
-            by_lanelet: dict[int, list[str]] = {}
-            for name in self.agents:
-                lane = self.lane_of(name)
-                if lane is not None:
-                    by_lanelet.setdefault(int(lane.lanelet.id), []).append(name)
-            self._by_lanelet = by_lanelet
-        return self._by_lanelet
+    def _box(self, lanelet: ConstLanelet) -> tuple[float, float, float, float]:
+        """The plan-view bounding box of *lanelet*'s centreline: west, south,
+        east, north (m)."""
+        key = int(lanelet.id)
+        if key not in self._boxes:
+            points = _centreline(lanelet)
+            xs = [x for x, _y in points]
+            ys = [y for _x, y in points]
+            self._boxes[key] = (min(xs), min(ys), max(xs), max(ys))
+        return self._boxes[key]
+
+    def _on_chain(self, chain: dict[int, LaneSpan]) -> dict[int, list[str]]:
+        """The vehicles located on *chain*, by the id of the lanelet each is
+        on, each list in the order of :attr:`agents`.
+
+        Only the vehicles that can be on it are located (#2336), and that
+        prefilter never drops one that is: a vehicle located on a lanelet is
+        within :data:`_MAX_LATERAL_M` in plan view of the point at its ``s``
+        on that lanelet's centreline -- ``|t|`` is the distance to the
+        nearest point of the centreline, ``s`` that point's arc length
+        (``lanelet2.geometry.toArcCoordinates``; past either end, the
+        distance to the end point) -- so within that of the box of the
+        centreline's vertices, which holds the whole centreline.  The margin
+        :data:`_CHAIN_BOX_MARGIN_M` is for rounding.  A NaN position is
+        never dropped.
+        """
+        reach = _MAX_LATERAL_M + _CHAIN_BOX_MARGIN_M
+        boxes = [self._box(span.lanelet) for span in chain.values()]
+        on_chain: dict[int, list[str]] = {}
+        for name, agent in self.agents.items():
+            if not agent.footprint.is_vehicle:
+                continue  # lane_of locates vehicles only
+            far = True
+            for west, south, east, north in boxes:
+                # Written so that a NaN coordinate is never "far".
+                if not (
+                    agent.x < west - reach
+                    or agent.x > east + reach
+                    or agent.y < south - reach
+                    or agent.y > north + reach
+                ):
+                    far = False
+                    break
+            if far:
+                continue
+            lane = self.lane_of(name)
+            if lane is not None:
+                key = int(lane.lanelet.id)
+                if key in chain:
+                    on_chain.setdefault(key, []).append(name)
+        return on_chain
 
     # -- vehicles ------------------------------------------------------------
 
@@ -391,7 +437,7 @@ class Scene:
         self, agent: AgentSnapshot, chain: dict[int, LaneSpan]
     ) -> tuple[Optional[Neighbour], Optional[Neighbour]]:
         """The nearest vehicle ahead and behind the agent along *chain*."""
-        on_lanelets = self._on_lanelets()
+        on_lanelets = self._on_chain(chain)
         leader: Optional[Neighbour] = None
         follower: Optional[Neighbour] = None
         for key, span in chain.items():
