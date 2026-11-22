@@ -2594,7 +2594,9 @@ run ends with its verdict, which can be well before 9 s. A log whose last
 line is cut off is read without it, as for a <a href="../t4_scene/">T4 Scene</a>; a
 log that fails does not stop the others, and the command exits 1. An
 option out of range (<code>--current-index</code> below 0, <code>--steps</code> below 1, an empty
-<code>--scenario-id</code>) is refused before any log is read, naming the option. Two
+<code>--scenario-id</code>) is refused before any log is read, naming the option, and so
+is a path that does not exist, as a directory with no log under it is (exit
+2). Ctrl-C prints <code>scenario-wosac: interrupted</code> and exits 130. Two
 <code>--object-ids</code> keys of one role (<code>ego</code> and <code>hero</code>) are refused.</p>
 <h3 id="pack"><code>pack</code><a class="headerlink" href="#pack" title="Permanent link">&para;</a></h3>
 <table>
@@ -2915,7 +2917,7 @@ duplicate file in Protobuf's descriptor pool).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 20:53:56 UTC"><span class="timeago" datetime="2026-11-21T20:53:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 20:53:56 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 14:37:38 UTC"><span class="timeago" datetime="2026-11-22T14:37:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 14:37:38 UTC">2026-11-22</span>
   </span>
 
     

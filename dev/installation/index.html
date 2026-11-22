@@ -2682,7 +2682,9 @@
 is not supported. <code>uv run scenario-setup</code> downloads CARLA's nightly Linux
 build into <code>~/.autoware_carla_scenario/bin/carla</code>, and the runner launches it
 from there (see the <a href="../quickstart/">Quick Start</a>). A CARLA installed any other
-way is used through <code>CARLA_EXECUTABLE</code>.</p>
+way is used through <code>CARLA_EXECUTABLE</code>. Ctrl-C during the download or the
+unpack prints <code>scenario-setup: interrupted</code> and exits 130, leaving no partial
+install behind.</p>
 <p>The runner launches CARLA only for a <strong>local</strong> <code>server.host</code>: <code>localhost</code>
 (or a <code>*.localhost</code> name), a loopback address (<code>127.0.0.0/8</code>, <code>::1</code>), this
 machine's own host name, or any name or address that resolves to one of this
@@ -2890,7 +2892,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 22:35:52 UTC"><span class="timeago" datetime="2026-11-21T22:35:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 22:35:52 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 14:37:38 UTC"><span class="timeago" datetime="2026-11-22T14:37:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 14:37:38 UTC">2026-11-22</span>
   </span>
 
     

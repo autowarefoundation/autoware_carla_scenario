@@ -2437,7 +2437,13 @@ raises (an error of the checker itself, not a verdict on the scenario) fails tha
 <code>[FAILED] &lt;config&gt;: checker error: &lt;exception&gt;</code>, its traceback goes to
 stderr, the other configs are still checked and reported, and the exit
 status is 1, as for any failed config (<code>--library</code> likewise reports
-<code>[FAILED] library check: checker error: ...</code> and exits with 1). A scenario package
+<code>[FAILED] library check: checker error: ...</code> and exits with 1). Its flags
+are <code>-h</code>/<code>--help</code> and <code>--library</code>: any other argument that starts with <code>-</code>
+(a typo such as <code>--libary</code>) is refused with
+<code>Error: scenario-check does not take &lt;flag&gt;</code> and exit 2, rather than read as
+an override, as <code>scenario-expand</code> refuses one; overrides (<code>key=value</code>,
+<code>+key=value</code>, <code>++key=value</code>, <code>~key</code>) are passed on. Ctrl-C prints
+<code>scenario-check: interrupted</code> and exits 130. A scenario package
 can make the same check in its own tests, with no simulator (the template and
 <code>scenario-new</code> packages have one in <code>tests/test_typecheck.py</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_scenario</span>
@@ -4956,6 +4962,10 @@ compile:</p>
 <a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">format</span><span class="p">()</span>
 </code></pre></div>
 <p><code>test_typecheck_library.py</code> makes the same check in the test suite.</p>
+<p>A name after <code>--library</code> that is not a module of the package, or that
+<code>typecheck/library.py</code> lists as <code>EXCLUDED</code>, is refused (<code>[FAILED] ...</code>, exit
+1) before Codon is looked for, so the refusal is the same whether Codon is
+installed or not.</p>
 <p><strong>The checked modules get the None check too</strong> (#277), as a scenario's
 modules do: after the compile, mypy runs over every module the run compiled,
 with the CARLA stubs, and an <code>Optional</code> used without a test for <code>None</code> fails
@@ -5049,7 +5059,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 348 of the package's 479
 modules (73%; about 110,500 of
-185,800 lines) are <code>CHECKED</code>: the kinematics, the
+185,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -9076,7 +9086,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 10:11:44 UTC"><span class="timeago" datetime="2026-11-22T10:11:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 10:11:44 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 14:37:38 UTC"><span class="timeago" datetime="2026-11-22T14:37:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 14:37:38 UTC">2026-11-22</span>
   </span>
 
     
