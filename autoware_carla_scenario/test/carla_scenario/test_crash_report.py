@@ -9,6 +9,7 @@ import subprocess
 import sys
 import textwrap
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -458,3 +459,175 @@ def test_a_slurm_case_s_failed_attempt_leaves_a_report_of_the_case(
     assert (report / "repro.sh").read_text().splitlines()[-1] == (
         'exec scenario scenario=cut_in seed=4 "$@"'
     )
+
+
+# -- settings -----------------------------------------------------------------
+
+
+def test_the_default_settings() -> None:
+    settings = crash_report.read_settings({})
+    assert settings == crash_report.Settings()
+    assert settings.items == frozenset(crash_report.ITEMS)
+    assert settings.send_items == settings.items
+    assert settings.max_file_size == 1024**2
+    assert settings.max_reports == 20
+    assert settings.log_lines == 5000
+
+
+def test_the_settings_read_from_the_environment() -> None:
+    settings = crash_report.read_settings(
+        {
+            "SCENARIO_CRASH_REPORT_ITEMS": "all,-environment",
+            "SCENARIO_CRASH_REPORT_SEND_ITEMS": "log, config, environment",
+            "SCENARIO_CRASH_REPORT_MAX_FILE_SIZE": "512KiB",
+            "SCENARIO_CRASH_REPORT_MAX_REPORTS": "0",
+            "SCENARIO_CRASH_REPORT_LOG_LINES": "100",
+        }
+    )
+    assert settings.items == frozenset(crash_report.ITEMS) - {"environment"}
+    # Only what a report holds can be sent.
+    assert settings.send_items == {"log", "config"}
+    assert settings.max_file_size == 512 * 1024
+    assert settings.max_reports is None
+    assert settings.log_lines == 100
+    assert crash_report.read_settings(
+        {
+            "SCENARIO_CRASH_REPORT_ITEMS": "none",
+            "SCENARIO_CRASH_REPORT_MAX_FILE_SIZE": "0",
+        }
+    ) == crash_report.Settings(
+        items=frozenset(), send_items=frozenset(), max_file_size=None
+    )
+    for size, expected in (("2MB", 2_000_000), ("1048576", 1024**2), ("1.5k", 1500)):
+        settings = crash_report.read_settings(
+            {"SCENARIO_CRASH_REPORT_MAX_FILE_SIZE": size}
+        )
+        assert settings.max_file_size == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SCENARIO_CRASH_REPORT_ITEMS", "locals,secrets"),
+        ("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "a lot"),
+        ("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "1 parsec"),
+        ("SCENARIO_CRASH_REPORT_MAX_REPORTS", "-1"),
+        ("SCENARIO_CRASH_REPORT_LOG_LINES", "0"),
+    ],
+)
+def test_a_setting_that_cannot_be_read_keeps_its_default(
+    name: str, value: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert crash_report.read_settings({name: value}) == crash_report.Settings()
+    assert name in caplog.text
+
+
+def test_a_report_holds_only_the_items_chosen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_ITEMS", "none")
+    monkeypatch.setenv("CARLA_ROOT", "/opt/carla")
+    with _installed(tmp_path, monkeypatch):
+        logging.getLogger("demo").warning("the ego left its lane")
+        with crash_report.run_context(
+            tmp_path / "run", overrides=["seed=3"], config_yaml="seed: 3\n"
+        ):
+            report = crash_report.capture(_caught())
+    assert report is not None
+    assert sorted(p.name for p in report.iterdir()) == [
+        "context.json",
+        "event.json",
+        "traceback.txt",
+    ]
+    event = json.loads((report / "event.json").read_text())
+    frame = event["exception"]["values"][0]["stacktrace"]["frames"][-1]
+    assert "vars" not in frame
+    assert not (event.get("breadcrumbs") or {}).get("values")
+    assert "modules" not in event
+    assert "environment" not in json.loads((report / "context.json").read_text())
+
+
+def test_a_long_file_is_cut_keeping_the_end_of_the_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "2KiB")
+    with _installed(tmp_path, monkeypatch):
+        for i in range(200):
+            logging.getLogger("demo").warning("record %03d", i)
+        config = "".join(f"key_{i}: {i}\n" for i in range(500))
+        with crash_report.run_context(tmp_path / "run", config_yaml=config):
+            report = crash_report.capture(_caught())
+    assert report is not None
+    log = (report / "log.txt").read_bytes()
+    assert len(log) <= 2048
+    assert log.startswith(b"[... ") and b"bytes cut" in log
+    assert b"record 199" in log and b"record 000" not in log
+    config_file = (report / "config.yaml").read_bytes()
+    assert len(config_file) <= 2048
+    assert config_file.startswith(b"key_0: 0\n")
+    assert b"bytes cut" in config_file
+
+
+def test_a_process_writes_at_most_max_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_MAX_REPORTS", "2")
+    with _installed(tmp_path, monkeypatch):
+        reports = [crash_report.capture(_caught(f"boom {i}")) for i in range(4)]
+    assert [r is not None for r in reports] == [True, True, False, False]
+    assert caplog.text.count("no more from this process") == 1
+
+
+def test_only_the_send_items_are_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sentry_sdk
+    from sentry_sdk.transport import Transport
+
+    sent: list[Any] = []
+
+    class Recorder(Transport):
+        def capture_envelope(self, envelope: Any) -> None:
+            sent.append(envelope)
+
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_SEND_ITEMS", "log,repro")
+    monkeypatch.setenv("CARLA_ROOT", "/opt/carla")
+    with _installed(tmp_path, monkeypatch):
+        sentry_sdk.get_client().transport.upstream = Recorder()  # type: ignore[union-attr]
+        logging.getLogger("demo").warning("the ego left its lane")
+        with crash_report.run_context(
+            tmp_path / "run", overrides=["seed=3"], config_yaml="seed: 3\n"
+        ):
+            report = crash_report.capture(_caught())
+    assert report is not None
+    # Kept whole on disk.
+    assert (report / "config.yaml").exists()
+    local = json.loads((report / "event.json").read_text())
+    assert "vars" in local["exception"]["values"][0]["stacktrace"]["frames"][-1]
+    (envelope,) = sent
+    event = envelope.get_event()
+    assert "vars" not in event["exception"]["values"][0]["stacktrace"]["frames"][-1]
+    assert "modules" not in event
+    assert event["breadcrumbs"]["values"]
+    files = {
+        item.headers["filename"]: item.get_bytes()
+        for item in envelope.items
+        if item.type == "attachment"
+    }
+    assert sorted(files) == ["context.json", "log.txt", "repro.sh", "traceback.txt"]
+    assert "environment" not in json.loads(files["context.json"])
+    assert b"export " not in files["repro.sh"]
+    assert b"exec scenario seed=3" in files["repro.sh"]
+
+
+@contextmanager
+def _installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
+    monkeypatch.delenv(crash_report.CRASH_REPORT_DIR_ENV, raising=False)
+    monkeypatch.delenv(crash_report.DSN_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert crash_report.install(["scenario"])
+    try:
+        yield
+    finally:
+        crash_report.uninstall()

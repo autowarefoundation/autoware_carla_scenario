@@ -17,7 +17,7 @@ outputs/2026-11-22/10-15-00/crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d
 ├── event.json      # the Sentry event: exception, every frame and its local variables,
 │                   # breadcrumbs (the recent log records), installed packages
 ├── traceback.txt   # the traceback, chained exceptions included
-├── log.txt         # the last 5000 log records of the process
+├── log.txt         # the last log records of the process (5000 by default)
 ├── context.json    # command line, overrides, output directory, versions, environment
 ├── config.yaml     # the run's composed config (a run through Hydra)
 └── repro.sh        # the command that runs the same case again
@@ -110,3 +110,60 @@ under the Functional Source License, which is not an open-source license.
 | `SCENARIO_CRASH_REPORT=0` | Turns crash reports off (`false`, `no` and `off` also work) |
 | `SCENARIO_CRASH_REPORT_DIR` | Where reports go before a run's directory is known; native-crash reports are also prepared there from the start |
 | `SENTRY_DSN` | Also send each report to this Sentry project |
+| `SCENARIO_CRASH_REPORT_ITEMS` | What a report holds ([items](#choosing-what-a-report-holds)); default `all` |
+| `SCENARIO_CRASH_REPORT_SEND_ITEMS` | What of a report is sent with a DSN; default: what it holds |
+| `SCENARIO_CRASH_REPORT_MAX_FILE_SIZE` | The largest file of a report (`1MiB`, `512KB`, `1048576`; `0` for no limit); default `1MiB` |
+| `SCENARIO_CRASH_REPORT_MAX_REPORTS` | How many reports one process writes at most (`0` for no limit); default `20` |
+| `SCENARIO_CRASH_REPORT_LOG_LINES` | How many log records `log.txt` keeps; default `5000` |
+
+A value that cannot be read is reported as a warning, and its default is
+used. A crash report never stops a run.
+
+## Choosing what a report holds
+
+Every report holds the exception with its stack, `traceback.txt` and
+`context.json` (the command line, overrides, versions). Beyond those,
+`SCENARIO_CRASH_REPORT_ITEMS` chooses among these items:
+
+| Item | What it adds |
+|---|---|
+| `locals` | the local variables of every frame, in `event.json` |
+| `log` | `log.txt`, and the log records as the event's breadcrumbs |
+| `config` | `config.yaml`, the run's composed config |
+| `environment` | the environment variables that affect a run, in `context.json` and as `export` lines in `repro.sh` |
+| `packages` | the installed packages and their versions, in `event.json` |
+| `repro` | `repro.sh` |
+
+The value is a comma-separated list of items, `all`, `none`, or `all` with
+some items removed by a leading `-`:
+
+```bash
+export SCENARIO_CRASH_REPORT_ITEMS=all,-locals          # everything but local variables
+export SCENARIO_CRASH_REPORT_SEND_ITEMS=log,config,repro  # write all, send less
+```
+
+`SCENARIO_CRASH_REPORT_SEND_ITEMS` takes the same form and chooses what is
+sent. Only what a report holds can be sent. The files on disk are written
+whole either way, so you can keep everything locally and send a narrower
+report. For example, leaving out `environment` from the sent items drops it
+from the sent `context.json` and drops the `export` lines from the sent
+`repro.sh`.
+
+## Size limits
+
+The defaults keep a report useful while bounding what a failing batch can
+write:
+
+- **`MAX_FILE_SIZE` (1 MiB):** applies to each file of a report except
+  `event.json`. A longer file is cut, with a line saying how many bytes were
+  dropped. `log.txt` and `traceback.txt` keep their end, where the error is.
+  Other files keep their start. At the default length, `log.txt` fits in this
+  limit, and a config is a few kilobytes. The Sentry SDK bounds `event.json`
+  itself: it shortens long values and caps how much of each frame it keeps.
+- **`MAX_REPORTS` (20):** applies to each process. A batch whose every case
+  fails on every attempt would otherwise write a report per attempt. After the
+  limit, one warning says so, and nothing more is written or sent. The limit
+  counts every report the process writes, so in a batch the first failures use
+  it up. Native-crash reports are not counted.
+- **`LOG_LINES` (5000):** applies to `log.txt`. 5000 records is a few minutes
+  of a run's log, including the start of the case.
