@@ -4027,7 +4027,14 @@ before anything is spawned.</p>
 <a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_vehicles<span class="o">=</span>sumo
 <a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_pedestrians<span class="o">=</span>sumo
 <a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/{stem}.sumo/fcd.xml</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.use_libsumo<span class="o">=</span><span class="nb">false</span><span class="w"> </span>traffic.options.binary<span class="o">=</span>sumo-gui
 </code></pre></div>
+<p><strong>To watch a run</strong>, run SUMO as a TraCI process (<code>use_libsumo: false</code>) with
+<code>binary: sumo-gui</code>. Its window stays open after the run, for a look at how it
+ended, until it is closed (or <code>--quit-on-end</code> in <code>sumo_args</code> closes it at
+once). A headless <code>sumo</code> is ended with the run: it is given 5 s to exit once
+its connection closes, then killed, and a failed start kills it and quotes
+what it wrote to its standard error.</p>
 <p><strong>Its switches</strong> -- <code>publish_walkers</code>, <code>pedestrian_crossings</code>,
 <code>cycle_on_sidewalks</code>, <code>use_libsumo</code>, <code>fcd_output</code>, <code>ambient.enabled</code>,
 <code>ambient.use_safe_weights</code>, <code>pedestrians.enabled</code>, <code>bicycles.enabled</code> and
@@ -4771,7 +4778,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 12:41:50 UTC"><span class="timeago" datetime="2026-11-21T12:41:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 12:41:50 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 07:58:23 UTC"><span class="timeago" datetime="2026-11-22T07:58:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 07:58:23 UTC">2026-11-22</span>
   </span>
 
     
