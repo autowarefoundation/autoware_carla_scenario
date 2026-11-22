@@ -165,6 +165,12 @@ class StaleDraftError(Exception):
 #: is generous; a form older than the window is refused.
 _WRITER_HISTORY = 64
 
+#: How many drafts' writer histories the editor keeps: the drafts most
+#: recently saved.  A draft that drops out is checked as after a restart -- a
+#: form one save behind is refused -- which only a tab left idle while this
+#: many other drafts were edited can meet.
+_WRITER_DRAFTS = 256
+
 
 class EditorStorageError(Exception):
     """Raised when a draft cannot be written to the drafts directory.
@@ -314,8 +320,11 @@ class EditorService:
         self._locks_guard = threading.Lock()
         # Who wrote each of a draft's latest revisions: see check_revision().
         # In memory only, so after a restart a form one save behind is refused
-        # rather than trusted.
-        self._writers: dict[str, collections.deque[tuple[int, str]]] = {}
+        # rather than trusted.  Most recently saved last, and bounded by
+        # _WRITER_DRAFTS, so it does not grow with every draft ever touched.
+        self._writers: collections.OrderedDict[
+            str, collections.deque[tuple[int, str]]
+        ] = collections.OrderedDict()
 
     def _lock(self, key: str) -> threading.Lock:
         """Return the lock for *key*, creating it on first use.
@@ -534,7 +543,18 @@ class EditorService:
             raise EditorError(f"No draft named {draft_id!r}.")
         return draft
 
-    def save(self, draft: Draft, client: str = "") -> Draft:
+    @staticmethod
+    def content(draft: Draft) -> tuple[str, dict[str, Any]]:
+        """What a save of *draft* stores, less its stamp and revision."""
+        return draft.document.title or draft.title, draft.document.to_yaml_dict()
+
+    def save(
+        self,
+        draft: Draft,
+        client: str = "",
+        *,
+        unless_same_as: Optional[tuple[str, dict[str, Any]]] = None,
+    ) -> Draft:
         """Normalise the layout and persist *draft*.
 
         Args:
@@ -542,12 +562,18 @@ class EditorService:
             client: The page that asked for the write (the ``X-Editor-Client``
                 header ``editor.js`` sends), or ``""`` when unknown; remembered
                 as the writer of the new revision for :meth:`check_revision`.
+            unless_same_as: The :meth:`content` of *draft* as it was read.
+                When the write would store exactly that, nothing is written
+                and the revision stays: a save that changes nothing must not
+                make the forms showing the draft stale (#2348).
 
         Raises:
             EditorStorageError: If the drafts directory refused the write.  The
                 stored draft is untouched.
         """
         draft.document.sync_layout()
+        if unless_same_as is not None and self.content(draft) == unless_same_as:
+            return draft
         with _storage_errors(self.store):
             saved = self.store.save(draft)
         with self._locks_guard:
@@ -555,10 +581,15 @@ class EditorService:
             if writers is None:
                 writers = collections.deque(maxlen=_WRITER_HISTORY)
                 self._writers[draft.id] = writers
+            self._writers.move_to_end(draft.id)
+            while len(self._writers) > _WRITER_DRAFTS:
+                self._writers.popitem(last=False)
             writers.append((saved.revision, client))
         return saved
 
-    def check_revision(self, draft: Draft, revision: Any, client: str = "") -> None:
+    def check_revision(
+        self, draft: Draft, revision: Any, client: str = "", *, strict: bool = False
+    ) -> None:
         """Refuse a form rendered from a revision of *draft* that is stale.
 
         *revision* is the ``draft_revision`` the form was rendered with.  It
@@ -569,6 +600,13 @@ class EditorService:
         the form afresh -- and its own forms hold its own latest values.  Any
         save in between by another page, or by one that is not known, makes
         it stale.
+
+        With *strict*, only the draft's revision is current, whoever made the
+        saves since.  That is for a button that names a row by its index or
+        posts a whole order -- delete a phase, move it, reorder the actors:
+        any save since it was rendered may have moved the rows, its own
+        page's included, so a second quick click acts on what the first one
+        left, not on what it shows (#2348).
 
         Call it inside :meth:`editing`, on the draft read there.
 
@@ -581,6 +619,14 @@ class EditorService:
             base = -1
         if base == draft.revision:
             return
+        if strict:
+            raise StaleDraftError(
+                "This draft was changed since this button was shown -- in another "
+                "tab, or by an edit of this page's own still on its way -- so it "
+                "was not applied: the rows it points at may have moved. Reload "
+                "the page to see the draft as it is now, then try again.",
+                draft.id,
+            )
         if 0 <= base < draft.revision and client:
             with self._locks_guard:
                 known = dict(self._writers.get(draft.id, ()))

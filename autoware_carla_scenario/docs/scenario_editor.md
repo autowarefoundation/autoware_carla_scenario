@@ -936,7 +936,8 @@ Whatever the author is doing when that answer lands carries across it
 (`editor.js`): the field being typed in keeps its focus, its caret and what
 was typed, and a change made in another field in the meantime -- a lanelet
 picked on the map included -- is posted again from the new form rather than
-lost with the old one. That needs the answer to show the same form again: a
+lost with the old one -- unless it was a choice in a list the new form no
+longer offers, when the server's value stands and nothing is posted. That needs the answer to show the same form again: a
 change still waiting its 200 ms when the author moves on to another object
 (opens another card, adds or removes one) is still lost.
 
@@ -951,11 +952,40 @@ tab's own quick edits do not trip the check: a post sent while the answer to
 the one before is still on its way carries the revision before it, and is
 accepted as long as every save since came from the same page (`editor.js`
 names its page in an `X-Editor-Client` header). The editor remembers who made
-each of a draft's last 64 saves in memory only, so such a post is refused like
-a stale one when a save it is behind was made before the editor restarted; a
-reload puts the tab back in step. A post without a `draft_revision` -- a
-button (add, remove, move), a script -- is not checked, so a button pressed in
-a stale tab still acts on the draft as it is now.
+each of a draft's last 64 saves, for the 256 drafts saved most recently, in
+memory only, so such a post is refused like a stale one when a save it is
+behind was made before the editor restarted (or has dropped out of that
+memory); a reload puts the tab back in step.
+
+A button that names a row by its position -- remove a signal group, a
+controller or a phase, move a phase, add a phase to a controller, remove a
+waypoint condition -- or that posts a whole order (`/actors`) carries the
+revision too, and is checked **strictly**: only the draft's current revision
+passes, with no allowance for the page's own saves. Any save since the button
+was rendered may have moved the rows it points at, so a stale tab's click is
+refused rather than removing or moving the wrong row, and so is the second of
+two quick clicks in one tab, sent before the answer to the first renumbered
+the page. The refusal is the same 409 with its Reload button. Every answer
+re-renders the buttons with the revision it was rendered from, so a click
+after the swap goes through. A post without a `draft_revision` -- another
+button (add, remove by id), a script -- is not checked, so it acts on the draft
+as it is now.
+
+The forms of those rows -- a signal group's, a controller's, a phase's, the
+vertex of a waypoint condition -- post to a URL holding the row's position
+too, but are checked like any other inspector form, so a page's own quick
+edits pass. One of those edits may be the removal of a row before it, so each
+such form also names its row as it was rendered (`row`: the group's,
+controller's or phase's name, or the vertex; a phase also names its
+controller, `parent_row`), and is refused with the same 409 when the row now
+at its position is another -- unless the form is renaming its own row. A
+change pending in such a form when the answer lands is not carried across
+onto the row that took its place: it is dropped, as a change pending while
+the author moves on to another object is.
+
+**Save Draft** writes nothing when the draft is already stored as it is (every
+edit is saved as it is made), so pressing it leaves the revision, and the
+forms on the page, current.
 
 ## Save Draft vs Export Wheelhouse
 

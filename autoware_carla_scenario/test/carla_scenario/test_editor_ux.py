@@ -252,6 +252,329 @@ class TestOneTabsQuickEdits:
         assert _stored(client, draft_id).document.title == "After save"
 
 
+class TestRowButtons:
+    """Buttons that name a row by its index are checked strictly (#2348)."""
+
+    @staticmethod
+    def _phases(client: TestClient, draft_id: str) -> list[str]:
+        controllers = _stored(client, draft_id).document.map.traffic_signal_controllers
+        return [phase.name for phase in controllers[0].phases]
+
+    @pytest.fixture
+    def cycle(self, client: TestClient, draft_id: str) -> str:
+        """A controller of three phases; returns the revision a page shows."""
+        assert client.post(f"/draft/{draft_id}/signal-group").status_code == 200
+        assert client.post(f"/draft/{draft_id}/signal-controller").status_code == 200
+        for _ in range(2):
+            response = client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+            assert response.status_code == 200
+        assert self._phases(client, draft_id) == ["phase_1", "phase_2", "phase_3"]
+        return _revision(client.get(f"/draft/{draft_id}/inspector/environment").text)
+
+    def test_every_row_button_carries_the_revision(
+        self, client: TestClient, draft_id: str, cycle: str
+    ) -> None:
+        page = client.get(f"/draft/{draft_id}/inspector/environment").text
+        buttons = re.findall(
+            r'<form hx-post="[^"]*/(?:delete|move|phase)"[^>]*>\s*'
+            r'(?:<input type="hidden" name="delta" value="-?1">\s*)?'
+            r'<input type="hidden" name="draft_revision" value="(\d+)">',
+            page,
+        )
+        # A group, a controller and three phases' deletes, four moves, + Phase.
+        assert len(buttons) == 1 + 1 + 3 + 4 + 1
+        assert set(buttons) == {cycle}
+
+    def test_a_single_click_works_and_renumbers_the_buttons(
+        self, client: TestClient, draft_id: str, cycle: str
+    ) -> None:
+        response = client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/1/delete",
+            data={REVISION_FIELD: cycle},
+            headers={CLIENT_HEADER: "tab-a"},
+        )
+        assert response.status_code == 200
+        assert self._phases(client, draft_id) == ["phase_1", "phase_3"]
+        assert _revision(response.text) == str(int(cycle) + 1)
+
+    def test_a_stale_tabs_delete_is_refused(
+        self, client: TestClient, draft_id: str, cycle: str
+    ) -> None:
+        first = client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0/delete",
+            data={REVISION_FIELD: cycle},
+            headers={CLIENT_HEADER: "tab-a"},
+        )
+        assert first.status_code == 200
+        # Tab B still shows phase_1 at index 0; index 0 is now phase_2.
+        second = client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0/delete",
+            data={REVISION_FIELD: cycle},
+            headers={CLIENT_HEADER: "tab-b"},
+        )
+        assert second.status_code == 409
+        assert "Changed elsewhere" in second.text
+        assert "Reload the page" in html.unescape(second.text)
+        assert self._phases(client, draft_id) == ["phase_2", "phase_3"]
+
+    def test_a_stale_tabs_move_is_refused(
+        self, client: TestClient, draft_id: str, cycle: str
+    ) -> None:
+        moved = client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/0/move",
+            data={"delta": "1", REVISION_FIELD: cycle},
+            headers={CLIENT_HEADER: "tab-a"},
+        )
+        assert moved.status_code == 200
+        assert self._phases(client, draft_id) == ["phase_2", "phase_1", "phase_3"]
+        stale = client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/2/move",
+            data={"delta": "-1", REVISION_FIELD: cycle},
+            headers={CLIENT_HEADER: "tab-b"},
+        )
+        assert stale.status_code == 409
+        assert self._phases(client, draft_id) == ["phase_2", "phase_1", "phase_3"]
+
+    @pytest.mark.parametrize(
+        "button",
+        [
+            "signal-controller/0/phase/0/delete",
+            "signal-controller/0/phase/0/move",
+            "signal-group/0/delete",
+            "signal-controller/0/phase",
+        ],
+    )
+    def test_a_double_click_in_one_tab_lands_once(
+        self, client: TestClient, draft_id: str, cycle: str, button: str
+    ) -> None:
+        # The second click leaves before the answer to the first renumbers the
+        # page: the same page made every save since, yet the rows have moved.
+        tab = {CLIENT_HEADER: "tab-a"}
+        data = {"delta": "1", REVISION_FIELD: cycle}
+        url = f"/draft/{draft_id}/{button}"
+        assert client.post(url, data=data, headers=tab).status_code == 200
+        after_one = _stored(client, draft_id)
+        assert client.post(url, data=data, headers=tab).status_code == 409
+        again = _stored(client, draft_id)
+        assert again.revision == after_one.revision
+        assert again.document.to_yaml_dict() == after_one.document.to_yaml_dict()
+
+    def test_a_stale_waypoint_condition_delete_is_refused(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        shown = str(_stored(client, draft_id).revision)
+        tab = {CLIENT_HEADER: "tab-a"}
+        client.post(f"/draft/{draft_id}/scenario", data={"title": "T"}, headers=tab)
+        response = client.post(
+            f"/draft/{draft_id}/action/nothing/advance/0/delete",
+            data={REVISION_FIELD: shown},
+            headers=tab,
+        )
+        # Refused before the (missing) action is even looked up.
+        assert response.status_code == 409
+
+    def test_a_stale_actor_order_is_refused(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        before = _stored(client, draft_id)
+        order = [entity.id for entity in before.document.ordered_entities()]
+        current = str(before.revision)
+        tab = {CLIENT_HEADER: "tab-a"}
+        reordered = client.post(
+            f"/draft/{draft_id}/actors",
+            data={"order": order[::-1], REVISION_FIELD: current},
+            headers=tab,
+        )
+        assert reordered.status_code == 200
+        stale = client.post(
+            f"/draft/{draft_id}/actors",
+            data={"order": order, REVISION_FIELD: current},
+            headers=tab,
+        )
+        assert stale.status_code == 409
+        document = _stored(client, draft_id).document
+        assert [entity.id for entity in document.ordered_entities()] == order[::-1]
+
+    def test_the_waypoint_delete_button_sends_the_revision(self) -> None:
+        from autoware_carla_scenario.editor import app as app_module
+
+        template = (
+            Path(app_module.__file__).parent
+            / "templates"
+            / "partials"
+            / "vertex_conditions.html"
+        ).read_text(encoding="utf-8")
+        button = template.split("/advance/{{ index }}/delete")[1].split(">")[0]
+        assert """hx-vals='{"draft_revision": "{{ draft.revision }}"}'""" in button
+
+
+class TestRowForms:
+    """A row's form names its row, so its index cannot land on another (#2348).
+
+    These forms are checked leniently: a page's own quick edits pass the
+    revision check, and one of them may have removed a row before this one.
+    """
+
+    TAB = {CLIENT_HEADER: "tab-a"}
+
+    @staticmethod
+    def _groups(client: TestClient, draft_id: str) -> list[str]:
+        return [g.name for g in _stored(client, draft_id).document.map.signal_groups]
+
+    @pytest.fixture
+    def three_groups(self, client: TestClient, draft_id: str) -> str:
+        for _ in range(3):
+            assert client.post(f"/draft/{draft_id}/signal-group").status_code == 200
+        return _revision(client.get(f"/draft/{draft_id}/inspector/environment").text)
+
+    def test_every_row_form_names_its_row(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/signal-controller")
+        page = client.get(f"/draft/{draft_id}/inspector/environment").text
+        for name in self._groups(client, draft_id):
+            assert f'name="row" value="{name}"' in page
+        controller = _stored(client, draft_id).document.map.traffic_signal_controllers[
+            0
+        ]
+        assert f'name="row" value="{controller.name}"' in page
+        assert f'name="row" value="{controller.phases[0].name}"' in page
+        assert f'name="parent_row" value="{controller.name}"' in page
+
+    def test_an_edit_behind_a_delete_before_its_row_is_refused(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        first, second, third = self._groups(client, draft_id)
+        deleted = client.post(
+            f"/draft/{draft_id}/signal-group/0/delete",
+            data={REVISION_FIELD: three_groups},
+            headers=self.TAB,
+        )
+        assert deleted.status_code == 200
+        # The form of the second group, rendered before the delete and posted
+        # after it: index 1 is now the third group.
+        stale = client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={"name": "renamed", "row": second, REVISION_FIELD: three_groups},
+            headers=self.TAB,
+        )
+        assert stale.status_code == 409
+        assert "has moved" in html.unescape(stale.text)
+        assert self._groups(client, draft_id) == [second, third]
+
+    def test_a_rename_and_a_quick_edit_after_it_both_land(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        first = self._groups(client, draft_id)[0]
+        url = f"/draft/{draft_id}/signal-group/0"
+        form = {"name": "east", "row": first, REVISION_FIELD: three_groups}
+        assert client.post(url, data=form, headers=self.TAB).status_code == 200
+        # The same form again, before the answer to the rename renumbered it.
+        again = {**form, "lanelet2_regulatory_element_ids": "1330"}
+        assert client.post(url, data=again, headers=self.TAB).status_code == 200
+        group = _stored(client, draft_id).document.map.signal_groups[0]
+        assert group.name == "east"
+        assert group.lanelet2_regulatory_element_ids == [1330]
+
+    def test_a_phase_of_a_controller_that_moved_up_is_refused(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        for _ in range(3):
+            client.post(f"/draft/{draft_id}/signal-controller")
+        page = client.get(f"/draft/{draft_id}/inspector/environment").text
+        shown = _revision(page)
+        controllers = _stored(client, draft_id).document.map.traffic_signal_controllers
+        middle = controllers[1]
+        # Every controller is born with a phase of the same name.
+        assert len({c.phases[0].name for c in controllers}) == 1
+        deleted = client.post(
+            f"/draft/{draft_id}/signal-controller/0/delete",
+            data={REVISION_FIELD: shown},
+            headers=self.TAB,
+        )
+        assert deleted.status_code == 200
+        stale = client.post(
+            f"/draft/{draft_id}/signal-controller/1/phase/0",
+            data={
+                "duration_seconds": "99",
+                "row": middle.phases[0].name,
+                "parent_row": middle.name,
+                REVISION_FIELD: shown,
+            },
+            headers=self.TAB,
+        )
+        assert stale.status_code == 409
+        after = _stored(client, draft_id).document.map.traffic_signal_controllers
+        assert all(c.phases[0].duration_seconds != 99 for c in after)
+
+    def test_a_form_without_a_row_is_not_checked(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        response = client.post(
+            f"/draft/{draft_id}/signal-group/1", data={"name": "scripted"}
+        )
+        assert response.status_code == 200
+        assert self._groups(client, draft_id)[1] == "scripted"
+
+
+class TestSaveDraft:
+    def test_saving_an_unchanged_draft_keeps_the_revision(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        before = _stored(client, draft_id)
+        # More presses than the editor remembers writers for (#2348).
+        for _ in range(100):
+            response = client.post(
+                f"/draft/{draft_id}/save", headers={CLIENT_HEADER: "tab-a"}
+            )
+            assert response.status_code == 200
+            assert "Draft saved" in response.text
+        after = _stored(client, draft_id)
+        assert after.revision == before.revision
+        assert after.updated_at == before.updated_at
+        # The page's forms are still current, from any tab.
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"title": "Still current", REVISION_FIELD: str(before.revision)},
+            headers={CLIENT_HEADER: "tab-b"},
+        )
+        assert response.status_code == 200
+
+    def test_saving_a_new_title_bumps_the_revision(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        before = _stored(client, draft_id).revision
+        client.post(f"/draft/{draft_id}/save", data={"title": "Retitled"})
+        after = _stored(client, draft_id)
+        assert after.revision == before + 1
+        assert after.document.title == "Retitled"
+
+
+class TestWriterMemory:
+    def test_only_the_latest_drafts_writers_are_kept(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.editor import service as service_module
+
+        monkeypatch.setattr(service_module, "_WRITER_DRAFTS", 3)
+        service = _service(client)
+        drafts = [_new_draft(client) for _ in range(5)]
+        for draft_id in drafts:
+            client.post(
+                f"/draft/{draft_id}/scenario",
+                data={"title": f"T {draft_id}"},
+                headers={CLIENT_HEADER: "tab-a"},
+            )
+        assert list(service._writers) == drafts[-3:]
+        # Saving an older one again makes it the newest.
+        client.post(
+            f"/draft/{drafts[2]}/scenario",
+            data={"title": "again"},
+            headers={CLIENT_HEADER: "tab-a"},
+        )
+        assert list(service._writers) == [drafts[3], drafts[4], drafts[2]]
+
+
 class TestHeaderFollowsTheDocument:
     def test_a_rename_updates_the_crumb_and_the_tab_title(
         self, client: TestClient, draft_id: str

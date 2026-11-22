@@ -16,6 +16,9 @@
             hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
             class="ed-gate-vertex">
         <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+        {#- The gates are kept in vertex order, so moving one renumbers the
+            rest: the vertex it was rendered on names this row (#2348). #}
+        <input type="hidden" name="row" value="{{ gate.vertex }}" data-row data-row-field="vertex">
         <span>depart vertex</span>
         <input type="number" name="vertex" min="1" step="1" value="{{ gate.vertex }}"
                class="ed-input-xs" aria-label="Vertex" style="width:4.5em">
@@ -23,6 +26,7 @@
       </form>
       <button class="ed-btn-xs" title="Remove this waypoint condition" aria-label="Remove this waypoint condition"
               hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}/delete"
+              hx-vals='{"draft_revision": "{{ draft.revision }}"}'
               hx-target="#editor-body" hx-swap="innerHTML">{{ ic.icon('trash', 11) }}</button>
     </div>
     <div class="ed-trigger">{{ pred.render(gate.condition, draft, selected, document) }}</div>
