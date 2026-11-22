@@ -194,7 +194,13 @@ def _entry_overrides(entry: dict[str, Any]) -> list[str]:
     batch's label for the case, less the ``#k`` it is numbered with when its
     sweep gave the scenario more than one case
     (``examples.argv._case_labels``).  None is added for an entry that names
-    no scenario.
+    no scenario.  The label is ``name`` or ``name#k`` alone (a local batch,
+    a SLURM one, a glob's resolved names); a scenario's name has no ``#`` of
+    its own, which Hydra's override grammar refuses unquoted.
+
+    They are not all the case ran with: a batch records no command line, so
+    the overrides it gave every case are not among them, and the scenario
+    page says so beside its Re-run.
     """
     value = entry.get("overrides")
     overrides = [str(o) for o in value] if isinstance(value, list) else []

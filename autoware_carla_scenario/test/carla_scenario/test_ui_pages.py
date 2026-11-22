@@ -103,6 +103,30 @@ def test_a_batch_case_shows_its_own_overrides_and_can_be_run_again(
     assert json.dumps(want[1]) in page.text
 
 
+def test_a_batch_case_says_its_re_run_lacks_the_batch_command_line(
+    tmp_path: Path, client: TestClient
+) -> None:
+    """A batch records each case's sweep overrides, not the overrides its
+    command line gave every case: the Re-run is labelled as running with the
+    listed overrides alone, and the page says why.  A multirun job's
+    ``.hydra/overrides.yaml`` is its whole command line: plain Re-run."""
+    _batch(tmp_path, [{"scenario": "a/b#1", "overrides": ["k=1"]} | _result(True)])
+    job = tmp_path / "multirun" / DATE / TIME / "0"
+    (job / ".hydra").mkdir(parents=True)
+    (job / ".hydra" / "overrides.yaml").write_text("- scenario=a/b\n- k=1\n")
+    (job / "b_result.json").write_text(json.dumps(_result(True)))
+
+    batch = client.get(f"/session/{BATCH}/0").text
+    multirun = client.get(f"/session/multirun/{DATE}/{TIME}/0").text
+
+    assert 'id="rerun-case-overrides"' in batch
+    assert "Re-run with these overrides" in batch
+    assert 'id="batch-overrides-note"' in batch
+    assert "rerunScenario()" in multirun
+    assert 'id="rerun-case-overrides"' not in multirun
+    assert 'id="batch-overrides-note"' not in multirun
+
+
 def test_a_pending_batch_case_keeps_its_overrides_and_says_why(
     tmp_path: Path, client: TestClient
 ) -> None:
@@ -237,6 +261,33 @@ def test_a_missing_page_is_a_page_for_a_browser(client: TestClient, path: str) -
     assert "Scenario Viewer" in page.text
     # The guard's headers are on it too.
     assert page.headers["x-frame-options"] == "DENY"
+
+
+def test_a_missing_page_elsewhere_is_not_called_a_session(client: TestClient) -> None:
+    page = client.get("/static/no-such-file.js", headers=HTML)
+
+    assert page.status_code == 404
+    assert 'id="error-page"' in page.text
+    assert "There is no such page here." in page.text
+    assert "session or case" not in page.text
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        # A script, a stylesheet, a Rerun viewer's fetch: not a navigation.
+        {"Accept": "*/*"},
+        # An htmx request asks for HTML partials, but only of /api/.
+        {"Accept": "*/*", "HX-Request": "true"},
+    ],
+)
+def test_a_missing_static_file_fetched_by_a_page_is_json(
+    client: TestClient, headers: dict[str, str]
+) -> None:
+    answer = client.get("/static/no-such-file.js", headers=headers)
+
+    assert answer.status_code == 404
+    assert answer.headers["content-type"] == "application/json"
 
 
 @pytest.mark.parametrize(

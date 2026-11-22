@@ -128,7 +128,13 @@ async def _http_error(request: Request, exc: Exception) -> Response:
     # A detail of its own, not the status's phrase (starlette's default).
     detail = exc.detail if isinstance(exc.detail, str) and exc.detail != phrase else ""
     if exc.status_code == 404 and not detail:
-        detail = "There is no such session or case here."
+        # Only a session's page is a session or case: any other path (a
+        # mistyped URL, /static/...) is a page that is not there.
+        detail = (
+            "There is no such session or case here."
+            if request.url.path.startswith("/session/")
+            else "There is no such page here."
+        )
     return templates.TemplateResponse(
         request=request,
         name="error.html",
