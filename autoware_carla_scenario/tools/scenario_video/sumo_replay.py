@@ -20,20 +20,22 @@ from __future__ import annotations
 import bisect
 import csv
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
-
-import subprocess
 from typing import IO
 
 import sumo
 import sumolib
 import traci
 
-from autoware_carla_scenario.traffic.sumo.backend import _drop_traci_connection
-from autoware_carla_scenario.traffic.sumo.mesosim import start_sumo, stop_sumo
+from autoware_carla_scenario.traffic.sumo.mesosim import (
+    drop_traci_connection,
+    start_sumo,
+    stop_sumo,
+)
 
 _WHAT = " (the replay's sumo-gui)"
 
@@ -63,7 +65,7 @@ def start_replay(cmd: list[str]) -> tuple[subprocess.Popen[bytes], IO[bytes]]:
             traci.init(port, numRetries=0, proc=process)
         except BaseException:
             # A handshake that failed after connecting left it registered.
-            _drop_traci_connection(traci, "default")
+            drop_traci_connection(traci, "default")
             raise
 
     # SUMO's standard output stays the replay's, as with traci.start.
@@ -77,7 +79,7 @@ def stop_replay(process: subprocess.Popen[bytes], stderr: IO[bytes]) -> None:
         traci.close()
     except Exception as exc:  # noqa: BLE001 - SUMO may be gone already
         print("closing TraCI:", exc)
-        _drop_traci_connection(traci, "default")
+        drop_traci_connection(traci, "default")
     finally:
         stop_sumo(process, stderr, kill=False, what=_WHAT)
 

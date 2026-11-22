@@ -67,6 +67,7 @@ __all__ = [
     "MesoRoads",
     "SumoMesoscopicTraffic",
     "build_mesoscopic_model",
+    "drop_traci_connection",
     "segment_count",
     "start_sumo",
     "stop_sumo",
@@ -919,6 +920,32 @@ def _launch_sumo(
         if isinstance(exc, Exception) and not isinstance(exc, TrafficBackendError):
             raise TrafficBackendError(f"SUMO{what} did not start: {exc}{tail}") from exc
         raise
+
+
+def drop_traci_connection(traci: Any, label: str) -> None:
+    """Close *traci*'s connection *label*, if one is registered, and make sure
+    it is no longer, even when SUMO broke the socket mid-handshake: what a
+    :func:`start_sumo` *connect* undoes when a try of its own fails."""
+    try:
+        conn = traci.getConnection(label)
+    except Exception:  # noqa: BLE001 - none registered
+        return
+    try:
+        conn.close(False)
+    except Exception as exc:  # noqa: BLE001 - the socket is gone
+        logger.debug("SUMO close after a failed start: %s", exc)
+        # Without its socket, close() only unregisters the connection.
+        sock = getattr(conn, "_socket", None)
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            conn._socket = None
+        try:
+            conn.close(False)
+        except Exception as again:  # noqa: BLE001 - nothing more to do
+            logger.debug("SUMO connection %r stays registered: %s", label, again)
 
 
 def stop_sumo(

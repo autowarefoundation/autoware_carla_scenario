@@ -1400,6 +1400,25 @@ def test_a_build_lock_interrupt_while_waiting_closes_the_file(
         os.fstat(closed[0])
 
 
+def test_a_build_lock_taken_after_a_wait_is_handed_over_open(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
+    _flock_raising(monkeypatch, BlockingIOError(), BlockingIOError())
+    closed = _closes_recorded(monkeypatch)
+    fd = launcher._lock_workspace()
+    try:
+        assert fd >= 0
+        assert closed == []
+        os.fstat(fd)  # still open
+    finally:
+        launcher._unlock_workspace(fd)
+    assert closed == [fd]
+
+
 def _closes_recorded(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Record the descriptors ``docker`` closes (and close them)."""
     closed: list[int] = []

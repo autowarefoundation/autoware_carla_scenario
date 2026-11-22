@@ -746,7 +746,9 @@ class DockerAutowareLauncher:
         waiting = False
         # Closed on anything raised while it waits (the timeout, a
         # KeyboardInterrupt, SIGTERM's exception): the caller's try/finally
-        # only starts once this returns.
+        # only starts once this returns.  Closed in one place only, so an
+        # interrupt cannot close it twice (the second time, perhaps, a
+        # descriptor another thread has opened since).
         try:
             while True:
                 try:
@@ -761,8 +763,7 @@ class DockerAutowareLauncher:
                         self._workspace,
                         exc,
                     )
-                    os.close(fd)
-                    return -1
+                    break
                 if time.monotonic() >= deadline:
                     raise AutowareStackError(
                         f"Another run has been building {self._workspace} for "
@@ -780,6 +781,8 @@ class DockerAutowareLauncher:
         except BaseException:
             os.close(fd)
             raise
+        os.close(fd)
+        return -1
 
     def _unlock_workspace(self, fd: int) -> None:
         """Let the build lock *fd* (from :meth:`_lock_workspace`) go."""
