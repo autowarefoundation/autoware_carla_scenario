@@ -143,6 +143,12 @@ options of the others (`scenario-slurm <command> --help` says the same):
 | `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight or its sbatch timed out less than 600 s after its record was made |
 | `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option, and on an error reading the batch |
 
+A task that raised, every failed attempt of a case and a native crash in a
+task leave a [crash report](crash_reports.md) in the batch's `crash_reports/`,
+as a local batch's do. A case's report runs the case again on its own, with
+`scenario` and without `launcher=slurm`; a failed task's status names its
+report (`crash_report`).
+
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
 saying so, and `collect` lists them, saying what to do about them, chosen from

@@ -82,7 +82,9 @@ SENSITIVE_NAME_PATTERNS: tuple[str, ...] = tuple(
         "*SECRET*",
         "*KEY*",
         "*PASSWORD*",
+        "*PASSWD*",
         "*CREDENTIAL*",
+        "*DSN*",
     ]
 )
 
