@@ -5001,7 +5001,7 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-347 of the package's 477
+348 of the package's 478
 modules (73%; about 110,100 of
 184,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
@@ -5110,7 +5110,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 347 CHECKED modules</summary>
+<summary>The 348 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5242,6 +5242,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>adversity.avoidance</code></td>
 <td>Who an adversity challenges, whether they can avoid it, and how they respond (#396).</td>
+</tr>
+<tr>
+<td><code>adversity.checks</code></td>
+<td>The checks an adversity's settings make of their numbers (#2318).</td>
 </tr>
 <tr>
 <td><code>adversity.collision</code></td>
@@ -6783,7 +6787,7 @@ the first:</p>
 <li><code>autoware_bridge.ros_bridge.client</code>: imports grpc</li>
 <li><code>autoware_bridge.ros_bridge.node</code>: imports rclpy, autoware_adapi_v1_msgs, autoware_vehicle_msgs, geometry_msgs, grpc</li>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
-<li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file and the opening of it (<code>_open_lock()</code>, <code>_UNWRITABLE_ERRNOS</code>, #2144), needed room, swap, the decision whether an install is current and the conditional request that asks so, and the error of a run that can check an install but cannot write it (<code>_cannot_install()</code>), are the checked carla_install_paths's, which it re-exports; holding the lock (<code>_locked()</code>) stays: it is a <code>contextlib.contextmanager</code> generator and tells a read-only lock without flock by <code>errno.EBADF</code>, neither of which their shims declare</li>
+<li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file and the opening of it (<code>_open_lock()</code>, <code>_UNWRITABLE_ERRNOS</code>, #2144), needed room, swap, the decision whether an install is current and the conditional request that asks so, and the error of a run that can check an install but cannot write it (<code>_cannot_install()</code>), are the checked carla_install_paths's, which it re-exports, and the errors of a flock the file system does not support (<code>_NO_FLOCK_ERRNOS</code>) the checked slurm.start_lock's (#2318); holding the lock (<code>_locked()</code>) stays: it is a <code>contextlib.contextmanager</code> generator and tells a read-only lock without flock by <code>errno.EBADF</code>, neither of which their shims declare</li>
 <li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports; commonroad/session.codon declares what the checked commonroad package re-exports of it</li>
 <li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for; starts the worker with a keyword the model's <code>Popen()</code> does not declare (<code>bufsize=1</code>) and, in close(), tries its write lock with <code>acquire(blocking=False)</code>, which the model's Lock (Codon's, whose keyword is <code>block</code>) refuses; decodes the bytes it reads off the worker's output (<code>.decode()</code>), which the check, reading bytes as <code>str</code>, refuses; takes the worker's output stream typed <code>Any</code> and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; the command that starts the worker, the worker's error and the excerpt an error quotes (<code>worker_command()</code>, <code>CommonRoadWorkerError</code>, <code>WORKER_ENV</code>, <code>WORKER_SCRIPT</code>, <code>_checkout_project()</code>, <code>_excerpt()</code>) are the checked commonroad.worker_start's (#2116), which it re-exports; what is left is CommonRoadWorker, the running worker; commonroad/worker.codon declares it, which the checked commonroad package re-exports, and, for a scenario importing them from commonroad.worker, <code>WORKER_ENV</code>, <code>CommonRoadWorkerError</code> and <code>worker_command()</code></li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
@@ -8697,7 +8701,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   per set of keywords (<code>RoutingAction</code> passes <code>waypoints=</code> only when there
   are some, in a call of its own).
 - <strong><code>Literal["a", "b"]</code> is checked as the type of its values</strong> (<code>str</code>), an
-  annotation and a module-level alias alike (<code>route.model</code>'s <code>Tristate</code>):
+  annotation and a module-level alias alike (<code>autoware_stack.docker</code>'s
+  <code>BuildPolicy</code>, the type of <code>DockerAutowareConfig.build</code>):
   Codon's own <code>Literal</code> types a compile-time value of <code>int</code>, <code>bool</code> or <code>str</code>
   only, and the <code>typing</code> shim's <code>Literal</code> is <code>str</code> (its <code>TYPE_CHECKING</code> is
   declared with <code>Static[bool]</code>, Codon's other name for its <code>Literal</code>). A
@@ -9021,7 +9026,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 02:46:11 UTC"><span class="timeago" datetime="2026-11-22T02:46:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 02:46:11 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 06:05:44 UTC"><span class="timeago" datetime="2026-11-22T06:05:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 06:05:44 UTC">2026-11-22</span>
   </span>
 
     
