@@ -659,7 +659,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     task.update(cases=chunk)
     # What the task raises, a case's failed attempts and a native crash leave
     # their crash reports beside a local batch's (docs/crash_reports.md).
-    crash_report.set_report_dir(batch_dir / crash_report.CRASH_REPORTS_DIRNAME)
+    crash_report.set_output_dir(batch_dir)
 
     if manifest.get("typechecked"):
         # Checked by the submitting process, once a config shape: building the

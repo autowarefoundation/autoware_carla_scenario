@@ -113,7 +113,7 @@ __all__ = [
     "read_settings",
     "reporting",
     "run_context",
-    "set_report_dir",
+    "set_output_dir",
     "uninstall",
     "wants",
 ]
@@ -772,13 +772,14 @@ def wants(item: str) -> bool:
     return reporter is not None and item in reporter.settings.items
 
 
-def set_report_dir(directory: Path) -> None:
-    """Send the process's reports to *directory* from now on (a batch's
-    ``crash_reports/``), and prepare a native-crash report there."""
+def set_output_dir(output_dir: Path) -> None:
+    """Send the process's reports to ``<output_dir>/crash_reports/`` from now
+    on (a batch's), and prepare a native-crash report there.  Nothing when no
+    reporter is installed."""
     reporter = _REPORTER[0]
     if reporter is None:
         return
-    reporter.context = _RunContext(report_dir=directory)
+    reporter.context = _RunContext(report_dir=Path(output_dir) / CRASH_REPORTS_DIRNAME)
     reporter.arm_native()
 
 

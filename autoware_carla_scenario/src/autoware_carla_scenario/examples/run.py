@@ -3290,7 +3290,7 @@ def run_batch(
 
     # A case that raises becomes a failed result and the batch goes on: its
     # crash report goes to the batch's directory.
-    crash_report.set_report_dir(output_dir / crash_report.CRASH_REPORTS_DIRNAME)
+    crash_report.set_output_dir(output_dir)
     queue = _batch_queue(first_cfg, map_paths, output_dir, rerun=rerun)
 
     for cfg, scenario, stem in zip(configs, scenarios, run_stems):
