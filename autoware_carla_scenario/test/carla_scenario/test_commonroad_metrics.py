@@ -1543,8 +1543,6 @@ def test_a_worker_answering_its_init_out_of_protocol_is_not_left_running(
     assert process.poll() is not None
 
 
-#: A worker that answers its ``init`` and then neither reads nor answers
-#: anything more, as one deep in a long (or deadlocked) evaluation would.
 #: A worker that answers each request after a moment, naming the request's
 #: ``n``: what tells one thread's answer from another's.
 _ECHOES_SLOWLY = textwrap.dedent(
@@ -1601,6 +1599,8 @@ def test_requests_from_two_threads_each_get_their_own_answer(
         _kill(process)
 
 
+#: A worker that answers its ``init`` and then neither reads nor answers
+#: anything more, as one deep in a long (or deadlocked) evaluation would.
 _STUCK = textwrap.dedent(
     """
     import json, sys, time

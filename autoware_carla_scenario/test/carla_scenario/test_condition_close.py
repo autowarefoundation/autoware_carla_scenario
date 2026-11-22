@@ -193,6 +193,32 @@ class TestCollisionConditionReset:
         assert isinstance(result, ScenarioResult) and not result.passed
 
 
+class TestCollisionConditionStop:
+    def test_the_sensor_is_stopped_without_the_lock_its_callback_takes(
+        self,
+    ) -> None:
+        """#2323: CARLA's stop() may wait for a callback in flight, which takes
+        the condition's lock; check() held that lock across stop()."""
+        calls: list[str] = []
+        condition, sensor, world = _attached(calls)
+        free: list[bool] = []
+
+        def stop() -> None:
+            calls.append("stop")
+            taken = condition._lock.acquire(timeout=1.0)
+            free.append(taken)
+            if taken:
+                condition._lock.release()
+
+        sensor.stop = stop  # type: ignore[method-assign]
+        _collide(sensor)
+        result = condition.check(world, 1.0)
+        assert isinstance(result, ScenarioResult) and not result.passed
+        assert free == [True]
+        assert condition.check(world, 2.0) is result
+        assert calls == ["listen", "stop"]
+
+
 class _Closable(BaseCondition):
     def __init__(self, label: str, closed: list[str]) -> None:
         super().__init__(label=label)

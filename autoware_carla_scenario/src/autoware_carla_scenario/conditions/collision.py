@@ -301,22 +301,25 @@ class CollisionCondition(BaseCondition):
             self._try_attach_sensor(world, elapsed)
 
         with self._lock:
-            if self._collided:
-                if self._other_is_actor:
-                    other = f"'{self._other_description()}'"
-                else:
-                    other = "something that is not an actor (map geometry)"
-                self._cached_result = ScenarioResult(
-                    passed=False,
-                    message=f"Ego vehicle collided with {other} at {elapsed:.2f}s",
-                    elapsed_seconds=elapsed,
-                )
-                # Stop the listener — no further callbacks are needed.
-                if self._sensor is not None and self._listening:
-                    self._sensor.stop()
-                    self._listening = False
-                return self._cached_result
-        return None
+            if not self._collided:
+                return None
+            if self._other_is_actor:
+                other = f"'{self._other_description()}'"
+            else:
+                other = "something that is not an actor (map geometry)"
+            result = ScenarioResult(
+                passed=False,
+                message=f"Ego vehicle collided with {other} at {elapsed:.2f}s",
+                elapsed_seconds=elapsed,
+            )
+            self._cached_result = result
+        # Stop the listener -- no further callbacks are needed.  Outside the
+        # lock: CARLA's stop() may wait for a callback in flight, which takes
+        # the lock (_on_collision), and would wait for this thread (#2323).
+        if self._sensor is not None and self._listening:
+            self._sensor.stop()
+            self._listening = False
+        return result
 
     def close(self) -> None:
         """Stop the collision sensor and destroy it, through this handle.
