@@ -84,8 +84,15 @@ def test_a_build_that_does_not_fit_waits_for_one_to_end(tmp_path: Path) -> None:
 
 
 def test_a_build_too_large_for_the_machine_runs_alone(tmp_path: Path) -> None:
-    with admitted(30 * GB, directory=tmp_path, budget=_budget(14)):
-        pass
+    def sleep(seconds: float) -> None:
+        raise AssertionError("a build with none running waited")
+
+    with admitted(30 * GB, directory=tmp_path, budget=_budget(14), sleep=sleep):
+        # Admitted with its whole need held, not let through ungated.
+        holds = list(tmp_path.glob("*.hold"))
+        assert len(holds) == 1
+        assert holds[0].read_text().split()[0] == str(30 * GB)
+    assert not list(tmp_path.glob("*.hold"))
 
 
 def _hold_in_child(directory: str, ready: object, release: object) -> None:

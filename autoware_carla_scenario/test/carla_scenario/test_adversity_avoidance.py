@@ -182,14 +182,20 @@ def test_a_nade_setting_refuses_an_avoid_is_probability_above_1() -> None:
         NadeSettings(avoidance=AvoidanceSettings(avoid_is_probability=1.5))
 
 
-@pytest.mark.parametrize("q", [0.0, 0.2, 0.5, 1.0])
-@pytest.mark.parametrize("p", [0.0, 0.5, 0.99, 1.0])
+@pytest.mark.parametrize(
+    ("p", "q"),
+    [
+        (p, q)
+        for q in (0.0, 0.2, 0.5, 1.0)
+        for p in (0.0, 0.5, 0.99, 1.0)
+        # Not a q that never draws a response p can.
+        if not ((q == 0.0 and p > 0.0) or (q == 1.0 and p < 1.0))
+    ],
+)
 def test_the_response_s_weight_averages_to_1(p: float, q: float) -> None:
     """The weight is p / q or (1 - p) / (1 - q), so its mean is 1 for a q
     that can draw both responses; one above 1 would draw avoid every time
     and still weight it by p / q (#1463)."""
-    if (q == 0.0 and p > 0.0) or (q == 1.0 and p < 1.0):
-        pytest.skip("q never draws a response p can")
     settings = AvoidanceSettings(avoid_probability=p, avoid_is_probability=q)
     rng = random.Random(7)
     weights = [respond(rng, False, True, settings).weight for _ in range(20000)]

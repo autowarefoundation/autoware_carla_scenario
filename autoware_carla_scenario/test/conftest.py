@@ -111,6 +111,25 @@ def _map_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _openodd_cache_restored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put ``$OPENODD_CACHE`` back as it was after every test.
+
+    ``odd.backend.sync_cache_env`` (every ODD load) copies
+    ``$AUTOWARE_CARLA_SCENARIO_ODD_CACHE`` into ``os.environ`` directly, so a
+    test that monkeypatches that to its own temporary directory would leave
+    openodd's cache pointing there for every later test in the worker.  Per
+    test, not per session: a session's undo would only run once the suite is
+    done.  An unset variable is set, then removed, so that monkeypatch records
+    the undo that removes it again.
+    """
+    name = "OPENODD_CACHE"
+    value = os.environ.get(name)
+    monkeypatch.setenv(name, "" if value is None else value)
+    if value is None:
+        monkeypatch.delenv(name)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _typecheck_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Share the Codon verdicts between the xdist workers of a run.

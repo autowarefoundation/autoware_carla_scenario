@@ -297,7 +297,9 @@ def test_a_prop_on_no_lanelet_is_refused_at_construction(lanelet_id: int) -> Non
         SpawnAction(name="cone1", position=Lanelet2Pose(lanelet_id, 5.0))
 
 
-def test_an_entity_on_no_lanelet_still_waits_where_it_was_declared() -> None:
+def test_an_entity_on_no_lanelet_is_not_refused_at_construction() -> None:
+    # Unlike a prop's, lanelet 0 is a place for an entity: where it was
+    # declared to spawn (test_hidden_declared_spawn.py brings it in there).
     SpawnAction("npc1", position=Lanelet2Pose(0, 0.0))
 
 
