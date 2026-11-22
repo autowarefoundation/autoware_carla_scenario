@@ -43,6 +43,14 @@ sweep:
     ego.spawn_lanelet_id:
       - type: and
         constraints:
+          # A lane before it, which stop_line_offset walks back onto: a pick
+          # with none starts the ego at its own start, which is the stop line
+          # where the line is at the start, not 25 m short of it (#2350). A
+          # lanelet_length of 0 m or more is any lanelet.
+          - type: following_of
+            constraints:
+              - type: lanelet_length
+                value: 0.0
           - type: turn_direction
             value: right
           - type: has_traffic_light_stop_line

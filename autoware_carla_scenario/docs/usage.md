@@ -436,6 +436,25 @@ replaces the pick, several picks that walk back to the same predecessor can
 end as the same case. Each distinct case runs once, as the first of those
 picks gives it, and the log names the picks that were merged.
 
+A walk-back that runs out of predecessors stops at the start of the last
+lanelet it reached and logs how much of the offset it could not satisfy. On a
+pick with no lanelet before it, that is the pick's own start, which is the
+stop line itself where the line is at the start, as a junction lanelet's
+usually is. The shipped `intersection_passing` and `temporary_stop` sweeps
+leave such picks out by requiring a lanelet before the pick (any lanelet, as
+`lanelet_length` of 0 m or more matches). That drops every pick with nothing
+before it, including one whose line is far enough in that it falls only a
+little short, and it does not make the offset fit: at each step the walk-back
+takes the routing graph's first predecessor, and the lane it reaches can
+itself run out.
+
+```yaml
+- type: following_of
+  constraints:
+    - type: lanelet_length
+      value: 0.0
+```
+
 A constraint sees the pick, not where a walk-back puts the spawn. Use
 `sweep.exclude` to drop a case by the values it ends up with once its bindings
 are applied. Each key lists the values a case may not hold there. For example,
@@ -878,8 +897,9 @@ conf/
 │   └── default.yaml         # CARLA Traffic Manager settings
 ├── traffic/                 # Traffic backend: traffic_manager, sumo, hybrid, none
 ├── launcher/                # Who runs a batch's cases: local, slurm
-├── hydra/sweeper/
-│   └── lanelet_constraint.yaml
+├── hydra/help/
+│   └── scenario.yaml        # `scenario --help` (hydra/sweeper=lanelet_constraint
+│                            # is the sweeper plugin's own, not a file here)
 ├── map/
 │   ├── nishishinjuku.yaml   # Map file paths and excluded lanelet IDs
 │   └── town10hd_opt.yaml
