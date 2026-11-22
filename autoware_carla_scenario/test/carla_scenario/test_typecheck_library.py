@@ -5547,6 +5547,96 @@ def test_the_errno_codes_and_uuid_hex_slurm_start_lock_reads_are_cpythons() -> N
 
 
 # ---------------------------------------------------------------------------
+# os.lstat(), stat_result.st_uid and os.O_NOFOLLOW: what slurm.ports checks its
+# lock directory and opens its lock files with (#2325)
+# ---------------------------------------------------------------------------
+
+
+_PORT_LOCK_DIR = """
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+def private(path: Path) -> bool:
+    info = os.lstat(path)
+    again = os.lstat(str(path), dir_fd=None)
+    return info.st_uid == os.getuid() and again.st_mode & 18 == 0
+
+
+def owner(fd: int) -> int:
+    return os.fstat(fd).st_uid + os.stat("x").st_uid
+
+
+def lock(path: Path) -> int:
+    return os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 420)
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_os_shim_takes_what_slurm_ports_checks_its_lock_dir_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_PORT_LOCK_DIR, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ("os.lstat(path)", "os.lstat()"),
+        ("os.lstat(path)", "os.lstat(path, None)"),
+        ("os.lstat(str(path), dir_fd=None)", "os.lstat(str(path), follow=False)"),
+        ("info.st_uid", "info.st_owner"),
+        ("os.O_NOFOLLOW", "os.O_NOFOLLOWS"),
+    ],
+    ids=[
+        "lstat-no-path",
+        "lstat-dir-fd-keyword-only",
+        "lstat-unknown-keyword",
+        "stat-result-unknown-attribute",
+        "o-nofollow-unknown-name",
+    ],
+)
+def test_the_os_shim_refuses_what_cpython_refuses_of_slurm_ports_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _PORT_LOCK_DIR.replace(right, wrong, 1)
+    assert source != _PORT_LOCK_DIR
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_os_shims_lstat_and_o_nofollow_are_cpythons(tmp_path: Path) -> None:
+    import os
+    import platform
+
+    shim = (model_dir() / "os" / "__init__.codon").read_text()
+    # x86_64's value (0o400000; aarch64's is 0o100000): the check reads only
+    # its type, and the package always uses os.O_NOFOLLOW at run time.
+    assert re.search(r"^O_NOFOLLOW = 131072$", shim, re.MULTILINE)
+    if platform.machine() == "x86_64":
+        assert os.O_NOFOLLOW == 131072
+    elif platform.machine() == "aarch64":
+        assert os.O_NOFOLLOW == 32768
+    assert "    st_uid: int\n" in shim
+    # The arguments CPython takes and refuses, as the shim declares them.
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "missing")
+    assert os.lstat(link, dir_fd=None).st_uid == os.getuid()
+    with pytest.raises(TypeError):
+        os.lstat(link, None)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        os.lstat()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
 # errno.EACCES and errno.EROFS: what carla_install_paths tells a lock file
 # that cannot be created or written by (#2144)
 # ---------------------------------------------------------------------------

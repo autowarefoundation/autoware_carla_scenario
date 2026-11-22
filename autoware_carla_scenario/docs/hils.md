@@ -205,6 +205,16 @@ WantedBy=multi-user.target
 
 A failing `startup` step stops the bridge with status 1 (systemd restarts it).
 
+### Exposure
+
+The run link has no authentication: anyone who can reach `runner.listen` can
+start and end runs on the ECUs and read the commands they send. Its default,
+`0.0.0.0:7700`, is every interface, so bind it to the interface that faces the
+scenario runner (or to `127.0.0.1` when the runner is on the same machine), or
+firewall the port so only the runner reaches it. Listening on an address that
+is not a loopback one, `scenario-hils` says so on stderr when it starts, as the
+viewer and the scenario editor do.
+
 ## Configuration
 
 One YAML file describes everything. Relative paths in it (the `canvas` file,
@@ -229,7 +239,7 @@ devices:
 | `ego.wait` | `120.0` | seconds (not negative; wall clock) without an ego -- since the bridge reached CARLA, or since the last scenario ended -- before a warning, logged once a wait (it keeps waiting) |
 | `canvas` | none | a carla_canvas configuration: see [carla_canvas](#sensors-rendered-by-carla_canvas) |
 | `clock` | `simulation` | the devices' time: see [Time](#time) |
-| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge: `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link (an empty `""` is refused) |
+| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge, with no authentication ([Exposure](#exposure)): `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link (an empty `""` is refused) |
 | `commands.mode` | `control` | how the ECUs' command drives the ego: see [ECU to simulation](#ecu-to-simulation) |
 | `devices` | | one entry per device, by name |
 | `lifecycle` | none | steps around the bridge and each scenario: see [Lifecycle](#lifecycle) |

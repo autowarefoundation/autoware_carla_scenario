@@ -3375,7 +3375,9 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
   `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
   nothing is opened) with the flags `O_RDONLY`, `O_WRONLY`, `O_RDWR`,
-  `O_CREAT`, `O_EXCL`, `O_TRUNC` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  `O_CREAT`, `O_EXCL`, `O_TRUNC` and `O_CLOEXEC` (Linux's values) and
+  `O_NOFOLLOW` (x86_64's; aarch64's differs, and the check only reads its
+  type) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
   errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
   `Path.open()` gives), and what `slurm.manifest` creates a file
   exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
@@ -3392,13 +3394,14 @@ What Codon 0.19 needs that Python does not, beyond
   read), and makes its input non-blocking with, `set_blocking(fd, blocking,
   /)` (of an `int` and a `bool`; nothing is changed), and what `rerun`
   builds a `FileNotFoundError` with, `strerror(code, /)` (a `str`, `""` in
-  the check). `memoryview(obj)` of bytes is declared as far as
+  the check), and what `slurm.ports` checks its lock directory with,
+  `lstat(path, *, dir_fd=None)`. `memoryview(obj)` of bytes is declared as far as
   `tools.file_writes` uses it: a view is true while it is not empty and
   sliced into another (`view[n:]`), which `os.write()` takes; indexing an
   item, `tobytes()`, `release()` and the rest are not declared.
-  The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
-  `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
-  nothing else. `errno` declares `EPERM`, `ENOENT`, `EACCES`, `EEXIST`,
+  The result of `stat()`, `lstat()` and `fstat()` has `st_dev`, `st_ino`,
+  `st_mode`, `st_nlink`, `st_uid`, `st_size`, `st_mtime` and `st_mtime_ns`
+  (all zero) and nothing else. `errno` declares `EPERM`, `ENOENT`, `EACCES`, `EEXIST`,
   `ENOTDIR`, `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
   `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
   declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the

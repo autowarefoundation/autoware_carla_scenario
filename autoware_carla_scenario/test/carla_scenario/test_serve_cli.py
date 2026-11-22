@@ -521,6 +521,16 @@ def test_warn_if_exposed_writes_one_line_to_stderr(
     )
 
 
+def test_warn_if_exposed_takes_a_hint_of_its_own(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    warn_if_exposed("prog", "0.0.0.0", 1234, "edit drafts", hint="Firewall it.")
+    assert capsys.readouterr().err == (
+        "prog: WARNING: listening on 0.0.0.0:1234 with no authentication; "
+        "anyone who can reach this port can edit drafts. Firewall it.\n"
+    )
+
+
 @pytest.mark.parametrize(
     "host", ["127.0.0.1", "::1", "[::1]", "localhost", "LOCALHOST."]
 )

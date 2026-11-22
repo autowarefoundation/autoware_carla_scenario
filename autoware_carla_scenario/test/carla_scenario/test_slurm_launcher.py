@@ -3982,8 +3982,10 @@ def test_port_locks_go_to_a_node_wide_directory(
     lock_dir = ports.default_lock_dir(shm)
     assert lock_dir == shm / f"acs-slurm-ports-{os.getuid()}"
     assert lock_dir.is_dir() and (lock_dir.stat().st_mode & 0o777) == 0o700
-    # Where /dev/shm cannot be used, /tmp.
-    assert ports.default_lock_dir(tmp_path / "missing") == ports.LOCK_DIR
+    # Where /dev/shm cannot be used, a directory of the user's own in /tmp.
+    assert ports.default_lock_dir(tmp_path / "missing", tmp_path) == (
+        tmp_path / f"acs-slurm-ports-{os.getuid()}"
+    )
     # A slot taken without a lock directory locks there.
     monkeypatch.setattr(ports, "default_lock_dir", lambda: lock_dir)
     slot = acquire_slot(port_base, RANGE_SLOTS, start=0)
