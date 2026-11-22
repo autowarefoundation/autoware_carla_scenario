@@ -61,8 +61,10 @@ def _original_is_ego(role: str) -> bool:
 def _original_on_scene(
     spawned: Optional[int], despawned: Optional[int], frame: int
 ) -> bool:
-    return (spawned is None or frame > spawned) and (
-        despawned is None or frame < despawned
+    # The spawn's and the despawn's own frames are on the scene since #2352
+    # (the original left both out).
+    return (spawned is None or frame >= spawned) and (
+        despawned is None or frame <= despawned
     )
 
 

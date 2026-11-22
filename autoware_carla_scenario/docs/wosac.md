@@ -99,7 +99,7 @@ method_link: https://example.com/method
 uses_lidar_data: false
 uses_camera_data: false
 uses_public_model_pretraining: false
-num_model_parameters: "0"
+num_model_parameters: "200K"            # an integer and a multiplier suffix (K, M, B, T)
 acknowledge_complies_with_closed_loop_requirement: true
 ```
 

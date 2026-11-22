@@ -1290,6 +1290,141 @@ def test_a_camera_slower_than_the_policy_writes_no_empty_samples(
     assert "nothing fed on frame 103 can be written" in caplog.text
 
 
+def _jpeg_of(value: int) -> bytes:
+    """A JPEG frame of its own: grey at *value*, so each rendered frame's
+    bytes tell it from the others."""
+    import cv2  # noqa: PLC0415
+
+    ok, encoded = cv2.imencode(".jpg", np.full((48, 64, 3), value, dtype=np.uint8))
+    assert ok
+    return encoded.tobytes()
+
+
+def _written_jpegs(root: Path) -> dict[str, list[bytes]]:
+    """Each camera channel's written frames, oldest first."""
+    sensors = {s["token"]: s["channel"] for s in _table(root, "sensor")}
+    channels = {
+        c["token"]: sensors[c["sensor_token"]]
+        for c in _table(root, "calibrated_sensor")
+    }
+    written: dict[str, list[tuple[int, bytes]]] = {}
+    for row in _table(root, "sample_data"):
+        if row["fileformat"] == "jpg":
+            written.setdefault(channels[row["calibrated_sensor_token"]], []).append(
+                (row["timestamp"], (root / "0" / row["filename"]).read_bytes())
+            )
+    return {
+        channel: [jpeg for _, jpeg in sorted(frames)]
+        for channel, frames in written.items()
+    }
+
+
+def test_a_camera_slower_than_the_policy_beside_an_older_sweep_is_written_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sweep a tick older than the step puts the key frame before the frame
+    of a camera rendering every 4 ticks on the step itself; on the next step
+    the policy is handed that frame again, which is after the key frame
+    written last but is not written a second time (#2352)."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    rendered = -1
+    for frame in range(100, 113):
+        world.frame = frame
+        if frame % 4 == 3:  # the camera's ticks: 103, 107, 111
+            rendered = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_lidar(
+                frame,
+                np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                taken_on=frame - 1,
+            )
+            if rendered >= 0:
+                recording.feed_camera_jpeg(
+                    frame, "cam_front", _jpeg_of(rendered), taken_on=rendered
+                )
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    # A sample per sweep: frames 100, 102, ..., 110.
+    assert [t - samples[0] for t in samples] == [i * 100_000 for i in range(6)]
+    assert _written_jpegs(root) == {
+        "CAM_FRONT": [_jpeg_of(103), _jpeg_of(107), _jpeg_of(111)]
+    }
+
+
+def test_two_cameras_at_other_rates_write_each_frame_once_a_step_apart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a LiDAR: a camera at the policy's rate, rendering a tick before
+    each step, and one every 4 ticks on the step itself.  The slow camera's
+    frame handed to the policy again on the next step is not written again,
+    nor does it pull that step's key frame back onto its own tick -- the
+    samples stay a policy step apart, not 50 and 150 ms (#2352)."""
+    rear = DriverCameraConfig(
+        logical_id="cam_rear", image_width=64, image_height=48, fov=90.0, yaw=180.0
+    )
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(
+            tmp_path,
+            monkeypatch,
+            world,
+            _driver(lidars=(), cameras=(_driver().cameras[0], rear)),
+        )
+    finally:
+        t4.withdraw_driver_sensors()
+    rear_rendered = -1
+    for frame in range(100, 113):
+        world.frame = frame
+        if frame % 4 == 1:  # the rear camera's ticks: 101, 105, 109
+            rear_rendered = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_camera_jpeg(
+                frame, "cam_front", _jpeg_of(frame - 1), taken_on=frame - 1
+            )
+            recording.feed_camera_jpeg(
+                frame, "cam_rear", _jpeg_of(rear_rendered), taken_on=rear_rendered
+            )
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    # On the front camera's frames: 100, 102, ..., 110.
+    assert [t - samples[0] for t in samples] == [i * 100_000 for i in range(6)]
+    assert _written_jpegs(root) == {
+        "CAM_FRONT": [_jpeg_of(f) for f in range(100, 111, 2)],
+        "CAM_REAR": [_jpeg_of(101), _jpeg_of(105), _jpeg_of(109)],
+    }
+
+
+def test_a_fed_dataset_with_two_cameras_passes_t4_devkits_sanity_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run of
+    :func:`test_two_cameras_at_other_rates_write_each_frame_once_a_step_apart`
+    reads back with t4-devkit and passes its sanity checker."""
+    t4_devkit = pytest.importorskip("t4_devkit")
+    from t4_devkit.sanity import sanity_check  # noqa: PLC0415
+
+    test_two_cameras_at_other_rates_write_each_frame_once_a_step_apart(
+        tmp_path, monkeypatch
+    )
+    root = dataset_path(tmp_path / "out", "CutInScenario")
+    dataset = t4_devkit.T4Devkit(str(root))
+    assert len(dataset.sample) == 6
+    result = sanity_check(str(root))
+    assert result.is_passed()
+    failed = {r.id for r in result.reports if r.status.name == "FAILED"}
+    assert failed <= {"STR005", "STR009"}
+
+
 def test_the_dataset_and_the_trajectory_log_agree_on_the_rear_axle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

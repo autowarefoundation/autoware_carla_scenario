@@ -170,17 +170,26 @@ def is_ego(role: str) -> bool:
 
 
 def on_scene(spawned: Optional[int], despawned: Optional[int], frame: int) -> bool:
-    """Whether a road user is on the scene at *frame*, not parked out of
-    sight up to its ``SpawnAction``'s frame *spawned* (whose tick may have
-    been logged before the action moved it) or from its ``DespawnAction``'s,
-    *despawned*; ``None``: it has no such action."""
+    """Whether a road user is on the scene at *frame*: not parked out of
+    sight before its ``SpawnAction``'s frame *spawned*, nor gone after its
+    ``DespawnAction``'s, *despawned*; ``None``: it has no such action.
+
+    Both frames are the tick logged last when the action ran, and each can
+    hold a valid row (#2352): a pre-tick spawn (the default) moves the actor
+    before the world is stepped to *spawned*, so that tick shows it on its
+    place; a post-tick despawn, or the run's of a walker lying fallen,
+    destroys it after *despawned* was logged with it still there.  The other
+    phase's row is no box all the same: a post-tick spawn's tick shows the
+    actor still parked under the map, which the caller leaves out by its
+    height, and a pre-tick despawn's has no row of it at all.
+    """
     if spawned is not None:
         first: int = spawned
-        if frame <= first:
+        if frame < first:
             return False
     if despawned is not None:
         last: int = despawned
-        if frame >= last:
+        if frame > last:
             return False
     return True
 

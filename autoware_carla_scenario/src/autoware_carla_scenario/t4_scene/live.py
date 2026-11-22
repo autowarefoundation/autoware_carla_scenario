@@ -394,10 +394,13 @@ class LiveT4Scene:
         return self._route
 
     def _fill_ego_extras(self, scene: pb.T4Scene, frames: Sequence[int]) -> None:
-        """The ego's acceleration, angular velocity, tyre angle and odometry
-        times, on the rows they were told; masked on the others, but for the
-        angular velocity the log has (the converter's).  The rig's vectors
-        turn into the scene's axes by the row's ``poses_3d`` rotation."""
+        """The ego's acceleration, angular velocity and tyre angle, on the
+        rows they were told; masked on the others, but for the angular
+        velocity the log has (the converter's).  The rig's vectors turn into
+        the scene's axes by the row's ``poses_3d`` rotation.  The odometry
+        times are the rows' ticks, masked where the ego is unavailable: the
+        contract's masks mark unknown values, and a row without the ego has
+        no odometry (#2352)."""
         ego = scene.ego
         rows = len(frames)
         rotations = (
@@ -456,8 +459,17 @@ class LiveT4Scene:
         ego.accelerations_3d.CopyFrom(_array(accelerations, "f8", ~told[:, None]))
         ego.angular_velocities_3d.CopyFrom(_array(angular, "f8", angular_mask))
         ego.tire_steering_angles.CopyFrom(_array(steering, "f8", ~steered))
+        available = (
+            np.frombuffer(ego.available.data, dtype=np.bool_).reshape(rows)
+            if ego.HasField("available")
+            else np.ones(rows, dtype=bool)
+        )
         ego.odometry_timestamps_ns.CopyFrom(
-            _array([(f - self._log.first_frame) * _TICK_NS for f in frames], "i8")
+            _array(
+                [(f - self._log.first_frame) * _TICK_NS for f in frames],
+                "i8",
+                ~available,
+            )
         )
         if self.wheel_base_m is not None:
             ego.shape.wheel_base = float(self.wheel_base_m)
