@@ -182,8 +182,13 @@ def getpgid(pid: int) -> int:
     return 0
 
 
-# getuid() and getgid(): this process's real user and group ids.
+# getuid() and getgid(): this process's real user and group ids; geteuid():
+# its effective user id, whether it runs as root (hils.host_setup, #2310).
 def getuid() -> int:
+    return 0
+
+
+def geteuid() -> int:
     return 0
 
 
@@ -486,6 +491,33 @@ def write(*args) -> int:
     else:
         compile_error("write(): the data is bytes or a memoryview")
     return 0
+
+
+# read(fd, length, /): at most *length* bytes from the descriptor, bytes (a
+# str here: the check reads bytes as str), empty at the end of the file ("",
+# as nothing is read); set_blocking(fd, blocking, /): whether a read of the
+# descriptor waits for data (nothing is changed here). commonroad.worker reads
+# the worker's output with them (#2310).
+def read(*args) -> str:
+    _positional_only(args, 2, "read()")
+    fd: int = args[0]
+    length: int = args[1]
+    return ""
+
+
+def set_blocking(*args) -> None:
+    _positional_only(args, 2, "set_blocking()")
+    fd: int = args[0]
+    blocking: bool = args[1]
+
+
+# strerror(code, /): the message of an error code, a str ("No such file or
+# directory" of errno.ENOENT in CPython; "" here, as nothing runs), which
+# rerun's convert_outputs() builds its FileNotFoundError with (#2310).
+def strerror(*args) -> str:
+    _positional_only(args, 1, "strerror()")
+    code: int = args[0]
+    return ""
 
 
 # ftruncate(fd, length, /): cuts the descriptor's file to *length* bytes
