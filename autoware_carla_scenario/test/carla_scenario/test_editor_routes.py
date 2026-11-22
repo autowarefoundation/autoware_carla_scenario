@@ -3373,6 +3373,16 @@ class TestAreasOnTheMap:
         body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
         assert "nothing on this map is in it" in body
 
+    def test_the_road_surface_is_read_off_the_opendrive_map_unasked(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """No Lanelet2 parse is needed, so it is answered without Outline
+        areas: the fixture map has no OpenCRG grid, and says so."""
+        self._area_card(store, draft_id, ground="SURFACE_RAISED", relief_m=0.02)
+        body = client.get(f"/draft/{draft_id}/map-view").text
+        assert "raised road surface (0.02 m and more)" in body
+        assert "nothing on this map is in it" in body
+
 
 class TestAMapSourceThatIsNoURL:
     """An unclosed ``[`` is urlsplit's ValueError, which MapSource.parse turns

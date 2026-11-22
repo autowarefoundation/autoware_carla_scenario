@@ -1045,6 +1045,9 @@ class AreaGround:
     NO_PARKING_AREA: ClassVar[AreaGround] = AreaGround("no_parking_area")
     PARKING_LOT: ClassVar[AreaGround] = AreaGround("parking_lot")
     POLYGON: ClassVar[AreaGround] = AreaGround("polygon")
+    SURFACE_RAISED: ClassVar[AreaGround] = AreaGround("surface_raised")
+    SURFACE_GROOVED: ClassVar[AreaGround] = AreaGround("surface_grooved")
+    SURFACE_RELIEF: ClassVar[AreaGround] = AreaGround("surface_relief")
 
     # Enum's name (#307): Codon has no Enum to give a framework enum one.
     @property
@@ -1073,6 +1076,12 @@ class AreaGround:
             return "PARKING_LOT"
         if self == AreaGround.POLYGON:
             return "POLYGON"
+        if self == AreaGround.SURFACE_RAISED:
+            return "SURFACE_RAISED"
+        if self == AreaGround.SURFACE_GROOVED:
+            return "SURFACE_GROOVED"
+        if self == AreaGround.SURFACE_RELIEF:
+            return "SURFACE_RELIEF"
         raise ValueError("not a member of AreaGround")
 
     @property
@@ -1080,6 +1089,11 @@ class AreaGround:
         return (self.value == "crosswalk" or self.value == "walkway"
                 or self.value == "road_shoulder" or self.value == "road"
                 or self.value == "junction" or self.value == "lanelet")
+
+    @property
+    def on_surface(self) -> bool:
+        return (self.value == "surface_raised" or self.value == "surface_grooved"
+                or self.value == "surface_relief")
 
     # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
     # them (#437). Declared in Python's order, as the test checks.
@@ -1089,7 +1103,9 @@ class AreaGround:
                 AreaGround.ROAD, AreaGround.JUNCTION, AreaGround.LANELET,
                 AreaGround.INTERSECTION_AREA, AreaGround.DETECTION_AREA,
                 AreaGround.NO_STOPPING_AREA, AreaGround.NO_PARKING_AREA,
-                AreaGround.PARKING_LOT, AreaGround.POLYGON]
+                AreaGround.PARKING_LOT, AreaGround.POLYGON,
+                AreaGround.SURFACE_RAISED, AreaGround.SURFACE_GROOVED,
+                AreaGround.SURFACE_RELIEF]
 
     @staticmethod
     def _acs_by_name(name: str) -> AreaGround:
@@ -1117,6 +1133,12 @@ class AreaGround:
             return AreaGround.PARKING_LOT
         if name == "POLYGON":
             return AreaGround.POLYGON
+        if name == "SURFACE_RAISED":
+            return AreaGround.SURFACE_RAISED
+        if name == "SURFACE_GROOVED":
+            return AreaGround.SURFACE_GROOVED
+        if name == "SURFACE_RELIEF":
+            return AreaGround.SURFACE_RELIEF
         raise KeyError(name)
 
 
@@ -1125,7 +1147,7 @@ class MapArea:
     # Python, are List[X] here (docs/typecheck.md), so the constructor takes
     # them untyped.
     def __init__(self, ground: AreaGround = AreaGround("crosswalk"), lanelet_ids = (),
-                 attributes = ()):
+                 attributes = (), relief_m: float = 0.01):
         pass
 
     # Python's frozen dataclass fields, read as properties (#298).
@@ -1139,6 +1161,10 @@ class MapArea:
 
     @property
     def attributes(self) -> List[Tuple[str, str]]:
+        raise NotImplementedError()
+
+    @property
+    def relief_m(self) -> float:
         raise NotImplementedError()
 
     def validate(self) -> None:

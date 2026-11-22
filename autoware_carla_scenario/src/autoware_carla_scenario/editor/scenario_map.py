@@ -360,6 +360,7 @@ def _areas(
                     str(params.get("ground") or "CROSSWALK"),
                     params.get("lanelet_ids") or None,
                     str(params.get("attributes") or ""),
+                    params.get("relief_m"),
                 ).describe()
             except (TypeError, ValueError):
                 description = "an area that cannot be read"

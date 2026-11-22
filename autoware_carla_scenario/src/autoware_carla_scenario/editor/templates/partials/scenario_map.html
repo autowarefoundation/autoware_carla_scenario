@@ -211,13 +211,15 @@
                   {% elif not preview.map_loaded %}
                     outlined once the map is parsed
                   {% elif preview.empty %}
-                    nothing on this map is in it: the run refuses the card
+                    nothing on this map is in it: the card would never hold
                   {% else %}
                     {%- set n = preview.lanelet_ids|length -%}
                     {%- if n %}{{ n }} lanelet{{ 's' if n != 1 }} outlined{% endif -%}
                     {%- if n and preview.polygon_count %}, {% endif -%}
                     {%- if preview.polygon_count %}{{ preview.polygon_count }} polygon{{ 's' if preview.polygon_count != 1 }} (not drawn){% endif -%}
+                    {%- if preview.surface_count %}{{ preview.surface_count }} surface part{{ 's' if preview.surface_count != 1 }} from OpenCRG (not drawn){% endif -%}
                   {% endif %}
+                  {%- for reason in preview.skipped %}<br>passed over: {{ reason }}{% endfor %}
                 </span>
               </span>
             </button>

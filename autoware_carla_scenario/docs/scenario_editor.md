@@ -118,15 +118,19 @@ is chosen by what the ground is:
 
 | Field | What it chooses |
 | --- | --- |
-| Ground | Lanelets by subtype (crosswalks, walkways, road shoulders, roads), the lanes through a junction (tagged `turn_direction`), any lanelet, or polygons of the map's polygon layer by type (Autoware's intersection, detection, no-stopping and no-parking areas, parking lots, any polygon) |
+| Ground | Lanelets by subtype (crosswalks, walkways, road shoulders, roads), the lanes through a junction (tagged `turn_direction`), any lanelet, polygons of the map's polygon layer by type (Autoware's intersection, detection, no-stopping and no-parking areas, parking lots, any polygon), or the raised or grooved parts of the roads' surface, from the OpenDRIVE map's OpenCRG grids |
 | Only these lanelets | Narrows lanelet ground to lanelets picked on the map, which must each be of the ground. Not for polygons |
-| Attributes | `key=value` tags every element must have, apart by commas: `turn_direction=left`, `location=urban`. A bare key asks only that the tag is there |
+| Attributes | `key=value` tags every element must have, apart by commas: `turn_direction=left`, `location=urban`. A bare key asks only that the tag is there. Not for the road surface |
+| Surface counts from | For the road surface: how far above or below its design the surface has to stand to count. Empty: 0.01 m |
 
 The places panel outlines an area **whole** rather than pinning it: every
 lanelet it matches is outlined, and it is listed under the places with how many
 lanelets that is. A pin per crosswalk of a city would bury the places above.
 The viewer outlines lanelets only, so polygons of the polygon layer are counted
-and not drawn. The match uses the framework's own matcher
+and not drawn, and so are the raised and grooved parts of the road surface.
+Those come from the OpenDRIVE map, not the Lanelet2 one. They are counted on
+every render, without parsing the Lanelet2 map, and any OpenCRG grid that
+cannot be read is listed under the row. The match uses the framework's own matcher
 (`conditions.map_area.area_shapes`), so the outline is the ground the run
 measures to. Matching waits on the map being parsed, like binding a search
 pattern: **Outline areas** asks for it.

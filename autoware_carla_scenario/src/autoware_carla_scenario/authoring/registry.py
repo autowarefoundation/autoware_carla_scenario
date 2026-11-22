@@ -3965,6 +3965,9 @@ _AREA_GROUNDS = (
     SelectOption("NO_PARKING_AREA", "No-parking areas (polygon)"),
     SelectOption("PARKING_LOT", "Parking lots (polygon)"),
     SelectOption("POLYGON", "Any polygon (filter)"),
+    SelectOption("SURFACE_RAISED", "Raised road surface (OpenCRG)"),
+    SelectOption("SURFACE_GROOVED", "Grooved road surface (OpenCRG)"),
+    SelectOption("SURFACE_RELIEF", "Raised or grooved road surface (OpenCRG)"),
 )
 
 register_condition_spec(
@@ -3985,6 +3988,7 @@ register_condition_spec(
                             ("ground", "ground"),
                             ("lanelet_ids", "lanelet_ids"),
                             ("attributes", "attributes"),
+                            ("relief_m", "relief_m"),
                         )
                     ),
                 ),
@@ -3998,7 +4002,7 @@ register_condition_spec(
             rule="rule",
             value="distance",
             unit="m",
-            details=("lanelet_ids", "attributes"),
+            details=("lanelet_ids", "attributes", "relief_m"),
         ),
         fields=(
             _entity_field("entity", "Subject"),
@@ -4010,8 +4014,10 @@ register_condition_spec(
                 options=_AREA_GROUNDS,
                 help=(
                     "What the area is: lanelets by their subtype, the lanes "
-                    "through a junction (tagged turn_direction), or polygons "
-                    "of the map's polygon layer by their type."
+                    "through a junction (tagged turn_direction), polygons "
+                    "of the map's polygon layer by their type, or the parts of "
+                    "the roads' surface raised or grooved past a threshold, "
+                    "from the OpenDRIVE map's OpenCRG grids."
                 ),
             ),
             FieldSpec(
@@ -4035,7 +4041,22 @@ register_condition_spec(
                 help=(
                     "key=value tags every element must have, apart by commas "
                     "-- turn_direction=left, location=urban; a bare key asks "
-                    "only that it is there.  Empty: no further filter."
+                    "only that it is there.  Empty: no further filter.  Not "
+                    "for the road surface."
+                ),
+            ),
+            FieldSpec(
+                name="relief_m",
+                label="Surface counts from",
+                kind="number",
+                default=None,
+                unit="m",
+                required=False,
+                exclusive_minimum=0.0,
+                help=(
+                    "For the road surface: how far above (raised) or below "
+                    "(grooved) its design the surface has to stand to count.  "
+                    "Empty: 0.01 m."
                 ),
             ),
             _rule_field(),

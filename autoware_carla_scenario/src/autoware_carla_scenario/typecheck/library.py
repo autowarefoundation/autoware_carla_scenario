@@ -253,6 +253,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.maps.catalogue",
     "autoware_carla_scenario.maps.config",
     "autoware_carla_scenario.maps.opendrive",
+    "autoware_carla_scenario.maps.opencrg",
     "autoware_carla_scenario.maps.resolver",
     "autoware_carla_scenario.maps.source",
     "autoware_carla_scenario.maps.z_offset_cache",

@@ -663,19 +663,35 @@ def _check_map_area(out: _Collector, path: str, node: ConditionNode) -> None:
         parse_attributes,
     )
 
-    ground = str(node.params.get("ground") or "")
+    ground = str(node.params.get("ground") or "").upper()
     picked = node.params.get("lanelet_ids") or []
-    if picked and ground.upper() in {g.name for g in AreaGround if not g.on_lanelets}:
+    surface = ground in {g.name for g in AreaGround if g.on_surface}
+    if picked and surface:
+        out.error(
+            f"{path}.lanelet_ids",
+            "The road surface is read from the OpenDRIVE map's OpenCRG grids, "
+            "not from lanelets: pick no lanelets.",
+            node.id,
+        )
+    elif picked and ground in {g.name for g in AreaGround if not g.on_lanelets}:
         out.error(
             f"{path}.lanelet_ids",
             "This ground is polygons, not lanelets: narrow it by attributes, "
             "not by picked lanelets.",
             node.id,
         )
+    attributes = str(node.params.get("attributes") or "")
     try:
-        parse_attributes(str(node.params.get("attributes") or ""))
+        parsed = parse_attributes(attributes)
     except ValueError as exc:
         out.error(f"{path}.attributes", f"Attributes: {exc}.", node.id)
+    else:
+        if parsed and surface:
+            out.error(
+                f"{path}.attributes",
+                "The road surface has no tags to filter by: give no attributes.",
+                node.id,
+            )
 
 
 def _check_filter_ranges(out: _Collector, path: str, node: ConditionNode) -> None:

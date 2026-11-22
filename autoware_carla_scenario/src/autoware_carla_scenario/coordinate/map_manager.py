@@ -100,6 +100,7 @@ class MapManager:
     _mgrs_offset: Optional[tuple[float, float]]
     _z_offset: Optional[float]
     _carla_map: Optional[carla.Map]
+    _xodr_path: Optional[Path]
 
     def __new__(cls) -> "MapManager":
         if cls._instance is None:
@@ -111,6 +112,7 @@ class MapManager:
             cls._instance._mgrs_offset = None
             cls._instance._z_offset = None
             cls._instance._carla_map = None
+            cls._instance._xodr_path = None
         return cls._instance
 
     def __init__(self) -> None:
@@ -222,6 +224,7 @@ class MapManager:
         from ..maps.road_network_cache import open_road_network  # noqa: PLC0415
 
         self._road_network = open_road_network(xodr_path)
+        self._xodr_path = xodr_path
 
         # Build carla.Map for waypoint-based road/lane lookups (optional).
         # First, so the z offset below reads its spawn points off this map
@@ -311,6 +314,16 @@ class MapManager:
                 "MapManager is not initialized. Call initialize() first."
             )
         return self._geo_origin
+
+    @property
+    def xodr_path(self) -> Path:
+        """The OpenDRIVE file the map was initialised with: what the files a
+        road refers to beside it (OpenCRG surfaces) are relative to."""
+        if self._xodr_path is None:
+            raise RuntimeError(
+                "MapManager is not initialized. Call initialize() first."
+            )
+        return self._xodr_path
 
     @property
     def mgrs_offset(self) -> tuple[float, float]:

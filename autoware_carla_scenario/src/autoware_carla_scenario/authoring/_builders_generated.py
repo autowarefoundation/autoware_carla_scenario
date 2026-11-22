@@ -709,6 +709,7 @@ def build_area_distance_condition(
         ground=params["ground"],
         lanelet_ids=params["lanelet_ids"],
         attributes=params["attributes"],
+        relief_m=params["relief_m"],
     )
     return EntityAreaDistanceCondition(
         entity_name=str(params["entity"]),
