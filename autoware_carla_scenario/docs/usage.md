@@ -353,7 +353,7 @@ uv run scenario scenario=lane_change/left map=town10hd_opt \
 
 # Any repository, any revision
 uv run scenario map=town10hd_opt \
-  map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'
+  "map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'"
 
 # A map directory on this machine, read in place
 uv run scenario map=town10hd_opt map.directory=/path/to/autoware_maps/Town10HD_Opt

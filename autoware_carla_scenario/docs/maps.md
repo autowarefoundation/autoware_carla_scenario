@@ -376,11 +376,12 @@ uv run scenario scenario=cut_in/left map=town10hd_opt
 ```
 
 `conf/map/town10hd_opt.yaml` is a normal map group whose `map.source` names the
-published map at a pinned commit. Override it like any other key:
+published map at a pinned commit. Override it like any other key. Hydra refuses a `#` in an unquoted value, so
+the value keeps its quotes inside the shell's:
 
 ```bash
 uv run scenario map=town10hd_opt \
-  map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'
+  "map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'"
 ```
 
 `map.xodr_path` and `map.lanelet2_path` still win where they are set, so a
