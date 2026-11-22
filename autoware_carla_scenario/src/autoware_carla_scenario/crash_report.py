@@ -38,8 +38,10 @@ an empty ``faulthandler.log`` is the trace of a process killed without a
 chance to write (``SIGKILL``, the OOM killer).
 
 Sending: with ``SENTRY_DSN`` set (and the usual ``SENTRY_ENVIRONMENT``,
-``SENTRY_RELEASE``), every report is also sent to that Sentry project, its
-files as attachments.  Without it nothing leaves the machine.  The event
+``SENTRY_RELEASE``), every report is also sent to that project, its files as
+attachments.  Any server that speaks Sentry's protocol takes it; the one
+docs/crash_reports.md recommends is GlitchTip, an open-source (MIT) server
+hosted by the user.  Without a DSN nothing leaves the machine.  The event
 holds local variables and the config, so set it only for a project you trust
 with them.
 

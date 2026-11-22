@@ -2,9 +2,10 @@
 
 When a run raises or the process crashes, `scenario` writes a **crash
 report**: everything it takes to see what went wrong and to run the same case
-again. It is built on the [Sentry SDK](https://docs.sentry.io/platforms/python/)
-(`sentry-sdk`), which captures the error as a Sentry event. Nothing leaves the
-machine unless you set a DSN (see [Sending reports](#sending-reports)).
+again. It is built on the [Sentry SDK](https://github.com/getsentry/sentry-python)
+(`sentry-sdk`, MIT-licensed), which captures the error as a Sentry event. The
+SDK is used as a library only: reports are written to files, and nothing leaves
+the machine unless you set a DSN (see [Sending reports](#sending-reports)).
 
 ## Where reports go
 
@@ -70,10 +71,26 @@ output directory, has the log records that came before.
 
 ## Sending reports
 
-Set `SENTRY_DSN` to a Sentry project's DSN, and every report is sent there as
-well, with its files as attachments. Sentry's `SENTRY_ENVIRONMENT` and
-`SENTRY_RELEASE` apply as usual. The release defaults to
-`autoware-carla-scenario@<version>`.
+Set `SENTRY_DSN` to a project's DSN, and every report is sent there as well,
+with its files as attachments. `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` apply
+as usual. The release defaults to `autoware-carla-scenario@<version>`.
+
+Any server that speaks Sentry's protocol accepts the reports. The recommended
+one is [GlitchTip](https://glitchtip.com/), an open-source (MIT) error tracker
+you host yourself, which takes events from the Sentry SDK unchanged:
+
+1. Run GlitchTip (its [installation guide](https://glitchtip.com/documentation/install)
+   covers Docker Compose and Helm).
+2. Create an organization and a project in it, and copy the project's DSN.
+3. Export it where `scenario` runs:
+
+    ```bash
+    export SENTRY_DSN="https://<key>@glitchtip.example.org/<project-id>"
+    ```
+
+The client side is open source either way. Only the server you send to
+changes: sentry.io is a hosted service, and Sentry's own self-hosted server is
+under the Functional Source License, which is not an open-source license.
 
 !!! warning
     The event includes local variables and the run's config. Only set a DSN
