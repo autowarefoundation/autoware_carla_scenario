@@ -18,12 +18,29 @@ conventions differ:
   clockwise from +x, in its left-handed frame.
 
 Pure functions of numbers, so they are tested without either simulator.
+The backends' small helpers that import neither simulator live here too,
+so that the library check compiles them (#2306): a driver's
+speed in what it can see (:func:`_sight_cap`), a velocity in SUMO's frame
+(:func:`_sumo_velocity`), the lane index of a lane change
+(:func:`_lane_step`), the files beside a network
+(:func:`_safe_weights_prefix`) and the world's OpenDRIVE
+(:func:`world_opendrive`), :mod:`.backend`'s, and how the mesoscopic model
+cuts a road (:func:`segment_count`), the height along a lane
+(:func:`_height_at`) and the angle between two headings
+(:func:`_angle_between`), :mod:`.mesosim`'s.  Both re-export them.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Sequence
+
+from ...coordinate.map_manager import run_carla_map
+from ...kinematics.angle import normalize_angle_deg
+from ...visibility import driver_quantile, sight_speed_at
+from ..base import LaneChangeDirection, TrafficBackendUnavailable, TrafficContext
 
 __all__ = [
     "Pose2D",
@@ -31,8 +48,10 @@ __all__ = [
     "carla_to_sumo",
     "carla_xy_to_sumo",
     "origin_to_box_centre",
+    "segment_count",
     "sumo_to_carla",
     "sumo_xy_to_carla",
+    "world_opendrive",
 ]
 
 
@@ -123,3 +142,95 @@ def sumo_xy_to_carla(
 def _wrap(deg: float) -> float:
     """*deg* in [-180, 180)."""
     return (deg + 180.0) % 360.0 - 180.0
+
+
+def _sight_cap(sumo_id: str, seen: float, held: tuple[float, float, float]) -> float:
+    """The maximum speed (m/s) *sumo_id*'s driver keeps in *seen* metres,
+    from *held*: its own maximum speed, deceleration and tau -- the weather
+    rules' ``sight_speed`` at the driver's own quantile, scaled to the
+    vehicle's braking and reaction."""
+    own, decel, tau = held
+    limit = sight_speed_at(seen, driver_quantile(sumo_id), decel, tau)
+    # Never to a standstill: a car in thick fog still creeps on.  Nor above
+    # its own: a background vehicle capped below the creep keeps its cap
+    # (#967).
+    return min(own, max(limit, 1.0))
+
+
+def _safe_weights_prefix(net_file: Path) -> Path:
+    """The prefix of the safe-weight files beside *net_file*, as roadgen names
+    them: ``network.safe`` (``network.safe.src.xml`` ...) beside
+    ``network.net.xml`` (:func:`.network.build_network`)."""
+    name = net_file.name
+    if name.endswith(".net.xml"):
+        return net_file.with_name(name[: -len(".net.xml")] + ".safe")
+    return net_file.with_suffix(".safe")
+
+
+def _sumo_velocity(speed: float, angle_deg: float) -> tuple[float, float]:
+    """A velocity in SUMO's frame from a speed and SUMO's angle (degrees
+    clockwise from north)."""
+    heading = math.radians(angle_deg)
+    return speed * math.sin(heading), speed * math.cos(heading)
+
+
+def _lane_step(direction: LaneChangeDirection) -> int:
+    """The lane index one lane to *direction*: SUMO counts from the right kerb."""
+    return 1 if direction is LaneChangeDirection.LEFT else -1
+
+
+def world_opendrive(context: TrafficContext, who: str) -> str:
+    """The OpenDRIVE of *context*'s world: its file, else the world's map.
+
+    Raises:
+        TrafficBackendUnavailable: The run has neither (*who* needs it).
+    """
+    if context.xodr_path is not None and Path(context.xodr_path).is_file():
+        return Path(context.xodr_path).read_text()
+    if context.world is None:
+        raise TrafficBackendUnavailable(
+            f"{who} needs the world's OpenDRIVE, and the run has neither a world "
+            "nor an OpenDRIVE file"
+        )
+    # The run's map where one is held: get_map() builds a whole new one.
+    return str(run_carla_map(context.world).to_opendrive())
+
+
+def segment_count(length: float, segment_length: float) -> int:
+    """How many segments SUMO's mesoscopic model cuts a road of *length* into.
+
+    As ``MELoop::numSegmentsFor``: the road's length over the segment length,
+    rounded half up, and at least one.  A length that is no finite number --
+    the ``inf`` :meth:`SumoMesoscopicTraffic.position` takes for a road it has
+    no :class:`MesoLink` of -- is one segment, not the ``OverflowError`` (or,
+    for NaN, ``ValueError``) of flooring it (#2283).
+    """
+    if segment_length <= 0.0 or not math.isfinite(length):
+        return 1
+    return max(int(math.floor(length / segment_length + 0.5)), 1)
+
+
+def _height_at(
+    shape: Sequence[tuple[float, float]], heights: Sequence[float], offset: float
+) -> float:
+    """The height *offset* metres along *shape* (measured across the ground,
+    as sumolib measures a shape offset), interpolated between the heights of
+    the points either side."""
+    if not heights:
+        return 0.0
+    walked = 0.0
+    for i in range(1, len(shape)):
+        (x0, y0), (x1, y1) = shape[i - 1], shape[i]
+        length = math.hypot(x1 - x0, y1 - y0)
+        if walked + length >= offset:
+            if length <= 0.0:
+                return heights[i]
+            t = min(max((offset - walked) / length, 0.0), 1.0)
+            return heights[i - 1] + (heights[i] - heights[i - 1]) * t
+        walked += length
+    return heights[-1]
+
+
+def _angle_between(a: float, b: float) -> float:
+    """How far apart two headings are, degrees, 0 to 180."""
+    return abs(normalize_angle_deg(a - b))

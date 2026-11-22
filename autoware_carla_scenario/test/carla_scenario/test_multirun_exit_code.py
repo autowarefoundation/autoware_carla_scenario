@@ -52,6 +52,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
+import autoware_carla_scenario.sweeper.job_status as job_status
 import autoware_carla_scenario.sweeper.lanelet_constraint_sweeper as lcs
 from autoware_carla_scenario.run_outputs import run_outputs_exist
 
@@ -59,7 +60,8 @@ if "+unremovable=true" in sys.argv:
     def remove_run_outputs(directory, stem):
         raise PermissionError(f"cannot remove {stem}")
 
-    lcs.remove_run_outputs = remove_run_outputs
+    # The sweeper removes a job's outputs with job_status's helpers (#2306).
+    job_status.remove_run_outputs = remove_run_outputs
 
 lcs.check_constraint_keys = lambda sweep: None
 lcs.load_sweep_map = lambda map_cfg, **_: object()

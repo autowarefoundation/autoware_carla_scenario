@@ -59,7 +59,6 @@ launch, and the exit status its result reads as).
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import logging
 import os
@@ -79,15 +78,9 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
-from ..gate.errored import (
-    remove_case_errored,
-    write_case_errored,
-    write_case_unfinished,
-)
 from ..gate.sweep_plan import write_sweep_plan
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
-from ..run_outputs import remove_run_outputs, run_output_paths
 from ..run_outputs import run_output_stems as _run_output_stems
 from ..ui.case_paths import last_result_path
 from ..value_text import shown
@@ -122,6 +115,17 @@ from .job_status import (
     verdict_exit_code,
     whole_job_seconds,
 )
+
+# What a job's directory is cleared of and given (an earlier run's or a
+# failed attempt's outputs, the markers) is the checked :mod:`.job_status`'s
+# (#2306); the names they had here stay importable from here.
+from .job_status import _SERVICE_LOGS as _SERVICE_LOGS
+from .job_status import _is_service_log as _is_service_log
+from .job_status import _remove_earlier_outputs as _remove_earlier_outputs
+from .job_status import _remove_marker as _remove_marker
+from .job_status import _remove_run_stems as _remove_run_stems
+from .job_status import _write_marker as _write_marker
+from .job_status import _write_unfinished_marker as _write_unfinished_marker
 
 logger = logging.getLogger(__name__)
 
@@ -1049,146 +1053,6 @@ class LaneletConstraintSweeper(Sweeper):
                 f"({timed_out_count} timed out)."
             )
         return all_returns
-
-
-#: The logs that services a run starts write into its directory under names
-#: of their own, which :func:`..run_outputs.run_output_stems` reads as the
-#: CARLA recorder log of a run (``X.log``): a containerised backend's
-#: (``backend_<name>.log``, appended to), Autoware's (``autoware-<n>-<name>.log``
-#: or, in a batch, ``autoware-<stem>.log``, ``autoware-build.log``,
-#: ``autoware-deps.log``) and the viewer runner's.
-#: An earlier sweep's are not a run of the job, and stay.
-_SERVICE_LOGS: tuple[str, ...] = (
-    "backend_*.log",
-    "autoware-*.log",
-    "raw_output.log",
-    "run.log",
-)
-
-
-def _is_service_log(directory: Path, stem: str) -> bool:
-    """Whether all a run named *stem* has in *directory* is a log one of
-    :data:`_SERVICE_LOGS` names: a service's log, not a run."""
-    found = [path for path in run_output_paths(directory, stem) if path.exists()]
-    return (
-        len(found) == 1
-        and found[0].name == f"{stem}.log"
-        and any(
-            fnmatch.fnmatchcase(found[0].name, pattern) for pattern in _SERVICE_LOGS
-        )
-    )
-
-
-def _remove_earlier_outputs(job_dir: tuple[Path, str | None], label: str) -> None:
-    """Remove the run outputs an earlier sweep left in *job_dir* (its
-    directory and Hydra's job log), before the job's first attempt in this
-    sweep: every stem :func:`..run_outputs.run_output_stems` finds there,
-    with :func:`..run_outputs.remove_run_outputs`, as a retry removes the
-    failed attempt's (#1956).  Hydra's job log, its ``.hydra`` directory, the
-    job's marker (``case_errored.json``, replaced as the attempt starts), the
-    logs of the services runs start (:data:`_SERVICE_LOGS`) and any other
-    file that is not a run's output are left alone.  Logged, never
-    raised, when one cannot be removed: the job runs anyway, under the next
-    free stem."""
-    _remove_run_stems(
-        job_dir, label, "earlier run", ": the job runs again and replaces it."
-    )
-
-
-def _remove_run_stems(
-    job_dir: tuple[Path, str | None],
-    label: str,
-    what: str,
-    why: str,
-    *,
-    exclude: set[str] | frozenset[str] = frozenset(),
-) -> None:
-    """Remove every run in *job_dir* (its directory and Hydra's job log) but
-    those of *exclude* and the services' logs (:func:`_is_service_log`),
-    with :func:`..run_outputs.remove_run_outputs`: the earlier sweep's
-    (:func:`_remove_earlier_outputs`) or a failed attempt's, before its
-    retry (#1373).  Each is logged as ``[<label>] Removing the outputs of
-    the <what> <stem> in <directory><why>``; one that cannot be removed is
-    logged, never raised (#2070)."""
-    directory, job_log = job_dir
-    for stem in sorted(_run_output_stems(directory, job_log) - exclude):
-        if _is_service_log(directory, stem):
-            continue
-        logger.info(
-            "[%s] Removing the outputs of the %s %s in %s%s",
-            label,
-            what,
-            stem,
-            directory,
-            why,
-        )
-        try:
-            remove_run_outputs(directory, stem)
-        except OSError as exc:
-            logger.warning(
-                "Cannot remove the outputs of the %s %s in %s (%s).",
-                what,
-                stem,
-                directory,
-                exc,
-            )
-
-
-def _remove_marker(directory: Path) -> None:
-    """Remove the marker (``case_errored.json``) of a job that ended with a
-    verdict from *directory*; logged, never raised, when it cannot be."""
-    try:
-        remove_case_errored(directory)
-    except OSError as exc:
-        logger.warning("Cannot remove the error marker in %s (%s).", directory, exc)
-
-
-def _write_unfinished_marker(
-    job_dir: tuple[Path, str | None] | None, batch: tuple[str, ...], attempt: int
-) -> None:
-    """Give a job the marker saying it did not finish
-    (:func:`..gate.errored.write_case_unfinished`) before its attempt
-    *attempt* (from 1); logged, never raised, when it cannot be.  Nothing
-    when its directory is not known (:meth:`LaneletConstraintSweeper._job_output_dir`
-    logged why)."""
-    if job_dir is None:
-        return
-    try:
-        write_case_unfinished(job_dir[0], overrides=list(batch), attempt=attempt)
-    except OSError as exc:
-        logger.warning(
-            "Cannot write the unfinished-job marker in %s (%s).", job_dir[0], exc
-        )
-
-
-def _write_marker(
-    job_dir: tuple[Path, str | None] | None,
-    batch: tuple[str, ...],
-    exit_code: int | None,
-    attempts: int,
-    timeout: int | None = None,
-) -> None:
-    """Leave the marker of a job given up (``case_errored.json``,
-    :mod:`..gate.errored`) in its directory; logged, never raised, when it
-    cannot be, or the directory is not known."""
-    if job_dir is None:
-        logger.warning(
-            "Cannot tell the output directory of the job given up for "
-            "overrides %s; it leaves no error marker, and scenario-gate will "
-            "not see it.",
-            batch,
-        )
-        return
-    try:
-        write_case_errored(
-            job_dir[0],
-            overrides=list(batch),
-            exit_code=exit_code,
-            attempts=attempts,
-            reason=marker_reason(exit_code, timeout),
-        )
-    except OSError as exc:
-        logger.warning("Cannot write the error marker in %s (%s).", job_dir[0], exc)
 
 
 def _wait_with_progress(seconds: float, *, desc: str = "Waiting") -> None:
