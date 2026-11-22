@@ -18,18 +18,30 @@ import pytest
 from autoware_carla_scenario import crash_report
 
 
+@contextmanager
+def _installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str] | None = None,
+) -> Iterator[None]:
+    """A crash reporter installed for *argv*, *tmp_path* the working
+    directory, with nothing of the environment's to change what it does."""
+    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
+    for name in (crash_report.CRASH_REPORT_DIR_ENV, crash_report.DSN_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert crash_report.install(["scenario"] if argv is None else argv)
+    try:
+        yield
+    finally:
+        crash_report.uninstall()
+
+
 @pytest.fixture
 def reporter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """A crash reporter installed in *tmp_path*, the working directory."""
-    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
-    monkeypatch.delenv(crash_report.CRASH_REPORT_DIR_ENV, raising=False)
-    monkeypatch.delenv(crash_report.DSN_ENV, raising=False)
-    monkeypatch.chdir(tmp_path)
-    assert crash_report.install(["scenario", "scenario=demo", "seed=3"])
-    try:
+    with _installed(tmp_path, monkeypatch, ["scenario", "scenario=demo", "seed=3"]):
         yield tmp_path
-    finally:
-        crash_report.uninstall()
 
 
 def _raise(message: str = "boom") -> None:
@@ -323,10 +335,6 @@ def worker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]
     from autoware_carla_scenario.examples import run
     from autoware_carla_scenario.slurm import worker
 
-    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
-    monkeypatch.delenv(crash_report.CRASH_REPORT_DIR_ENV, raising=False)
-    monkeypatch.delenv(crash_report.DSN_ENV, raising=False)
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(worker, "CarlaWatchdog", _no_watchdog)
     monkeypatch.setattr(worker, "kill_carla_on_port", lambda _port: [])
     monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
@@ -342,11 +350,10 @@ def worker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]
         "0",
         "0",
     ]
-    assert crash_report.install(command)
     try:
-        yield worker
+        with _installed(tmp_path, monkeypatch, command):
+            yield worker
     finally:
-        crash_report.uninstall()
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
 
@@ -620,14 +627,44 @@ def test_only_the_send_items_are_sent(
     assert b"exec scenario seed=3" in files["repro.sh"]
 
 
-@contextmanager
-def _installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+# -- sending ------------------------------------------------------------------
+
+
+def test_nothing_is_sent_without_the_crash_report_dsn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sentry_sdk
+
+    # Set for another project, or for the SDK's local Spotlight sidecar.
+    monkeypatch.setenv("SENTRY_DSN", "https://key@sentry.example.org/1")
+    monkeypatch.setenv("SENTRY_SPOTLIGHT", "1")
+
+    def no_http(*_args: object, **_kw: object) -> None:
+        raise AssertionError("an HTTP transport was made")
+
+    monkeypatch.setattr(crash_report, "HttpTransport", no_http)
+    with _installed(tmp_path, monkeypatch):
+        client = sentry_sdk.get_client()
+        assert not client.options["dsn"]
+        assert client.spotlight is None
+        assert client.transport.upstream is None  # type: ignore[union-attr]
+        assert crash_report.capture(_caught()) is not None
+
+
+def test_reports_are_sent_with_the_crash_report_dsn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sentry_sdk
+    from sentry_sdk.transport import HttpTransport
+
     monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
-    monkeypatch.delenv(crash_report.CRASH_REPORT_DIR_ENV, raising=False)
-    monkeypatch.delenv(crash_report.DSN_ENV, raising=False)
+    monkeypatch.setenv(crash_report.DSN_ENV, "https://key@glitchtip.example.org/1")
     monkeypatch.chdir(tmp_path)
     assert crash_report.install(["scenario"])
     try:
-        yield
+        client = sentry_sdk.get_client()
+        assert client.options["dsn"] == "https://key@glitchtip.example.org/1"
+        upstream = client.transport.upstream  # type: ignore[union-attr]
+        assert isinstance(upstream, HttpTransport)
     finally:
         crash_report.uninstall()

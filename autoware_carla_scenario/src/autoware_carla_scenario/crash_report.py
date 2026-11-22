@@ -39,9 +39,10 @@ signal.  The directory is removed when the run ends normally; one left with
 an empty ``faulthandler.log`` is the trace of a process killed without a
 chance to write (``SIGKILL``, the OOM killer).
 
-Sending: with ``SENTRY_DSN`` set (and the usual ``SENTRY_ENVIRONMENT``,
-``SENTRY_RELEASE``), every report is also sent to that project, its files as
-attachments.  Any server that speaks Sentry's protocol takes it; the one
+Sending: only with ``SCENARIO_CRASH_REPORT_DSN`` set (:data:`DSN_ENV`) is
+every report also sent to that project, its files as attachments.  The Sentry
+SDK's own ``SENTRY_DSN`` and ``SENTRY_SPOTLIGHT`` are ignored: a shell that
+sets them for another project sends nothing of this one.  Any server that speaks Sentry's protocol takes it; the one
 docs/crash_reports.md recommends is GlitchTip, an open-source (MIT) server
 hosted by the user.  Without a DSN nothing leaves the machine.  The event
 holds local variables and the config, so set it only for a project you trust
@@ -65,7 +66,9 @@ from __future__ import annotations
 
 import collections
 import copy
+import dataclasses
 import faulthandler
+import functools
 import json
 import logging
 import os
@@ -92,6 +95,9 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.modules import ModulesIntegration
 from sentry_sdk.transport import HttpTransport, Transport
 
+from .config_flags import FALSE_TEXT
+from .slurm.settings import snapshot_environment
+
 __all__ = [
     "CAPTURED_LOGGERS",
     "CRASH_REPORTS_DIRNAME",
@@ -109,6 +115,7 @@ __all__ = [
     "run_context",
     "set_report_dir",
     "uninstall",
+    "wants",
 ]
 
 logger = logging.getLogger(__name__)
@@ -117,8 +124,10 @@ logger = logging.getLogger(__name__)
 CRASH_REPORT_ENV = "SCENARIO_CRASH_REPORT"
 #: Where reports go before a run's output directory is known.
 CRASH_REPORT_DIR_ENV = "SCENARIO_CRASH_REPORT_DIR"
-#: The Sentry project reports are also sent to (the Sentry SDK's own name).
-DSN_ENV = "SENTRY_DSN"
+#: The project reports are also sent to (a Sentry DSN).  Nothing is sent
+#: without it: not the SDK's own ``SENTRY_DSN``, which a shell may set for
+#: another project.
+DSN_ENV = "SCENARIO_CRASH_REPORT_DSN"
 #: The directory, in a run's output directory, its reports go to.
 CRASH_REPORTS_DIRNAME = "crash_reports"
 #: Loggers whose records with an exception attached at ``WARNING`` or above
@@ -148,6 +157,8 @@ MAX_REPORTS_ENV = "SCENARIO_CRASH_REPORT_MAX_REPORTS"
 #: How many log records ``log.txt`` keeps.
 LOG_LINES_ENV = "SCENARIO_CRASH_REPORT_LOG_LINES"
 
+#: The attribute marking an exception reported (:func:`capture`).
+_REPORTED = "_autoware_carla_scenario_crash_reported"
 #: Where reports go when nothing else says.
 _DEFAULT_REPORT_DIR = Path("outputs") / CRASH_REPORTS_DIRNAME
 #: Each item's file of a report.
@@ -238,7 +249,6 @@ def read_settings(environ: Mapping[str, str] | None = None) -> Settings:
     crash report never stops a run.
     """
     env = os.environ if environ is None else environ
-    default = Settings()
     values: dict[str, Any] = {}
 
     def read(name: str, field_name: str, parse: Any) -> None:
@@ -263,15 +273,10 @@ def read_settings(environ: Mapping[str, str] | None = None) -> Settings:
         "log_lines",
         lambda n, t: _parse_count(n, t, zero_is_none=False),
     )
-    items = values.get("items", default.items)
-    send = values.get("send_items", items)
-    return Settings(
-        items=items,
-        send_items=send & items,
-        max_file_size=values.get("max_file_size", default.max_file_size),
-        max_reports=values.get("max_reports", default.max_reports),
-        log_lines=values.get("log_lines", default.log_lines),
-    )
+    settings = dataclasses.replace(Settings(), **values)
+    # What is sent is what reports hold unless said, and never more.
+    send = values.get("send_items", settings.items)
+    return dataclasses.replace(settings, send_items=send & settings.items)
 
 
 def _truncate(data: bytes, limit: int | None, *, keep_end: bool = False) -> bytes:
@@ -287,33 +292,32 @@ def _truncate(data: bytes, limit: int | None, *, keep_end: bool = False) -> byte
     return data[:room] + b"\n" + marker
 
 
-#: The environment variables ``context.json`` and ``repro.sh`` keep, by
-#: prefix: those that change what a run does.  Any whose name looks like a
-#: secret is left out (:data:`_SECRET_NAME`).
-_ENV_PREFIXES = (
-    "CARLA",
-    "SCENARIO",
-    "SWEEP_",
-    "HYDRA_",
-    "TYPESAFE_CARLA",
-    "AUTOWARE",
-    "ROS_",
-    "RMW_",
-    "CYCLONEDDS",
+#: The environment variables ``context.json`` and ``repro.sh`` keep: those
+#: that change what a run does.  One whose name looks like a secret is left
+#: out (``slurm.settings.SENSITIVE_NAME_PATTERNS``).
+_ENV_PATTERNS = (
+    "CARLA*",
+    "SCENARIO*",
+    "SWEEP_*",
+    "HYDRA_*",
+    "TYPESAFE_CARLA*",
+    "AUTOWARE*",
+    "ROS_*",
+    "RMW_*",
+    "CYCLONEDDS*",
     "SUMO_HOME",
-    "SLURM_",
+    "SLURM_*",
     "CUDA_VISIBLE_DEVICES",
     "DISPLAY",
 )
-_SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|DSN", re.I)
-_FALSE = {"0", "false", "no", "off"}
 
 
 def enabled() -> bool:
     """Whether crash reports are on (:data:`CRASH_REPORT_ENV`)."""
-    return os.environ.get(CRASH_REPORT_ENV, "").strip().lower() not in _FALSE
+    return os.environ.get(CRASH_REPORT_ENV, "").strip().lower() not in FALSE_TEXT
 
 
+@functools.cache
 def _package_version() -> str:
     try:
         from importlib.metadata import version  # noqa: PLC0415
@@ -323,12 +327,13 @@ def _package_version() -> str:
         return "unknown"
 
 
+@functools.cache
+def _platform() -> str:
+    return platform.platform()
+
+
 def _kept_environment() -> dict[str, str]:
-    return {
-        name: value
-        for name, value in sorted(os.environ.items())
-        if name.startswith(_ENV_PREFIXES) and not _SECRET_NAME.search(name)
-    }
+    return snapshot_environment(_ENV_PATTERNS)
 
 
 def _timestamp() -> str:
@@ -351,11 +356,6 @@ class _RunContext:
     overrides: list[str] | None = None
     #: Its composed config, as YAML.
     config_yaml: str | None = None
-    #: The program ``repro.sh`` runs the overrides with (``scenario`` when
-    #: ``None`` and the process was not started as it).
-    program: str | None = None
-    #: Whether a native-crash report is prepared in :attr:`report_dir`.
-    native: bool = False
 
 
 class _LogBuffer(logging.Handler):
@@ -453,8 +453,6 @@ def _for_sending(envelope: Envelope, settings: Settings) -> Envelope:
 
 def _event_for_sending(event: Any, left_out: frozenset[str]) -> Any:
     """*event* without the items *left_out* hold in it (a copy)."""
-    if not left_out:
-        return event
     event = copy.deepcopy(event)
     if "locals" in left_out:
         for key in ("exception", "threads"):
@@ -486,15 +484,12 @@ class _Reporter:
         self.cwd = Path.cwd()
         self.started = time.time()
         env_dir = os.environ.get(CRASH_REPORT_DIR_ENV)
-        self.default_dir = Path(env_dir) if env_dir else _DEFAULT_REPORT_DIR
-        self.context = _RunContext(report_dir=self.default_dir)
+        self.context = _RunContext(
+            report_dir=Path(env_dir) if env_dir else _DEFAULT_REPORT_DIR
+        )
         self.log_buffer = _LogBuffer(settings.log_lines)
         self.capture_handler = _CaptureHandler()
         self.lock = threading.Lock()
-        #: ids of the exceptions reported, so one is reported once, and an
-        #: exception raised from one (the queue's "failed after N attempts")
-        #: is not reported again.
-        self.reported: set[int] = set()
         #: The report directory of each event written, by event id.
         self.written: dict[str, Path] = {}
         #: How many reports were captured (:attr:`Settings.max_reports`).
@@ -508,12 +503,9 @@ class _Reporter:
         overrides = self.context.overrides
         if overrides is None:
             return list(self.argv)
-        program = self.context.program
-        if program is None:
-            program = self.argv[0] if self.argv else "scenario"
-            if Path(program).name in ("run.py", "__main__.py", "-c", "-m"):
-                program = "scenario"
-        return [program, *overrides]
+        # Overrides are the `scenario` CLI's, whatever runs them here (a SLURM
+        # task's worker, a script calling main()).
+        return ["scenario", *overrides]
 
     def context_dict(self) -> dict[str, Any]:
         ctx = self.context
@@ -528,7 +520,7 @@ class _Reporter:
             "autoware_carla_scenario": _package_version(),
             "python": sys.version,
             "executable": sys.executable,
-            "platform": platform.platform(),
+            "platform": _platform(),
             "machine": platform.machine(),
             **(
                 {"environment": _kept_environment()}
@@ -602,7 +594,17 @@ class _Reporter:
 
     def arm_native(self) -> None:
         """Prepare the report a native crash would leave, in the report
-        directory, and point :mod:`faulthandler` at it."""
+        directory, and point :mod:`faulthandler` at it.  One prepared there
+        already has its files rewritten for the context, not made again:
+        each case of a batch is one, on a filesystem its tasks share."""
+        native = self.native
+        if (
+            native is not None
+            and native.pid == os.getpid()
+            and native.directory.parent == self.context.report_dir
+        ):
+            self._write_native_files(native.directory)
+            return
         self.disarm_native()
         # The host too: the tasks of a SLURM batch on several nodes share the
         # batch's directory, and their process ids can collide.
@@ -612,8 +614,7 @@ class _Reporter:
         )
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            for name, data in self.context_files().items():
-                _write(directory / name, data)
+            self._write_native_files(directory)
             log = open(directory / "faulthandler.log", "w")  # noqa: SIM115
         except OSError:
             logger.warning("Cannot prepare the native crash report", exc_info=True)
@@ -621,6 +622,14 @@ class _Reporter:
             return
         faulthandler.enable(file=log, all_threads=True)
         self.native = _NativeReport(directory, log)
+
+    def _write_native_files(self, directory: Path) -> None:
+        files = self.context_files()
+        for name in ("config.yaml", "repro.sh"):
+            if name not in files:
+                (directory / name).unlink(missing_ok=True)
+        for name, data in files.items():
+            _write(directory / name, data)
 
     def disarm_native(self) -> None:
         """Remove the report :meth:`arm_native` prepared, unless a fatal
@@ -681,7 +690,9 @@ def install(argv: Sequence[str] | None = None) -> bool:
     if "packages" in settings.items:
         integrations.append(ModulesIntegration())
     sentry_sdk.init(
-        dsn=dsn,
+        # Never None: the SDK would read SENTRY_DSN then.
+        dsn=dsn or "",
+        spotlight=False,
         transport=transport,
         release=os.environ.get("SENTRY_RELEASE")
         or f"autoware-carla-scenario@{_package_version()}",
@@ -689,10 +700,7 @@ def install(argv: Sequence[str] | None = None) -> bool:
         auto_enabling_integrations=False,
         integrations=integrations,
         include_local_variables="locals" in settings.items,
-        max_breadcrumbs=200,
-        before_send=lambda event, _hint: _event_for_sending(
-            event, frozenset(ITEMS) - settings.items
-        ),
+        max_breadcrumbs=200 if "log" in settings.items else 0,
     )
     # Not the breadcrumbs of an earlier reporter in this process.
     for scope in (sentry_sdk.get_global_scope(), sentry_sdk.get_isolation_scope()):
@@ -700,18 +708,13 @@ def install(argv: Sequence[str] | None = None) -> bool:
     if dsn:
         transport.upstream = HttpTransport(sentry_sdk.get_client().options)
     if "log" in settings.items:
+        # It sees what reaches the root logger: INFO and up once the CLI's
+        # logging.basicConfig() has run.
         logging.getLogger().addHandler(reporter.log_buffer)
-    if logging.getLogger().level > logging.INFO or (
-        logging.getLogger().level == logging.NOTSET
-    ):
-        # The buffer sees what reaches the root logger: INFO and up, as
-        # logging.basicConfig() sets later anyway.
-        logging.getLogger().setLevel(logging.INFO)
     for name in CAPTURED_LOGGERS:
         logging.getLogger(name).addHandler(reporter.capture_handler)
     _REPORTER[0] = reporter
     if os.environ.get(CRASH_REPORT_DIR_ENV):
-        reporter.context.native = True
         reporter.arm_native()
     else:
         faulthandler.enable(all_threads=True)
@@ -761,13 +764,21 @@ def reporting(
         uninstall()
 
 
+def wants(item: str) -> bool:
+    """Whether a reporter is installed and its reports hold *item*
+    (:data:`ITEMS`): what a caller need not compute otherwise (the config's
+    YAML, for ``config``)."""
+    reporter = _REPORTER[0]
+    return reporter is not None and item in reporter.settings.items
+
+
 def set_report_dir(directory: Path) -> None:
     """Send the process's reports to *directory* from now on (a batch's
     ``crash_reports/``), and prepare a native-crash report there."""
     reporter = _REPORTER[0]
     if reporter is None:
         return
-    reporter.context = _RunContext(report_dir=directory, native=True)
+    reporter.context = _RunContext(report_dir=directory)
     reporter.arm_native()
 
 
@@ -777,34 +788,35 @@ def run_context(
     *,
     overrides: Sequence[str] | None = None,
     config_yaml: str | None = None,
-    program: str | None = None,
 ) -> Iterator[None]:
-    """Report what the ``with`` block raises as a run's: in
-    ``<output_dir>/crash_reports/``, with its *overrides* (what ``repro.sh``
-    runs, with *program*: the process's own when ``None``) and its composed
-    config (*config_yaml*).  A native-crash report is prepared there for the
-    block.  Nothing when no reporter is installed."""
+    """Reports captured in the ``with`` block (:func:`capture`) are a run's:
+    in ``<output_dir>/crash_reports/``, with its *overrides* (what
+    ``repro.sh`` runs ``scenario`` with) and its composed config
+    (*config_yaml*).  A native-crash report is prepared there for the block.
+    Nothing when no reporter is installed; the block's caller captures what
+    it raises."""
     reporter = _REPORTER[0]
     if reporter is None:
         yield
         return
     previous = reporter.context
+    # A native-crash report prepared before (a batch's) is again afterwards.
+    rearm = reporter.native is not None
     reporter.context = _RunContext(
         report_dir=Path(output_dir) / CRASH_REPORTS_DIRNAME,
         output_dir=Path(output_dir),
         overrides=None if overrides is None else [str(o) for o in overrides],
         config_yaml=config_yaml,
-        program=program,
-        native=True,
     )
     reporter.arm_native()
     try:
         yield
     finally:
-        reporter.disarm_native()
         reporter.context = previous
-        if _REPORTER[0] is reporter and previous.native:
+        if rearm and _REPORTER[0] is reporter:
             reporter.arm_native()
+        else:
+            reporter.disarm_native()
 
 
 def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
@@ -835,9 +847,14 @@ def capture(exc: BaseException, *, message: str | None = None) -> Path | None:
     if reporter is None:
         return None
     with reporter.lock:
-        if any(id(e) in reporter.reported for e in _exception_chain(exc)):
+        # Marked on the exception itself, not kept by id: an id is reused
+        # once the exception is gone, and keeping it would keep its frames.
+        if any(getattr(e, _REPORTED, False) for e in _exception_chain(exc)):
             return None
-        reporter.reported.add(id(exc))
+        try:
+            setattr(exc, _REPORTED, True)
+        except (AttributeError, TypeError):
+            pass  # an exception without attributes: reported each time
         limit = reporter.settings.max_reports
         if limit is not None and reporter.count >= limit:
             if reporter.count == limit:

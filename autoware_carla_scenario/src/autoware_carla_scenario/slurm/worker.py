@@ -630,16 +630,6 @@ def repro_overrides(case: dict[str, Any]) -> list[str]:
     ]
 
 
-def _config_yaml(cfg: Any) -> str | None:
-    """*cfg* as YAML, for a crash report; ``None`` when it cannot be."""
-    try:
-        from omegaconf import OmegaConf  # noqa: PLC0415
-
-        return OmegaConf.to_yaml(cfg)
-    except Exception:  # noqa: BLE001 - reported without its config
-        return None
-
-
 def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int:
     """Run task *task_index* of submission *submission_index*; its exit status."""
     layout = BatchLayout(manifest_path.resolve().parent.parent)
@@ -838,8 +828,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 with crash_report.run_context(
                     batch_dir,
                     overrides=repro_overrides(case),
-                    config_yaml=_config_yaml(cfg),
-                    program="scenario",
+                    config_yaml=run.config_yaml(cfg),
                 ):
                     (result,) = queue.run_all(release=True, continue_on_error=True)
                 # The case's recording is a few milliseconds' work, done in the

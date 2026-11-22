@@ -4348,9 +4348,15 @@ def _hydra_main(cfg: DictConfig) -> None:
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
     marker_dir = _case_errored_dir()
+    # Around the handlers too: what the last one captures is the run's.
+    with _crash_report_context(cfg):
+        _hydra_case(cfg, marker_dir)
+
+
+def _hydra_case(cfg: DictConfig, marker_dir: Path | None) -> None:
+    """:func:`_hydra_main`'s run of *cfg*, its verdict and its errors."""
     try:
-        with _crash_report_context(cfg):
-            result = run_scenario(cfg)
+        result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
         # A refusal ends a --multirun too, with the same 2: the next case
         # would be refused for the same reason.  Hydra lets SystemExit through
@@ -4376,9 +4382,9 @@ def _hydra_main(cfg: DictConfig) -> None:
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(2)
     except Exception as exc:
-        # Reported by _crash_report_context(), unless it could not tell the
-        # run's directory: before Hydra's own report of it, which ends a
-        # single run with exit 1 and leaves main() nothing to report.
+        # Before Hydra's own report of it, which ends a single run with exit
+        # 1 and leaves main() nothing to report.  A refusal is not a crash:
+        # the clauses above take those.
         crash_report.capture(exc)
         _mark_case_errored(marker_dir, exc, exit_code=1)
         if _record_basic_sweeper_error(exc):
@@ -4400,10 +4406,9 @@ def _hydra_main(cfg: DictConfig) -> None:
 
 @contextmanager
 def _crash_report_context(cfg: DictConfig) -> Iterator[None]:
-    """Report what the ``with`` block raises (a refusal of the config
-    aside, :data:`_REFUSALS`) and a native crash in it as the Hydra run's: in
-    its output directory, with its overrides and its config
-    (:func:`crash_report.run_context`).  The block raises what it raises."""
+    """Crash reports of the ``with`` block (a native crash's too) are the
+    Hydra run's: in its output directory, with its overrides and its config
+    (:func:`crash_report.run_context`)."""
     if not crash_report.installed():
         yield
         return
@@ -4413,19 +4418,21 @@ def _crash_report_context(cfg: DictConfig) -> Iterator[None]:
         logger.warning("Cannot tell the run's output directory", exc_info=True)
         yield
         return
-    try:
-        config_yaml: str | None = OmegaConf.to_yaml(cfg)
-    except Exception:  # noqa: BLE001 - reported without its config
-        config_yaml = None
     with crash_report.run_context(
-        output_dir, overrides=_task_overrides(), config_yaml=config_yaml
+        output_dir, overrides=_task_overrides(), config_yaml=config_yaml(cfg)
     ):
-        try:
-            yield
-        except Exception as exc:
-            if not isinstance(exc, _REFUSALS):
-                crash_report.capture(exc)
-            raise
+        yield
+
+
+def config_yaml(cfg: Any) -> str | None:
+    """*cfg* as YAML for a crash report; ``None`` when reports hold no
+    config (:func:`crash_report.wants`) or it cannot be written."""
+    if not crash_report.wants("config"):
+        return None
+    try:
+        return OmegaConf.to_yaml(cfg)
+    except Exception:  # noqa: BLE001 - reported without its config
+        return None
 
 
 #: The ``_target_`` of Hydra's basic sweeper and launcher, which run every

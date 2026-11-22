@@ -5,7 +5,8 @@ report**: everything it takes to see what went wrong and to run the same case
 again. It is built on the [Sentry SDK](https://github.com/getsentry/sentry-python)
 (`sentry-sdk`, MIT-licensed), which captures the error as a Sentry event. The
 SDK is used as a library only: reports are written to files, and nothing leaves
-the machine unless you set a DSN (see [Sending reports](#sending-reports)).
+the machine unless you set `SCENARIO_CRASH_REPORT_DSN` (see
+[Sending reports](#sending-reports)).
 
 ## Where reports go
 
@@ -78,8 +79,10 @@ output directory, has the log records that came before.
 
 ## Sending reports
 
-Set `SENTRY_DSN` to a project's DSN, and every report is sent there as well,
-with its files as attachments. `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` apply
+Reports are sent only when `SCENARIO_CRASH_REPORT_DSN` is set to a project's
+DSN. Each report is then also sent there, with its files as attachments. The
+Sentry SDK's own `SENTRY_DSN` and `SENTRY_SPOTLIGHT` are ignored, so a shell
+that sets them for another project sends nothing from `scenario`. `SENTRY_ENVIRONMENT` and `SENTRY_RELEASE` apply
 as usual. The release defaults to `autoware-carla-scenario@<version>`.
 
 Any server that speaks Sentry's protocol accepts the reports. The recommended
@@ -92,7 +95,7 @@ you host yourself, which takes events from the Sentry SDK unchanged:
 3. Export it where `scenario` runs:
 
     ```bash
-    export SENTRY_DSN="https://<key>@glitchtip.example.org/<project-id>"
+    export SCENARIO_CRASH_REPORT_DSN="https://<key>@glitchtip.example.org/<project-id>"
     ```
 
 The client side is open source either way. Only the server you send to
@@ -109,7 +112,7 @@ under the Functional Source License, which is not an open-source license.
 |---|---|
 | `SCENARIO_CRASH_REPORT=0` | Turns crash reports off (`false`, `no` and `off` also work) |
 | `SCENARIO_CRASH_REPORT_DIR` | Where reports go before a run's directory is known; native-crash reports are also prepared there from the start |
-| `SENTRY_DSN` | Also send each report to this Sentry project |
+| `SCENARIO_CRASH_REPORT_DSN` | Also send each report to this project (a Sentry DSN, such as GlitchTip's); nothing is sent without it |
 | `SCENARIO_CRASH_REPORT_ITEMS` | What a report holds ([items](#choosing-what-a-report-holds)); default `all` |
 | `SCENARIO_CRASH_REPORT_SEND_ITEMS` | What of a report is sent with a DSN; default: what it holds |
 | `SCENARIO_CRASH_REPORT_MAX_FILE_SIZE` | The largest file of a report (`1MiB`, `512KB`, `1048576`; `0` for no limit); default `1MiB` |
