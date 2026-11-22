@@ -648,7 +648,14 @@ class ScenarioBridgeNode(Node):
 
     def _on_step_response(self, future, *, latch: str, label: str) -> None:
         with self._lock:
-            self._inflight.pop(latch, None)
+            # Only the request in flight for *latch* answers it: a future
+            # _expire_stalled_steps gave up on (cancelling it runs its
+            # callback too) must not pop, or clear the latch of, the retry
+            # issued since (#2323).
+            entry = self._inflight.get(latch)
+            if entry is None or entry[1] is not future:
+                return
+            del self._inflight[latch]
         ok, detail = _response_ok(future)
         if ok:
             self.get_logger().info(f"{label} accepted")
@@ -1021,15 +1028,22 @@ def main(args: Optional[list] = None) -> None:
         }
     )
     rclpy.init(args=args)
-    node = ScenarioBridgeNode()
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
+    # Shut down whatever was made, and rclpy even when the node could not
+    # be (#2323).
+    node: Optional[ScenarioBridgeNode] = None
+    executor: Optional[MultiThreadedExecutor] = None
     try:
+        node = ScenarioBridgeNode()
+        executor = MultiThreadedExecutor()
+        executor.add_node(node)
         executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        if executor is not None:
+            executor.shutdown()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 

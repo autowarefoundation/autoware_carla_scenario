@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -251,8 +251,13 @@ _submission: Submission | None = None
 
 
 def submission() -> Submission | None:
+    """A copy of the last submission as it is now: the record itself is
+    filled in by the submitting thread, under :data:`_lock`, while the
+    caller reads it without (#2323)."""
     with _lock:
-        return _submission
+        if _submission is None:
+            return None
+        return replace(_submission, command=list(_submission.command))
 
 
 def _new_manifests(base: Path, before: set[Path]) -> list[Path]:
