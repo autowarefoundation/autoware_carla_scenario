@@ -112,3 +112,39 @@ def test_ctrl_c_is_re_raised_with_only_its_traceback_silenced(
     other = RuntimeError("boom")
     sys.excepthook(RuntimeError, other, None)
     assert seen == [other]
+
+
+def test_the_hook_is_put_back_and_never_stacked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A caller that catches the interrupt and calls main() again: one hook,
+    # holding only the latest interrupt, and the original back once called.
+    def interrupted() -> None:
+        raise KeyboardInterrupt
+
+    seen: list[BaseException] = []
+
+    def previous(kind: object, value: BaseException, tb: object) -> None:
+        seen.append(value)
+
+    monkeypatch.setattr(run, "_main", interrupted)
+    monkeypatch.setattr(sys, "excepthook", previous)
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    caught = []
+    try:
+        for _ in range(2):
+            with pytest.raises(KeyboardInterrupt) as raised:
+                run.main()
+            caught.append(raised.value)
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+    capsys.readouterr()
+    hook = sys.excepthook
+    assert isinstance(hook, run._QuietInterruptHook)
+    assert hook.previous is previous
+    assert hook.exc is caught[1]
+    # An unrelated interrupt goes on to the original hook, which is back.
+    later = KeyboardInterrupt()
+    sys.excepthook(KeyboardInterrupt, later, None)
+    assert seen == [later]
+    assert sys.excepthook is previous

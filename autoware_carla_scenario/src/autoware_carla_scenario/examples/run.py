@@ -4683,14 +4683,32 @@ def _quiet_interrupt(exc: KeyboardInterrupt) -> None:
     parent sees a death by signal (a shell's 130), not an exit status.  Only
     *exc* is silenced: any other uncaught exception goes to the hook as it
     did, and an embedding program that catches *exc* sees it as before.
+
+    The hook puts the one it replaced back the first time it is called, and
+    a hook an earlier call left (its caller caught that interrupt) is
+    replaced rather than wrapped: calling ``main()`` again in one process
+    neither stacks hooks nor keeps every interrupt (and its frames) alive.
     """
     previous = sys.excepthook
+    if isinstance(previous, _QuietInterruptHook):
+        previous = previous.previous
+    sys.excepthook = _QuietInterruptHook(exc, previous)
 
-    def hook(kind: type[BaseException], value: BaseException, tb: Any) -> None:
-        if value is not exc:
-            previous(kind, value, tb)
 
-    sys.excepthook = hook
+class _QuietInterruptHook:
+    """``sys.excepthook`` silencing one interrupt (:func:`_quiet_interrupt`)."""
+
+    def __init__(self, exc: KeyboardInterrupt, previous: Any) -> None:
+        self.exc = exc
+        self.previous = previous
+
+    def __call__(
+        self, kind: type[BaseException], value: BaseException, tb: Any
+    ) -> None:
+        if sys.excepthook is self:
+            sys.excepthook = self.previous
+        if value is not self.exc:
+            self.previous(kind, value, tb)
 
 
 def main() -> None:

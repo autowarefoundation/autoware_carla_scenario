@@ -90,7 +90,8 @@ def _main(argv: list[str] | None) -> int:
     # once for every config (#2333); after --library, it is no module name.
     for arg in args:
         if arg.startswith("-") and arg != "--library":
-            flag = arg.split("=", 1)[0]
+            # --library takes no value: `--library=x` is named whole.
+            flag = arg if arg.startswith("--library=") else arg.split("=", 1)[0]
             print(f"Error: scenario-check does not take {flag}", file=sys.stderr)  # noqa: T201
             return 2
     library = "--library" in args

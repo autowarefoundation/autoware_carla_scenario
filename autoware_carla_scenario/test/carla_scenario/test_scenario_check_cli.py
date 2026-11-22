@@ -355,6 +355,10 @@ def _no_codon_lookup() -> object:
         (["--resume-from=3"], "--resume-from"),
         (["--library", "--verbose"], "--verbose"),
         (["--library", "autoware_carla_scenario.kinematics.vector", "-x"], "-x"),
+        (
+            ["--library=autoware_carla_scenario.nope"],
+            "--library=autoware_carla_scenario.nope",
+        ),
     ],
 )
 def test_a_flag_it_does_not_take_is_refused(
