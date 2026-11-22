@@ -1144,3 +1144,33 @@ def test_the_command_refuses_an_empty_scenario_id(
     assert exited.value.code == 2
     assert "--scenario-id must not be empty" in capsys.readouterr().err
     assert not (tmp_path / "Run.wosac.pb").exists()
+
+
+def test_export_refuses_a_path_that_does_not_exist(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A usage error, as a directory holding no log is (#2333).
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    missing = tmp_path / "missing.trajectory.jsonl"
+    with pytest.raises(SystemExit) as exited:
+        main(["export", str(log), str(missing)])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert err.endswith(
+        f"scenario-wosac export: error: {missing}: no such file or directory\n"
+    )
+    assert not (tmp_path / "Run.wosac.pb").exists()
+
+
+def test_export_ctrl_c_prints_one_line_and_exits_130(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import autoware_carla_scenario.wosac.__main__ as cli
+
+    def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "write_rollout", interrupted)
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    assert main(["export", str(log)]) == 130
+    assert capsys.readouterr().err == "scenario-wosac: interrupted\n"

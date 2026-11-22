@@ -4675,11 +4675,32 @@ _REFUSALS: tuple[type[BaseException], ...] = (
 )
 
 
+def _quiet_interrupt(exc: KeyboardInterrupt) -> None:
+    """Let *exc*, re-raised, end the process without a traceback (#2333).
+
+    Python still ends the process as it ends one Ctrl-C stopped: once it has
+    finalized (``atexit`` included), it kills itself with ``SIGINT``, so a
+    parent sees a death by signal (a shell's 130), not an exit status.  Only
+    *exc* is silenced: any other uncaught exception goes to the hook as it
+    did, and an embedding program that catches *exc* sees it as before.
+    """
+    previous = sys.excepthook
+
+    def hook(kind: type[BaseException], value: BaseException, tb: Any) -> None:
+        if value is not exc:
+            previous(kind, value, tb)
+
+    sys.excepthook = hook
+
+
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly.
 
-    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.  What it
-    raises or a native crash leaves a crash report (:mod:`..crash_report`).
+    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.  Ctrl-C
+    prints ``scenario: interrupted`` rather than a traceback, and the process
+    still dies by ``SIGINT`` (:func:`_quiet_interrupt`), once the run has
+    stopped what it started.  What it raises or a native crash leaves a crash
+    report (:mod:`..crash_report`).
     """
     try:
         with (
@@ -4690,6 +4711,10 @@ def main() -> None:
     except _Terminated as exc:
         print(f"Interrupted ({exc})", file=sys.stderr)  # noqa: T201
         sys.exit(128 + exc.signum)
+    except KeyboardInterrupt as exc:
+        print("scenario: interrupted", file=sys.stderr)  # noqa: T201
+        _quiet_interrupt(exc)
+        raise
 
 
 def _main() -> None:

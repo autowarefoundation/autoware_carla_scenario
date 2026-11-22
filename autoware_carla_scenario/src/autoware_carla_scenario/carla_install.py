@@ -557,6 +557,19 @@ def _unpack(stream: IO[bytes], destination: Path) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """``scenario-setup``: download and unpack a CARLA server.
+
+    Ctrl-C prints one line, not a traceback, and exits 130 (#2333), once the
+    install has cleaned up after itself (its lock, a partial download).
+    """
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        print("scenario-setup: interrupted", file=sys.stderr)
+        return 130
+
+
+def _main(argv: Optional[list[str]]) -> int:
     parser = argparse.ArgumentParser(
         prog="scenario-setup",
         description="Download a CARLA server for the scenario runner to launch.",

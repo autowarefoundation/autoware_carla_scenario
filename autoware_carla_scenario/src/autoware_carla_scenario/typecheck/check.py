@@ -161,6 +161,7 @@ __all__ = [
     "available_toolchain",
     "find_supported_codon",
     "model_dir",
+    "refuse_library_modules",
     "typecheck_library",
     "typecheck_odd",
     "typecheck_scenario",
@@ -4426,6 +4427,34 @@ def replaced_models(
     return out
 
 
+def refuse_library_modules(modules: Iterable[str]) -> TypeCheckResult | None:
+    """The failed result of a library check of *modules*, or ``None``: each
+    name that is not a module of the package, or that ``typecheck/library.py``
+    EXCLUDES, is refused, before any Codon is looked for (#2288), so the
+    refusal is the same whether Codon is installed or not.  An EXCLUDED module
+    is not compiled, whose failure would only advise excluding it.
+
+    :func:`typecheck_library` refuses them so; ``scenario-check --library``
+    asks first, before it looks for Codon itself (#2333).
+    """
+    names = sorted(set(modules))
+    every = package_modules()
+    refused = [
+        f"{name} is EXCLUDED in typecheck/library.py: {EXCLUDED[name]}"
+        if name in EXCLUDED
+        else f"{name} is not a module of {_PACKAGE} the check can compile"
+        for name in names
+        if name in EXCLUDED or name not in every
+    ]
+    if not refused:
+        return None
+    return TypeCheckResult(
+        f"{_PACKAGE} library ({len(names)} checked modules)",
+        ok=False,
+        diagnostics=[Diagnostic(message) for message in refused],
+    )
+
+
 def typecheck_library(
     modules: Iterable[str] | None = None,
     *,
@@ -4464,21 +4493,10 @@ def typecheck_library(
     title = f"{_PACKAGE} library ({len(names)} checked modules)"
     if not names:
         return TypeCheckResult(title, ok=True, skipped="no module to check")
-    # A name the check refuses is refused before any Codon is looked for: an
-    # EXCLUDED module is not compiled, whose failure would only advise
-    # excluding it (#2288).
+    refusal = refuse_library_modules(names)
+    if refusal is not None:
+        return refusal
     every = package_modules()
-    refused = [
-        f"{name} is EXCLUDED in typecheck/library.py: {EXCLUDED[name]}"
-        if name in EXCLUDED
-        else f"{name} is not a module of {_PACKAGE} the check can compile"
-        for name in names
-        if name in EXCLUDED or name not in every
-    ]
-    if refused:
-        return TypeCheckResult(
-            title, ok=False, diagnostics=[Diagnostic(message) for message in refused]
-        )
     if toolchain is None:
         try:
             toolchain = find_supported_codon()

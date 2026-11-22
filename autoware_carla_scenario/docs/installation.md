@@ -48,7 +48,9 @@ The framework targets CARLA UE5 (`0.10.0` and `ue5-dev`). CARLA 0.9.x (UE4)
 is not supported. `uv run scenario-setup` downloads CARLA's nightly Linux
 build into `~/.autoware_carla_scenario/bin/carla`, and the runner launches it
 from there (see the [Quick Start](quickstart.md)). A CARLA installed any other
-way is used through `CARLA_EXECUTABLE`.
+way is used through `CARLA_EXECUTABLE`. Ctrl-C during the download or the
+unpack prints `scenario-setup: interrupted` and exits 130, leaving no partial
+install behind.
 
 The runner launches CARLA only for a **local** `server.host`: `localhost`
 (or a `*.localhost` name), a loopback address (`127.0.0.0/8`, `::1`), this
