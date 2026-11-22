@@ -182,7 +182,9 @@ def default_lock_dir(shm: Path = Path("/dev/shm"), tmp: Path = LOCK_DIR) -> Path
     raise RuntimeError(
         "No private directory for the port slots' locks: "
         + "; ".join(problems)
-        + ". Remove the one another user made, or set launcher.port_lock_dir"
+        + ". Have the node's administrator remove another user's directory"
+        " (chmod go-w one of your own), or set launcher.port_lock_dir to a"
+        " directory of your own"
     )
 
 

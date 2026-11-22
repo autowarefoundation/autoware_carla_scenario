@@ -20,7 +20,11 @@ both it and its directory belong to the current user and neither is writable
 by the group or others, and only the classes and functions this module writes
 (:data:`_ALLOWED_GLOBALS`) are resolved from it.  An entry refused for either
 reason is a cache miss, with a warning: the roads are built, and stored again
-when the directory is the user's own.
+when the directory is the user's own.  A directory of the user's that the group
+may write to (made under a umask of ``002``) is closed to it when an entry is
+stored, so it is refused once, not on every run; and where the directory is
+another user's (a map root shared with a group), this user's entries go to a
+sibling of their own, ``road_network-<uid>`` (:func:`_own_directory`).
 """
 
 from __future__ import annotations
@@ -122,12 +126,14 @@ def _nodes(roads: Iterable[object]) -> list[Any]:
 
 
 class _Refused(pickle.UnpicklingError):
-    """An entry this module will not read: whose file, or directory, is not
-    the user's own (*in_directory*), or that names a class it never writes."""
+    """An entry this module will not read: whose file, or directory, may have
+    been written by someone else, or that names a class it never writes.
+    *foreign_directory*: its directory is another user's, so an entry stored
+    there would be refused again."""
 
-    def __init__(self, reason: str, *, in_directory: bool = False) -> None:
+    def __init__(self, reason: str, *, foreign_directory: bool = False) -> None:
         super().__init__(reason)
-        self.in_directory = in_directory
+        self.foreign_directory = foreign_directory
 
 
 def _distrust(info: os.stat_result, what: str) -> str | None:
@@ -137,9 +143,26 @@ def _distrust(info: os.stat_result, what: str) -> str | None:
     uid = os.getuid()
     if info.st_uid != uid:
         return f"{what} is owned by uid {info.st_uid}, not {uid}"
-    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    if info.st_mode & _GROUP_OTHER_WRITE:
         return f"{what} is writable by others (mode {stat.S_IMODE(info.st_mode):o})"
     return None
+
+
+_GROUP_OTHER_WRITE = stat.S_IWGRP | stat.S_IWOTH
+
+
+def _own_directory(directory: Path) -> Path:
+    """*directory*, or where this user's entries go when it is another user's:
+    ``<directory>-<uid>`` beside it, so that users sharing a map root each
+    cache their own roads instead of rebuilding them on every run."""
+    try:
+        owner = os.stat(directory).st_uid
+    except OSError:
+        return directory  # made by _dump, as the user's
+    uid = os.getuid()
+    if owner == uid:
+        return directory
+    return directory.with_name(f"{directory.name}-{uid}")
 
 
 def _shell(cls: type[Any]) -> object:
@@ -207,6 +230,11 @@ _ALLOWED_GLOBALS: frozenset[tuple[str, str]] = frozenset(
         ("numpy._core.multiarray", "_reconstruct"),
         ("numpy._core.multiarray", "scalar"),
         ("numpy._core.numeric", "_frombuffer"),
+        # numpy 1.x's names of the same (numpy>=1.21 is allowed), so that an
+        # entry written there is not refused on every run.
+        ("numpy.core.multiarray", "_reconstruct"),
+        ("numpy.core.multiarray", "scalar"),
+        ("numpy.core.numeric", "_frombuffer"),
         ("pyxodr.road_objects.lane", "ConnectionPosition"),
         ("pyxodr.road_objects.lane", "Lane"),
         ("pyxodr.road_objects.lane", "LaneOrientation"),
@@ -256,9 +284,14 @@ def _dump(network: RoadNetwork, entry: Path) -> None:
     # other processes, or other hosts sharing the map root -- never write one
     # file (#2165).  The rename is atomic, so a reader sees one whole entry or
     # none, and the scratch file is removed when the write fails.
-    # 0o755 whatever the umask leaves: a directory its group may write to is
-    # never read from (_load).
+    # A directory its group or others may write to is never read from
+    # (_load): made 0o755 (less the umask), and one of the user's that is open
+    # to writing -- made before, under a umask of 002 -- is closed, so that
+    # what is stored now is read on the next run.
     entry.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    info = os.stat(entry.parent)
+    if info.st_uid == os.getuid() and info.st_mode & _GROUP_OTHER_WRITE:
+        os.chmod(entry.parent, stat.S_IMODE(info.st_mode) & ~_GROUP_OTHER_WRITE)
     fd, name = tempfile.mkstemp(
         prefix=f".{entry.name}.", suffix=".tmp", dir=str(entry.parent)
     )
@@ -293,9 +326,10 @@ def _load(network: RoadNetwork, entry: Path) -> dict[str, Any]:
     # a symlink; the checks are of the file opened.
     fd = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     with os.fdopen(fd, "rb") as stream:
-        problem = _distrust(os.stat(entry.parent), "its directory")
+        directory = os.stat(entry.parent)
+        problem = _distrust(directory, "its directory")
         if problem is not None:
-            raise _Refused(problem, in_directory=True)
+            raise _Refused(problem, foreign_directory=directory.st_uid != os.getuid())
         problem = _distrust(os.fstat(stream.fileno()), "the entry")
         if problem is not None:
             raise _Refused(problem)
@@ -327,7 +361,8 @@ def load_roads(network: RoadNetwork, *, root: Path | None = None) -> None:
         network.get_roads()
         return
     key = _road_network_key(network, content_digest)
-    entry = (root or map_root() / DERIVED_SUBDIR / "road_network") / f"{key}.pickle"
+    directory = _own_directory(root or map_root() / DERIVED_SUBDIR / "road_network")
+    entry = directory / f"{key}.pickle"
 
     started = time.monotonic()
     store = True
@@ -338,7 +373,7 @@ def load_roads(network: RoadNetwork, *, root: Path | None = None) -> None:
     except _Refused as refused:
         logger.warning("Not reading the cached roads at %s: %s", entry, refused)
         # Not stored where the next run would refuse them again.
-        store = not refused.in_directory
+        store = not refused.foreign_directory
     except Exception:  # noqa: BLE001 -- any unreadable entry is a miss
         logger.warning("Could not read the cached roads at %s", entry, exc_info=True)
     else:

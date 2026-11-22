@@ -471,7 +471,8 @@ real directory (not a symlink) that you own and that neither your group nor
 others can write to. One another user made first, or one open to writing, is
 passed over with a warning for `/tmp/acs-slurm-ports-<uid>`, checked the same
 way; if that is not private either, the task stops with an error naming both.
-Remove the directory that is not yours, or set `launcher.port_lock_dir`. A
+Have the node's administrator remove a directory another user made (`chmod
+go-w` one of your own), or set `launcher.port_lock_dir`. A
 configured `port_lock_dir` is taken as it is, as it may be shared on purpose.
 Lock files are never opened through a symlink.
 

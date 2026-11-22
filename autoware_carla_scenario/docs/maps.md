@@ -290,6 +290,18 @@ Anything holding a parsed map keyed on its path therefore notices.
 A machine that cannot reach the remote falls back to the commit that ref last
 resolved to, so an offline run still works exactly as it did before.
 
+The OpenDRIVE roads pyxodr builds from a map (some 15 seconds of every run on
+a large map) are kept in the same root too, under `.derived/road_network/`,
+keyed on the file's content. Reading one runs code, so an entry is read only
+if both it and that directory are yours and neither your group nor others can
+write to them; any other is rebuilt, with a warning, and is never loaded. A
+`road_network/` of yours that your group can write to (made under a umask of
+`002`) is closed to it the next time the roads are stored, so it costs one
+rebuild. Where a root is shared with a group on purpose and `road_network/`
+is another user's, your roads go to `.derived/road_network-<uid>/` beside it,
+so each user caches their own; the other directories of the root are shared
+as before.
+
 ## Pinning, and why it matters
 
 A source naming a branch means "whatever is on that branch today" -- and, since

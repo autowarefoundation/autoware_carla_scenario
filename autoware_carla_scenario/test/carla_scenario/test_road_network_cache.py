@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import pickle
 import stat
@@ -171,39 +172,89 @@ def _entry(cache: Path) -> Path:
     return entry
 
 
-@pytest.mark.parametrize("where", ["entry", "directory"])
+def _foreign(monkeypatch: pytest.MonkeyPatch, *paths: Path) -> int:
+    """Make *paths* read as another user's, to stat() and fstat(); that uid."""
+    real_stat, real_fstat = os.stat, os.fstat
+    theirs = os.getuid() + 1
+
+    def owned(info: os.stat_result) -> os.stat_result:
+        for path in paths:
+            with contextlib.suppress(OSError):
+                if os.path.samestat(info, real_stat(path)):
+                    fields = list(info)
+                    fields[stat.ST_UID] = theirs
+                    return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(
+        os, "stat", lambda path, *a, **k: owned(real_stat(path, *a, **k))
+    )
+    monkeypatch.setattr(os, "fstat", lambda fd: owned(real_fstat(fd)))
+    return theirs
+
+
 def test_a_foreign_owned_entry_is_a_miss(
     xodr: Path,
     tmp_path: Path,
     builds: list[RoadNetwork],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    where: str,
 ) -> None:
     cache = tmp_path / "cache"
     _load(xodr, cache)
-    entry = _entry(cache)
-    foreign = entry if where == "entry" else cache
-    real_stat, real_fstat = os.stat, os.fstat
-    ours = os.getuid()
-
-    def owned(info: os.stat_result, path: Any) -> os.stat_result:
-        if os.path.samestat(info, real_stat(foreign)):
-            fields = list(info)
-            fields[stat.ST_UID] = ours + 1
-            return os.stat_result(fields)
-        return info
-
-    monkeypatch.setattr(
-        os, "stat", lambda path, *a, **k: owned(real_stat(path, *a, **k), path)
-    )
-    monkeypatch.setattr(os, "fstat", lambda fd: owned(real_fstat(fd), fd))
+    theirs = _foreign(monkeypatch, _entry(cache))
     with caplog.at_level("WARNING", logger=road_network_cache.__name__):
         network = _load(xodr, cache)
     assert len(builds) == 2
     assert sorted(network.road_ids_to_object) == ["1", "2"]
-    assert f"is owned by uid {ours + 1}, not {ours}" in caplog.text
+    assert f"is owned by uid {theirs}, not {os.getuid()}" in caplog.text
     assert "Not reading the cached roads" in caplog.text
+
+
+def test_another_users_directory_is_passed_over_for_ones_own(
+    xodr: Path,
+    tmp_path: Path,
+    builds: list[RoadNetwork],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A map root shared with a group: its road_network is another user's,
+    # with their entry in it.
+    cache = tmp_path / "cache"
+    _load(xodr, cache)
+    _foreign(monkeypatch, cache)
+    with caplog.at_level("WARNING", logger=road_network_cache.__name__):
+        _load(xodr, cache)
+        assert len(builds) == 2
+        own = tmp_path / f"cache-{os.getuid()}"
+        assert stat.S_IMODE(_entry(own).stat().st_mode) == 0o644
+        # ... and read from there on.
+        _load(xodr, cache)
+    assert len(builds) == 2
+    assert caplog.text == ""
+
+
+def test_a_foreign_directory_is_never_stored_into(
+    xodr: Path,
+    tmp_path: Path,
+    builds: list[RoadNetwork],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Its own sibling squatted too: refused, and not written again.
+    cache = tmp_path / "cache"
+    own = tmp_path / f"cache-{os.getuid()}"
+    _load(xodr, own)
+    entry = _entry(own)
+    before = entry.stat().st_mtime_ns
+    cache.mkdir()
+    theirs = _foreign(monkeypatch, cache, own)
+    with caplog.at_level("WARNING", logger=road_network_cache.__name__):
+        _load(xodr, cache)
+        _load(xodr, cache)
+    assert len(builds) == 3
+    assert f"its directory is owned by uid {theirs}" in caplog.text
+    assert entry.stat().st_mtime_ns == before
 
 
 @pytest.mark.parametrize("where", ["entry", "directory"])
@@ -225,18 +276,30 @@ def test_a_group_writable_entry_is_a_miss(
         _load(xodr, cache)
     assert len(builds) == 2
     assert "is writable by others" in caplog.text
-    if where == "entry":
-        # Its directory is the user's: the entry is written again, and read.
-        assert stat.S_IMODE(entry.stat().st_mode) == 0o644
+    # The directory is the user's: the entry is written again -- the
+    # directory closed to the group first, as one made under a umask of 002
+    # is -- and read from then on, not refused on every run.
+    assert stat.S_IMODE(entry.stat().st_mode) == 0o644
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o755
+    _load(xodr, cache)
+    assert len(builds) == 2
+
+
+def test_a_directory_made_under_umask_002_is_closed_and_read(
+    xodr: Path, tmp_path: Path, builds: list[RoadNetwork]
+) -> None:
+    # As an earlier version left it: mkdir() of the default mode, 0o775.
+    cache = tmp_path / "cache"
+    previous = os.umask(0o002)
+    try:
+        cache.mkdir()
+        assert stat.S_IMODE(cache.stat().st_mode) == 0o775
         _load(xodr, cache)
-        assert len(builds) == 2
-    else:
-        # Not written where the next run would refuse it again.
-        assert stat.S_IMODE(entry.stat().st_mode) == 0o644
-        before = entry.stat().st_mtime_ns
         _load(xodr, cache)
-        assert len(builds) == 3
-        assert entry.stat().st_mtime_ns == before
+    finally:
+        os.umask(previous)
+    assert len(builds) == 1
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o755
 
 
 def test_a_world_writable_directory_is_a_miss(
@@ -245,6 +308,9 @@ def test_a_world_writable_directory_is_a_miss(
     cache = tmp_path / "cache"
     _load(xodr, cache)
     cache.chmod(0o777)
+    _load(xodr, cache)
+    assert len(builds) == 2
+    assert stat.S_IMODE(cache.stat().st_mode) == 0o755
     _load(xodr, cache)
     assert len(builds) == 2
 
@@ -317,7 +383,11 @@ def test_an_entry_names_only_allowed_globals(
     assert _load(xodr, tmp_path).road_ids_to_object
     assert named <= road_network_cache._ALLOWED_GLOBALS
     assert road_network_cache._ALLOWED_GLOBALS - named == {
-        ("numpy._core.multiarray", "scalar")
+        ("numpy._core.multiarray", "scalar"),
+        # numpy 1.x's names, which numpy 2 does not write.
+        ("numpy.core.multiarray", "_reconstruct"),
+        ("numpy.core.multiarray", "scalar"),
+        ("numpy.core.numeric", "_frombuffer"),
     }
 
 
