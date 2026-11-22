@@ -45,7 +45,12 @@ if TYPE_CHECKING:
 # ``_parse_geo_reference`` moved to `projection`, beside `map_origin`, which is
 # the only thing that consults it now.  Re-exported because it is the
 # geoReference parser this package has always offered under this name.
-from .projection import _parse_geo_reference, load_lanelet2, map_origin
+from .projection import (
+    _parse_geo_reference,
+    load_lanelet2,
+    map_origin,
+    missing_map_file,
+)
 
 __all__ = ["MapManager", "_parse_geo_reference"]
 
@@ -184,9 +189,13 @@ class MapManager:
             )
 
         if not xodr_path.exists():
-            raise FileNotFoundError(f"OpenDRIVE file not found: {xodr_path}")
+            raise FileNotFoundError(
+                missing_map_file("OpenDRIVE", xodr_path, "xodr_path")
+            )
         if not lanelet2_path.exists():
-            raise FileNotFoundError(f"Lanelet2 file not found: {lanelet2_path}")
+            raise FileNotFoundError(
+                missing_map_file("Lanelet2", lanelet2_path, "lanelet2_path")
+            )
 
         # Where the map is anchored, decided the way the sweeper decides it:
         # the map's own descriptor first, the OpenDRIVE geoReference second.

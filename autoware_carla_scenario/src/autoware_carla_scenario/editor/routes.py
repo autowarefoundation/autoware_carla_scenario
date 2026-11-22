@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
-from starlette.concurrency import run_in_threadpool
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -1137,8 +1137,6 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     the event loop for the length of a dependency resolution, so the export runs
     in a worker thread.
     """
-    import anyio  # noqa: PLC0415
-
     form = dict(await request.form())
     service = _service(request)
     draft = service.require_draft(draft_id)
@@ -1160,7 +1158,7 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
             return None, str(exc), exc.log
         return result, "", result.log
 
-    result, error, log = await anyio.to_thread.run_sync(_run)
+    result, error, log = await run_in_threadpool(_run)
 
     return _templates(request).TemplateResponse(
         request=request,

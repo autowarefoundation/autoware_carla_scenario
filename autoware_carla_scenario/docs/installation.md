@@ -145,6 +145,21 @@ converter separately when you need to generate a map.
     toolchain on any host, and the CARLA client's prebuilt CPython package
     means no `cc` either.
 
+### From a Wheel
+
+A wheel installed outside a checkout (`pip install`, `uv pip install`) does
+not carry the built-in Nishishinjuku map's files. Its `map` config falls back
+to `data/nishishinjuku.osm` and `data/nishishinjuku_carla.xodr`, resolved
+against the current directory, so they are found only from the repository
+root. Anywhere else, point at the files with `NISHISHINJUKU_LANELET2_PATH` and
+`NISHISHINJUKU_XODR_PATH` (see [Environment Configuration](#environment-configuration)),
+or pass `map.lanelet2_path=` and `map.xodr_path=` on the command line.
+
+The editor's new scenarios name the same relative files, never the variables'
+values: a scenario document is exported into packages that run on other
+machines. A run on the built-in map still reads the variables, because the
+`map` group, composed after the scenario, wins over the paths a document names.
+
 ## Environment Configuration
 
 Configure your environment by exporting the variables consumed by the
@@ -163,8 +178,8 @@ trust. The most common variables:
 | `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither and no server answers at their host. |
 | `AUTOWARE_CARLA_SCENARIO_HOME` | optional | Moves `~/.autoware_carla_scenario`, where `scenario-setup` installs CARLA (`bin/carla`). |
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
-| `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
-| `NISHISHINJUKU_LANELET2_PATH` | optional | Override the default Lanelet2 `.osm` path. |
+| `NISHISHINJUKU_XODR_PATH` | outside a checkout | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
+| `NISHISHINJUKU_LANELET2_PATH` | outside a checkout | Override the default Lanelet2 `.osm` path (`data/nishishinjuku.osm`, relative to the current directory). |
 | `VIEWER_BASE_PATH`, `VIEWER_HOST`, `VIEWER_PORT`, `VIEWER_CACHE_DIR`, `VIEWER_RERUN_WEB_VIEWER`, `VIEWER_RERUN_MAP_DIR` | optional | `viewer` web-app overrides (`viewer --help` for the flags that win over them). |
 
 See the [Usage Guide](usage.md) and [Architecture](architecture.md) for

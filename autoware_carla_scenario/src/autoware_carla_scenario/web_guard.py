@@ -48,9 +48,9 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from starlette.exceptions import HTTPException
-from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from fastapi import HTTPException
+from fastapi.requests import Request
+from fastapi.responses import PlainTextResponse
 
 from .serve_bind import DEFAULT_HOST, is_loopback
 

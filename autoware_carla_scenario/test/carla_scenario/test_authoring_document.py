@@ -69,6 +69,21 @@ class TestStarterDocuments:
         assert npc.spawn.s.binding is not None
         assert any(a.trigger is not None for a in document.actions)
 
+    @pytest.mark.parametrize("make", [new_document, blank_document])
+    def test_map_paths_ignore_the_map_config_variables(
+        self, make: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The group's relative fallbacks, never this machine's paths (#2340).
+
+        A document travels in scenario packages; a run reads the variables
+        through conf/map/nishishinjuku.yaml, composed after the scenario.
+        """
+        monkeypatch.setenv("NISHISHINJUKU_LANELET2_PATH", "/maps/n.osm")
+        monkeypatch.setenv("NISHISHINJUKU_XODR_PATH", "/maps/n.xodr")
+        document = make()
+        assert document.map.lanelet2_path == "data/nishishinjuku.osm"
+        assert document.map.xodr_path == "data/nishishinjuku_carla.xodr"
+
 
 class TestNodeIds:
     """Action and condition node ids are Hydra keys and lookups (#1889)."""
