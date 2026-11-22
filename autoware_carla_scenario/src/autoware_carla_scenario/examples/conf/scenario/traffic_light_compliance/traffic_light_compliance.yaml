@@ -67,8 +67,12 @@ sweep:
           - type: not
             constraint:
               type: equals
-              # Exclude lanelet 222 because of CARLA Traffic manager assing a ego vehicle to another lanelet while passing intersection and always fails.
-              # TODO: Remove this exclusion after CARLA Traffic manager is fixed, this value is depends on scenario and map, so you cannot use this scenario in another map.
+              # Nishi-Shinjuku's lanelet 222: CARLA's Traffic Manager moves
+              # the ego onto another lane while it crosses the junction, so
+              # this case always fails.
+              # TODO: drop this exclusion once the Traffic Manager is fixed.
+              # The ID is Nishi-Shinjuku's: on another map it names some other
+              # lanelet (or none), so remove or replace it there.
               value: 222
 
   bindings:
