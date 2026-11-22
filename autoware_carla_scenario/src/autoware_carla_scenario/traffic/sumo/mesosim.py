@@ -93,6 +93,11 @@ _CONNECT_TIMEOUT_S = 60.0
 _EXIT_TIMEOUT_S = 5.0
 #: How much of SUMO's standard error a failure to start quotes, characters.
 _STDERR_TAIL_CHARS = 2000
+#: How many SUMOs, one after another, a start tries when the port picked for
+#: one was taken before it bound it.
+_PORT_TRIES = 3
+#: What SUMO writes when its TraCI port is taken (strerror(EADDRINUSE)).
+_PORT_IN_USE = "Address already in use"
 
 # TraCI's variable ids (traci.constants), named here so the module does not
 # import traci until it starts SUMO.
@@ -829,7 +834,9 @@ def start_sumo(
     :data:`_CONNECT_TIMEOUT_S` passes.  Unlike ``traci.start``, which
     launches a new SUMO for each of its tries and leaves them running, this
     starts one SUMO, and kills and reaps it on any failure; *connect* undoes
-    whatever a failed try of its own left behind (a registered label).
+    whatever a failed try of its own left behind (a registered label).  Only
+    a SUMO that exits because its port was taken before it bound it is
+    started again, on another port (up to :data:`_PORT_TRIES` in all).
 
     Returns:
         What *connect* answered, SUMO's process and its standard error (a
@@ -840,6 +847,34 @@ def start_sumo(
         TrafficBackendError: If SUMO exits, does not listen in time or the
             connection fails, with the tail of SUMO's standard error.
     """
+    deadline = time.monotonic() + _CONNECT_TIMEOUT_S
+    for launch in range(1, _PORT_TRIES + 1):
+        try:
+            return _launch_sumo(cmd, connect, what, stdout, deadline)
+        except _PortTaken as exc:
+            # Something took the free port before SUMO bound it: a new port,
+            # as traci.start would, but never more than one SUMO at a time.
+            if launch == _PORT_TRIES:
+                raise
+            logger.debug("SUMO%s: %s; trying another port", what, exc)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+class _PortTaken(TrafficBackendError):
+    """SUMO exited at once because its TraCI port was taken meanwhile."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+def _launch_sumo(
+    cmd: Sequence[str],
+    connect: Callable[[int, "subprocess.Popen[bytes]"], _Connection],
+    what: str,
+    stdout: Any,
+    deadline: float,
+) -> tuple[_Connection, "subprocess.Popen[bytes]", IO[bytes]]:
+    """One SUMO of :func:`start_sumo`, on a port of its own."""
     from traci.exceptions import FatalTraCIError, TraCIException  # noqa: PLC0415
 
     with socket.socket() as probe:
@@ -858,13 +893,13 @@ def start_sumo(
             raise TrafficBackendError(f"SUMO{what} did not start: {exc}") from exc
         raise
     timeout_s = _CONNECT_TIMEOUT_S
-    deadline = time.monotonic() + timeout_s
     try:
         while True:
             if process.poll() is not None:
-                raise TrafficBackendError(
-                    f"SUMO{what} did not start: {_stderr_tail(stderr)}"
-                )
+                tail = _stderr_tail(stderr)
+                if _PORT_IN_USE in tail:
+                    raise _PortTaken(f"SUMO{what} did not start: {tail}")
+                raise TrafficBackendError(f"SUMO{what} did not start: {tail}")
             try:
                 return connect(port, process), process, stderr
             except Exception as exc:  # noqa: BLE001 - narrowed just below

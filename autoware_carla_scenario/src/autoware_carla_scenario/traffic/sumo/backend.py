@@ -368,6 +368,12 @@ def _drop_traci_connection(traci: Any, label: str) -> None:
             logger.debug("SUMO connection %r stays registered: %s", label, again)
 
 
+def _is_gui(binary: str) -> bool:
+    """Whether *binary* is sumo-gui (``sumo-gui``, ``sumo-gui.exe``, a path
+    to either), which shows the run in a window."""
+    return Path(binary).name.lower().startswith("sumo-gui")
+
+
 def _load_traci(use_libsumo: bool) -> Any:
     if use_libsumo:
         try:
@@ -674,6 +680,8 @@ class SumoTrafficBackend(TrafficBackend):
         #: (libsumo runs it in this process): started by _start_traci().
         self._sumo_process: Optional[subprocess.Popen[bytes]] = None
         self._sumo_stderr: Optional[IO[bytes]] = None
+        #: Whether that SUMO is sumo-gui, which close() leaves open.
+        self._sumo_gui = False
         self._failures = 0
         #: Simulated seconds at which tick gave up stepping SUMO, ``None``
         #: while it has not: the result records it (describe(), #2082).
@@ -1204,12 +1212,24 @@ class SumoTrafficBackend(TrafficBackend):
 
         # SUMO's standard output stays the run's, as with traci.start.
         _, self._sumo_process, self._sumo_stderr = start_sumo(cmd, connect, stdout=None)
+        self._sumo_gui = _is_gui(cmd[0])
 
     def _stop_sumo_process(self) -> None:
         """Reap SUMO's process (killing it if it does not exit once its
-        connection is closed) and close its standard error."""
+        connection is closed) and close its standard error.
+
+        Not a sumo-gui still open: without ``--quit-on-end`` it stays open
+        after the run, for the user to look at the end of it, as it did when
+        traci.start ran it; closing its window ends it.
+        """
         process, self._sumo_process = self._sumo_process, None
         stderr, self._sumo_stderr = self._sumo_stderr, None
+        if self._sumo_gui and process is not None and process.poll() is None:
+            logger.info(
+                "sumo-gui (pid %d) stays open after the run; close it to end it",
+                process.pid,
+            )
+            process = None
         stop_sumo(process, stderr, kill=False)
 
     def adopt(self, entity: Any) -> None:

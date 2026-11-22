@@ -184,3 +184,98 @@ def test_a_missing_sumo_binary_is_a_backend_error(
 ) -> None:
     with pytest.raises(TrafficBackendError, match="SUMO did not start"):
         _backend()._start_traci([str(tmp_path / "no-such-sumo")])
+
+
+def test_a_port_taken_before_sumo_bound_it_is_tried_again(
+    tmp_path: Path, started: list[Any]
+) -> None:
+    """A SUMO that exits because its port was taken meanwhile is started
+    again on another port, as traci.start would, one SUMO at a time; any
+    other early exit is not."""
+    marker = tmp_path / "launched"
+    cmd = _fake_sumo(
+        tmp_path,
+        f"""
+        from pathlib import Path
+        marker = Path({str(marker)!r})
+        if not marker.exists():
+            marker.write_text("")
+            sys.stderr.write(
+                "Error: tcpip::Socket::accept() Unable to create listening "
+                "socket: Address already in use\\n"
+            )
+            sys.exit(1)
+        sys.stderr.write("Error: no network\\n")
+        sys.exit(1)
+        """,
+    )
+    with pytest.raises(
+        TrafficBackendError, match=r"^SUMO did not start: Error: no network$"
+    ):
+        _backend()._start_traci(cmd)
+    first, second = started  # one after the other, each reaped
+    assert first.returncode == 1 and second.returncode == 1
+
+
+def test_a_port_always_taken_gives_up(tmp_path: Path, started: list[Any]) -> None:
+    cmd = _fake_sumo(
+        tmp_path,
+        """
+        sys.stderr.write("Error: Address already in use\\n")
+        sys.exit(1)
+        """,
+    )
+    with pytest.raises(TrafficBackendError, match="Address already in use$"):
+        _backend()._start_traci(cmd)
+    assert len(started) == mesosim._PORT_TRIES
+    assert all(p.returncode == 1 for p in started)
+
+
+def _running_sumo(tmp_path: Path, name: str) -> list[str]:
+    """A fake SUMO named *name* that runs until it is killed."""
+    script = tmp_path / name
+    script.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(60)\n")
+    script.chmod(0o755)
+    return [str(script)]
+
+
+@pytest.mark.parametrize("name", ["sumo", "sumo-gui"])
+def test_close_ends_a_headless_sumo_but_leaves_sumo_gui_open(
+    tmp_path: Path,
+    started: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    """A headless SUMO that does not exit once its connection closes is
+    killed; a sumo-gui, which stays open without --quit-on-end, is left for
+    the user to close."""
+    monkeypatch.setattr(mesosim, "_EXIT_TIMEOUT_S", 0.2)
+    backend = _backend()
+    monkeypatch.setattr(backend, "_traci", _Connected())
+    backend._start_traci(_running_sumo(tmp_path, name))
+    backend._connected = True
+    (process,) = started
+    stderr = backend._sumo_stderr
+    backend.close()
+    assert backend._sumo_process is None and stderr is not None and stderr.closed
+    if name == "sumo-gui":
+        assert process.poll() is None  # still open; the fixture ends it
+        process.kill()
+        process.wait()
+    else:
+        assert process.returncode == -9
+
+
+class _Connected:
+    """A traci whose init connects at once and whose close does nothing."""
+
+    __name__ = "traci"
+
+    def getConnection(self, label: str) -> Any:  # noqa: N802 - traci's name
+        raise traci.exceptions.TraCIException(f"Connection {label!r} is not known.")
+
+    def init(self, port: int, **kwargs: Any) -> None:
+        pass
+
+    def close(self, wait: bool = True) -> None:
+        pass
