@@ -25,9 +25,17 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
+import subprocess
+from typing import IO
+
 import sumo
 import sumolib
 import traci
+
+from autoware_carla_scenario.traffic.sumo.backend import _drop_traci_connection
+from autoware_carla_scenario.traffic.sumo.mesosim import start_sumo, stop_sumo
+
+_WHAT = " (the replay's sumo-gui)"
 
 
 def signal_states(path: Path) -> dict[str, list[tuple[float, str]]]:
@@ -37,6 +45,41 @@ def signal_states(path: Path) -> dict[str, list[tuple[float, str]]]:
     for match in pattern.finditer(path.read_text()):
         states[match.group(2)].append((float(match.group(1)), match.group(3)))
     return states
+
+
+def start_replay(cmd: list[str]) -> tuple[subprocess.Popen[bytes], IO[bytes]]:
+    """Start SUMO (*cmd*) and connect TraCI's default connection to it; its
+    process and standard error, for :func:`stop_replay`.
+
+    Not ``traci.start``, which launches a new SUMO for each of its tries,
+    leaves them running and hides SUMO's own error: the backend's
+    ``start_sumo`` starts one, kills it on a failure and raises a
+    ``TrafficBackendError`` with the end of its standard error (#2327).
+    """
+
+    def connect(port: int, process: subprocess.Popen[bytes]) -> None:
+        try:
+            # One try each: traci sleeps a second between its own.
+            traci.init(port, numRetries=0, proc=process)
+        except BaseException:
+            # A handshake that failed after connecting left it registered.
+            _drop_traci_connection(traci, "default")
+            raise
+
+    # SUMO's standard output stays the replay's, as with traci.start.
+    _, process, stderr = start_sumo(cmd, connect, what=_WHAT, stdout=None)
+    return process, stderr
+
+
+def stop_replay(process: subprocess.Popen[bytes], stderr: IO[bytes]) -> None:
+    """Close TraCI's connection and reap SUMO (killed if it does not exit)."""
+    try:
+        traci.close()
+    except Exception as exc:  # noqa: BLE001 - SUMO may be gone already
+        print("closing TraCI:", exc)
+        _drop_traci_connection(traci, "default")
+    finally:
+        stop_sumo(process, stderr, kill=False, what=_WHAT)
 
 
 def main() -> None:
@@ -64,7 +107,7 @@ def main() -> None:
     signal_times = {tls: [t for t, _ in seq] for tls, seq in signals.items()}
 
     binary = str(Path(sumo.__file__).parent / "bin" / "sumo-gui")
-    traci.start(
+    process, stderr = start_replay(
         [
             binary,
             "-n",
@@ -184,7 +227,7 @@ def main() -> None:
             element.clear()
         traci.simulationStep()
     finally:
-        traci.close()
+        stop_replay(process, stderr)
     print("screenshots requested", len(wanted))
 
 

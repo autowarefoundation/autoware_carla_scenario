@@ -1291,6 +1291,73 @@ def test_a_netconvert_that_cannot_run_is_a_backend_error(
     assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
 
 
+def test_a_random_trips_that_does_not_finish_is_a_backend_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: a stuck randomTrips.py times out as a TrafficBackendError
+    naming it and the timeout, not a hung run."""
+    import sys
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    # The "interpreter" randomTrips.py runs under never finishes.
+    stuck = tmp_path / "stuck-python"
+    stuck.write_text("#!/bin/sh\nexec sleep 60\n")
+    stuck.chmod(0o755)
+    monkeypatch.setattr(network_module, "sumo_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "executable", str(stuck))
+    monkeypatch.setattr(network_module, "_RANDOM_TRIPS_TIMEOUT_S", 0.2)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    start = time.monotonic()
+    with pytest.raises(
+        TrafficBackendError,
+        match=r"^randomTrips\.py \(walks\) did not finish within 0\.2 s$",
+    ):
+        network_module._random_trips(
+            network,
+            tmp_path / "out" / "a.rou.xml",
+            seed=3,
+            period=1.5,
+            end=9.0,
+            prefix="walk",
+            options=[],
+            what=" (walks)",
+        )
+    assert time.monotonic() - start < 30
+
+
+@needs_sumo
+def test_a_netconvert_that_does_not_finish_is_a_backend_error(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: a stuck netconvert times out as a TrafficBackendError naming
+    it and the timeout, and leaves nothing in the cache."""
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    netconvert = tmp_path / "netconvert"
+    netconvert.write_text("#!/bin/sh\nexec sleep 60\n")
+    netconvert.chmod(0o755)
+    monkeypatch.setattr(network_module, "_binary", lambda name: str(netconvert))
+    monkeypatch.setattr(network_module, "_NETCONVERT_TIMEOUT_S", 0.2)
+    start = time.monotonic()
+    with pytest.raises(
+        TrafficBackendError,
+        match=r"^SUMO's netconvert \(.*netconvert\) did not finish within 0\.2 s$",
+    ):
+        network_module.build_network(crossroads.read_text(), tmp_path / "cache")
+    assert time.monotonic() - start < 30
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
+
+
 def test_generate_demand_runs_the_command_network_built(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
