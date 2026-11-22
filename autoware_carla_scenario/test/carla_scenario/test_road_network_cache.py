@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import pickle
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -159,6 +161,164 @@ def test_damaged_entry_is_rebuilt(
     # ... and the entry is repaired.
     _load(xodr, tmp_path / "cache")
     assert len(builds) == 2
+
+
+# An entry another user may have written is not read (#2325).
+
+
+def _entry(cache: Path) -> Path:
+    (entry,) = cache.glob("*.pickle")
+    return entry
+
+
+@pytest.mark.parametrize("where", ["entry", "directory"])
+def test_a_foreign_owned_entry_is_a_miss(
+    xodr: Path,
+    tmp_path: Path,
+    builds: list[RoadNetwork],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    where: str,
+) -> None:
+    cache = tmp_path / "cache"
+    _load(xodr, cache)
+    entry = _entry(cache)
+    foreign = entry if where == "entry" else cache
+    real_stat, real_fstat = os.stat, os.fstat
+    ours = os.getuid()
+
+    def owned(info: os.stat_result, path: Any) -> os.stat_result:
+        if os.path.samestat(info, real_stat(foreign)):
+            fields = list(info)
+            fields[stat.ST_UID] = ours + 1
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(
+        os, "stat", lambda path, *a, **k: owned(real_stat(path, *a, **k), path)
+    )
+    monkeypatch.setattr(os, "fstat", lambda fd: owned(real_fstat(fd), fd))
+    with caplog.at_level("WARNING", logger=road_network_cache.__name__):
+        network = _load(xodr, cache)
+    assert len(builds) == 2
+    assert sorted(network.road_ids_to_object) == ["1", "2"]
+    assert f"is owned by uid {ours + 1}, not {ours}" in caplog.text
+    assert "Not reading the cached roads" in caplog.text
+
+
+@pytest.mark.parametrize("where", ["entry", "directory"])
+def test_a_group_writable_entry_is_a_miss(
+    xodr: Path,
+    tmp_path: Path,
+    builds: list[RoadNetwork],
+    caplog: pytest.LogCaptureFixture,
+    where: str,
+) -> None:
+    cache = tmp_path / "cache"
+    _load(xodr, cache)
+    entry = _entry(cache)
+    if where == "entry":
+        entry.chmod(0o664)
+    else:
+        cache.chmod(0o775)
+    with caplog.at_level("WARNING", logger=road_network_cache.__name__):
+        _load(xodr, cache)
+    assert len(builds) == 2
+    assert "is writable by others" in caplog.text
+    if where == "entry":
+        # Its directory is the user's: the entry is written again, and read.
+        assert stat.S_IMODE(entry.stat().st_mode) == 0o644
+        _load(xodr, cache)
+        assert len(builds) == 2
+    else:
+        # Not written where the next run would refuse it again.
+        assert stat.S_IMODE(entry.stat().st_mode) == 0o644
+        before = entry.stat().st_mtime_ns
+        _load(xodr, cache)
+        assert len(builds) == 3
+        assert entry.stat().st_mtime_ns == before
+
+
+def test_a_world_writable_directory_is_a_miss(
+    xodr: Path, tmp_path: Path, builds: list[RoadNetwork]
+) -> None:
+    cache = tmp_path / "cache"
+    _load(xodr, cache)
+    cache.chmod(0o777)
+    _load(xodr, cache)
+    assert len(builds) == 2
+
+
+def test_a_symlinked_entry_is_a_miss(
+    xodr: Path, tmp_path: Path, builds: list[RoadNetwork]
+) -> None:
+    cache = tmp_path / "cache"
+    _load(xodr, cache)
+    entry = _entry(cache)
+    elsewhere = tmp_path / "elsewhere.pickle"
+    entry.rename(elsewhere)
+    entry.symlink_to(elsewhere)
+    _load(xodr, cache)
+    assert len(builds) == 2
+
+
+class _Planted:
+    """Stands for anything an entry should never name."""
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (os.getcwd, ())
+
+
+@pytest.mark.parametrize(
+    "planted", [_Planted(), {"x": np.float64}, pytest.param(eval, id="builtin")]
+)
+def test_an_entry_naming_another_class_is_a_miss(
+    xodr: Path,
+    tmp_path: Path,
+    builds: list[RoadNetwork],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    planted: Any,
+) -> None:
+    cache = tmp_path / "cache"
+    _load(xodr, cache)
+    entry = _entry(cache)
+    count = len(list(open_road_network(xodr).root.iter()))
+    entry.write_bytes(pickle.dumps((count, [], [], {"1": planted})))
+    called: list[object] = []
+    monkeypatch.setattr(os, "getcwd", lambda: called.append(None))
+    with caplog.at_level("WARNING", logger=road_network_cache.__name__):
+        network = _load(xodr, cache)
+    assert called == []
+    assert len(builds) == 2
+    assert sorted(network.road_ids_to_object) == ["1", "2"]
+    assert "which the cache never writes" in caplog.text
+    # ... and the entry is repaired.
+    _load(xodr, cache)
+    assert len(builds) == 2
+
+
+def test_an_entry_names_only_allowed_globals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What the fixture map's entry names: every global is on the allowlist,
+    and the allowlist holds nothing the fixture map's entry does not name but
+    numpy's scalars (which no road of it holds)."""
+    named: set[tuple[str, str]] = set()
+    find_class = road_network_cache._Unpickler.find_class
+
+    def recording(self: Any, module: str, name: str) -> Any:
+        named.add((module, name))
+        return find_class(self, module, name)
+
+    monkeypatch.setattr(road_network_cache._Unpickler, "find_class", recording)
+    xodr = _DATA / "nishishinjuku_carla.xodr"
+    _load(xodr, tmp_path)
+    assert _load(xodr, tmp_path).road_ids_to_object
+    assert named <= road_network_cache._ALLOWED_GLOBALS
+    assert road_network_cache._ALLOWED_GLOBALS - named == {
+        ("numpy._core.multiarray", "scalar")
+    }
 
 
 def test_unwritable_cache_still_builds(

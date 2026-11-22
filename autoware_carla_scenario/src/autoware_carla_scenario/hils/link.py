@@ -24,6 +24,7 @@ import socket
 import threading
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from ..serve_bind import warn_if_exposed
 from .protocol import (
     PROTOCOL_VERSION,
     RUNNER_MESSAGES,
@@ -49,6 +50,13 @@ _POLL_S = 0.2
 #: one.
 SEND_TIMEOUT_S = 10.0
 
+#: How the exposure warning tells the bridge to serve fewer hosts (docs/hils.md,
+#: "Exposure"): the default, ``0.0.0.0``, is every interface.
+_EXPOSURE_HINT = (
+    "Set runner.listen (or --listen) to the runner-facing interface's address "
+    "or 127.0.0.1, or firewall the port."
+)
+
 
 class RunnerLink:
     """Listens for scenario runs at *address* (``host:port``; port 0 picks one).
@@ -58,6 +66,10 @@ class RunnerLink:
     connections where the OS supports dual-stack sockets
     (:func:`socket.has_dualstack_ipv6`); elsewhere it is IPv6 only, and
     ``0.0.0.0`` listens on IPv4.
+
+    The link has no authentication: listening on an address that is not a
+    loopback one, it warns so on stderr
+    (:func:`~autoware_carla_scenario.serve_bind.warn_if_exposed`).
 
     Args:
         address: Where to listen.
@@ -74,6 +86,13 @@ class RunnerLink:
             (host, port), family=family, dualstack_ipv6=dualstack, reuse_port=False
         )
         self._server.settimeout(_POLL_S)
+        warn_if_exposed(
+            "scenario-hils",
+            host,
+            port or self.address[1],  # the one port 0 picked
+            "start and end runs on the ECUs and read the commands they send",
+            hint=_EXPOSURE_HINT,
+        )
         self._events = events
         self._conn: Optional[socket.socket] = None
         self._lock = threading.Lock()

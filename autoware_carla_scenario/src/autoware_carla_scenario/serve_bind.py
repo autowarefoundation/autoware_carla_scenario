@@ -1,6 +1,7 @@
 """Where the web applications (``viewer``, ``scenario-editor``) listen: the
 default host, the TCP port range, which hosts are loopback ones, and the
-warning when they listen beyond this machine.
+warning when they listen beyond this machine, which the HILS bridge's run link
+(``hils.link``) gives too.
 
 Both serve an HTTP API with no authentication, so both bind
 :data:`DEFAULT_HOST`, the loopback interface, unless told otherwise, and
@@ -65,15 +66,22 @@ def is_loopback(host: str) -> bool:
     return address.is_loopback
 
 
-def warn_if_exposed(prog: str, host: str, port: int, what: str) -> None:
-    """Warn on stderr that *prog* is about to serve beyond this machine."""
+#: How :func:`warn_if_exposed` tells the web applications to serve this
+#: machine only.
+_HOST_HINT = "Pass --host 127.0.0.1 to serve this machine only."
+
+
+def warn_if_exposed(
+    prog: str, host: str, port: int, what: str, *, hint: str = _HOST_HINT
+) -> None:
+    """Warn on stderr that *prog* is about to serve beyond this machine;
+    *hint* says how not to (by default, :data:`_HOST_HINT`)."""
     if is_loopback(host):
         return
     # An IPv6 address is bracketed, so its port reads apart from it.
     shown = f"[{host}]" if ":" in host and not host.startswith("[") else host
     print(  # noqa: T201
         f"{prog}: WARNING: listening on {shown}:{port} with no authentication; "
-        f"anyone who can reach this port can {what}. Pass --host 127.0.0.1 to "
-        "serve this machine only.",
+        f"anyone who can reach this port can {what}. {hint}",
         file=sys.stderr,
     )

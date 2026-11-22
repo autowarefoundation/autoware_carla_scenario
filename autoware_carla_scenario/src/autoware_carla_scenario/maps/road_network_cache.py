@@ -14,8 +14,13 @@ and the document is parsed afresh from the file when the entry is read. So the
 XML is never stored, and every element a loaded road holds is one of
 ``RoadNetwork.root``'s tree, as it is in a built one.
 
-Unpickling runs code. An entry is only ever read from the user's own map
-cache, written by this module; nothing else should be put there.
+Unpickling runs code, and a map cache may be a tree other users can reach
+(a group-shared ``AUTOWARE_DATA_DIR``, #2325), so an entry is read only when
+both it and its directory belong to the current user and neither is writable
+by the group or others, and only the classes and functions this module writes
+(:data:`_ALLOWED_GLOBALS`) are resolved from it.  An entry refused for either
+reason is a cache miss, with a warning: the roads are built, and stored again
+when the directory is the user's own.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import io
 import logging
 import os
 import pickle
+import stat
 import tempfile
 import time
 import weakref
@@ -115,6 +121,27 @@ def _nodes(roads: Iterable[object]) -> list[Any]:
     return nodes
 
 
+class _Refused(pickle.UnpicklingError):
+    """An entry this module will not read: whose file, or directory, is not
+    the user's own (*in_directory*), or that names a class it never writes."""
+
+    def __init__(self, reason: str, *, in_directory: bool = False) -> None:
+        super().__init__(reason)
+        self.in_directory = in_directory
+
+
+def _distrust(info: os.stat_result, what: str) -> str | None:
+    """Why the file or directory *info* describes may have been written by
+    someone else, or None: it is another user's, or the group or others may
+    write to it."""
+    uid = os.getuid()
+    if info.st_uid != uid:
+        return f"{what} is owned by uid {info.st_uid}, not {uid}"
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return f"{what} is writable by others (mode {stat.S_IMODE(info.st_mode):o})"
+    return None
+
+
 def _shell(cls: type[Any]) -> object:
     """An instance of *cls* with no state yet: the state is set after."""
     return object.__new__(cls)
@@ -167,6 +194,29 @@ class _Pickler(pickle.Pickler):
         return NotImplemented
 
 
+#: Every global an entry may name, as ``(module, name)``: what :class:`_Pickler`
+#: writes (read off a written entry with ``pickletools``) -- the shells and
+#: views above, numpy's arrays (and its scalars, which a road's state may
+#: hold), and pyxodr's roads, lane sections, lanes and their enums.
+_ALLOWED_GLOBALS: frozenset[tuple[str, str]] = frozenset(
+    {
+        (__name__, "_shell"),
+        (__name__, "_view"),
+        ("numpy", "dtype"),
+        ("numpy", "ndarray"),
+        ("numpy._core.multiarray", "_reconstruct"),
+        ("numpy._core.multiarray", "scalar"),
+        ("numpy._core.numeric", "_frombuffer"),
+        ("pyxodr.road_objects.lane", "ConnectionPosition"),
+        ("pyxodr.road_objects.lane", "Lane"),
+        ("pyxodr.road_objects.lane", "LaneOrientation"),
+        ("pyxodr.road_objects.lane", "TrafficOrientation"),
+        ("pyxodr.road_objects.lane_section", "LaneSection"),
+        ("pyxodr.road_objects.road", "Road"),
+    }
+)
+
+
 class _Unpickler(pickle.Unpickler):
     def __init__(self, file: io.BufferedIOBase, elements: list[Any]) -> None:
         super().__init__(file)
@@ -174,6 +224,11 @@ class _Unpickler(pickle.Unpickler):
 
     def persistent_load(self, pid: Any) -> Any:
         return self._elements[pid]
+
+    def find_class(self, module: str, name: str) -> Any:
+        if (module, name) not in _ALLOWED_GLOBALS:
+            raise _Refused(f"it names {module}.{name}, which the cache never writes")
+        return super().find_class(module, name)
 
 
 def _force(roads: Iterable[Any]) -> None:
@@ -201,7 +256,9 @@ def _dump(network: RoadNetwork, entry: Path) -> None:
     # other processes, or other hosts sharing the map root -- never write one
     # file (#2165).  The rename is atomic, so a reader sees one whole entry or
     # none, and the scratch file is removed when the write fails.
-    entry.parent.mkdir(parents=True, exist_ok=True)
+    # 0o755 whatever the umask leaves: a directory its group may write to is
+    # never read from (_load).
+    entry.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(
         prefix=f".{entry.name}.", suffix=".tmp", dir=str(entry.parent)
     )
@@ -225,8 +282,24 @@ def _dump(network: RoadNetwork, entry: Path) -> None:
 
 
 def _load(network: RoadNetwork, entry: Path) -> dict[str, Any]:
-    elements = list(network.root.iter())
-    with entry.open("rb") as stream:
+    """The roads *entry* holds for *network*.
+
+    Raises:
+        FileNotFoundError: There is no entry.
+        _Refused: The entry, or its directory, may have been written by
+            another user, or it names a class the cache never writes.
+    """
+    # Opened first, so that a missing entry is a plain miss, and not through
+    # a symlink; the checks are of the file opened.
+    fd = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as stream:
+        problem = _distrust(os.stat(entry.parent), "its directory")
+        if problem is not None:
+            raise _Refused(problem, in_directory=True)
+        problem = _distrust(os.fstat(stream.fileno()), "the entry")
+        if problem is not None:
+            raise _Refused(problem)
+        elements = list(network.root.iter())
         count, nodes, states, roads = _Unpickler(stream, elements).load()  # type: ignore[arg-type]
     if count != len(elements) or len(nodes) != len(states):
         raise ValueError("the entry is not of this document")
@@ -257,10 +330,15 @@ def load_roads(network: RoadNetwork, *, root: Path | None = None) -> None:
     entry = (root or map_root() / DERIVED_SUBDIR / "road_network") / f"{key}.pickle"
 
     started = time.monotonic()
+    store = True
     try:
         roads = _load(network, entry)
     except FileNotFoundError:
         pass
+    except _Refused as refused:
+        logger.warning("Not reading the cached roads at %s: %s", entry, refused)
+        # Not stored where the next run would refuse them again.
+        store = not refused.in_directory
     except Exception:  # noqa: BLE001 -- any unreadable entry is a miss
         logger.warning("Could not read the cached roads at %s", entry, exc_info=True)
     else:
@@ -280,6 +358,8 @@ def load_roads(network: RoadNetwork, *, root: Path | None = None) -> None:
         len(network.road_ids_to_object),
         time.monotonic() - started,
     )
+    if not store:
+        return
     try:
         _dump(network, entry)
     except Exception:  # noqa: BLE001 -- the roads are built, caching is a bonus

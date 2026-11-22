@@ -252,6 +252,42 @@ def test_runner_link_binds_the_address_family(
     assert asked["family"] == family
 
 
+# -- exposure (issue #2325) -----------------------------------------------------
+
+
+def test_runner_link_warns_when_it_listens_beyond_this_machine(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Every interface, as runner.listen's default (0.0.0.0:7700) is.
+    link = RunnerLink("0.0.0.0:0", queue.Queue())
+    try:
+        port = link.address[1]
+    finally:
+        link.close()
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == (
+        f"scenario-hils: WARNING: listening on 0.0.0.0:{port} with no "
+        "authentication; anyone who can reach this port can start and end runs "
+        "on the ECUs and read the commands they send. Set runner.listen (or "
+        "--listen) to the runner-facing interface's address or 127.0.0.1, or "
+        "firewall the port.\n"
+    )
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1:0", "localhost:0"])
+def test_runner_link_says_nothing_of_loopback(
+    capsys: pytest.CaptureFixture[str], address: str
+) -> None:
+    RunnerLink(address, queue.Queue()).close()
+    assert capsys.readouterr() == ("", "")
+
+
+def test_the_default_listen_address_is_unchanged() -> None:
+    config = parse_config(_DEVICES)
+    assert config.runner_listen == f"0.0.0.0:{DEFAULT_PORT}"
+
+
 # -- follow-ups (issue #1291) ----------------------------------------------------
 
 
