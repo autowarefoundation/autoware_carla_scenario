@@ -476,6 +476,43 @@ def test_destroy_drops_the_sweeps_still_queued(
     assert latest is not None and latest[0] == 11
 
 
+def _attached_listener(lidar: CarlaLidarSensor) -> Any:
+    """Attach *lidar* to a fake world; the listener it handed the sensor."""
+    listeners: list[Any] = []
+    blueprint = SimpleNamespace(
+        set_attribute=lambda name, value: None, has_attribute=lambda name: True
+    )
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
+        spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
+            listen=listeners.append, stop=lambda: None, destroy=lambda: None
+        ),
+        get_weather=lambda: SimpleNamespace(
+            precipitation=0.0, fog_density=0.0, fog_distance=0.0
+        ),
+    )
+    lidar.attach(world, SimpleNamespace(type_id="vehicle.lincoln.mkz"))
+    (listener,) = listeners
+    return listener
+
+
+def test_a_sweep_in_flight_after_destroy_is_not_queued() -> None:
+    """#2323: CARLA may still be inside the callback when stop() returns; a
+    sweep it queued after destroy() drained the queue was taken for one of
+    the actor attached next."""
+    lidar = CarlaLidarSensor(DriverLidarConfig(), sweep_interval_s=0.05)
+    old = _attached_listener(lidar)
+    lidar.destroy()
+    old(_measurement(10))
+    assert lidar._sweeps.empty()  # noqa: SLF001
+    new = _attached_listener(lidar)
+    old(_measurement(11))
+    assert lidar._sweeps.empty()  # noqa: SLF001
+    new(_measurement(12))
+    latest = lidar.latest_sweep(12)
+    assert latest is not None and latest[0] == 12
+
+
 def test_sweeps_stay_bounded_while_the_bridged_stack_boots() -> None:
     """The driver entity attaches its LiDARs, then waits for the stack's handshake
     without reading them; the sweeps of that wait must not pile up (#983)."""

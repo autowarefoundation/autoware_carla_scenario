@@ -60,6 +60,7 @@ compiles (docs/typecheck.md); this module takes the slots and re-exports it.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import logging
 import os
@@ -258,17 +259,37 @@ def acquire_slot(
 
 def _try_lock(path: Path) -> IO[bytes] | None:
     """*path* opened and locked (exclusive, not waiting); None when another
-    process holds it or it cannot be opened (another user's lock file)."""
+    process holds it or it cannot be opened (another user's lock file).
+
+    Opened read-write: on NFS, Linux emulates flock with fcntl locks, and an
+    exclusive one needs the file open for writing, so a read-only descriptor
+    fails ``LOCK_EX`` with EBADF -- which made every slot and ROS domain
+    look held under a ``launcher.port_lock_dir`` on NFS (#2323).  Read-only
+    only where it cannot be written (EACCES, EROFS): another user's lock file
+    in a shared directory, which a local file system locks read-only too, as
+    ``autoware_stack.docker``'s build lock does (#1862, #2187).  Only
+    ``BlockingIOError`` means another process holds it; a lock that fails
+    otherwise is skipped with a warning naming why.
+    """
+    # 0o644: Codon has no octal literal.
     try:
-        # 0o644: Codon has no octal literal.
-        fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 420)
-    except OSError:
-        return None
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 420)
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EROFS):
+            return None
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return None
     stream = os.fdopen(fd, "rb")
     try:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except BlockingIOError:
         stream.close()
+        return None
+    except OSError as exc:
+        stream.close()
+        logger.warning("Cannot lock %s (%s): skipping it", path, exc)
         return None
     return stream
 

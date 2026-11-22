@@ -11,6 +11,7 @@ the run, and a ``CollisionCondition`` stops and destroys its sensor itself.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Optional
 from unittest.mock import MagicMock
 
@@ -137,6 +138,85 @@ class TestCollisionConditionClose:
         assert calls == ["listen", "stop", "destroy"]
         condition.close()
         assert calls == ["listen", "stop", "destroy"]
+
+
+class _PausedEvent:
+    """A collision event whose impulse is read only once the test says so:
+    the callback is paused before it takes the condition's lock."""
+
+    other_actor = None
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    @property
+    def normal_impulse(self) -> carla.Vector3D:
+        self.entered.set()
+        assert self.release.wait(5.0)
+        return carla.Vector3D(100.0, 0.0, 0.0)
+
+
+class TestCollisionConditionReset:
+    def test_an_event_in_flight_across_reset_is_not_the_next_runs(self) -> None:
+        """#2323: CARLA may still be inside the callback when stop() returns;
+        an event that took the lock after reset() started the next run
+        already collided."""
+        calls: list[str] = []
+        condition, sensor, _world = _attached(calls)
+        event = _PausedEvent()
+        callback = threading.Thread(target=sensor.callback, args=(event,))
+        callback.start()
+        try:
+            assert event.entered.wait(5.0)
+            condition.reset()
+        finally:
+            event.release.set()
+            callback.join(5.0)
+        assert not callback.is_alive()
+        no_ego = MagicMock()
+        no_ego.get_actors.return_value.filter.return_value = []
+        assert condition.check(no_ego, 1.0) is None
+        assert "other_actor_type" not in condition.get_details()
+
+    def test_the_next_runs_sensor_still_reports(self) -> None:
+        calls: list[str] = []
+        condition, old, _world = _attached(calls)
+        condition.reset()
+        sensor = _FakeSensor(calls)
+        world = _world_with_ego(sensor)
+        assert condition.check(world, 0.0) is None
+        _collide(old)  # the old run's sensor: stale
+        assert condition.check(world, 0.5) is None
+        _collide(sensor)
+        result = condition.check(world, 1.0)
+        assert isinstance(result, ScenarioResult) and not result.passed
+
+
+class TestCollisionConditionStop:
+    def test_the_sensor_is_stopped_without_the_lock_its_callback_takes(
+        self,
+    ) -> None:
+        """#2323: CARLA's stop() may wait for a callback in flight, which takes
+        the condition's lock; check() held that lock across stop()."""
+        calls: list[str] = []
+        condition, sensor, world = _attached(calls)
+        free: list[bool] = []
+
+        def stop() -> None:
+            calls.append("stop")
+            taken = condition._lock.acquire(timeout=1.0)
+            free.append(taken)
+            if taken:
+                condition._lock.release()
+
+        sensor.stop = stop  # type: ignore[method-assign]
+        _collide(sensor)
+        result = condition.check(world, 1.0)
+        assert isinstance(result, ScenarioResult) and not result.passed
+        assert free == [True]
+        assert condition.check(world, 2.0) is result
+        assert calls == ["listen", "stop"]
 
 
 class _Closable(BaseCondition):

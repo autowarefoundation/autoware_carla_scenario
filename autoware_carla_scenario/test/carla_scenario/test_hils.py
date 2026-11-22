@@ -1522,6 +1522,48 @@ def test_a_canvas_configuration_needs_carla_canvas(
 # -- the command ----------------------------------------------------------------
 
 
+def test_sigterm_stops_the_bridge_from_a_thread_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2323: the handler runs on the main thread, which may hold the stop
+    Event's lock inside its wait() when the signal arrives: bridge.stop()
+    (Event.set()) there would wait for itself.  It is handed to a thread."""
+    import signal
+
+    from autoware_carla_scenario.hils import bridge as bridge_module
+
+    stopped = threading.Event()
+    stopped_on: list[threading.Thread] = []
+    closed: list[bool] = []
+
+    class _Bridge:
+        def __init__(self, _config: Any) -> None:
+            pass
+
+        def run(self) -> None:
+            os.kill(os.getpid(), signal.SIGTERM)
+            assert stopped.wait(5.0)
+
+        def stop(self) -> None:
+            stopped_on.append(threading.current_thread())
+            stopped.set()
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(bridge_module, "HilsBridge", _Bridge)
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+    handler = signal.getsignal(signal.SIGTERM)
+    try:
+        assert main([str(path)]) == 0
+    finally:
+        signal.signal(signal.SIGTERM, handler)
+    assert len(stopped_on) == 1
+    assert stopped_on[0] is not threading.main_thread()
+    assert closed == [True]
+
+
 def test_the_command_checks_prints_and_refuses(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

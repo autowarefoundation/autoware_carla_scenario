@@ -113,6 +113,7 @@ class CollisionCondition(BaseCondition):
     _listening: bool
     _closed: bool
     _lock: threading.Lock
+    _generation: int
     _collided: bool
     _other_type_id: Optional[str]
     _other_is_actor: bool
@@ -146,6 +147,10 @@ class CollisionCondition(BaseCondition):
         self._listening = False
         self._closed = False
         self._lock = threading.Lock()
+        # Moved on by reset(), under _lock: a listener is bound to the
+        # generation it was attached in, and an event it still delivers
+        # after reset() is of an earlier run (#2323).
+        self._generation = 0
         self._collided = False
         self._other_type_id: Optional[str] = None
         self._other_is_actor = True
@@ -191,8 +196,18 @@ class CollisionCondition(BaseCondition):
             return _role_name(other) == canonical_role_name(target)
         return self._target_type.matches(other.type_id)
 
-    def _on_collision(self, event: "carla.CollisionEvent") -> None:
-        """Callback invoked by CARLA when a collision event occurs."""
+    def _on_collision(
+        self, event: "carla.CollisionEvent", generation: Optional[int] = None
+    ) -> None:
+        """Callback invoked by CARLA when a collision event occurs.
+
+        *generation* is the one the sensor's listener was attached in
+        (:meth:`_try_attach_sensor`); ``None`` for the current one.  CARLA
+        may still be inside the callback when ``sensor.stop()`` returns, so
+        an event of a sensor :meth:`reset` let go is dropped here: the
+        generation is checked under the lock :meth:`reset` moves it on under,
+        so the next run does not start already collided (#2323).
+        """
         impulse = event.normal_impulse
         magnitude = math.sqrt(impulse.x**2 + impulse.y**2 + impulse.z**2)
         if magnitude < self._min_impulse:
@@ -213,13 +228,17 @@ class CollisionCondition(BaseCondition):
                 return
             type_id = actor.type_id
         with self._lock:
+            if generation is not None and generation != self._generation:
+                return
             if not self._collided:
                 self._collided = True
                 self._other_is_actor = other is not None
                 self._other_type_id = type_id
 
     def _on_sensor_data(
-        self, data: Union["carla.CollisionEvent", "carla.SensorData"]
+        self,
+        data: Union["carla.CollisionEvent", "carla.SensorData"],
+        generation: Optional[int] = None,
     ) -> None:
         """The sensor's listener: hands the collision event to :meth:`_on_collision`.
 
@@ -228,11 +247,12 @@ class CollisionCondition(BaseCondition):
         calls it with the ``carla.SensorData``, which ``as_collision()`` turns
         into the event; the static check sees that branch, and Python, whose
         ``CollisionEvent`` has no ``as_collision``, never takes it.
+        *generation* is the listener's (:meth:`_on_collision`).
         """
         if hasattr(data, "as_collision"):
-            self._on_collision(data.as_collision())
+            self._on_collision(data.as_collision(), generation)
         else:
-            self._on_collision(data)
+            self._on_collision(data, generation)
 
     def _try_attach_sensor(self, world: "carla.World", elapsed: float) -> None:
         """Search for the ego vehicle and attach a collision sensor to it.
@@ -258,7 +278,9 @@ class CollisionCondition(BaseCondition):
         sensor_bp = blueprint_library.find("sensor.other.collision")
         sensor = world.spawn_actor(sensor_bp, carla.Transform(), attach_to=ego)
         self._sensor = sensor
-        sensor.listen(self._on_sensor_data)
+        with self._lock:
+            generation = self._generation
+        sensor.listen(lambda data: self._on_sensor_data(data, generation))
         self._listening = True
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
@@ -279,22 +301,25 @@ class CollisionCondition(BaseCondition):
             self._try_attach_sensor(world, elapsed)
 
         with self._lock:
-            if self._collided:
-                if self._other_is_actor:
-                    other = f"'{self._other_description()}'"
-                else:
-                    other = "something that is not an actor (map geometry)"
-                self._cached_result = ScenarioResult(
-                    passed=False,
-                    message=f"Ego vehicle collided with {other} at {elapsed:.2f}s",
-                    elapsed_seconds=elapsed,
-                )
-                # Stop the listener — no further callbacks are needed.
-                if self._sensor is not None and self._listening:
-                    self._sensor.stop()
-                    self._listening = False
-                return self._cached_result
-        return None
+            if not self._collided:
+                return None
+            if self._other_is_actor:
+                other = f"'{self._other_description()}'"
+            else:
+                other = "something that is not an actor (map geometry)"
+            result = ScenarioResult(
+                passed=False,
+                message=f"Ego vehicle collided with {other} at {elapsed:.2f}s",
+                elapsed_seconds=elapsed,
+            )
+            self._cached_result = result
+        # Stop the listener -- no further callbacks are needed.  Outside the
+        # lock: CARLA's stop() may wait for a callback in flight, which takes
+        # the lock (_on_collision), and would wait for this thread (#2323).
+        if self._sensor is not None and self._listening:
+            self._sensor.stop()
+            self._listening = False
+        return result
 
     def close(self) -> None:
         """Stop the collision sensor and destroy it, through this handle.
@@ -343,6 +368,8 @@ class CollisionCondition(BaseCondition):
         super().reset()
         self.close()
         with self._lock:
+            # An event the old sensor still delivers is stale from here.
+            self._generation += 1
             self._collided = False
             self._other_type_id = None
             self._other_is_actor = True

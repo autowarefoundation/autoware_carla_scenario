@@ -14,6 +14,7 @@ import queue
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -223,6 +224,53 @@ def test_destroy_drops_the_frames_still_queued() -> None:
     sensor._on_sensor_data(_rendered(500, 3))  # type: ignore[arg-type]
     latest = sensor.latest_image(500)
     assert latest is not None and latest[0] == 500
+
+
+def _attached_listener(sensor: CarlaCameraSensor) -> Any:
+    """Attach *sensor* to a fake world; the listener it handed the camera."""
+    listeners: list[Any] = []
+    blueprint = SimpleNamespace(
+        set_attribute=lambda name, value: None, has_attribute=lambda name: True
+    )
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
+        spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
+            listen=listeners.append, stop=lambda: None, destroy=lambda: None
+        ),
+    )
+    sensor.attach(world, SimpleNamespace(type_id="vehicle.lincoln.mkz"))
+    (listener,) = listeners
+    return listener
+
+
+def test_a_frame_in_flight_after_destroy_is_not_queued() -> None:
+    """#2323: CARLA may still be inside the callback when stop() returns; a
+    frame it queued after destroy() drained the queue was taken for one of
+    the camera attached next."""
+    sensor = _sensor()
+    old = _attached_listener(sensor)
+    sensor.destroy()
+    old(_rendered(10, 1))
+    assert sensor._frame_queue.empty()
+    new = _attached_listener(sensor)
+    old(_rendered(11, 2))
+    assert sensor._frame_queue.empty()
+    new(_rendered(12, 3))
+    latest = sensor.latest_image(12)
+    assert latest is not None and latest[0] == 12
+
+
+def test_a_frame_in_flight_after_destroy_does_not_reach_on_frame() -> None:
+    seen: list[object] = []
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1), seen.append
+    )
+    old = _attached_listener(sensor)
+    first = _rendered(10, 1)
+    old(first)
+    sensor.destroy()
+    old(_rendered(11, 2))
+    assert seen == [first]
 
 
 # ---------------------------------------------------------------------------

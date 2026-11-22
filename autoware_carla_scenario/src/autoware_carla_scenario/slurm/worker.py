@@ -823,7 +823,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                     case=run._odd_case(cfg),
                     file_stem=stem,
                 )
-                started = time.time()
+                # The monotonic clock: a wall clock stepped mid-case (NTP)
+                # would skew, or make negative, how long it took (#2323).
+                started = time.monotonic()
                 # A crash report of the case runs it again with `scenario`.
                 with crash_report.run_context(
                     batch_dir,
@@ -851,7 +853,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                         "task": task_index,
                         "job_id": task.status["job_id"],
                         "host": task.status["host"],
-                        "wall_seconds": round(time.time() - started, 3),
+                        "wall_seconds": round(time.monotonic() - started, 3),
                         "finished": _now(),
                         **({"rerun_error": rerun_error} if rerun_error else {}),
                     },
