@@ -112,6 +112,7 @@ nav:
   - Logical Scenarios from Routes: logical_scenarios.md
   - Gates for Logical Scenarios: gate.md
   - Running a Batch on SLURM: slurm.md
+  - Crash Reports: crash_reports.md
   - Coverage: coverage.md
   - ODD: odd.md
   - Metrics: metrics.md

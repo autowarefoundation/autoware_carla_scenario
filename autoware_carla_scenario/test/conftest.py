@@ -35,6 +35,11 @@ for _var in (
 ):
     os.environ.pop(_var, None)
 
+# No crash reports from the runs the tests start, in this process or in the
+# `scenario` processes they launch: a test that makes a run raise would leave
+# one in its output directory. test_crash_report.py turns them back on.
+os.environ["SCENARIO_CRASH_REPORT"] = "0"
+
 
 #: The repository root, wherever pytest was started from.
 REPO_ROOT = Path(__file__).resolve().parents[2]

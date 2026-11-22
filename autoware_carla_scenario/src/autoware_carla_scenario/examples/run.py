@@ -86,6 +86,7 @@ from autoware_carla_scenario.batch_resume import (
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.config_flags import check_flag
+from autoware_carla_scenario import crash_report
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.gate.errored import (
     remove_case_errored,
@@ -3287,6 +3288,9 @@ def run_batch(
             )
         )
 
+    # A case that raises becomes a failed result and the batch goes on: its
+    # crash report goes to the batch's directory.
+    crash_report.set_report_dir(output_dir / crash_report.CRASH_REPORTS_DIRNAME)
     queue = _batch_queue(first_cfg, map_paths, output_dir, rerun=rerun)
 
     for cfg, scenario, stem in zip(configs, scenarios, run_stems):
@@ -4345,7 +4349,8 @@ def _hydra_main(cfg: DictConfig) -> None:
     )
     marker_dir = _case_errored_dir()
     try:
-        result = run_scenario(cfg)
+        with _crash_report_context(cfg):
+            result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
         # A refusal ends a --multirun too, with the same 2: the next case
         # would be refused for the same reason.  Hydra lets SystemExit through
@@ -4371,6 +4376,10 @@ def _hydra_main(cfg: DictConfig) -> None:
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(2)
     except Exception as exc:
+        # Reported by _crash_report_context(), unless it could not tell the
+        # run's directory: before Hydra's own report of it, which ends a
+        # single run with exit 1 and leaves main() nothing to report.
+        crash_report.capture(exc)
         _mark_case_errored(marker_dir, exc, exit_code=1)
         if _record_basic_sweeper_error(exc):
             return
@@ -4387,6 +4396,36 @@ def _hydra_main(cfg: DictConfig) -> None:
     _multirun_ran.append(case)
     if not result.passed:
         _multirun_failed.append(case)
+
+
+@contextmanager
+def _crash_report_context(cfg: DictConfig) -> Iterator[None]:
+    """Report what the ``with`` block raises (a refusal of the config
+    aside, :data:`_REFUSALS`) and a native crash in it as the Hydra run's: in
+    its output directory, with its overrides and its config
+    (:func:`crash_report.run_context`).  The block raises what it raises."""
+    if not crash_report.installed():
+        yield
+        return
+    try:
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+    except Exception:  # noqa: BLE001 - the run goes on, reported elsewhere
+        logger.warning("Cannot tell the run's output directory", exc_info=True)
+        yield
+        return
+    try:
+        config_yaml: str | None = OmegaConf.to_yaml(cfg)
+    except Exception:  # noqa: BLE001 - reported without its config
+        config_yaml = None
+    with crash_report.run_context(
+        output_dir, overrides=_task_overrides(), config_yaml=config_yaml
+    ):
+        try:
+            yield
+        except Exception as exc:
+            if not isinstance(exc, _REFUSALS):
+                crash_report.capture(exc)
+            raise
 
 
 #: The ``_target_`` of Hydra's basic sweeper and launcher, which run every
@@ -4619,13 +4658,27 @@ def _environ_for_run(name: str, value: str | None) -> Iterator[None]:
             os.environ[name] = previous
 
 
+#: What a run raises when it refuses its configuration: the user's to fix, not
+#: a crash, and so not reported (:func:`crash_report.reporting`).
+_REFUSALS: tuple[type[BaseException], ...] = (
+    RunConfigError,
+    ScenarioTypeError,
+    RerunUnavailableError,
+    T4UnavailableError,
+)
+
+
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly.
 
-    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.
+    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.  What it
+    raises or a native crash leaves a crash report (:mod:`..crash_report`).
     """
     try:
-        with _interrupt_on_sigterm():
+        with (
+            crash_report.reporting(list(sys.argv), ignore=_REFUSALS),
+            _interrupt_on_sigterm(),
+        ):
             _main()
     except _Terminated as exc:
         print(f"Interrupted ({exc})", file=sys.stderr)  # noqa: T201
