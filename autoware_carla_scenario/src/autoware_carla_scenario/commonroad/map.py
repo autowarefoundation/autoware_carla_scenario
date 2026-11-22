@@ -77,7 +77,8 @@ def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
     except ImportError as exc:
         raise ImportError(_INSTALL) from exc
     version = str(getattr(roadgen, "__version__", "0"))
-    if _version(version) < _ROADGEN_MIN or not hasattr(
+    # Compared as lists, as tuples compare (Codon's _version() is a list).
+    if list(_version(version)) < list(_ROADGEN_MIN) or not hasattr(
         roadgen.Map, "export_commonroad"
     ):
         raise ImportError(f"roadgen {version} does not write CommonRoad: {_INSTALL}")
