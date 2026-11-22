@@ -30,8 +30,12 @@ def canvas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     module.plugin_path = lambda: plugin  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "carla_canvas", types.ModuleType("carla_canvas"))
     monkeypatch.setitem(sys.modules, "carla_canvas.plugin", module)
-    monkeypatch.delenv(CONFIG_ENV, raising=False)
-    monkeypatch.delenv(PLUGIN_ENV, raising=False)
+    # Set, then removed: delenv on an unset variable records no undo, and
+    # use_canvas writes os.environ itself -- without one, what it wrote would
+    # outlive the test.
+    for name in (CONFIG_ENV, PLUGIN_ENV):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     return plugin
 
 

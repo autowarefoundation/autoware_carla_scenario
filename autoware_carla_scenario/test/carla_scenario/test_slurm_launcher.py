@@ -547,25 +547,38 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
 
     local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
     capsys.readouterr()
+    # Six cases, two tasks in parallel: the first task runs cases 0, 1 and 2.
+    first_task = range(3)
+    # Its worker dies on the last of them the fake world does not error, so
+    # long as that is not the task's first: what the task finished before it
+    # must survive the crash.  The fake world crashes on a digest, and only a
+    # case that does not error records one (stems.jsonl).  _SWEEP's seed
+    # fixes the cases, so the same case is crashed on every run.
+    local_results = json.loads((local / "batch_results.json").read_text())
+    clean = [i for i in first_task if not local_results[i].get("error")]
+    assert (
+        clean and clean[-1] != first_task[0]
+    ), f"no case after the first task's first one runs in the fake world: {clean}"
+    crashed = clean[-1]
+    # stems.jsonl lists the cases that did not error, in the batch's order.
     ran = [json.loads(line) for line in (fake_slurm.record / "stems.jsonl").open()]
-    # The worker of the first task dies on the batch's second case (stem -1).
-    second = next(
-        (entry["digest"] for entry in ran if entry["stem"].endswith("Scenario-1")), None
-    )
-    if second is None:
-        pytest.skip("the second case errored in the fake world")
-    fake_slurm.monkeypatch.setenv("FAKE_CRASH_DIGESTS", second[:16])
+    entry = ran[clean.index(crashed)]
+    assert entry["stem"].endswith(f"Scenario-{crashed}")
+    fake_slurm.monkeypatch.setenv("FAKE_CRASH_DIGESTS", entry["digest"][:16])
+    # The crashed case and those after it in its task never ran.
+    missing = list(range(crashed, first_task.stop))
 
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     out = capsys.readouterr().out
     assert status == 1
+    assert (fake_slurm.record / f"crashed-{entry['digest'][:16]}").exists()
     layout = BatchLayout(batch)
-    assert layout.read_result(0) is not None
-    assert layout.read_result(1) is None and layout.read_result(2) is None
+    for i in range(6):
+        assert (layout.read_result(i) is None) == (i in missing), i
     assert "No result: the case did not finish under SLURM" in out
     assert "scenario-slurm resubmit" in out
     results = json.loads((batch / "batch_results.json").read_text())
-    assert results[1]["error"] is True and results[2]["error"] is True
+    assert all(results[i]["error"] is True for i in missing)
     # The job script stopped the CARLA the dead worker left running.
     task0 = layout.read_task(0, 0)
     assert task0 is not None
@@ -575,20 +588,21 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     )
     _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
 
-    # Resubmitted: the two cases with no result, and those that errored (the
+    # Resubmitted: the cases with no result, and those that errored (the
     # fake world's errored cases raise again, as a case without ground would).
     errored = [
         i
         for i in range(6)
         if (record := layout.read_result(i)) is not None and record.errored
     ]
-    assert missing_cases(layout) == [1, 2]
+    assert missing_cases(layout) == missing
     code = cli.main(["resubmit", str(batch), "--dry-run"])
     assert code == 0
-    assert f"Resubmitting {2 + len(errored)} case(s)" in capsys.readouterr().out
+    resubmitted = sorted([*missing, *errored])
+    assert f"Resubmitting {len(resubmitted)} case(s)" in capsys.readouterr().out
     code = cli.main(["resubmit", str(batch), "--wait"])
     assert code == local_status
-    assert _record_json(layout, 1)["cases"] == sorted([1, 2, *errored])
+    assert _record_json(layout, 1)["cases"] == resubmitted
     assert _outputs(batch) == _outputs(local)
     assert (batch / "batch_results.json").read_bytes() == (
         local / "batch_results.json"

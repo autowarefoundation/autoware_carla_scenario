@@ -29,8 +29,9 @@ def test_the_traffic_manager_options_take_a_port(port: int) -> None:
 
 
 def test_the_traffic_manager_options_default_to_a_port() -> None:
-    TrafficManagerBackendConfig()
-    TrafficManagerBackendConfig.from_mapping({})
+    assert TrafficManagerBackendConfig().port == 8100
+    assert TrafficManagerBackendConfig.from_mapping({}).port == 8100
+    assert build_traffic_manager({}).describe()["port"] == 8100
 
 
 def test_the_traffic_manager_options_read_a_null_port_as_the_default() -> None:

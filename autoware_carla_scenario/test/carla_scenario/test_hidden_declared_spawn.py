@@ -459,6 +459,18 @@ class TestBroughtInWhereDeclared:
         put = bring_in["put"][scenario._compiled.role_of("a")]
         assert put == pytest.approx((40.0, 50.0, 1.0, 10.0))
 
+    @pytest.mark.parametrize("lanelet_id", [0, -3])
+    def test_an_entity_on_no_lanelet_still_waits_where_it_was_declared(
+        self, bring_in: dict[str, Any], lanelet_id: int
+    ) -> None:
+        # A Lanelet2 pose on lanelet 0 or less, what a card leaves empty, is
+        # no place of its own: it comes up at its declared spawn.
+        action = SpawnAction("npc1", position=Lanelet2Pose(lanelet_id, 0.0))
+        action.declare_spawn(CarlaWorldPose(40.0, 50.0, 1.0, yaw=10.0))
+        assert action.apply(_World())  # type: ignore[arg-type]
+        assert bring_in["put"]["npc1"] == pytest.approx((40.0, 50.0, 1.0, 10.0))
+        assert bring_in["claimed"] == [(40.0, 50.0)]
+
     def test_with_nothing_declared_it_comes_up_where_it_waits(
         self, bring_in: dict[str, Any]
     ) -> None:
