@@ -11,6 +11,7 @@ into one :class:`MetricSeries` a metric.
 from __future__ import annotations
 
 import math
+from array import array
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -69,15 +70,157 @@ class ActorFrame:
     light_state: Optional[int] = None
 
 
-@dataclass(frozen=True)
+#: How many floats a recorded frame keeps an actor's motion in
+#: (:class:`_Recorded`): place, rotation, velocity, acceleration and angular
+#: velocity, three each.
+_MOTION = 15
+
+
+class _ActorStatic:
+    """What does not change about an actor, read once and shared by every
+    frame it is recorded in: its id, type, role, kind and box."""
+
+    id: int
+    type_id: str
+    role: str
+    base_type: str
+    extent: tuple[float, float, float]
+    centre: tuple[float, float, float]
+    box_yaw: float
+
+    def __init__(
+        self,
+        id: int,
+        type_id: str,
+        role: str,
+        base_type: str,
+        extent: tuple[float, float, float],
+        centre: tuple[float, float, float],
+        box_yaw: float,
+    ) -> None:
+        self.id = id
+        self.type_id = type_id
+        self.role = role
+        self.base_type = base_type
+        self.extent = extent
+        self.centre = centre
+        self.box_yaw = box_yaw
+
+
+class _Recorded:
+    """A frame's road users as :class:`FrameRecorder` keeps them (#2338): a
+    reference to each one's :class:`_ActorStatic`, its motion as
+    :data:`_MOTION` doubles in one ``array('d')`` (the floats it was read as,
+    bit for bit), and the steer and light state of those that have them
+    (the ego), by index.  :meth:`actors` makes the :class:`ActorFrame` values
+    of it when the frame is read."""
+
+    statics: list[_ActorStatic]
+    motion: array
+    controls: list[tuple[int, Optional[float], Optional[int]]]
+
+    def __init__(self) -> None:
+        self.statics = []
+        self.motion = array("d")
+        self.controls = []
+
+    def actors(self) -> list[ActorFrame]:
+        controls: dict[int, tuple[Optional[float], Optional[int]]] = {}
+        for index, read_steer, read_light in self.controls:
+            controls[index] = (read_steer, read_light)
+        motion = self.motion
+        actors: list[ActorFrame] = []
+        for index, static in enumerate(self.statics):
+            k = _MOTION * index
+            steer: Optional[float] = None
+            light: Optional[int] = None
+            if index in controls:
+                steer, light = controls[index]
+            actors.append(
+                ActorFrame(
+                    id=static.id,
+                    type_id=static.type_id,
+                    role=static.role,
+                    base_type=static.base_type,
+                    x=motion[k],
+                    y=motion[k + 1],
+                    z=motion[k + 2],
+                    roll=motion[k + 3],
+                    pitch=motion[k + 4],
+                    yaw=motion[k + 5],
+                    vx=motion[k + 6],
+                    vy=motion[k + 7],
+                    vz=motion[k + 8],
+                    ax=motion[k + 9],
+                    ay=motion[k + 10],
+                    az=motion[k + 11],
+                    wx=motion[k + 12],
+                    wy=motion[k + 13],
+                    wz=motion[k + 14],
+                    extent=static.extent,
+                    centre=static.centre,
+                    box_yaw=static.box_yaw,
+                    steer=steer,
+                    light_state=light,
+                )
+            )
+        return actors
+
+
 class Frame:
     """One tick of a run: its CARLA frame, simulated time, the run's
-    importance-sampling weight then, and its road users."""
+    importance-sampling weight then, and its road users.
+
+    A frame :class:`FrameRecorder` records keeps its road users compactly
+    and makes their :class:`ActorFrame` values each time :attr:`actors` is
+    read (#2338); a frame made with its actors holds those.
+    """
 
     frame: int
     t: float
     weight: Optional[float]
-    actors: tuple[ActorFrame, ...]
+    _actors: tuple[ActorFrame, ...]
+    _recorded: Optional[_Recorded]
+
+    def __init__(
+        self,
+        frame: int,
+        t: float,
+        weight: Optional[float],
+        actors: tuple[ActorFrame, ...],
+    ) -> None:
+        self.frame = frame
+        self.t = t
+        self.weight = weight
+        self._actors = actors
+        self._recorded = None
+
+    @property
+    def actors(self) -> tuple[ActorFrame, ...]:
+        """The frame's road users."""
+        recorded = self._recorded
+        if recorded is None:
+            return self._actors
+        return tuple(recorded.actors())
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Frame):
+            return NotImplemented
+        if self is other:
+            # A frame equals itself, NaN readings and all, as the dataclass
+            # did (its actors were one tuple; these are made afresh).
+            return True
+        return (self.frame, self.t, self.weight, self.actors) == (
+            other.frame,
+            other.t,
+            other.weight,
+            other.actors,
+        )
+
+    def __hash__(self) -> int:
+        # Of what the frame says about the tick only: equal frames hash
+        # alike all the same.
+        return hash((self.frame, self.t, self.weight))
 
 
 class FrameRecorder:
@@ -86,34 +229,21 @@ class FrameRecorder:
 
     frames: list[Frame]
     _walkers: WalkerVelocities
-    #: What does not change about an actor, read once: type, role, kind, box.
-    _static: dict[
-        int,
-        tuple[
-            str,
-            str,
-            str,
-            tuple[float, float, float],
-            tuple[float, float, float],
-            float,
-        ],
-    ]
+    #: What does not change about an actor, read once, by actor id.
+    _static: dict[int, _ActorStatic]
 
     def __init__(self) -> None:
         self.frames = []
         self._walkers = WalkerVelocities()
         self._static = {}
 
-    def _static_of(
-        self, actor: "carla.Actor"
-    ) -> tuple[
-        str, str, str, tuple[float, float, float], tuple[float, float, float], float
-    ]:
+    def _static_of(self, actor: "carla.Actor") -> _ActorStatic:
         key = int(actor.id)
         if key not in self._static:
             attributes = actor.attributes
             box = actor.bounding_box
-            self._static[key] = (
+            self._static[key] = _ActorStatic(
+                key,
                 str(actor.type_id),
                 canonical_role_name(str(attributes.get("role_name", ""))),
                 str(attributes.get("base_type", "")),
@@ -128,7 +258,8 @@ class FrameRecorder:
     ) -> None:
         """Record the tick the world was just stepped to, at *elapsed*
         simulated seconds, with the run's importance-sampling *weight*."""
-        actors: list[ActorFrame] = []
+        recorded = _Recorded()
+        motion = recorded.motion
         for actor in world.get_actors():
             type_id = str(actor.type_id)
             walker = type_id.startswith("walker.")
@@ -139,16 +270,16 @@ class FrameRecorder:
             v: tuple[float, float, float]
             if walker:
                 velocity = self._walkers.walker(actor, elapsed, location)
-                v = (velocity.x, velocity.y, velocity.z)
+                v = (float(velocity.x), float(velocity.y), float(velocity.z))
             else:
                 reported = actor.get_velocity()
                 v = (float(reported.x), float(reported.y), float(reported.z))
             acceleration = _acceleration(actor)
             angular = _angular_velocity(actor)
-            kind, role, base, extent, centre, box_yaw = self._static_of(actor)
-            steer: Optional[float] = None
-            light: Optional[int] = None
-            if role == str(EGO_ROLE_NAME) and not walker:
+            static = self._static_of(actor)
+            if static.role == str(EGO_ROLE_NAME) and not walker:
+                steer: Optional[float] = None
+                light: Optional[int] = None
                 try:
                     # The steer and the light state are a vehicle's; the ego
                     # is one.  An actor without them (a stand-in) has neither
@@ -161,39 +292,37 @@ class FrameRecorder:
                     light = int(vehicle.get_light_state())
                 except Exception:
                     pass
-            actors.append(
-                ActorFrame(
-                    id=int(actor.id),
-                    type_id=kind,
-                    role=role,
-                    base_type=base,
-                    x=float(location.x),
-                    y=float(location.y),
-                    z=float(location.z),
-                    roll=float(rotation.roll),
-                    pitch=float(rotation.pitch),
-                    yaw=float(rotation.yaw),
-                    vx=v[0],
-                    vy=v[1],
-                    vz=v[2],
-                    ax=acceleration[0],
-                    ay=acceleration[1],
-                    az=acceleration[2],
-                    wx=angular[0],
-                    wy=angular[1],
-                    wz=angular[2],
-                    extent=extent,
-                    centre=centre,
-                    box_yaw=box_yaw,
-                    steer=steer,
-                    light_state=light,
+                if steer is not None or light is not None:
+                    recorded.controls.append((len(recorded.statics), steer, light))
+            recorded.statics.append(static)
+            motion.extend(
+                (
+                    float(location.x),
+                    float(location.y),
+                    float(location.z),
+                    float(rotation.roll),
+                    float(rotation.pitch),
+                    float(rotation.yaw),
+                    v[0],
+                    v[1],
+                    v[2],
+                    acceleration[0],
+                    acceleration[1],
+                    acceleration[2],
+                    angular[0],
+                    angular[1],
+                    angular[2],
                 )
             )
         try:
             frame = int(world.get_snapshot().frame)
         except Exception:
             frame = len(self.frames)
-        self.frames.append(Frame(frame, float(elapsed), weight, tuple(actors)))
+        # Its actors are the recorded ones, not these.
+        held: list[ActorFrame] = []
+        recorded_frame = Frame(frame, float(elapsed), weight, tuple(held))
+        recorded_frame._recorded = recorded
+        self.frames.append(recorded_frame)
 
 
 def _acceleration(actor: "carla.Actor") -> tuple[float, float, float]:

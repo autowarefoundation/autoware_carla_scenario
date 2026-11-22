@@ -3251,7 +3251,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
+  `__future__`, `abc`, `array`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
   `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions`, `urllib.parse`, `uuid` and `xml.etree.ElementTree`
@@ -3276,6 +3276,12 @@ What Codon 0.19 needs that Python does not, beyond
   `codon/_stdlib/` (#422): they add
   `collections.OrderedDict` and `itertools.pairwise`, as listed under
   "Standard library names Codon lacks".
+  `array` declares what `metric_frames` keeps a recorded frame's motion in
+  (#2338): `array("d")` (an array of doubles, which reads back the floats it
+  was given bit for bit; another typecode raises `ValueError`, and no
+  initializer is declared), its `typecode`, `len()`, indexing by an `int`,
+  iteration, `append(x)` and `extend(iterable)`. Slicing, the other
+  typecodes, the arithmetic and the byte methods are not declared.
   `xml.etree.ElementTree` declares what `traffic.sumo.network` reads a
   network's crossings with: `iterparse(source)` of a file name (no file
   object, no `events` or `parser`), which gives no element in the check, of
