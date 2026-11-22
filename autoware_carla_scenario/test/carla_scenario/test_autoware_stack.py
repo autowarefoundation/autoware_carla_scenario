@@ -1366,9 +1366,70 @@ def test_a_build_lock_interrupt_is_raised(
     monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
     error = KeyboardInterrupt()
     _flock_raising(monkeypatch, BlockingIOError(), error)
+    closed = _closes_recorded(monkeypatch)
     with pytest.raises(KeyboardInterrupt) as raised:
         launcher._lock_workspace()
     assert raised.value is error
+    assert len(closed) == 1
+
+
+def test_a_build_lock_interrupt_while_waiting_closes_the_file(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The caller's try/finally only starts once _lock_workspace returns, so
+    # an interrupt in its sleep must close the descriptor itself (#2327).
+    import time
+
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    _flock_raising(monkeypatch, *[BlockingIOError() for _ in range(1000)])
+    closed = _closes_recorded(monkeypatch)
+    error = KeyboardInterrupt()
+
+    def _sleep(seconds: float) -> None:
+        raise error
+
+    monkeypatch.setattr(time, "sleep", _sleep)
+    with pytest.raises(KeyboardInterrupt) as raised:
+        launcher._lock_workspace()
+    assert raised.value is error
+    assert len(closed) == 1
+    # Really closed, not just recorded: the descriptor is gone.
+    with pytest.raises(OSError):
+        os.fstat(closed[0])
+
+
+def test_a_build_lock_taken_after_a_wait_is_handed_over_open(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
+    _flock_raising(monkeypatch, BlockingIOError(), BlockingIOError())
+    closed = _closes_recorded(monkeypatch)
+    fd = launcher._lock_workspace()
+    try:
+        assert fd >= 0
+        assert closed == []
+        os.fstat(fd)  # still open
+    finally:
+        launcher._unlock_workspace(fd)
+    assert closed == [fd]
+
+
+def _closes_recorded(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the descriptors ``docker`` closes (and close them)."""
+    closed: list[int] = []
+    real_close = os.close
+
+    def _close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(docker_module.os, "close", _close)
+    return closed
 
 
 def test_a_build_lock_held_too_long_closes_the_file(

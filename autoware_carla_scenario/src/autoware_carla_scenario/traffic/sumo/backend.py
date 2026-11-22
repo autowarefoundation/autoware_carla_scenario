@@ -150,6 +150,7 @@ from .mesosim import (
     MesoRoads,
     SumoMesoscopicTraffic,
     build_mesoscopic_model,
+    drop_traci_connection,
     start_sumo,
     stop_sumo,
 )
@@ -341,31 +342,6 @@ _PERSON_EDGE_RADIUS_M = 50.0
 #: The label of SUMO's TraCI connection: traci's own default, the one its
 #: module-level functions use.
 _TRACI_LABEL = "default"
-
-
-def _drop_traci_connection(traci: Any, label: str) -> None:
-    """Close TraCI's connection *label*, if one is registered, and make sure
-    it is no longer, even when SUMO broke the socket mid-handshake."""
-    try:
-        conn = traci.getConnection(label)
-    except Exception:  # noqa: BLE001 - none registered
-        return
-    try:
-        conn.close(False)
-    except Exception as exc:  # noqa: BLE001 - the socket is gone
-        logger.debug("SUMO close after a failed start: %s", exc)
-        # Without its socket, close() only unregisters the connection.
-        sock = getattr(conn, "_socket", None)
-        if sock is not None:
-            try:
-                sock.close()
-            except OSError:
-                pass
-            conn._socket = None
-        try:
-            conn.close(False)
-        except Exception as again:  # noqa: BLE001 - nothing more to do
-            logger.debug("SUMO connection %r stays registered: %s", label, again)
 
 
 def _is_gui(binary: str) -> bool:
@@ -1207,7 +1183,7 @@ class SumoTrafficBackend(TrafficBackend):
             except BaseException:
                 # A handshake that failed after connecting left the label
                 # registered, and the next try (or start) refused.
-                _drop_traci_connection(traci, _TRACI_LABEL)
+                drop_traci_connection(traci, _TRACI_LABEL)
                 raise
 
         # SUMO's standard output stays the run's, as with traci.start.

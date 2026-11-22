@@ -28,6 +28,7 @@ import importlib.metadata
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -57,6 +58,13 @@ __all__ = [
 ]
 
 _INSTALL = "install the `sumo` extra (autoware-carla-scenario[sumo])"
+
+#: How long netconvert, and randomTrips.py, may run before the run gives up
+#: on them, seconds: generous (netconvert builds a 6400-junction grid with
+#: crossings in about 12 s), but a stuck tool no longer hangs the run
+#: (#2327).  Read when they run, not bound once.
+_NETCONVERT_TIMEOUT_S = 600.0
+_RANDOM_TRIPS_TIMEOUT_S = 600.0
 
 
 @dataclass(frozen=True)
@@ -245,6 +253,7 @@ def build_network(
         for warning in road_map.sumo_warnings():
             logger.debug("roadgen: %s", warning)
         netconvert = _binary("netconvert")
+        timeout = _NETCONVERT_TIMEOUT_S
         try:
             proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
                 [
@@ -257,8 +266,14 @@ def build_network(
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=timeout,
                 check=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise TrafficBackendError(
+                f"SUMO's netconvert ({netconvert}) did not finish within "
+                f"{timeout:g} s"
+            ) from exc
         except OSError as exc:
             # Found but not runnable: gone since, not executable, or a
             # script whose interpreter is missing (#2321).
@@ -320,26 +335,54 @@ def _random_trips(
     home = str(sumo_home())
     env = os.environ.copy()
     env["SUMO_HOME"] = home
+    timeout = _RANDOM_TRIPS_TIMEOUT_S
     try:
-        proc = subprocess.run(  # noqa: S603
+        # In a session of its own: randomTrips.py runs duarouter as its own
+        # child, which killing randomTrips.py alone would leave running.
+        process = subprocess.Popen(  # noqa: S603
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
             env=env,
-            check=False,
+            start_new_session=True,
         )
     except OSError as exc:
         # The interpreter that runs it could not be started (#2321).
         raise TrafficBackendError(
             f"Could not run randomTrips.py{what} ({cmd[0]}): {exc}"
         ) from exc
-    if proc.returncode != 0 or not out.is_file():
+    # Closes its pipes, and reaps it, however this ends.
+    with process:
+        try:
+            _stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _kill_group(process)
+            process.wait()
+            raise TrafficBackendError(
+                f"randomTrips.py{what} did not finish within {timeout:g} s"
+            ) from exc
+        except BaseException:
+            # An interrupt: the group, in a session of its own, did not get
+            # the terminal's SIGINT.
+            _kill_group(process)
+            process.wait()
+            raise
+    if process.returncode != 0 or not out.is_file():
+        tail = stderr.strip()[-2000:] if stderr else ""
         raise TrafficBackendError(
-            f"randomTrips.py{what} failed ({proc.returncode}): "
-            f"{proc.stderr.strip()[-2000:]}"
+            f"randomTrips.py{what} failed ({process.returncode}): {tail}"
         )
     return out
+
+
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """SIGKILL *process*'s group (its own session's, ``start_new_session``)."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # Every process of the group has ended already.
 
 
 def generate_trips(

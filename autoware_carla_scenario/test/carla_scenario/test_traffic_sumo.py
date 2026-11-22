@@ -1291,10 +1291,129 @@ def test_a_netconvert_that_cannot_run_is_a_backend_error(
     assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
 
 
+def test_a_random_trips_that_does_not_finish_is_a_backend_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: a stuck randomTrips.py times out as a TrafficBackendError
+    naming it and the timeout, not a hung run."""
+    import sys
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    # The "interpreter" randomTrips.py runs under never finishes.
+    stuck = tmp_path / "stuck-python"
+    stuck.write_text("#!/bin/sh\nexec sleep 60\n")
+    stuck.chmod(0o755)
+    monkeypatch.setattr(network_module, "sumo_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "executable", str(stuck))
+    monkeypatch.setattr(network_module, "_RANDOM_TRIPS_TIMEOUT_S", 0.2)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    start = time.monotonic()
+    with pytest.raises(
+        TrafficBackendError,
+        match=r"^randomTrips\.py \(walks\) did not finish within 0\.2 s$",
+    ):
+        network_module._random_trips(
+            network,
+            tmp_path / "out" / "a.rou.xml",
+            seed=3,
+            period=1.5,
+            end=9.0,
+            prefix="walk",
+            options=[],
+            what=" (walks)",
+        )
+    assert time.monotonic() - start < 30
+
+
+def test_a_random_trips_timeout_kills_the_duarouter_it_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: randomTrips.py runs duarouter as a child of its own; a timeout
+    kills that one too, not only randomTrips.py."""
+    import os
+    import sys
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    pid_file = tmp_path / "duarouter.pid"
+    # The "interpreter" starts a "duarouter" that never finishes, and waits.
+    stuck = tmp_path / "stuck-python"
+    stuck.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > '{pid_file}'\nwait\n")
+    stuck.chmod(0o755)
+    monkeypatch.setattr(network_module, "sumo_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "executable", str(stuck))
+    monkeypatch.setattr(network_module, "_RANDOM_TRIPS_TIMEOUT_S", 1.0)
+    network = network_module.SumoNetwork(
+        tmp_path / "network.net.xml", tmp_path / "network.safe"
+    )
+    with pytest.raises(TrafficBackendError, match="did not finish within 1 s"):
+        network_module._random_trips(
+            network,
+            tmp_path / "out" / "a.rou.xml",
+            seed=3,
+            period=1.5,
+            end=9.0,
+            prefix="sumo",
+            options=[],
+        )
+    grandchild = int(pid_file.read_text())
+
+    def alive() -> bool:
+        # Killed, it may linger as a zombie until init reaps it.
+        try:
+            stat = Path(f"/proc/{grandchild}/stat").read_text()
+        except OSError:
+            return False
+        return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+    deadline = time.monotonic() + 10.0
+    while alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    still_alive = alive()
+    if still_alive:
+        os.kill(grandchild, 9)
+    assert not still_alive
+
+
+@needs_sumo
+def test_a_netconvert_that_does_not_finish_is_a_backend_error(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: a stuck netconvert times out as a TrafficBackendError naming
+    it and the timeout, and leaves nothing in the cache."""
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    netconvert = tmp_path / "netconvert"
+    netconvert.write_text("#!/bin/sh\nexec sleep 60\n")
+    netconvert.chmod(0o755)
+    monkeypatch.setattr(network_module, "_binary", lambda name: str(netconvert))
+    monkeypatch.setattr(network_module, "_NETCONVERT_TIMEOUT_S", 0.2)
+    start = time.monotonic()
+    with pytest.raises(
+        TrafficBackendError,
+        match=r"^SUMO's netconvert \(.*netconvert\) did not finish within 0\.2 s$",
+    ):
+        network_module.build_network(crossroads.read_text(), tmp_path / "cache")
+    assert time.monotonic() - start < 30
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
+
+
 def test_generate_demand_runs_the_command_network_built(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """generate_trips/walks/rides still hand subprocess.run the old argv,
+    """generate_trips/walks/rides still hand subprocess.Popen the old argv,
     with sys.executable and sumo_home() as network finds them."""
     import subprocess
     import sys
@@ -1304,13 +1423,14 @@ def test_generate_demand_runs_the_command_network_built(
     home = tmp_path / "sumo_home"
     monkeypatch.setattr(network_module, "sumo_home", lambda: home)
     commands: list[list[str]] = []
+    popen = subprocess.Popen
 
-    def run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def recording_popen(cmd: list[str], **kwargs: Any) -> Any:
         commands.append(cmd)
         Path(cmd[cmd.index("-r") + 1]).write_text("<routes/>")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return popen([sys.executable, "-c", ""], **kwargs)
 
-    monkeypatch.setattr(network_module.subprocess, "run", run)
+    monkeypatch.setattr(network_module.subprocess, "Popen", recording_popen)
     cache = tmp_path / "cache"
     cache.mkdir()
     network = network_module.SumoNetwork(
