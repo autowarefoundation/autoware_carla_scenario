@@ -755,7 +755,18 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """CLI entry point for detecting lanelets without a CARLA 3D model."""
+    """CLI entry point for detecting lanelets without a CARLA 3D model.
+
+    Ctrl-C prints one line, not a traceback, and exits 130 (#2333).
+    """
+    try:
+        _main(argv)
+    except KeyboardInterrupt:
+        print("detect-no-3d-model: interrupted", file=sys.stderr)  # noqa: T201
+        sys.exit(130)
+
+
+def _main(argv: Sequence[str] | None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     _check_args(parser, args)

@@ -514,6 +514,8 @@ def test_ctrl_c_still_ends_a_run_as_a_keyboard_interrupt(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(run_module, "_main", interrupted)
+    # main() silences the interrupt's traceback in the hook (#2333).
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     previous = signal.getsignal(signal.SIGTERM)
     try:
         with pytest.raises(KeyboardInterrupt):

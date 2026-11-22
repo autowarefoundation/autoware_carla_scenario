@@ -25,7 +25,15 @@ A package author checks only theirs: ``scenario='my_package/*'``.
 ``--library`` checks the framework's own modules instead: those
 ``typecheck/library.py`` lists as checked, or the modules named after it with
 the checked modules they import (docs/typecheck.md, "Checking the framework
-itself").
+itself").  A name that is not a module of the package, or that it EXCLUDES,
+is refused (``[FAILED]``, exit status 1) before Codon is looked for.
+
+The flags are ``-h``/``--help`` and ``--library``.  Any other argument that
+starts with ``-`` is refused with ``Error: scenario-check does not take
+<flag>`` and exit 2, rather than read as an override (or, after
+``--library``, as a module name).  Overrides (``key=value``, ``+key=value``,
+``++key=value``, ``~key``) are passed on as the runner passes them.  Ctrl-C
+prints ``scenario-check: interrupted`` and exits 130.
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from .check import find_supported_codon, typecheck_library
+from .check import find_supported_codon, refuse_library_modules, typecheck_library
 from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
@@ -59,7 +67,18 @@ def _checker_error(what: str, exc: BaseException) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Check the scenario configs *argv* selects (``sys.argv[1:]`` by default)."""
+    """Check the scenario configs *argv* selects (``sys.argv[1:]`` by default).
+
+    Ctrl-C prints one line, not a traceback, and exits 130 (#2333).
+    """
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        print("scenario-check: interrupted", file=sys.stderr)  # noqa: T201
+        return 130
+
+
+def _main(argv: list[str] | None) -> int:
     logging.basicConfig(
         level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
@@ -67,13 +86,28 @@ def main(argv: list[str] | None = None) -> int:
     if any(a in ("-h", "--help") for a in args):
         print(__doc__)  # noqa: T201
         return 0
+    # Hydra would read a flag it does not know as an override, and report it
+    # once for every config (#2333); after --library, it is no module name.
+    for arg in args:
+        if arg.startswith("-") and arg != "--library":
+            # --library takes no value: `--library=x` is named whole.
+            flag = arg if arg.startswith("--library=") else arg.split("=", 1)[0]
+            print(f"Error: scenario-check does not take {flag}", file=sys.stderr)  # noqa: T201
+            return 2
+    library = "--library" in args
+    modules = [a for a in args if a != "--library"]
+    if library and modules:
+        # Refused the same with Codon or without (#2288).
+        refusal = refuse_library_modules(modules)
+        if refusal is not None:
+            print(f"[FAILED] {refusal.format()}")  # noqa: T201
+            return 1
     try:
         toolchain = find_supported_codon()
     except ToolchainError as exc:
         print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
         return 2
-    if "--library" in args:
-        modules = [a for a in args if a != "--library"]
+    if library:
         try:
             result = typecheck_library(modules or None, toolchain=toolchain)
         except Exception as exc:  # noqa: BLE001 - reported as a failed check

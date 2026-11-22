@@ -465,6 +465,26 @@ def test_an_interrupted_download_leaves_nothing_behind(
     assert not install_dir().with_name("carla.partial").exists()
 
 
+def test_ctrl_c_prints_one_line_and_exits_130_after_the_clean_up(
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Not a traceback (#2333); the partial unpack is still removed.
+    def interrupted(stream: object, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        (destination / "half").write_bytes(b"x")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(carla_install, "_unpack", interrupted)
+    assert carla_install.main(["--url", _carla(tmp_path / "carla.tar.gz")]) == 130
+    err = capsys.readouterr().err  # after the progress bar
+    assert err.endswith("\nscenario-setup: interrupted\n")
+    assert "Traceback" not in err
+    assert not install_dir().with_name("carla.partial").exists()
+
+
 class _Origin:
     """A local server for one archive that answers range requests like CARLA's.
 

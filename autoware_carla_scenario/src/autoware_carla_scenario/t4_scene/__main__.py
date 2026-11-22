@@ -14,6 +14,15 @@ from .grid import checked_max_distance, stem_collision, trajectory_logs
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """Ctrl-C prints one line, not a traceback, and exits 130 (#2333)."""
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        print("scenario-t4scene: interrupted", file=sys.stderr)  # noqa: T201
+        return 130
+
+
+def _main(argv: Optional[list[str]]) -> int:
     parser = argparse.ArgumentParser(prog="scenario-t4scene", description=__doc__)
     parser.add_argument(
         "paths",
@@ -90,6 +99,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     except ValueError as error:
         parser.error(str(error))
 
+    missing = next((path for path in args.paths if not path.exists()), None)
+    if missing is not None:
+        # A usage error, as a directory holding no log is (#2333).
+        parser.error(f"{missing}: no such file or directory")
     logs = trajectory_logs(args.paths)
     if not logs:
         parser.error("no trajectory log found")
