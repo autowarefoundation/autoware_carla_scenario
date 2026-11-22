@@ -59,7 +59,10 @@ class Col(IntEnum):
     ROUTE_SLACK = 9
     #: Distance covered so far, less what `makes_progress` asks for, m.
     PROGRESS_SLACK = 10
-    #: Posted limit less the planned speed, m/s.
+    #: Target speed less the planned speed, m/s.  The target is not the posted
+    #: limit but `STLDriverConfig.target_speed_mps`: the lower of the cruise
+    #: speed and the posted limit, or of the cruise speed and the 13.9 m/s
+    #: fallback when the runtime reports no limit.
     SPEED_HEADROOM = 11
 
 

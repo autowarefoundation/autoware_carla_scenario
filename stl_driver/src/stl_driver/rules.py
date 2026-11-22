@@ -113,7 +113,14 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             Always(headroom > -limits.speed_tolerance_mps),
             weight=2.0,
             margin=1.0,
-            description="Never exceed the posted limit by more than the tolerance.",
+            # Checked against the target speed, not the posted limit
+            # (`STLDriverConfig.target_speed_mps`): a legal speed more than
+            # the tolerance above the cruise speed violates it too.
+            description=(
+                "Never exceed the target speed -- min(cruise speed, posted limit"
+                f" or the {limits.default_speed_limit_mps:g} m/s fallback) -- by"
+                " more than the tolerance."
+            ),
         ),
         Rule(
             "no_reverse",

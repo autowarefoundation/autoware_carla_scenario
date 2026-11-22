@@ -86,6 +86,55 @@ MEASURES: tuple[str, ...] = (*CRIME_MEASURES, *REACH_MEASURES)
 #: (ALongReq) take a lane heading of exactly 0 for one they could not read.
 _TILT = 1e-3
 
+#: The least length and width a box is given (m): CommonRoad's shapes and
+#: Reach's discs need a positive extent.  Obstacles and the ego alike.
+_MIN_EXTENT_M = 0.1
+
+#: Actor's fields that must be finite numbers (every one but id and kind).
+_ACTOR_NUMBERS = ("x", "y", "yaw", "vx", "vy", "ax", "ay", "yaw_rate", "length", "width")
+
+
+class NonFiniteError(ValueError):
+    """A number that must be finite is not: a NaN, an infinity or an int too
+    big for a float.  A ``ValueError`` as any other refusal; told apart so
+    that the worker can answer a frame holding one with its measures failed,
+    a reading gone bad in one frame, rather than the request refused
+    (:func:`failed_frame`)."""
+
+
+def _finite(name: str, value: Any) -> float:
+    """*value* as a float, refused (``ValueError`` naming *name*) unless it is
+    a finite number -- :class:`NonFiniteError` when it is a number but not
+    finite.  A NaN read as a speed or a headway gives the least critical value
+    (TTC ``inf``, ALongReq ``0``), and one read as a position makes every
+    measure ``None``: neither says the input was bad."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a number, got {value!r}")
+    try:
+        number = float(value)
+    except OverflowError:  # an int too big for a float
+        raise NonFiniteError(f"{name} must be finite, got an int too big for a float") from None
+    if not math.isfinite(number):
+        raise NonFiniteError(f"{name} must be finite, got {number!r}")
+    return number
+
+
+#: The error a measure that is not one of :data:`MEASURES` fails with.
+UNKNOWN_MEASURE = "unknown measure"
+
+
+def failed_frame(
+    measures: Iterable[str], error: str
+) -> tuple[dict[str, float | None], dict[str, str]]:
+    """What :meth:`Evaluator.evaluate` gives for a frame none of whose
+    *measures* could be evaluated: each known one ``None``, failed with
+    *error*; each unknown one failed with :data:`UNKNOWN_MEASURE`, as ever."""
+    wanted = list(dict.fromkeys(measures))
+    values: dict[str, float | None] = {m: None for m in wanted if m in MEASURES}
+    errors = {m: error if m in MEASURES else UNKNOWN_MEASURE for m in wanted}
+    return values, errors
+
+
 #: The CommonRoad obstacle type of each kind of road user the frame names.
 _OBSTACLE_TYPES: dict[str, str] = {
     "car": "CAR",
@@ -112,6 +161,11 @@ class Actor:
         ax, ay: Its acceleration (m/s^2), in the map's frame.
         yaw_rate: How fast it turns (rad/s).
         length, width: Its box (m).
+
+    Every number but ``id`` must be finite: a NaN or an infinity is refused
+    with a :class:`NonFiniteError` naming the field (the worker answers the
+    frame with each measure ``null`` and failed with that message), anything
+    but a number with a ``ValueError`` (the worker answers ``ok: false``).
     """
 
     id: int
@@ -126,6 +180,10 @@ class Actor:
     yaw_rate: float = 0.0
     length: float = 4.5
     width: float = 1.8
+
+    def __post_init__(self) -> None:
+        for name in _ACTOR_NUMBERS:
+            _finite(name, getattr(self, name))
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> Actor:
@@ -150,6 +208,11 @@ class EvaluatorSettings:
         share_frame: Let CriMe's measures share the frame's scenario rather
             than each copy it (:func:`_shared_frame`); the same values, in a
             fifth of the time.  Off only to check that.
+
+    ``dt`` and ``radius_m`` must be finite and positive, ``horizon_steps`` an
+    int of at least 1; anything else is refused with a ``ValueError`` (the
+    worker's ``init`` answers ``ok: false``) rather than breaking every frame
+    after it.
     """
 
     dt: float = 0.1
@@ -157,6 +220,14 @@ class EvaluatorSettings:
     radius_m: float = 150.0
     reach_settings: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     share_frame: bool = True
+
+    def __post_init__(self) -> None:
+        for name in ("dt", "radius_m"):
+            if not _finite(name, getattr(self, name)) > 0.0:
+                raise ValueError(f"{name} must be positive, got {getattr(self, name)!r}")
+        steps = self.horizon_steps
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+            raise ValueError(f"horizon_steps must be an int of at least 1, got {steps!r}")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> EvaluatorSettings:
@@ -330,7 +401,9 @@ class Evaluator:
         from commonroad.scenario.trajectory import Trajectory
 
         dt = self.settings.dt
-        shape = Rectangle(length=max(actor.length, 0.1), width=max(actor.width, 0.1))
+        shape = Rectangle(
+            length=max(actor.length, _MIN_EXTENT_M), width=max(actor.width, _MIN_EXTENT_M)
+        )
         speed = math.hypot(actor.vx, actor.vy)
         heading = math.atan2(actor.vy, actor.vx) if speed > 0.1 else actor.yaw
 
@@ -405,7 +478,7 @@ class Evaluator:
         wanted = list(dict.fromkeys(measures))
         unknown = [m for m in wanted if m not in MEASURES]
         values: dict[str, float | None] = {}
-        errors: dict[str, str] = {m: "unknown measure" for m in unknown}
+        errors: dict[str, str] = {m: UNKNOWN_MEASURE for m in unknown}
         wanted = [m for m in wanted if m not in unknown]
         if not wanted:
             return values, errors
@@ -539,7 +612,8 @@ class Evaluator:
 
         config = copy.deepcopy(self._reach_base_config())
         config.planning.steps_computation = horizon - start
-        _set_ego_footprint(config, ego.length, ego.width)
+        # Floored as the obstacles' boxes are (Evaluator._obstacle).
+        _set_ego_footprint(config, max(ego.length, _MIN_EXTENT_M), max(ego.width, _MIN_EXTENT_M))
         config.vehicle.ego.v_max = max(config.vehicle.ego.v_max, speed + 1.0)
         config.vehicle.ego.v_lon_max = max(config.vehicle.ego.v_lon_max, speed + 1.0)
         config.vehicle.ego.v_lon_min = min(config.vehicle.ego.v_lon_min, velocity - 1.0)
@@ -977,11 +1051,22 @@ def _signed_crime_measures() -> dict[str, type]:
     from commonroad.scenario.obstacle import DynamicObstacle
     from commonroad_crime.measure import BTN, HW, STN, THW, TTC, ALatReq, ALongReq
 
-    def heading_at(lanelet: Any, position: Any) -> Any:
+    def heading_at(lanelet: Any, position: Any) -> float | None:
         # The lane's heading where *position* projects onto it, as CriMe reads
-        # it (None out of its domain); wrap-safe under
-        # _unwrapped_lane_headings, which Evaluator._crime holds.
-        return utils_sol.compute_lanelet_width_orientation(lanelet, position)[1]
+        # it, or None where there is none; wrap-safe under
+        # _unwrapped_lane_headings, which Evaluator._crime holds.  CriMe
+        # answers (None, None) for a position out of the projection's domain,
+        # and raises ValueError for a lanelet it cannot build the projection of
+        # (a degenerate centre line: smoothing it fails, and the raw one has
+        # fewer than the 3 points a CurvilinearCoordinateSystem needs).  Both
+        # are None here, and every measure below reads None the same way: the
+        # ego's heading missing is NaN (nothing to measure), the other's is a
+        # road user far away.
+        try:
+            heading = utils_sol.compute_lanelet_width_orientation(lanelet, position)[1]
+        except ValueError:
+            return None
+        return None if heading is None else float(heading)
 
     def ego_along(state: Any, heading: float, name: str) -> float:
         # CriMe's TTC reading of the ego: its magnitude, signed as its
@@ -1071,17 +1156,11 @@ def _signed_crime_measures() -> dict[str, type]:
             lanelet = network.find_lanelet_by_id(
                 _best_lanelet(network, lanelet_ids, state.orientation)
             )
-            try:
-                ego_heading = heading_at(lanelet, state.position)
-            except ValueError:
-                ego_heading = None
+            ego_heading = heading_at(lanelet, state.position)
             if ego_heading is None:
                 self.value = math.nan
                 return self.value
-            try:
-                other_heading = heading_at(lanelet, state_other.position)
-            except ValueError:
-                other_heading = None
+            other_heading = heading_at(lanelet, state_other.position)
             if other_heading is None:
                 # Out of the projection's domain: the other is far away.
                 self.value = math.inf
@@ -1118,8 +1197,13 @@ def _signed_crime_measures() -> dict[str, type]:
                 )
             )
             ego_heading = heading_at(lanelet, state.position)
+            if ego_heading is None:
+                # Nothing to measure from, as SignedTTC: NaN, not the least
+                # critical 0.
+                self.value = math.nan
+                return self.value
             other_heading = heading_at(lanelet, state_other.position)
-            if ego_heading is None or other_heading is None:
+            if other_heading is None:
                 # Out of the projection's domain: the other is far away.  (A
                 # heading of exactly 0.0 is a heading, not a missing one.)
                 a_req = 0.0
@@ -1182,9 +1266,13 @@ def _signed_crime_measures() -> dict[str, type]:
                 )
             )
             ego_orientation = heading_at(lanelet, state.position)
-            try:
-                other_orientation = heading_at(lanelet, state_other.position)
-            except ValueError:
+            if ego_orientation is None:
+                # Nothing to measure from, as SignedTTC (math.sin(None) would
+                # fail the measure for the whole frame).
+                self.value = math.nan
+                return self.value
+            other_orientation = heading_at(lanelet, state_other.position)
+            if other_orientation is None:
                 # Out of the projection's domain: the other is far away.
                 self.value = 0.0
             else:

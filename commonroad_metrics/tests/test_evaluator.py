@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from commonroad_metrics import CRIME_MEASURES, MEASURES, Actor, Evaluator, EvaluatorSettings
+from commonroad_metrics.evaluator import NonFiniteError
 from commonroad_metrics.worker import serve
 
 MAP = Path(__file__).parent / "data" / "straight.xml"
@@ -125,16 +126,257 @@ def test_the_worker_answers_line_by_line() -> None:
 
 
 def test_infinity_crosses_the_wire() -> None:
+    ego = on_road(50, 1.75, 15.0, 1).__dict__
     requests = [
         {"op": "init", "map": str(MAP)},
-        {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": on_road(50, 1.75, 15.0, 1).__dict__},
+        # A car in the next lane: no conflict, TTC never comes.
+        {
+            "op": "evaluate",
+            "measures": ["crime_ttc_s"],
+            "ego": ego,
+            "others": [on_road(80, 5.25, 5.0, 2).__dict__],
+        },
+        # Alone on the road: no one to measure from.
+        {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": ego},
     ]
     stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
     stdout = io.StringIO()
     serve(stdin, stdout)
-    last = stdout.getvalue().splitlines()[-1]
-    # Alone on the road: no one to measure from.
-    assert json.loads(last)["values"]["crime_ttc_s"] is None
+    _, beside, alone = stdout.getvalue().splitlines()
+    assert '"crime_ttc_s": Infinity' in beside
+    assert json.loads(beside)["values"]["crime_ttc_s"] == math.inf
+    assert '"crime_ttc_s": null' in alone
+    assert json.loads(alone)["values"]["crime_ttc_s"] is None
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize(
+    "name", ["x", "y", "yaw", "vx", "vy", "ax", "ay", "yaw_rate", "length", "width"]
+)
+def test_a_road_user_with_a_non_finite_number_is_refused(name: str, bad: float) -> None:
+    """#2342: a NaN speed read as TTC inf, a NaN position as every measure
+    null; refused instead, naming the field."""
+    fields = {**on_road(50, 1.75, 15.0, 1).__dict__, name: bad}
+    with pytest.raises(ValueError, match=rf"^{name} must be finite"):
+        Actor.from_mapping(fields)
+
+
+@pytest.mark.parametrize("bad", ["15", None, True, 10**400])
+def test_a_road_user_with_a_number_that_is_no_float_is_refused(bad: Any) -> None:
+    fields = {**on_road(50, 1.75, 15.0, 1).__dict__, "vx": bad}
+    with pytest.raises(ValueError, match=r"^vx must be "):
+        Actor.from_mapping(fields)
+
+
+def test_a_non_finite_number_is_told_apart_from_one_that_is_no_number() -> None:
+    """The worker fails a frame's measures on the first, refuses the request
+    on the second."""
+    fields = on_road(50, 1.75, 15.0, 1).__dict__
+    for bad in (math.nan, math.inf, 10**400):
+        with pytest.raises(NonFiniteError):
+            Actor.from_mapping({**fields, "vx": bad})
+    for bad in ("15", None, True):
+        with pytest.raises(ValueError) as refused:
+            Actor.from_mapping({**fields, "vx": bad})
+        assert not isinstance(refused.value, NonFiniteError)
+
+
+def test_the_worker_fails_the_measures_of_a_non_finite_frame_and_reads_on() -> None:
+    """#2342: a NaN in one road user of one frame fails that frame's measures
+    -- ``ok: true``, each ``null`` with the message -- rather than the
+    request, which made the framework give up every CommonRoad metric of the
+    run; the next frame is evaluated as ever."""
+    ego: dict[str, Any] = on_road(50, 1.75, 15.0, 1).__dict__
+    lead: dict[str, Any] = on_road(80, 1.75, 5.0, 2).__dict__
+    measures = ["crime_ttc_s", "reach_drivable_area_m2", "crime_ttc_s"]
+    evaluate: dict[str, Any] = {"op": "evaluate", "measures": measures, "ego": ego}
+    requests = [
+        {"op": "init", "map": str(MAP)},
+        {**evaluate, "others": [{**lead, "vx": math.nan}]},  # json writes NaN
+        {**evaluate, "ego": {**ego, "x": math.inf}, "others": [lead]},
+        {**evaluate, "measures": ["crime_ttc_s", "nope"], "others": [{**lead, "y": -math.inf}]},
+        {**evaluate, "measures": ["crime_ttc_s"], "others": [lead]},
+    ]
+    stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert len(answers) == 5
+    nan = "vx must be finite, got nan"
+    assert answers[1] == {
+        "ok": True,
+        "values": {"crime_ttc_s": None, "reach_drivable_area_m2": None},
+        "errors": {"crime_ttc_s": nan, "reach_drivable_area_m2": nan},
+    }
+    inf = "x must be finite, got inf"
+    assert answers[2] == {
+        "ok": True,
+        "values": {"crime_ttc_s": None, "reach_drivable_area_m2": None},
+        "errors": {"crime_ttc_s": inf, "reach_drivable_area_m2": inf},
+    }
+    # An unknown measure is unknown still.
+    assert answers[3] == {
+        "ok": True,
+        "values": {"crime_ttc_s": None},
+        "errors": {"crime_ttc_s": "y must be finite, got -inf", "nope": "unknown measure"},
+    }
+    assert answers[4]["ok"] and answers[4]["errors"] == {}
+    assert answers[4]["values"]["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
+
+
+@pytest.mark.parametrize(
+    ("ego", "error"),
+    [
+        ({"id": 1, "kind": "car", "x": 50.0, "y": 1.75}, "TypeError: "),  # no yaw
+        ({**on_road(50, 1.75, 15.0, 1).__dict__, "vx": "15"}, "ValueError: vx must be a number"),
+        ({**on_road(50, 1.75, 15.0, 1).__dict__, "vx": None}, "ValueError: vx must be a number"),
+    ],
+)
+def test_the_worker_refuses_a_malformed_road_user(ego: dict[str, Any], error: str) -> None:
+    """A field missing or of the wrong type is out of protocol: ``ok: false``."""
+    requests = [
+        {"op": "init", "map": str(MAP)},
+        {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": ego},
+    ]
+    stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert answers[1]["ok"] is False
+    assert answers[1]["error"].startswith(error)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"dt": 0.0}, "dt must be positive"),
+        ({"dt": -0.1}, "dt must be positive"),
+        ({"dt": math.nan}, "dt must be finite"),
+        ({"dt": math.inf}, "dt must be finite"),
+        ({"radius_m": 0.0}, "radius_m must be positive"),
+        ({"radius_m": -5.0}, "radius_m must be positive"),
+        ({"radius_m": math.nan}, "radius_m must be finite"),
+        ({"radius_m": math.inf}, "radius_m must be finite"),
+        ({"radius_m": "100"}, "radius_m must be a number"),
+        ({"horizon_steps": 0}, "horizon_steps must be an int of at least 1"),
+        ({"horizon_steps": -3}, "horizon_steps must be an int of at least 1"),
+        ({"horizon_steps": 30.0}, "horizon_steps must be an int of at least 1"),
+        ({"horizon_steps": True}, "horizon_steps must be an int of at least 1"),
+    ],
+)
+def test_settings_that_would_break_every_frame_are_refused(
+    changes: dict[str, Any], message: str
+) -> None:
+    """#2342: refused when made, not by every frame after init."""
+    with pytest.raises(ValueError, match=f"^{message}"):
+        EvaluatorSettings.from_mapping(changes)
+
+
+def test_the_smallest_settings_are_accepted() -> None:
+    settings = EvaluatorSettings.from_mapping({"dt": 1e-3, "horizon_steps": 1, "radius_m": 1})
+    assert (settings.dt, settings.horizon_steps, settings.radius_m) == (1e-3, 1, 1)
+
+
+def test_the_worker_refuses_bad_settings_at_init() -> None:
+    requests = [
+        {"op": "init", "map": str(MAP), "settings": {"horizon_steps": 0}},
+        {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": {}},
+    ]
+    stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert answers == [
+        {"ok": False, "error": "ValueError: horizon_steps must be an int of at least 1, got 0"},
+        {"ok": False, "error": "evaluate before init"},
+    ]
+
+
+def test_a_line_that_is_not_utf8_is_answered_and_the_worker_reads_on() -> None:
+    """#2342: the line was decoded as it was read, outside the request's try,
+    and its UnicodeDecodeError ended the worker."""
+    lines = [
+        json.dumps({"op": "evaluate", "measures": [], "ego": {}}).encode(),
+        b'{"op": "\xff\xfe"}',
+        b"",  # a blank line: no request, no answer
+        b"   ",
+        json.dumps({"op": "close"}).encode(),
+    ]
+    stdin = io.BytesIO(b"".join(line + b"\n" for line in lines))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert len(answers) == 3
+    assert answers[0] == {"ok": False, "error": "evaluate before init"}
+    assert answers[1]["ok"] is False
+    assert answers[1]["error"].startswith("UnicodeDecodeError: 'utf-8' codec can't decode")
+    assert answers[2] == {"ok": True}
+
+
+def test_the_worker_process_survives_a_line_that_is_not_utf8() -> None:
+    """The same through main(): its standard input is read as bytes."""
+    answered = subprocess.run(
+        [sys.executable, "-m", "commonroad_metrics"],
+        input=b'\xff\n{"op": "nope"}\n{"op": "close"}\n',
+        capture_output=True,
+        timeout=120,
+        check=True,
+    )
+    answers = [json.loads(line) for line in answered.stdout.decode().splitlines()]
+    assert [a["ok"] for a in answers] == [False, False, True]
+    assert answers[0]["error"].startswith("UnicodeDecodeError: ")
+    assert answers[1] == {"ok": False, "error": "unknown op 'nope'"}
+
+
+@pytest.mark.parametrize("failure", ["none", "raises"])
+def test_the_ego_lane_heading_missing_reads_nothing(
+    evaluator: Evaluator, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """#2342: CriMe reads no lane heading at the ego -- (None, None) out of the
+    projection's domain, ValueError for a lanelet it cannot project on.  TTC
+    read NaN, ALatReq failed on math.sin(None) and ALongReq read the least
+    critical 0; every one reads NaN (null, no error) now."""
+    import commonroad_crime.utility.solver as utils_sol
+
+    def no_heading(lanelet: Any, position: Any) -> Any:
+        if failure == "raises":
+            raise ValueError("Reference path must have at least 3 points")
+        return None, None
+
+    monkeypatch.setattr(utils_sol, "compute_lanelet_width_orientation", no_heading)
+    measures = [
+        "crime_ttc_s",
+        "crime_a_long_req_mps2",
+        "crime_btn",
+        "crime_a_lat_req_mps2",
+        "crime_stn",
+    ]
+    ego = on_road(50, 1.75, 15.0, 1)
+    values, errors = evaluator.evaluate(ego, [on_road(80, 1.75, 5.0, 2)], measures)
+    assert errors == {}
+    assert values == {key: None for key in measures}
+
+
+def test_a_degenerate_ego_box_is_floored_as_an_obstacle_is(
+    evaluator: Evaluator, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2342: the obstacles' boxes were floored at 0.1 m, Reach's ego's not."""
+    import commonroad_metrics.evaluator as module
+
+    footprints: list[tuple[float, float]] = []
+    original = module._set_ego_footprint
+
+    def recorded(config: Any, length: float, width: float) -> None:
+        footprints.append((length, width))
+        original(config, length, width)
+
+    monkeypatch.setattr(module, "_set_ego_footprint", recorded)
+    ego = replace(on_road(50, 1.75, 15.0, 1), length=0.0, width=0.05)
+    values, errors = evaluator.evaluate(ego, [], ["reach_drivable_area_m2"])
+    assert errors == {}
+    assert footprints and set(footprints) == {(0.1, 0.1)}
+    assert values["reach_drivable_area_m2"] is not None
+    assert values["reach_drivable_area_m2"] > 0.0
 
 
 def test_sharing_the_frame_changes_no_value() -> None:

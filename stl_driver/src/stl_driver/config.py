@@ -76,7 +76,9 @@ class Limits:
     """
 
     # -- legality ----------------------------------------------------------
-    #: Allowed overshoot of the posted limit before `speed_limit` is violated.
+    #: Allowed overshoot of the target speed -- the lower of the cruise speed
+    #: and the posted limit (`STLDriverConfig.target_speed_mps`) -- before
+    #: `speed_limit` is violated.
     speed_tolerance_mps: float = 0.5
     #: Fallback cap when the runtime reports no speed limit (0 means unknown).
     default_speed_limit_mps: float = 13.9

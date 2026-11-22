@@ -10,6 +10,7 @@ the plan stops -- rather than on robustness numbers.
 from __future__ import annotations
 
 import math
+import sys
 
 import pytest
 import torch
@@ -713,6 +714,149 @@ def test_the_batched_path_is_the_one_in_use(optimizer):
     """If this ever flips, the loop fallback is live and latency will show it."""
     solution = optimizer.solve(make_inputs(CONFIG, speed0_mps=6.0))
     assert solution.used_vmap
+
+
+#: Every method of the optimizer that calls `torch.vmap` itself.
+_BATCHED_STAGES = (
+    "_score_batch_eager",
+    "_refine_losses",
+    "_batched_scores_eager",
+    "_batched_rollout_eager",
+)
+
+
+def _vmap_failing_in(monkeypatch, stages) -> list[str]:
+    """Make `torch.vmap` raise when one of *stages* calls it, as a torch that
+    broke batching would; the stages that failed are listed in the result."""
+    real = torch.vmap
+    failed: list[str] = []
+
+    def vmap(*args, **kwargs):
+        caller = sys._getframe(1).f_code.co_name
+        if caller in stages:
+            failed.append(caller)
+            raise RuntimeError(f"vmap: no batching rule in {caller} (simulated)")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "vmap", vmap)
+    return failed
+
+
+def _loop_path_solution(inputs, warm_start=None):
+    looped = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    looped._vmap_ok = False
+    return looped.solve(inputs, warm_start)
+
+
+def test_a_vmap_that_always_fails_gives_exactly_the_loop_path(monkeypatch):
+    """#2342: `_score_batch` fell back, but refinement called `vmap` regardless
+    and crashed `solve`. Every batched stage honours the fallback now."""
+    centres, radii = stationary_actor(CONFIG, ahead_m=25.0)
+    inputs = make_inputs(CONFIG, speed0_mps=6.0, actor_centres=centres, actor_radii=radii)
+    expected = _loop_path_solution(inputs)
+
+    failed = _vmap_failing_in(monkeypatch, _BATCHED_STAGES)
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    solution = optimizer.solve(inputs)
+    # Once: the first failure switches every later stage off `vmap`.
+    assert failed == ["_score_batch_eager"]
+    assert not solution.used_vmap
+    assert torch.equal(solution.params, expected.params)
+    assert torch.equal(solution.signal, expected.signal)
+    assert solution.robustness == expected.robustness
+    assert solution.per_rule == expected.per_rule
+    assert solution.n_refine_steps == expected.n_refine_steps
+    # And the next step goes straight to the loop path.
+    assert optimizer.solve(inputs, solution.params).used_vmap is False
+    assert failed == ["_score_batch_eager"]
+
+
+@pytest.mark.parametrize("stage", _BATCHED_STAGES)
+def test_a_vmap_failure_in_any_stage_degrades_the_step_rather_than_crashing_it(monkeypatch, stage):
+    """A `vmap` that breaks only in refinement or the final scoring -- after
+    sampling batched -- falls back there too, and the step finishes on the loop
+    path with the loop path's answer."""
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    expected = _loop_path_solution(inputs)
+    assert CONFIG.optimizer.n_refine_seeds > 1, "a batch of one never calls vmap"
+
+    failed = _vmap_failing_in(monkeypatch, (stage,))
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    solution = optimizer.solve(inputs)
+    assert failed == [stage]
+    assert not optimizer._vmap_ok
+    assert not solution.used_vmap
+    # The stages that ran batched before the failure reassociate the same
+    # float32 arithmetic (`test_vmap_matches_a_python_loop`); the plan is the
+    # loop path's.
+    assert torch.allclose(solution.params, expected.params, atol=1e-4)
+    assert torch.allclose(solution.signal, expected.signal, atol=1e-3)
+    assert solution.robustness == pytest.approx(expected.robustness, abs=1e-3)
+
+
+@pytest.mark.parametrize("stage", ["_compiled_batch", "_compiled_refine", "_compiled_scores"])
+def test_a_compiled_stage_that_fails_falls_back_to_eager_vmap_not_the_loop(stage):
+    """`torch.compile` compiles on the first call, and its errors are
+    `RuntimeError`s: one must drop compilation, as `prepare` does, not switch
+    the session to the loop path."""
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    expected = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG).solve(inputs)
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    calls: list[str] = []
+
+    def failing_compile(*args, **kwargs):
+        calls.append(stage)
+        raise RuntimeError("BackendCompilerFailed (simulated)")
+
+    setattr(optimizer, stage, failing_compile)
+    solution = optimizer.solve(inputs)
+    assert calls == [stage]
+    assert optimizer._vmap_ok
+    assert solution.used_vmap
+    assert optimizer._compiled_batch is None
+    assert optimizer._compiled_refine is None
+    assert optimizer._compiled_scores is None
+    assert torch.equal(solution.params, expected.params)
+    assert solution.robustness == expected.robustness
+
+
+def test_the_loop_helpers_compute_what_the_batched_ones_do():
+    """Each fallback against its batched stage, on the same batch."""
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    params = torch.randn(5, N_PARAMS, generator=torch.Generator().manual_seed(1))
+
+    batched = optimizer._batched_rollout_eager(params, inputs)
+    looped = optimizer._looped_rollout(params, inputs)
+    assert torch.allclose(batched, looped, atol=1e-4, rtol=1e-4)
+    for a, b in zip(
+        optimizer._batched_scores_eager(looped), optimizer._looped_scores(looped), strict=True
+    ):
+        assert torch.allclose(a, b, atol=1e-4)
+    for a, b in zip(
+        optimizer._refine_losses(params, inputs, 2.0),
+        optimizer._refine_losses_looped(params, inputs, 2.0),
+        strict=True,
+    ):
+        assert torch.allclose(a, b, atol=1e-4, rtol=1e-4)
+    for a, b in zip(
+        optimizer._score_batch_eager(params, inputs, 2.0),
+        optimizer._score_batch_looped(params, inputs, 2.0),
+        strict=True,
+    ):
+        assert torch.allclose(a, b, atol=1e-4, rtol=1e-4)
+
+
+def test_the_looped_refinement_reaches_every_seed_s_gradient():
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    seeds = torch.randn(3, N_PARAMS, generator=torch.Generator().manual_seed(2))
+    batched = seeds.clone().requires_grad_(True)
+    looped = seeds.clone().requires_grad_(True)
+    optimizer._refine_losses(batched, inputs, 2.0)[0].sum().backward()
+    optimizer._refine_losses_looped(looped, inputs, 2.0)[0].sum().backward()
+    assert looped.grad is not None and batched.grad is not None
+    assert torch.allclose(looped.grad, batched.grad, atol=1e-3, rtol=1e-3)
 
 
 def test_a_distant_predicted_conflict_does_not_trigger_an_emergency_stop(optimizer):

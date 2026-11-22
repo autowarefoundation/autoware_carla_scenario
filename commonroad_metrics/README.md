@@ -161,6 +161,20 @@ code cannot break into an answer.
 {"ok": true}
 ```
 
+Every request line gets one answer, in order. One that cannot be served -- a
+line that is not UTF-8 or not JSON, an unknown `op`, a field missing or of the
+wrong type, settings `init` refuses -- is answered
+`{"ok": false, "error": "..."}`, and the worker reads on. A blank line is no
+request and gets no answer.
+
+A road user with a NaN or an infinity among its numbers is not such a request
+but a reading gone bad in one frame: `evaluate` answers it
+`{"ok": true, "values": {...}, "errors": {...}}` with every measure asked
+`null` and failed with the message naming the field (`"vx must be finite, got
+nan"`; an unknown measure still fails with `"unknown measure"`). The framework
+then reads nothing from those measures in that frame alone, as from any measure
+that fails now and then, and the next frame is evaluated as ever.
+
 The worker exits after answering `close`, and at the end of its input too.
 The framework does not wait for the answer to `close`: it sends the request,
 closes the worker's input, and kills a worker that has not exited within five
@@ -184,12 +198,14 @@ worker exits at its end, so a worker must not ignore the end of its input.
 
 A road user is `id` (positive), `kind` (`car`, `truck`, `bus`, `motorcycle`,
 `bicycle`, `pedestrian`), `x`, `y`, `yaw`, `vx`, `vy`, `ax`, `ay`, `yaw_rate`,
-`length` and `width`. A value is a number, `Infinity` (no conflict: TTC never
+`length` and `width`, every number finite (a frame with one that is not
+fails its measures, above). A value is a number, `Infinity` (no conflict: TTC never
 comes), `-Infinity` (ALongReq when no braking avoids a contact within the
 horizon; BTN is `Infinity` then) or `null` (nothing to measure from); a measure that failed is `null`
 with its error. While the ego is on no lanelet every measure is `null`.
-`settings` takes `reach_settings` too: overrides of CommonRoad-Reach's
-configuration by section and key (`{"reachable_set": {"size_grid": 0.3}}`). A
+`settings` takes `dt` and `radius_m`, finite and positive, and `horizon_steps`,
+an integer of at least 1 (`init` refuses anything else), and `reach_settings`:
+overrides of CommonRoad-Reach's configuration by section and key (`{"reachable_set": {"size_grid": 0.3}}`). A
 section or key the configuration does not have -- `planning.size_grid` for
 `reachable_set.size_grid`, a misspelling -- is refused: `init` answers
 `{"ok": false, "error": "ValueError: reach_settings['planning']['size_grid']: ..."}`
