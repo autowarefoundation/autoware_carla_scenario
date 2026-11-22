@@ -364,6 +364,24 @@ def test_a_recorded_frame_equals_one_made_with_its_actors(
         assert frame == made and hash(frame) == hash(made)
 
 
+def test_a_recorded_frame_equals_itself_with_a_nan() -> None:
+    # As the frozen dataclass did, though its actors (made afresh each read)
+    # hold a NaN, which equals nothing, not even itself.
+    recorder, _reference = _record_side_by_side(_world(0), 5)
+    nan = [
+        frame
+        for frame in recorder.frames
+        if any(
+            isinstance(v, float) and math.isnan(v)
+            for a in frame.actors
+            for v in (getattr(a, f.name) for f in fields(a))
+        )
+    ]
+    assert nan
+    for frame in nan:
+        assert frame == frame and not (frame != frame)
+
+
 def _retained_bytes_per_actor_frame(recorder: Any, world: _World, ticks: int) -> float:
     count = sum(
         1 for a in world.actors if a.type_id.startswith(("vehicle.", "walker."))

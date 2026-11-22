@@ -206,6 +206,10 @@ class Frame:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Frame):
             return NotImplemented
+        if self is other:
+            # A frame equals itself, NaN readings and all, as the dataclass
+            # did (its actors were one tuple; these are made afresh).
+            return True
         return (self.frame, self.t, self.weight, self.actors) == (
             other.frame,
             other.t,

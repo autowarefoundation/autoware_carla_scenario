@@ -6842,3 +6842,59 @@ def test_the_getpass_shim_declares_cpythons_getuser() -> None:
         pass
     except KeyError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# The array shim: what metric_frames keeps a recorded frame's motion in (#2338)
+# ---------------------------------------------------------------------------
+
+
+_ARRAY = """
+from __future__ import annotations
+
+from array import array
+
+
+def motion(values: list[float]) -> float:
+    kept = array("d")
+    kept.append(1.5)
+    kept.extend((2.0, 3.0))
+    kept.extend(values)
+    total = kept[0] + kept[-1] + float(len(kept))
+    for value in kept:
+        total += value
+    if kept.typecode != "d":
+        return 0.0
+    return total
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_array_shim_takes_what_metric_frames_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_ARRAY, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ('array("d")', "array()"),
+        ("kept.append(1.5)", "kept.append()"),
+        ("kept.append(1.5)", "kept.push(1.5)"),
+        ("kept.typecode !=", "kept.typecodes !="),
+    ],
+    ids=["no-typecode", "append-nothing", "unknown-method", "unknown-attribute"],
+)
+def test_the_array_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _ARRAY.replace(right, wrong, 1)
+    assert source != _ARRAY
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
