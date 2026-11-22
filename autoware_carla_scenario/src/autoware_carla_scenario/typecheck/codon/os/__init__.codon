@@ -495,9 +495,11 @@ def write(*args) -> int:
 
 # read(fd, length, /): at most *length* bytes from the descriptor, bytes (a
 # str here: the check reads bytes as str), empty at the end of the file ("",
-# as nothing is read); set_blocking(fd, blocking, /): whether a read of the
-# descriptor waits for data (nothing is changed here). commonroad.worker reads
-# the worker's output with them (#2310).
+# as nothing is read); commonroad.worker reads the worker's output with it.
+# set_blocking(fd, blocking, /): whether a read or a write of the descriptor
+# waits (nothing is changed here); commonroad.worker's close() makes the
+# worker's input non-blocking with it, so that a full pipe drops the close
+# request rather than waiting (#2310).
 def read(*args) -> str:
     _positional_only(args, 2, "read()")
     fd: int = args[0]

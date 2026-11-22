@@ -3355,8 +3355,8 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's returns), `getenv(key, default=None)` (a `str` default gives a
   `str`, `None` an `Optional[str]`; a default of another type, which CPython
   takes, is refused), `fspath()`, `getpid()`, `getppid()`, `getpgid(pid)`,
-  `getuid()`, `geteuid()`, `getgid()`, `readlink(path, *, dir_fd=None)` (of a `str` or an
-  `os.PathLike`, a `str`; a bytes path is not declared),
+  `getuid()`, `geteuid()`, `getgid()`, `readlink(path, *, dir_fd=None)`
+  (of a `str` or an `os.PathLike`, a `str`; a bytes path is not declared),
   `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
   `signal.Signals`), `system(command)`, what a forking parent and its child
   call (#719): `fork()` (`0`: nothing is forked), `setpgrp()`,
@@ -3387,16 +3387,18 @@ What Codon 0.19 needs that Python does not, beyond
   with a `fileno()` CPython also takes is not declared) and `chown(path,
   uid, gid, *, dir_fd=None, follow_symlinks=True)`; nothing is cut, synced
   or given away, and what `commonroad.worker` reads the worker's output
-  with: `read(fd, length, /)` (bytes, a `str` in the check; `""`: nothing is
-  read) and `set_blocking(fd, blocking, /)` (of an `int` and a `bool`), and
-  `strerror(code, /)` (a `str`, `""` in the check). `memoryview(obj)` of bytes is declared as far as
+  with, `read(fd, length, /)` (bytes, a `str` in the check; `""`: nothing is
+  read), and makes its input non-blocking with, `set_blocking(fd, blocking,
+  /)` (of an `int` and a `bool`; nothing is changed), and what `rerun`
+  builds a `FileNotFoundError` with, `strerror(code, /)` (a `str`, `""` in
+  the check). `memoryview(obj)` of bytes is declared as far as
   `tools.file_writes` uses it: a view is true while it is not empty and
   sliced into another (`view[n:]`), which `os.write()` takes; indexing an
   item, `tobytes()`, `release()` and the rest are not declared.
   The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
   `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
-  nothing else. `errno` declares `EPERM`, `ENOENT`, `EACCES`, `EEXIST`, `ENOTDIR`,
-  `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
+  nothing else. `errno` declares `EPERM`, `ENOENT`, `EACCES`, `EEXIST`,
+  `ENOTDIR`, `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
   `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
   declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
