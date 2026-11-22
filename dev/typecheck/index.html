@@ -3264,7 +3264,8 @@ value, so the result is not checked:</p>
   nothing), so a model file no test compares fails the suite.
 - <strong>Third-party models</strong>: carla_driver_interface's geometry, python-dotenv's
   <code>find_dotenv</code> and <code>load_dotenv</code>, packaging's <code>Version</code> and <code>InvalidVersion</code>, eclipse-sumo's
-  <code>SUMO_HOME</code> (where it is installed), pyxodr's <code>RoadNetwork</code> and lxml's
+  <code>SUMO_HOME</code> (where it is installed), roadgen's map, trace and
+  <code>read_opendrive()</code> (where it is installed), pyxodr's <code>RoadNetwork</code> and lxml's
   element.</p>
 <p>A constant whose model value is a literal (a <code>str</code>, <code>int</code>, <code>float</code> or a tuple
 of them) is compared by its value and type (a tuple's items' too: <code>1</code> is no
@@ -3372,7 +3373,7 @@ is imported from (#237):</p>
 </code></pre></div>
 <p>Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
-packaging, eclipse-sumo;
+packaging, eclipse-sumo, roadgen;
 see <em>Making a module compile</em>), and a scenario may use what
 those models declare.</p>
 <h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
@@ -5013,9 +5014,9 @@ and type files, with the command line of <code>randomTrips.py</code> and the opt
 each demand it generates: <code>traffic.sumo.options</code>, #1679, and where SUMO is,
 the network's files and the demand <code>randomTrips.py</code> generates for it:
 <code>traffic.sumo.network</code>, #1967, and the crossings read off the network
-with <code>xml.etree.ElementTree</code>; not the conversion of the map with roadgen or
-the signal table read off roadgen's traces, which the check leaves
-uncalled), the signal
+with <code>xml.etree.ElementTree</code>, the conversion of the map with roadgen and
+the signal table loaded from roadgen's traces, #2312; not what the table asks
+the traces, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
 checks of their periods: <code>heavy_metrics</code>, #1689, and the <code>commonroad</code>
@@ -6493,7 +6494,7 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>205 functions and methods of those modules are <code>UNCALLED</code>
+<p>201 functions and methods of those modules are <code>UNCALLED</code>
 (64 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -6506,7 +6507,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 205 UNCALLED functions and methods, and why</summary>
+<summary>The 201 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6522,7 +6523,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>autoware_stack.bridge_node.liveness_timeout_problem</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with; BridgeHandshake.__init__() calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>; the comparison itself is the checked min_liveness_timeout_s()'s</li>
 <li><code>commonroad.frame._state</code>: builds a road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express; the road user it is made of, its id, kind, geometry and motion, is the checked _road_user()'s (#2266)</li>
 <li><code>commonroad.frame.read_frame</code>: builds the ego's and the other road users' states with _state(), JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; the ego and the road users near it, typed, are the checked _read_road_users()'s (#2266)</li>
-<li><code>commonroad.map.commonroad_map</code>: imports roadgen (the <code>map</code> extra) inside it, which has no Codon model; where a map is cached (the root and the hash naming its directory) is the checked _cache_place()'s (#2266)</li>
 <li><code>conditions.adversity_active.AdversityActiveCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.and_condition.AndCondition.get_details</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>conditions.base.BaseCondition.__init_subclass__</code>: wraps check() when a subclass is created (cls.__dict__, functools.wraps), which Codon has no hook for</li>
@@ -6701,10 +6701,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>traffic.sumo.config.BicycleConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.sumo.config.PedestrianConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.sumo.config.SumoBackendConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
-<li><code>traffic.sumo.network.SignalTable.__init__</code>: takes roadgen's trace (<code>trace: Any</code>, a roadgen.Trace), which has no Codon model</li>
-<li><code>traffic.sumo.network.SignalTable.links</code>: asks roadgen's trace (<code>Any</code>) what a signal became in SUMO, answers of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
-<li><code>traffic.sumo.network.SignalTable.load</code>: imports roadgen (the <code>sumo</code> extra) inside it, which has no Codon model, and builds the table with SignalTable.__init__, itself uncalled</li>
-<li><code>traffic.sumo.network.build_network</code>: imports roadgen (the <code>sumo</code> extra) inside it, which has no Codon model, and converts the map with it</li>
+<li><code>traffic.sumo.network.SignalTable.links</code>: asks roadgen's trace what a signal became in SUMO (<code>Trace.translate()</code>), answers of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express, so the roadgen model does not declare it</li>
 <li><code>traffic.traffic_manager.TrafficManagerBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>trajectory.model._refusing_vertex_times</code>: the run-time wrapper of TrajectoryVertex.__init__ that refuses the calls written for a vertex with a time (<code>*args: Any, **kwargs: Any</code>, functools.wraps, an inspect.Signature); the check drops the decorator and compiles __init__ as written</li>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
@@ -6778,7 +6775,7 @@ the first:</p>
 <li><code>coverage.report</code>: re-exports openodd's coverage merge and report (a Rust extension)</li>
 <li><code>declarative</code>: imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (yaml), which are not checked and have no model</li>
 <li><code>driver.egodriver_client</code>: imports grpc, google.protobuf, numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and carla_driver_interface's contract, policies, server, service, driver, inprocess and protocol, which its model (geometry only) does not declare</li>
-<li><code>driver.hdmap_export</code>: imports, inside <code>_import_roadgen()</code>, roadgen, which has no Codon model; export_map() names its scratch directory <code>with tempfile.TemporaryDirectory(...) as scratch</code>, which Codon binds to the manager, not to the directory's name; _can_export() and _export() test for and call roadgen's exporter by a name held in a variable, through hasattr() and getattr() (<code>export_{name}</code>), which Codon does not compile; _file_digest() reads the file in chunks with the two-argument <code>iter(callable, sentinel)</code>, and Codon's <code>iter()</code> takes one argument; builds the manifest and its format records as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express; the file names of a map set, where each format is written (<code>MAP_FORMATS</code>) and map_id_for() are the checked driver.hdmap_files's (#1728), which it re-exports</li>
+<li><code>driver.hdmap_export</code>: hands the converter's module around as a value (<code>_import_roadgen()</code> returns it, typed <code>Any</code>, or <code>None</code> beside it) and the map it reads as <code>world_map: Any</code>, which Codon cannot express (the model of <code>roadgen</code>, #2312, declares read_opendrive() and the map's read_warnings(), export_ir() and write_read_trace(), which it calls, but not export_clipgt()); export_map() names its scratch directory <code>with tempfile.TemporaryDirectory(...) as scratch</code>, which Codon binds to the manager, not to the directory's name; _can_export() and _export() test for and call the map's exporter by a name held in a variable, through hasattr() and getattr() (<code>export_{name}</code>), which Codon does not compile; _file_digest() reads the file in chunks with the two-argument <code>iter(callable, sentinel)</code>, and Codon's <code>iter()</code> takes one argument; builds the manifest and its format records as <code>Dict[str, Any]</code> of mixed value types, and _known() reads them as <code>Mapping[str, Any]</code>, which Codon cannot express; the file names of a map set, where each format is written (<code>MAP_FORMATS</code>) and map_id_for() are the checked driver.hdmap_files's (#1728), which it re-exports</li>
 <li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds and reads: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, LidarSweep, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare; and _weather() reads the weather's fields by a name held in a variable, through getattr(), and passes them to CarlaWeather as ** a dict, neither of which Codon compiles; and the velocity it reports for an actor is a measured Vector3 or CARLA's Vector3D in one conditional expression, which Codon cannot type; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
 <li><code>editor</code>: imports argparse and serve_cli (argparse), which is not checked; imports uvicorn and editor.app (fastapi) inside main()</li>
 <li><code>editor.app</code>: imports fastapi and web_guard (starlette), and authoring.models (pydantic), authoring.hydra_config, authoring.persistence, authoring._builders_generated and editor.service (pydantic, through authoring.models), authoring.registry, trajectory.authoring and editor.forms, and, inside create_app(), editor.routes (fastapi), which are neither checked nor modelled</li>
@@ -6848,7 +6845,7 @@ the first:</p>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse), which is not checked; writing the map configuration in place or through a temporary file, and describing the error of either (<code>_write_in_place()</code>, <code>_write_atomically()</code>, <code>_PartialWriteError</code>, <code>_describe_os_error()</code>), are the checked tools.file_writes' (#2135), which it re-exports</li>
 <li><code>traffic.registry</code>: holds backend factories behind the <code>TrafficBackendFactory</code> alias, <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> ("expected type expression"), and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; load_traffic_backend_plugins and the _walk_traffic_backend_plugins it calls import, inside them, autoware_carla_scenario.registry (<code>_PLUGIN_LOAD_LOCK</code>, <code>load_entry_point_plugins()</code>), which is neither checked nor modelled and is the first error the check reports (UNCALLED entries for both would skip those imports, but not the alias); traffic.codon models it for the traffic package</li>
-<li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and builds its network and reads its signals and crossings with build_network(), SignalTable and crossing_edges() of the checked traffic.sumo.network, which the check leaves build_network() and SignalTable uncalled of, for roadgen; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'; its pure helpers (<code>_sight_cap()</code>, <code>_safe_weights_prefix()</code>, <code>_sumo_velocity()</code>, <code>_lane_step()</code> and <code>world_opendrive()</code>) are the checked traffic.sumo.geometry's (#2306), which it re-exports</li>
+<li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and builds its network and reads its signals and crossings with build_network(), SignalTable and crossing_edges() of the checked traffic.sumo.network, which the check leaves SignalTable.links() uncalled of, for roadgen's trace queries; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'; its pure helpers (<code>_sight_cap()</code>, <code>_safe_weights_prefix()</code>, <code>_sumo_velocity()</code>, <code>_lane_step()</code> and <code>world_opendrive()</code>) are the checked traffic.sumo.geometry's (#2306), which it re-exports</li>
 <li><code>traffic.sumo.hybrid</code>: reads SUMO's network with sumolib (imported inside its functions) as <code>Any</code> values, which Codon cannot express, and holds the mesoscopic model as a union of the checked traffic.mesoscopic's and the excluded traffic.sumo.mesosim's; the TrafficManager side it extends is the checked traffic.traffic_manager</li>
 <li><code>traffic.sumo.mesosim</code>: starts SUMO as a process of its own (subprocess, socket) and holds a TraCI connection to it as <code>_conn: Any</code> (traci, imported inside its functions), which Codon cannot express; the vehicles it holds are the checked traffic.mesoscopic's MesoVehicle and its roads its MesoLink, and its pure helpers (<code>segment_count()</code>, <code>_height_at()</code> and <code>_angle_between()</code>) the checked traffic.sumo.geometry's (#2306), which it re-exports</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
@@ -8032,6 +8029,26 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>SUMO_HOME</code> and <code>__file__</code>, both <code>str</code>, and nothing else. eclipse-sumo is
   optional (the <code>sumo</code> extra), so <code>test_typecheck_model.py</code> compares the model
   with the package only where it is installed.
+- <strong>roadgen is modelled</strong> as far as <code>commonroad.map</code> and
+  <code>traffic.sumo.network</code> convert the map with it (#2312):
+  <code>codon/roadgen/__init__.codon</code> declares <code>__version__</code> (a <code>str</code>),
+  <code>read_opendrive(path, sampling=2.0, origin=None,
+  projection="local_cartesian")</code>, a <code>Map</code>'s <code>read_warnings()</code>,
+  <code>write_read_trace()</code>, <code>export_ir()</code>, <code>export_commonroad()</code> and
+  <code>commonroad_warnings()</code> (a light cycle, which Codon has no one type for,
+  only as <code>None</code>), <code>export_sumo()</code> (the files' prefix) and
+  <code>sumo_warnings()</code>, and <code>Trace.load(*paths, check_files=True)</code> of <code>str</code>
+  paths, with the installed package's signatures, which
+  <code>test_typecheck_model.py</code> compares where roadgen (the <code>map</code> and <code>sumo</code>
+  extras) is installed. A trace's queries (<code>translate()</code>, whose answers are
+  dicts of mixed value types) and the rest of the package are not declared,
+  so <code>SignalTable.links()</code> stays <code>UNCALLED</code>. The probes compile as they are:
+  <code>getattr(roadgen, "__version__", "0")</code> is the rewrite of a <code>getattr</code> with a
+  default, and <code>hasattr(roadgen.Map, "export_commonroad")</code> is decided on the
+  model's <code>Map</code>. <code>commonroad_map()</code> compares the version as lists, as Python
+  compares the tuples (Codon's <code>tuple[int, ...]</code> is a <code>List[int]</code>), and
+  <code>SignalTable.load()</code> passes the three trace files by name, since Codon does
+  not unpack a generator into arguments.
 - <strong>carla_canvas</strong> is modelled for <code>canvas.use_canvas()</code>: <code>codon/carla_canvas/plugin.codon</code>
   declares <code>plugin_path() -&gt; Path</code> and nothing else. carla_canvas is not a
   dependency of this package, so <code>test_typecheck_model.py</code> cannot compare it with
@@ -8987,7 +9004,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 01:41:22 UTC"><span class="timeago" datetime="2026-11-22T01:41:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 01:41:22 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 02:46:11 UTC"><span class="timeago" datetime="2026-11-22T02:46:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 02:46:11 UTC">2026-11-22</span>
   </span>
 
     
