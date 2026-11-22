@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 from ..config_flags import check_flag
 from ..value_text import shown
@@ -98,8 +98,6 @@ PATH_TURNS: tuple[str, ...] = ("left", "right", "straight")
 CROSSWALK_LEGS: tuple[str, ...] = ("entry", "exit")
 #: Sides of the road.
 SIDES: tuple[str, ...] = ("left", "right")
-
-Tristate = Literal["any", "yes", "no"]
 
 
 def _tristate(name: str, value: Any) -> str:
@@ -334,8 +332,6 @@ class JunctionSegmentSpec:
         else:
             return str(getattr(self, f"crossing_from_{approach}"))
 
-
-SegmentSpec = "LaneSegmentSpec | JunctionSegmentSpec"
 
 _LANE_KEYS = {
     "kind",

@@ -72,6 +72,11 @@ from .carla_install_paths import install_dir as install_dir
 from .carla_install_paths import installed_executable as installed_executable
 from .carla_install_paths import package_url as package_url
 
+# The errors of a ``flock`` the file system does not support (some NFS and
+# Lustre mounts) are the checked slurm.start_lock's, whose start lock tells
+# such a file system by them too.
+from .slurm.start_lock import _NO_FLOCK_ERRNOS
+
 NIGHTLY_URL = (
     "https://s3.us-east-005.backblazeb2.com/carla-releases/Linux/Dev/"
     "CARLA_UE5_Latest.tar.gz"
@@ -209,12 +214,6 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
     _swap_into_place(staging, target)
     return target / LAUNCHER
-
-
-#: The errors of a ``flock`` the file system does not support (some NFS mounts).
-_NO_FLOCK_ERRNOS = frozenset(
-    {errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOLCK, errno.EINVAL}
-)
 
 
 @contextlib.contextmanager

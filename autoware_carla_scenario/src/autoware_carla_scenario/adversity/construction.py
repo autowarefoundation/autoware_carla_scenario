@@ -68,6 +68,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from .checks import check_non_negative, check_positive
+
 __all__ = [
     "DEFAULT_CONSTRUCTION",
     "HIGHWAY",
@@ -128,18 +130,6 @@ def _check_finite(name: str, value: float) -> None:
     """Refuse *value* for the field *name* unless it is finite."""
     if not math.isfinite(value):
         raise ValueError(f"{name} must be finite, not {value}")
-
-
-def _check_length(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is finite and >= 0."""
-    if not math.isfinite(value) or value < 0.0:
-        raise ValueError(f"{name} must be finite and not negative, not {value}")
-
-
-def _check_spacing(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is finite and > 0."""
-    if not math.isfinite(value) or value <= 0.0:
-        raise ValueError(f"{name} must be finite and positive, not {value}")
 
 
 def _check_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
@@ -237,17 +227,17 @@ class ConstructionSettings:
         _check_choice("taper_type", self.taper_type, _TAPER_TYPES)
         _check_choice("side", self.side, _SIDES)
         _check_choice("layout", self.layout, _LAYOUTS)
-        _check_spacing("spacing", self.spacing)
+        check_positive("spacing", self.spacing)
         _check_finite("work_zone_offset", self.work_zone_offset)
-        _check_length("speed_limit_mph", self.speed_limit_mph)
-        _check_length("taper_length_in", self.taper_length_in)
-        _check_length("taper_length_out", self.taper_length_out)
-        _check_length("warning_zone_length", self.warning_zone_length)
-        _check_spacing("warning_zone_spacing", self.warning_zone_spacing)
-        _check_length("buffer_zone_length", self.buffer_zone_length)
-        _check_length("termination_zone_length", self.termination_zone_length)
+        check_non_negative("speed_limit_mph", self.speed_limit_mph)
+        check_non_negative("taper_length_in", self.taper_length_in)
+        check_non_negative("taper_length_out", self.taper_length_out)
+        check_non_negative("warning_zone_length", self.warning_zone_length)
+        check_positive("warning_zone_spacing", self.warning_zone_spacing)
+        check_non_negative("buffer_zone_length", self.buffer_zone_length)
+        check_non_negative("termination_zone_length", self.termination_zone_length)
         _check_finite("warning_sign_offset", self.warning_sign_offset)
-        _check_length("merge_distance", self.merge_distance)
+        check_non_negative("merge_distance", self.merge_distance)
         if self.merge_signs < 0:
             raise ValueError(
                 f"merge_signs must not be negative, not {self.merge_signs}"

@@ -52,8 +52,6 @@ from .avoidance import (
     AVOID,
     DEFAULT_AVOIDANCE,
     AvoidanceSettings,
-    _check_non_negative,
-    _check_positive,
     _check_probability,
     accept_command,
     avoid_command,
@@ -61,6 +59,7 @@ from .avoidance import (
     respond,
     victims,
 )
+from .checks import check_non_negative, check_positive
 from .collision import DEFAULT_DISTANCE_THRESHOLD
 from .command import AdversarialCommand, predict_command
 from .geometry import AgentFootprint, PredictedState
@@ -153,13 +152,13 @@ class NadeSettings:
                 f"max_controlled must not be negative, not {self.max_controlled}"
             )
         object.__setattr__(self, "max_controlled", count)
-        _check_non_negative("control_radius", self.control_radius)
-        _check_positive("horizon", self.horizon)
-        _check_positive("resolution", self.resolution)
-        _check_non_negative("magnitude", self.magnitude)
+        check_non_negative("control_radius", self.control_radius)
+        check_positive("horizon", self.horizon)
+        check_positive("resolution", self.resolution)
+        check_non_negative("magnitude", self.magnitude)
         _check_probability("max_is_probability", self.max_is_probability)
         _check_probability("fixed_is_probability", self.fixed_is_probability)
-        _check_non_negative("cooldown", self.cooldown)
+        check_non_negative("cooldown", self.cooldown)
 
 
 DEFAULT_NADE = NadeSettings()
