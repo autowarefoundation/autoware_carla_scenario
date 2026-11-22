@@ -22,6 +22,8 @@ What is captured:
 * every failed attempt the scenario queue retries
   (:data:`CAPTURED_LOGGERS`): a batch goes on from a case that raised and
   keeps only a line of it in its result;
+* a SLURM task that raised, and its cases' failed attempts
+  (:mod:`~autoware_carla_scenario.slurm.worker`), in the batch's directory;
 * anything else ``scenario`` raises before it exits.
 
 A refusal of the configuration (a bad value, a scenario the static check
@@ -30,7 +32,7 @@ refuses) is the user's to fix, not a crash, and is not reported.
 A **native crash** (a ``SIGSEGV`` in the CARLA client, an abort) ends the
 process before Python can write anything.  So, once the run's output
 directory is known, the report is prepared ahead: ``crash_reports/
-native-<time>-<pid>/`` holds ``context.json``, ``config.yaml`` and
+native-<time>-<host>-<pid>/`` holds ``context.json``, ``config.yaml`` and
 ``repro.sh`` from the start, and :mod:`faulthandler` writes the Python stack
 of every thread to its ``faulthandler.log`` if the process dies of a fatal
 signal.  The directory is removed when the run ends normally; one left with
@@ -65,6 +67,7 @@ import platform
 import re
 import shlex
 import shutil
+import socket
 import sys
 import threading
 import time
@@ -182,6 +185,9 @@ class _RunContext:
     overrides: list[str] | None = None
     #: Its composed config, as YAML.
     config_yaml: str | None = None
+    #: The program ``repro.sh`` runs the overrides with (``scenario`` when
+    #: ``None`` and the process was not started as it).
+    program: str | None = None
     #: Whether a native-crash report is prepared in :attr:`report_dir`.
     native: bool = False
 
@@ -282,9 +288,11 @@ class _Reporter:
         overrides = self.context.overrides
         if overrides is None:
             return list(self.argv)
-        program = self.argv[0] if self.argv else "scenario"
-        if Path(program).name in ("run.py", "__main__.py", "-c", "-m"):
-            program = "scenario"
+        program = self.context.program
+        if program is None:
+            program = self.argv[0] if self.argv else "scenario"
+            if Path(program).name in ("run.py", "__main__.py", "-c", "-m"):
+                program = "scenario"
         return [program, *overrides]
 
     def context_dict(self) -> dict[str, Any]:
@@ -365,7 +373,12 @@ class _Reporter:
         """Prepare the report a native crash would leave, in the report
         directory, and point :mod:`faulthandler` at it."""
         self.disarm_native()
-        directory = self.context.report_dir / f"native-{_timestamp()}-{os.getpid()}"
+        # The host too: the tasks of a SLURM batch on several nodes share the
+        # batch's directory, and their process ids can collide.
+        host = _safe_name(socket.gethostname())
+        directory = (
+            self.context.report_dir / f"native-{_timestamp()}-{host}-{os.getpid()}"
+        )
         try:
             directory.mkdir(parents=True, exist_ok=True)
             for name, data in self.context_files().items():
@@ -525,11 +538,13 @@ def run_context(
     *,
     overrides: Sequence[str] | None = None,
     config_yaml: str | None = None,
+    program: str | None = None,
 ) -> Iterator[None]:
     """Report what the ``with`` block raises as a run's: in
     ``<output_dir>/crash_reports/``, with its *overrides* (what ``repro.sh``
-    runs) and its composed config (*config_yaml*).  A native-crash report is
-    prepared there for the block.  Nothing when no reporter is installed."""
+    runs, with *program*: the process's own when ``None``) and its composed
+    config (*config_yaml*).  A native-crash report is prepared there for the
+    block.  Nothing when no reporter is installed."""
     reporter = _REPORTER[0]
     if reporter is None:
         yield
@@ -540,6 +555,7 @@ def run_context(
         output_dir=Path(output_dir),
         overrides=None if overrides is None else [str(o) for o in overrides],
         config_yaml=config_yaml,
+        program=program,
         native=True,
     )
     reporter.arm_native()

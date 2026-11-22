@@ -10,6 +10,7 @@ import sys
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -266,3 +267,194 @@ def test_a_run_that_raises_leaves_a_report_in_its_directory(tmp_path: Path) -> N
     # A single run's command line is kept too.
     context = json.loads((report / "context.json").read_text())
     assert context["argv"][1:] == ["hydra.run.dir=run", "seed=7"]
+
+
+# -- the SLURM worker ---------------------------------------------------------
+
+
+def test_a_slurm_case_is_run_again_without_the_launcher() -> None:
+    from autoware_carla_scenario.slurm.worker import repro_overrides
+
+    case = {
+        "scenario": "cut_in",
+        "overrides": [
+            "seed=4",
+            "launcher=slurm",
+            "launcher.partition=gpu",
+            "+launcher.extra=1",
+            "server.port=2000",
+        ],
+    }
+    assert repro_overrides(case) == ["scenario=cut_in", "seed=4", "server.port=2000"]
+
+
+def _slurm_batch(tmp_path: Path) -> Any:
+    """A SLURM batch of one case (``cut_in``, seed 4) on disk, never run."""
+    from autoware_carla_scenario.slurm.manifest import (
+        MANIFEST_VERSION,
+        BatchLayout,
+        write_json,
+    )
+
+    layout = BatchLayout(tmp_path / "batch")
+    case = {
+        "index": 0,
+        "label": "cut_in#1",
+        "scenario": "cut_in",
+        "overrides": ["seed=4", "launcher=slurm"],
+        "stem": "CutIn",
+        "scenario_class": "CutIn",
+    }
+    write_json(
+        layout.manifest,
+        {"version": MANIFEST_VERSION, "cases": [case], "launcher": {}},
+    )
+    write_json(layout.submission(0), {"index": 0, "job_id": "77", "chunks": [[0]]})
+    return layout
+
+
+@pytest.fixture
+def worker_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+    """The worker module, with what a task does around its cases faked, and a
+    crash reporter installed as its main() installs it."""
+    import signal
+
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import worker
+
+    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
+    monkeypatch.delenv(crash_report.CRASH_REPORT_DIR_ENV, raising=False)
+    monkeypatch.delenv(crash_report.DSN_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(worker, "CarlaWatchdog", _no_watchdog)
+    monkeypatch.setattr(worker, "kill_carla_on_port", lambda _port: [])
+    monkeypatch.setattr(run, "load_scenario_plugins", lambda: None)
+    monkeypatch.setattr(run, "_cap_malloc_arenas", lambda: None)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    command = [
+        sys.executable,
+        "-m",
+        "autoware_carla_scenario.slurm.worker",
+        "m",
+        "0",
+        "0",
+    ]
+    assert crash_report.install(command)
+    try:
+        yield worker
+    finally:
+        crash_report.uninstall()
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+
+
+def _no_watchdog(*_args: object) -> None:
+    raise OSError("no watchdog here")
+
+
+def _slot() -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        rpc=31500,
+        streaming=31501,
+        secondary=31502,
+        to_dict=dict,
+        release=lambda **_: None,
+    )
+
+
+def test_a_slurm_task_that_raises_leaves_a_report_in_the_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_env: Any
+) -> None:
+    layout = _slurm_batch(tmp_path)
+
+    def acquire(*_args: object, **_kw: object) -> Any:
+        raise RuntimeError("no port slot free")
+
+    monkeypatch.setattr(worker_env, "acquire_slot", acquire)
+    assert worker_env.run_task(layout.manifest, 0, 0) == 1
+
+    status = layout.read_task(0, 0)
+    assert status is not None and status.get("state") == "failed"
+    report = Path(status.get("crash_report"))
+    assert report.parent == layout.batch_dir / crash_report.CRASH_REPORTS_DIRNAME
+    assert "no port slot free" in (report / "traceback.txt").read_text()
+    # No case was running: the task again, as the job script runs it.
+    assert (
+        "autoware_carla_scenario.slurm.worker m 0 0"
+        in ((report / "repro.sh").read_text().splitlines()[-1])
+    )
+
+
+def test_a_slurm_case_s_failed_attempt_leaves_a_report_of_the_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_env: Any
+) -> None:
+    from types import SimpleNamespace
+
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples import run
+
+    layout = _slurm_batch(tmp_path)
+    queue_logger = logging.getLogger("autoware_carla_scenario.scenario_queue")
+
+    class CutIn:
+        pass
+
+    class FakeQueue:
+        def __enter__(self) -> FakeQueue:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def add(self, *_args: object, **_kw: object) -> None:
+            return None
+
+        def run_all(self, **_kw: object) -> list[Any]:
+            try:
+                _raise("the CARLA client went away")
+            except ValueError:
+                queue_logger.warning("Scenario attempt 1/1 failed", exc_info=True)
+            return [SimpleNamespace(to_dict=lambda: {"passed": False})]
+
+        def errored_indices(self) -> list[int]:
+            return [0]
+
+    cfg = OmegaConf.create({"seed": 4, "map": {}})
+    monkeypatch.setattr(worker_env, "acquire_slot", lambda *_a, **_k: _slot())
+    monkeypatch.setattr(worker_env, "worker_overrides", lambda *_a: {})
+    monkeypatch.setattr(worker_env, "_check_same_config", lambda *_a: None)
+    monkeypatch.setattr(worker_env, "run_timeout_seconds", lambda _cfg: 60.0)
+    monkeypatch.setattr(worker_env, "_apply_metrics", lambda *_a: False)
+    monkeypatch.setattr(run, "_compose_config", lambda *_a: cfg)
+    monkeypatch.setattr(run, "check_scenario_maps", lambda *_a: None)
+    monkeypatch.setattr(run, "build_scenario", lambda *_a, **_k: (None, CutIn()))
+    monkeypatch.setattr(run, "build_rerun_converter", lambda *_a: None)
+    monkeypatch.setattr(run, "apply_canvas", lambda *_a: None)
+    monkeypatch.setattr(run, "check_batch_map", lambda *_a: None)
+    monkeypatch.setattr(run, "resolve_map_paths", lambda _m: None)
+    monkeypatch.setattr(run, "_batch_queue", lambda *_a, **_k: FakeQueue())
+    monkeypatch.setattr(run, "_cooldown_seconds", lambda _cfg: 0.0)
+    monkeypatch.setattr(run, "_odd_case", lambda _cfg: None)
+
+    assert worker_env.run_task(layout.manifest, 0, 0) == 0
+    status = layout.read_task(0, 0)
+    assert status is not None and status.get("state") == "done"
+    # The task's native-crash report goes when main() uninstalls the reporter.
+    reports = [
+        r
+        for r in (layout.batch_dir / crash_report.CRASH_REPORTS_DIRNAME).iterdir()
+        if not r.name.startswith("native-")
+    ]
+    assert [r.name.split("-")[1] for r in reports] == ["ValueError"]
+    (report,) = reports
+    assert "the CARLA client went away" in (report / "traceback.txt").read_text()
+    assert "seed: 4" in (report / "config.yaml").read_text()
+    # The case alone, here, without the batch's launcher.
+    assert (report / "repro.sh").read_text().splitlines()[-1] == (
+        'exec scenario scenario=cut_in seed=4 "$@"'
+    )

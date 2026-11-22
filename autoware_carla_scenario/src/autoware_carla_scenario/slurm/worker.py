@@ -39,6 +39,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import crash_report
 from ..run_outputs import remove_run_outputs
 from ..run_timeout import run_timeout_seconds
 from ..seed import check_whole_number
@@ -615,6 +616,30 @@ def _batch_configs(
     return found
 
 
+def repro_overrides(case: dict[str, Any]) -> list[str]:
+    """What ``repro.sh`` of a crash report of *case* runs ``scenario`` with:
+    its scenario and overrides, without the batch's launcher (``launcher=``,
+    ``launcher.*``), so that it runs again here, as a single run."""
+    return [
+        f"scenario={case['scenario']}",
+        *(
+            str(o)
+            for o in case["overrides"]
+            if not str(o).lstrip("+~").startswith("launcher")
+        ),
+    ]
+
+
+def _config_yaml(cfg: Any) -> str | None:
+    """*cfg* as YAML, for a crash report; ``None`` when it cannot be."""
+    try:
+        from omegaconf import OmegaConf  # noqa: PLC0415
+
+        return OmegaConf.to_yaml(cfg)
+    except Exception:  # noqa: BLE001 - reported without its config
+        return None
+
+
 def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int:
     """Run task *task_index* of submission *submission_index*; its exit status."""
     layout = BatchLayout(manifest_path.resolve().parent.parent)
@@ -642,6 +667,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
     task = _Task(layout, submission_index, task_index)
     task.update(cases=chunk)
+    # What the task raises, a case's failed attempts and a native crash leave
+    # their crash reports beside a local batch's (docs/crash_reports.md).
+    crash_report.set_report_dir(batch_dir / crash_report.CRASH_REPORTS_DIRNAME)
 
     if manifest.get("typechecked"):
         # Checked by the submitting process, once a config shape: building the
@@ -806,7 +834,14 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                     file_stem=stem,
                 )
                 started = time.time()
-                (result,) = queue.run_all(release=True, continue_on_error=True)
+                # A crash report of the case runs it again with `scenario`.
+                with crash_report.run_context(
+                    batch_dir,
+                    overrides=repro_overrides(case),
+                    config_yaml=_config_yaml(cfg),
+                    program="scenario",
+                ):
+                    (result,) = queue.run_all(release=True, continue_on_error=True)
                 # The case's recording is a few milliseconds' work, done in the
                 # background: wait for it, so its outcome is in the case's
                 # record for `collect`.
@@ -842,11 +877,13 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         exit_status = 143
     except BaseException as exc:  # noqa: BLE001 - recorded, then the task fails
         logger.error("Task failed: %s", exc, exc_info=True)
+        crash = crash_report.capture(exc) if isinstance(exc, Exception) else None
         task.update(
             state="failed",
             finished=_now(),
             error=f"{type(exc).__name__}: {exc}",
             traceback=traceback.format_exc(),
+            **({"crash_report": str(crash)} if crash is not None else {}),
             **sampler.to_dict(),
         )
         exit_status = 1
@@ -893,7 +930,10 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
-    return run_task(Path(args[0]), int(args[1]), int(args[2]))
+    # The task again, as the job script runs it, for a report of no case.
+    command = [sys.executable, "-m", "autoware_carla_scenario.slurm.worker", *args]
+    with crash_report.reporting(command):
+        return run_task(Path(args[0]), int(args[1]), int(args[2]))
 
 
 if __name__ == "__main__":

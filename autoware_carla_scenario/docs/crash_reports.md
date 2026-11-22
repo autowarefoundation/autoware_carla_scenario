@@ -27,13 +27,16 @@ outputs/2026-11-22/10-15-00/crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d
 |---|---|
 | A single run, or a `--multirun` case | `crash_reports/` in that run's or case's directory |
 | A batch (a scenario glob) | `crash_reports/` in the batch's directory |
+| A SLURM task (`launcher=slurm`) | `crash_reports/` in the batch's directory, from every task |
 | Anything before that (composing the config, ...) | `$SCENARIO_CRASH_REPORT_DIR`, else `outputs/crash_reports/` |
 
 `repro.sh` changes to the directory the run started in, exports the
 environment variables that affect a run (`CARLA*`, `SCENARIO*`, `ROS_*`, ...;
 anything whose name looks like a secret is left out), and runs `scenario` with
 the case's own overrides. Run again, the case writes to an output directory of
-its own. Extra arguments are passed through:
+its own. A SLURM case's runs locally, without the batch's `launcher=` and
+`launcher.*` overrides; a report of a SLURM task that failed outside any case
+runs the task's worker again. Extra arguments are passed through:
 
 ```bash
 sh outputs/.../crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d/repro.sh
@@ -46,6 +49,9 @@ sh outputs/.../crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d/repro.sh
 - Every failed attempt the scenario queue retries
   (`server.cooldown_max_retries`). A batch goes on from a case that raised and
   keeps only one line of it in its result; the report keeps the rest.
+- A SLURM task that raised, every failed attempt of its cases, and anything
+  else its worker raises. The task's status names the report of a task that
+  failed (`crash_report`; see [Running a Batch on SLURM](slurm.md)).
 - Anything else `scenario` raises before it exits.
 
 An exception is reported once: the queue's "failed after N attempts" error,
@@ -59,7 +65,8 @@ crash, so it is not reported.
 
 A `SIGSEGV` in the CARLA client or an abort ends the process before Python can
 write anything. So once the run's output directory is known, `scenario`
-prepares a report there in advance, `crash_reports/native-<time>-<pid>/`, with
+prepares a report there in advance, `crash_reports/native-<time>-<host>-<pid>/`
+(the host because the tasks of a SLURM batch share its directory), with
 `context.json`, `config.yaml` and `repro.sh`. If the process dies of a fatal
 signal, Python's `faulthandler` writes the stack of every thread to that
 directory's `faulthandler.log`.
