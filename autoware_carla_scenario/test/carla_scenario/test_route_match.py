@@ -150,3 +150,36 @@ def test_a_vertex_takes_the_heading_of_the_segment_leaving_it() -> None:
     assert route_match._heading_at(bend, 1.0) == pytest.approx(math.pi / 2)
     assert route_match._heading_at(bend, 2.0) == pytest.approx(math.pi / 2)
     assert route_match._heading_at(bend, 3.0) == pytest.approx(math.pi / 2)
+    # An s an ulp short of the vertex, as Lanelet2 may snap one, is at it.
+    assert route_match._heading_at(bend, math.nextafter(1.0, 0.0)) == pytest.approx(
+        math.pi / 2
+    )
+
+
+def test_a_track_through_a_bends_outside_wedge_matches_either_segment() -> None:
+    """Every point in the wedge outside a bend projects onto its vertex, where
+    a track swinging wide turns from one segment's heading to the other's:
+    it is measured against the nearer of the two, not the whole bend."""
+    import lanelet2.core
+    from lanelet2.core import LineString3d, Point3d, getId
+
+    bend = lanelet2.core.ConstLineString2d(
+        LineString3d(
+            getId(),
+            [Point3d(getId(), x, y, 0.0) for x, y in ((0, 0), (10, 0), (10, 10))],
+        )
+    )
+    at_vertex = 10.0
+    for heading in (0.0, math.pi / 2):
+        assert route_match._heading_error(bend, at_vertex, heading) == pytest.approx(
+            0.0
+        )
+    # Half way round the bend: a quarter of it off either segment.
+    assert abs(route_match._heading_error(bend, at_vertex, math.pi / 4)) == (
+        pytest.approx(math.pi / 4)
+    )
+    # Off the vertex only the segment there counts.
+    assert route_match._heading_error(bend, 5.0, math.pi / 2) == pytest.approx(
+        -math.pi / 2
+    )
+    assert route_match._heading_error(bend, 15.0, 0.0) == pytest.approx(math.pi / 2)

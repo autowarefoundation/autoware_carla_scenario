@@ -250,6 +250,15 @@ class TestTheHeadingAtAVertex:
                 _interpolate_at_s(points, s)[3]
             )
 
+    def test_an_s_an_ulp_short_of_the_vertex_is_at_the_vertex(self) -> None:
+        """Lanelet2 sums the segments in its own order: the s it snaps a wedge
+        point to can fall an ulp short of the vertex (#2329)."""
+        assert _heading_at(self._BEND, math.nextafter(1.0, 0.0)) == pytest.approx(
+            math.pi / 2
+        )
+        # Asking a little before the vertex still reads the arriving segment.
+        assert _heading_at(self._BEND, 1.0 - 1e-6) == pytest.approx(0.0)
+
     def test_the_end_and_beyond_take_the_last_segment(self) -> None:
         assert _heading_at(self._BEND, 2.0) == pytest.approx(math.pi / 2)
         assert _heading_at(self._BEND, 5.0) == pytest.approx(math.pi / 2)
