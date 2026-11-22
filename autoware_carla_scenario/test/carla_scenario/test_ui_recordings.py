@@ -653,6 +653,54 @@ def test_a_recording_in_the_cache_is_shown_without_the_converter(
     assert client.post(f"/api/recording/{SESSION}/4").status_code == 200
 
 
+def _side_by_side(client: TestClient) -> str:
+    page = client.get(
+        "/compare/runs", params=[("run", f"{SESSION}/4"), ("run", f"{SESSION}/5")]
+    )
+    assert page.status_code == 200, page.text
+    return page.text
+
+
+def test_side_by_side_shows_a_recording_in_the_cache_without_the_converter(
+    client: TestClient, no_converter: None, tmp_path: Path
+) -> None:
+    """As the scenario page decides it (``downloadable``), not by whether a
+    recording is beside the log (#2344)."""
+    log = tmp_path / "outputs" / "2026-10-18" / "16-09-52" / "Case-3.trajectory.jsonl"
+    cached = recordings._cached_recording(log)
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(b"kept in the cache")
+    os.utime(log, (time.time() - 60, time.time() - 60))
+
+    text = _side_by_side(client)
+
+    assert text.count('class="rerun-pane') == 1
+    assert f'data-make-url="/api/recording/{SESSION}/4"' in text
+    assert "The Rerun converter is not installed" in text  # case 5's
+
+
+def test_side_by_side_offers_no_viewer_for_a_stale_recording_without_the_converter(
+    client: TestClient, no_converter: None, tmp_path: Path
+) -> None:
+    """A recording older than its log would have to be made again, which
+    needs the converter: the pane's POST would answer 503 (#2344)."""
+    log = tmp_path / "outputs" / "2026-10-18" / "16-09-52" / "Case-3.trajectory.jsonl"
+    rrd = recordings.recording_path(log)
+    rrd.write_bytes(b"made before the log changed")
+    os.utime(rrd, (time.time() - 60, time.time() - 60))
+
+    text = _side_by_side(client)
+
+    assert 'class="rerun-pane' not in text
+    assert text.count("The Rerun converter is not installed") == 2
+
+
+def test_side_by_side_with_the_converter_shows_every_run(
+    client: TestClient, converter: _FakeConverter
+) -> None:
+    assert _side_by_side(client).count('class="rerun-pane') == 2
+
+
 def test_with_the_converter_the_download_link_is_offered(
     client: TestClient, converter: _FakeConverter
 ) -> None:

@@ -183,6 +183,38 @@ def _text(value: Any) -> str:
     return value if isinstance(value, str) else str(value)
 
 
+def _entry_overrides(entry: dict[str, Any]) -> list[str]:
+    """The overrides a batch case ran with, as its ``batch_results.json``
+    entry (or a SLURM batch's case recorded so far) gives them: its sweep
+    case, each item as a string (as :mod:`.results` reads them).
+
+    A batch directory has no ``.hydra/overrides.yaml``: each case carries its
+    own (#2344).  An entry names no ``scenario=`` override, which the scenario
+    page's Re-run needs, so one is added from the entry's ``scenario``: the
+    batch's label for the case, less the ``#k`` it is numbered with when its
+    sweep gave the scenario more than one case
+    (``examples.argv._case_labels``).  None is added for an entry that names
+    no scenario.  The label is ``name`` or ``name#k`` alone (a local batch,
+    a SLURM one, a glob's resolved names); a scenario's name has no ``#`` of
+    its own, which Hydra's override grammar refuses unquoted.
+
+    They are not all the case ran with: a batch records no command line, so
+    the overrides it gave every case are not among them, and the scenario
+    page says so beside its Re-run.
+    """
+    value = entry.get("overrides")
+    overrides = [str(o) for o in value] if isinstance(value, list) else []
+    if any(o.startswith("scenario=") for o in overrides):
+        return overrides
+    label = entry.get("scenario")
+    if not isinstance(label, str) or not label:
+        return overrides
+    name, sep, number = label.rpartition("#")
+    if not (sep and name and number.isascii() and number.isdigit()):
+        name = label
+    return [f"scenario={name}", *overrides]
+
+
 def _listing(directory: Path) -> list[Path] | None:
     """The entries of *directory*, ``None`` (with a warning) when it cannot be
     read: a session directory of another user's, mode 0700, must not break
@@ -433,7 +465,6 @@ def load_session(
         if found is None:
             return items
         data_list, final = found
-        overrides = _read_overrides(directory)
         # An entry that is not an object is left out; the others keep their
         # position, which load_scenario and case_files index the batch by.
         for i, entry in _dict_entries(data_list):
@@ -443,7 +474,7 @@ def load_session(
                     scenario_name=_name(entry.get("scenario"), "unknown"),
                     passed=_passed(entry.get("passed")),
                     elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
-                    overrides=overrides,
+                    overrides=_entry_overrides(entry),
                     message=_text(entry.get("message")),
                     pending=entry.get("pending") is True,
                 )
@@ -574,6 +605,8 @@ def load_scenario(
     overrides: list[str] = []
     job_path: Path | None = None
     cacheable = True
+    # What a case without a result says (a batch's pending case says why).
+    no_result = "No result data available (scenario may have failed to start)"
 
     if session_type == "multirun":
         job = cases.job_dir(base_path, date, time, index)
@@ -587,13 +620,18 @@ def load_scenario(
 
     elif session_type == "batch":
         job_path = directory
-        overrides = _read_overrides(job_path)
         found = batch_entries(job_path)
         if found is not None:
             data_list, final = found
             entry = data_list[index] if 0 <= index < len(data_list) else None
-            if isinstance(entry, dict) and not entry.get("pending"):
-                data = entry
+            if isinstance(entry, dict):
+                # The case's own overrides: a batch directory has no
+                # .hydra/overrides.yaml (#2344).
+                overrides = _entry_overrides(entry)
+                if not entry.get("pending"):
+                    data = entry
+                elif isinstance(entry.get("message"), str) and entry["message"]:
+                    no_result = entry["message"]
             if not final:
                 cacheable = False
 
@@ -615,7 +653,7 @@ def load_scenario(
             return None
         result = ScenarioResultView(
             passed=None,
-            message="No result data available (scenario may have failed to start)",
+            message=no_result,
             elapsed_seconds=None,
             condition_statuses=[],
             overrides=overrides,
