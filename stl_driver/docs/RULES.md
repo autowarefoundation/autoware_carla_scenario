@@ -87,9 +87,13 @@ that clips an obstacle at good speed outscores one that stops safely.
 ```
 □ (speed_headroom > -0.5)
 ```
-Never exceed the posted limit by more than 0.5 m/s.  `speed_headroom` is
-`limit - speed`; the limit comes from CARLA when available and falls back to
-13.9 m/s (50 km/h) when it does not.
+Never exceed the *target speed* by more than 0.5 m/s.  `speed_headroom` is
+`target - speed`, and the target is not the posted limit but the lower of the
+cruise speed and the posted limit: `min(cruise, posted)`, where the posted
+limit comes from CARLA when available and falls back to 13.9 m/s (50 km/h)
+when it does not (`STLDriverConfig.target_speed_mps`).  Despite its name the
+rule caps the speed at the target, so a speed above the cruise speed but
+under the posted limit is reported as a `speed_limit` violation.
 
 ### `no_reverse` — hard, weight 4, margin 0.5
 ```

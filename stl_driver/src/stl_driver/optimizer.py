@@ -28,8 +28,9 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 import numpy as np
 import torch
@@ -42,6 +43,13 @@ from stl_driver.stl_backend import smooth
 logger = logging.getLogger(__name__)
 
 __all__ = ["PlanSolution", "RobustnessOptimizer"]
+
+_T = TypeVar("_T")
+_P = ParamSpec("_P")
+
+#: What a batched (``vmap``) path raising means "batching broke", not "the
+#: input is bad": the loop path computes the same functions and takes over.
+_VMAP_FAILURES = (RuntimeError, TypeError, IndexError)
 
 #: Where each of the three fixed plans sits in the candidate batch, counted
 #: from the end -- the quasi-random sweep occupies everything before them.
@@ -78,7 +86,8 @@ class PlanSolution:
     imminent_rule: str | None = None
     #: Name of the worst-violated rule, or None when all are satisfied.
     worst_rule: str | None = None
-    #: Whether the batched fast path was used, for diagnosis.
+    #: Whether the batched fast path was used throughout, for diagnosis: false
+    #: once any stage of the step fell back to the loop path.
     used_vmap: bool = True
 
 
@@ -90,10 +99,11 @@ class RobustnessOptimizer:
         self.device = config.resolved_device()
         self.rules = rules.to(self.device)
         self._seeds = self._build_seeds().to(self.device)
-        # Set on the first failure, then honoured for the rest of the session.
-        # Batching relies on `vmap` seeing through upstream's hardcoded
-        # `reshape([T, 1])`; it works on the pinned versions, but a policy that
-        # crashed on a torch upgrade would be a poor trade for the speed.
+        # Set on the first failure, then honoured for the rest of the session
+        # by every batched stage (`_vmapped`). Batching relies on `vmap`
+        # seeing through upstream's hardcoded `reshape([T, 1])`; it works on
+        # the pinned versions, but a policy that crashed on a torch upgrade
+        # would be a poor trade for the speed.
         self._vmap_ok = True
         # Populated by `prepare()` when compilation is enabled; the eager
         # paths are used until then, and again if compilation fails.
@@ -368,7 +378,8 @@ class RobustnessOptimizer:
             needs_fallback=imminent is not None,
             imminent_rule=imminent,
             worst_rule=self.rules.worst_violated(per_rule),
-            used_vmap=used_vmap,
+            # A later stage may have fallen back after sampling batched.
+            used_vmap=used_vmap and self._vmap_ok,
         )
 
     def _braking_can_help(self, inputs: RolloutInputs) -> bool:
@@ -407,28 +418,54 @@ class RobustnessOptimizer:
         """
         temperature = self.config.optimizer.temperature_start
         with torch.inference_mode():
-            if self._vmap_ok:
-                try:
-                    batch = self._compiled_batch or self._score_batch_eager
-                    signals, scores, merit, robustness = batch(candidates, inputs, temperature)
-                    return (
-                        signals.clone(),
-                        scores.clone(),
-                        merit.clone(),
-                        robustness.clone(),
-                        True,
-                    )
-                except (RuntimeError, TypeError, IndexError):
-                    # Batching is an optimization, not a requirement. Fall back
-                    # permanently rather than paying the failure every step.
-                    self._vmap_ok = False
+            batched = self._vmap_ok
+            batch = self._compiled_batch or self._score_batch_eager
+            signals, scores, merit, robustness = self._vmapped(
+                batch, self._score_batch_looped, candidates, inputs, temperature
+            )
+            used_vmap = batched and self._vmap_ok
+            return signals.clone(), scores.clone(), merit.clone(), robustness.clone(), used_vmap
 
-            signals = torch.stack([rollout(p, inputs, self.config) for p in candidates])
-            scores = torch.stack([self.rules.objective(s, **smooth(temperature)) for s in signals])
-            scored = [self.rules.merit_and_robustness(s) for s in signals]
-            merit = torch.stack([m for m, _ in scored])
-            robustness = torch.stack([r for _, r in scored])
-            return signals.clone(), scores.clone(), merit.clone(), robustness.clone(), False
+    def _vmapped(
+        self,
+        batched: Callable[_P, _T],
+        looped: Callable[_P, _T],
+        *args: _P.args,
+        **kwargs: _P.kwargs,
+    ) -> _T:
+        """``batched(*args, **kwargs)``, or ``looped(...)`` on the same
+        arguments once batching has failed.
+
+        Every batched stage of the search goes through here, so a ``vmap``
+        failure anywhere -- sampling, a refinement step, the final scoring --
+        degrades the whole step to the loop path rather than crashing it, and
+        `_vmap_ok` then keeps every later stage, and step, off the batched
+        path rather than paying the failure each time. The two paths compute
+        the same functions (``tests/test_rollout.py`` checks ``vmap`` against
+        a Python loop), so batching is an optimization, not a requirement.
+        """
+        if self._vmap_ok:
+            try:
+                return batched(*args, **kwargs)
+            except _VMAP_FAILURES:
+                logger.warning(
+                    "batched evaluation failed; using the loop path from now on",
+                    exc_info=True,
+                )
+                self._vmap_ok = False
+        return looped(*args, **kwargs)
+
+    def _score_batch_looped(
+        self,
+        candidates: torch.Tensor,
+        inputs: RolloutInputs,
+        temperature: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """:meth:`_score_batch_eager` one candidate at a time, without ``vmap``."""
+        signals = self._looped_rollout(candidates, inputs)
+        scores = torch.stack([self.rules.objective(s, **smooth(temperature)) for s in signals])
+        merit, robustness = self._looped_scores(signals)
+        return signals, scores, merit, robustness
 
     def _score_batch_eager(
         self,
@@ -511,7 +548,9 @@ class RobustnessOptimizer:
 
             adam.zero_grad(set_to_none=True)
             refine = self._compiled_refine or self._refine_losses
-            losses, signals = refine(params, inputs, temperature)
+            losses, signals = self._vmapped(
+                refine, self._refine_losses_looped, params, inputs, temperature
+            )
 
             # Score the iterates we just rolled out, before stepping away from
             # them -- the signals are already in hand, so this costs one
@@ -564,7 +603,15 @@ class RobustnessOptimizer:
     def _batched_rollout(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
         if params.shape[0] == 1:
             return rollout(params[0], inputs, self.config).unsqueeze(0)
+        return self._vmapped(self._batched_rollout_eager, self._looped_rollout, params, inputs)
+
+    def _batched_rollout_eager(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
+        """The batched body of :meth:`_batched_rollout`."""
         return torch.vmap(lambda p: rollout(p, inputs, self.config))(params)
+
+    def _looped_rollout(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
+        """Every plan's rollout, one at a time, without ``vmap``."""
+        return torch.stack([rollout(p, inputs, self.config) for p in params])
 
     def _batched_scores(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Exact objective and exact robustness for a batch, in one pass.
@@ -573,7 +620,7 @@ class RobustnessOptimizer:
         informative, and has no business deciding anything.
         """
         scores = self._compiled_scores or self._batched_scores_eager
-        return scores(signals)
+        return self._vmapped(scores, self._looped_scores, signals)
 
     def _batched_scores_eager(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """The body of :meth:`_batched_scores`, separated so it can be compiled."""
@@ -581,6 +628,11 @@ class RobustnessOptimizer:
             merit, robustness = self.rules.merit_and_robustness(signals[0])
             return merit.reshape(1), robustness.reshape(1)
         return torch.vmap(self.rules.merit_and_robustness)(signals)
+
+    def _looped_scores(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """:meth:`_batched_scores_eager` one signal at a time, without ``vmap``."""
+        scored = [self.rules.merit_and_robustness(s) for s in signals]
+        return torch.stack([m for m, _ in scored]), torch.stack([r for _, r in scored])
 
     def _refine_losses(
         self,
@@ -609,6 +661,21 @@ class RobustnessOptimizer:
             return loss.reshape(1), signal.unsqueeze(0)
         signals = torch.vmap(lambda p: rollout(p, inputs, self.config))(params)
         losses = torch.vmap(lambda s: -self.rules.objective(s, **smooth(temperature)))(signals)
+        return losses, signals
+
+    def _refine_losses_looped(
+        self,
+        params: torch.Tensor,
+        inputs: RolloutInputs,
+        temperature: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """:meth:`_refine_losses` one seed at a time, without ``vmap``.
+
+        Each seed's rollout reads its own row of *params*, so the summed loss's
+        gradient still lands in that row, as on the batched path.
+        """
+        signals = self._looped_rollout(params, inputs)
+        losses = torch.stack([-self.rules.objective(s, **smooth(temperature)) for s in signals])
         return losses, signals
 
 

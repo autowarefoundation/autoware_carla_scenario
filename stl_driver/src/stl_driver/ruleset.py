@@ -208,7 +208,8 @@ class RuleSet:
         it is judging, twice over.
 
         Equal to calling the two separately, which
-        :mod:`tests.test_ruleset` asserts directly -- the conjunction *is* the
+        ``tests/test_rules.py::test_the_combined_score_equals_the_two_it_replaces``
+        asserts directly -- the conjunction *is* the
         minimum over the rules, which is also what makes the per-rule breakdown
         in ``debug_scalars`` a genuine decomposition.
         """

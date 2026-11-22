@@ -20,7 +20,11 @@ and speaks to it one line at a time, each request answered by one line:
 ``{"op": "close"}``
     Answers ``{"ok": true}`` and exits.
 
-A request that cannot be served is answered ``{"ok": false, "error": "..."}``.
+A request that cannot be served is answered ``{"ok": false, "error": "..."}``:
+a line that is not UTF-8 or not JSON, an unknown ``op``, settings or a road
+user refused (a NaN or an infinity among its numbers, ``horizon_steps: 0``).
+Every request line gets its one answer, so the answers stay in step with the
+requests.  A blank line is no request and gets none.
 Logging goes to the standard error, never the output, which carries the
 answers alone: :func:`main` writes them on a duplicate of descriptor 1 and
 points descriptor 1 itself at the standard error, so that what CriMe,
@@ -35,6 +39,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from typing import IO, Any
 
 from .evaluator import MEASURES, Actor, Evaluator, EvaluatorSettings
@@ -66,13 +71,19 @@ class Worker:
         return {"ok": False, "error": f"unknown op {op!r}"}
 
 
-def serve(stdin: IO[str], stdout: IO[str]) -> None:
-    """Answer the requests on *stdin* on *stdout* until ``close`` or the end."""
+def serve(stdin: Iterable[str | bytes], stdout: IO[str]) -> None:
+    """Answer the requests on *stdin* on *stdout* until ``close`` or the end.
+
+    *stdin* is text, or bytes decoded here as UTF-8 one line at a time, inside
+    the request's ``try``: a line that is not UTF-8 is answered ``ok: false``
+    as any other bad request, rather than ending the worker.
+    """
     worker = Worker()
-    for line in stdin:
-        if not line.strip():
+    for raw in stdin:
+        if not raw.strip():
             continue
         try:
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             request = json.loads(line)
             response = worker.handle(request)
         except Exception as exc:
@@ -104,7 +115,9 @@ def main(argv: list[str] | None = None) -> int:
     stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        serve(sys.stdin, answers)
+        # Bytes, so that serve decodes each line itself (strictly, inside its
+        # try): a text stdin decodes as it iterates, outside it.
+        serve(sys.stdin.buffer, answers)
     finally:
         sys.stdout = stdout
         answers.close()
