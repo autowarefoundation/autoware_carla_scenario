@@ -75,6 +75,12 @@ uv run scenario scenario=lane_change/left
 uv run scenario scenario=temporary_stop/temporary_stop
 ```
 
+`uv run scenario --help` prints Hydra's help -- the config groups and the
+composed config -- followed by the runner's own flags, which it reads before
+Hydra sees the command line: `--resume-from N` and `--resume-into DIR`
+([Resume from a Specific Scenario](#resume-from-a-specific-scenario)) and
+`--no-wait` ([SLURM](slurm.md)). `--hydra-help` is Hydra's own help.
+
 ### Batch Execution with Glob Patterns
 
 When the `scenario=` value contains glob metacharacters (`*`, `?`, `[`), all matching scenario configs are executed sequentially in a single CARLA session:
@@ -1752,7 +1758,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
 | 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, a batch's command line that does not compose (an override of a key the config does not have: `Error: <scenario>: could not override ...`), a batch's `hydra.run.dir=` (`hydra.sweep.dir=`) that is not empty or is given with `--resume-into`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
-| 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
+| 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running. Ctrl-C prints `scenario: interrupted` rather than a traceback, and the process still dies by `SIGINT`, as Python's own does, so a parent sees the signal (a shell's 130) |
 
 The same codes hold however the cases run: a single run, a glob batch, a
 `--multirun` (each case of the scenario's sweep in one batch,
@@ -1887,6 +1893,8 @@ Detects lanelets that do not have a matching 3D ground model in CARLA. Useful fo
 5. Writes the detected IDs to the YAML configuration's `no_3d_model_lanelet_ids` field
 
 The IDs go into `no_3d_model_lanelet_ids` in the YAML's `map:` section when it has one, and at the top level otherwise (the same place the map settings are read from). An existing value is replaced whatever its style (a block list, a flow list such as `[1, 2]`, an empty value, `null`); a missing key is added after the section's last entry. The file is edited as text, so comments, `${...}` interpolations and line endings are kept, and it is replaced atomically (a symlinked YAML is written through to its target). The edited text is parsed again first: if anything other than that one value would change -- or the section cannot be edited as text, e.g. `map: {name: X}` -- the tool exits with an error, prints the detected IDs, and leaves the file as it was.
+
+Ctrl-C prints `detect-no-3d-model: interrupted` and exits 130.
 
 ### Usage
 

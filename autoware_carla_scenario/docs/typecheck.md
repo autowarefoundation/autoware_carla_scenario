@@ -52,7 +52,13 @@ raises (an error of the checker itself, not a verdict on the scenario) fails tha
 `[FAILED] <config>: checker error: <exception>`, its traceback goes to
 stderr, the other configs are still checked and reported, and the exit
 status is 1, as for any failed config (`--library` likewise reports
-`[FAILED] library check: checker error: ...` and exits with 1). A scenario package
+`[FAILED] library check: checker error: ...` and exits with 1). Its flags
+are `-h`/`--help` and `--library`: any other argument that starts with `-`
+(a typo such as `--libary`) is refused with
+`Error: scenario-check does not take <flag>` and exit 2, rather than read as
+an override, as `scenario-expand` refuses one; overrides (`key=value`,
+`+key=value`, `++key=value`, `~key`) are passed on. Ctrl-C prints
+`scenario-check: interrupted` and exits 130. A scenario package
 can make the same check in its own tests, with no simulator (the template and
 `scenario-new` packages have one in `tests/test_typecheck.py`):
 
@@ -2386,6 +2392,11 @@ assert result.ok, result.format()
 ```
 
 `test_typecheck_library.py` makes the same check in the test suite.
+
+A name after `--library` that is not a module of the package, or that
+`typecheck/library.py` lists as `EXCLUDED`, is refused (`[FAILED] ...`, exit
+1) before Codon is looked for, so the refusal is the same whether Codon is
+installed or not.
 
 **The checked modules get the None check too** (#277), as a scenario's
 modules do: after the compile, mypy runs over every module the run compiled,

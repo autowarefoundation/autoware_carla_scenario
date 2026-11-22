@@ -61,7 +61,9 @@ run ends with its verdict, which can be well before 9 s. A log whose last
 line is cut off is read without it, as for a [T4 Scene](t4_scene.md); a
 log that fails does not stop the others, and the command exits 1. An
 option out of range (`--current-index` below 0, `--steps` below 1, an empty
-`--scenario-id`) is refused before any log is read, naming the option. Two
+`--scenario-id`) is refused before any log is read, naming the option, and so
+is a path that does not exist, as a directory with no log under it is (exit
+2). Ctrl-C prints `scenario-wosac: interrupted` and exits 130. Two
 `--object-ids` keys of one role (`ego` and `hero`) are refused.
 
 ### `pack`

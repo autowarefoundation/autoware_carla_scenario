@@ -94,6 +94,10 @@ uv run scenario-t4scene outputs/2026-10-29/10-00-00
 uv run scenario-t4scene outputs/.../CutInScenario.trajectory.jsonl -o scenes/ --step 0.05 --all-objects
 ```
 
+A path that does not exist, or a directory with no log under it, is a usage
+error (exit 2) before anything is written. Ctrl-C prints
+`scenario-t4scene: interrupted` and exits 130.
+
 A log whose last line is cut off -- a run killed while it wrote its last
 tick -- is converted without that line, with a warning; a line that is not
 JSON before the last, or a record that cannot be used, fails the log with

@@ -1,0 +1,31 @@
+# `scenario --help`: Hydra's help (the config groups and the composed config),
+# headed by what the command does and followed by the runner's own flags,
+# which it takes off the command line before Hydra reads it (docs/usage.md).
+defaults:
+  - default
+  - _self_
+
+app_name: scenario
+
+header: |
+  scenario: run a scenario, or a batch of the scenarios a glob names
+  (docs/usage.md).
+
+    scenario [--multirun] [scenario=<name or glob>] [key=value ...] [runner flags]
+
+footer: |
+  == Runner flags ==
+  Read by the runner itself, not by Hydra (docs/usage.md):
+
+    --resume-from N    start a batch (a scenario glob, or launcher=slurm) or a
+                       lanelet sweep at its Nth case (1-indexed)
+    --resume-into DIR  resume a local batch in its own output directory DIR,
+                       replacing the outputs of the cases it runs again
+    --no-wait          launcher=slurm: submit the batch and exit, without
+                       waiting for it (scenario-slurm wait follows it)
+
+  Exit status: 0 every scenario passed, 1 one failed or errored, 2 refused
+  before anything ran, 130 Ctrl-C, 143 SIGTERM.
+
+  Powered by Hydra (https://hydra.cc)
+  Use --hydra-help to view Hydra specific help

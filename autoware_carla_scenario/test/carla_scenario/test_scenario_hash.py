@@ -47,7 +47,9 @@ def test_every_section_of_the_runs_config_is_hashed_or_not() -> None:
     for default in config.defaults:
         if isinstance(default, str):
             continue  # _self_
-        sections.update(str(key) for key in default if not str(key).startswith("hydra"))
+        # Hydra's own groups (`override hydra/help: ...`) are no section.
+        groups = (str(key).removeprefix("override ") for key in default)
+        sections.update(group for group in groups if not group.startswith("hydra"))
     assert not set(SCENARIO_SECTIONS) & set(OTHER_SECTIONS)
     assert sections <= set(SCENARIO_SECTIONS) | set(OTHER_SECTIONS), sorted(
         sections - set(SCENARIO_SECTIONS) - set(OTHER_SECTIONS)

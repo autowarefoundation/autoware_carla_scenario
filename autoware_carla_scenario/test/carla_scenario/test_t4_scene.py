@@ -1180,8 +1180,8 @@ def test_cli_takes_a_log_as_named_and_every_log_under_a_directory_sorted(
     (runs / "d" / "dir.trajectory.jsonl").mkdir(parents=True)
     (runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl").write_text("")
     given = tmp_path / "any-name.txt"  # a file is taken as it is named
-    missing = tmp_path / "missing.trajectory.jsonl"  # and so is a missing one
-    code = main([str(given), str(runs), str(missing), str(given), "--no-map"])
+    given.write_text("")
+    code = main([str(given), str(runs), str(given), "--no-map"])
     assert code == 0
     assert [log for log, _ in calls] == [
         given,
@@ -1192,7 +1192,6 @@ def test_cli_takes_a_log_as_named_and_every_log_under_a_directory_sorted(
         runs / "d" / "dir.trajectory.jsonl",
         runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl",
         runs / "Ä" / "V.trajectory.jsonl",
-        missing,
     ]
     assert all(output is None for _, output in calls)
     out = capsys.readouterr().out
@@ -1236,6 +1235,38 @@ def test_cli_refuses_an_empty_directory_byte_for_byte(
     line = _cli_error(capsys, [str(tmp_path / "empty"), "--no-map"])
     assert line == "scenario-t4scene: error: no trajectory log found\n"
     assert calls == []
+
+
+def test_cli_refuses_a_path_that_does_not_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A usage error, as an empty directory is, not [Errno 2] and exit 1 (#2333).
+    calls = _recording_cli(monkeypatch)
+    log = tmp_path / "Run.trajectory.jsonl"
+    log.write_text("")
+    missing = tmp_path / "missing.trajectory.jsonl"
+    line = _cli_error(capsys, [str(log), str(missing), "--no-map"])
+    assert line == f"scenario-t4scene: error: {missing}: no such file or directory\n"
+    assert calls == []
+
+
+def test_cli_ctrl_c_prints_one_line_and_exits_130(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import autoware_carla_scenario.t4_scene.__main__ as cli
+
+    def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "write_t4_scene", interrupted)
+    (tmp_path / "Run.trajectory.jsonl").write_text("")
+    assert main([str(tmp_path), "--no-map"]) == 130
+    captured = capsys.readouterr()
+    assert captured.err == "scenario-t4scene: interrupted\n"
 
 
 @pytest.mark.parametrize(

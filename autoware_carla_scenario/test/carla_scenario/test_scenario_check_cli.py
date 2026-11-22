@@ -339,3 +339,136 @@ def test_a_skipped_library_check_is_not_a_pass(
     out = capsys.readouterr().out
     assert code == 2
     assert "[SKIPPED] library: static check skipped" in out
+
+
+# The command line (#2333): its flags, the overrides it passes on, the
+# modules --library refuses before any Codon, and Ctrl-C.
+def _no_codon_lookup() -> object:
+    raise AssertionError("Codon is not looked for")
+
+
+@pytest.mark.parametrize(
+    ("argv", "flag"),
+    [
+        (["--libary"], "--libary"),
+        (["scenario=cut_in/left", "--cfg", "job"], "--cfg"),
+        (["--resume-from=3"], "--resume-from"),
+        (["--library", "--verbose"], "--verbose"),
+        (["--library", "autoware_carla_scenario.kinematics.vector", "-x"], "-x"),
+        (
+            ["--library=autoware_carla_scenario.nope"],
+            "--library=autoware_carla_scenario.nope",
+        ),
+    ],
+)
+def test_a_flag_it_does_not_take_is_refused(
+    argv: list[str],
+    flag: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+
+    monkeypatch.setattr(cli, "find_supported_codon", _no_codon_lookup)
+    code = main(argv)
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.err == f"Error: scenario-check does not take {flag}\n"
+    assert captured.out == ""
+
+
+def test_hydra_overrides_are_passed_on(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+    from autoware_carla_scenario.typecheck.check import (  # noqa: PLC0415
+        TypeCheckResult,
+    )
+
+    checked: list[dict[str, Any]] = []
+
+    def check(name: str, scenario: object, *, toolchain: object) -> TypeCheckResult:
+        checked.append(dict(scenario))  # type: ignore[call-overload]
+        return TypeCheckResult(name, ok=True)
+
+    monkeypatch.setattr(cli, "find_supported_codon", _fake_toolchain)
+    monkeypatch.setattr(cli, "typecheck_registered", check)
+    code = main(
+        [
+            "scenario=cut_in/left",
+            "+scenario.extra_key=1",
+            "++scenario.timeout_seconds=5",
+            "~scenario.hold_seconds",
+        ]
+    )
+    captured = capsys.readouterr()
+    out = captured.out
+    assert code == 0, captured.err
+    assert "[ok] cut_in/left" in out
+    [scenario] = checked
+    assert scenario["extra_key"] == 1
+    assert scenario["timeout_seconds"] == 5
+    assert "hold_seconds" not in scenario
+
+
+@pytest.mark.parametrize("codon", [True, False], ids=["codon", "no-codon"])
+@pytest.mark.parametrize(
+    ("module", "message"),
+    [
+        (
+            "autoware_carla_scenario.nope",
+            "autoware_carla_scenario.nope is not a module of autoware_carla_scenario "
+            "the check can compile",
+        ),
+        (
+            "autoware_carla_scenario.wosac.pack",
+            "autoware_carla_scenario.wosac.pack is EXCLUDED in typecheck/library.py",
+        ),
+    ],
+)
+def test_a_library_module_it_refuses_fails_with_codon_or_without(
+    codon: bool,
+    module: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Exit 1 either way, never 2 for a missing Codon (#2288).
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+    from autoware_carla_scenario.typecheck.toolchain import (  # noqa: PLC0415
+        ToolchainError,
+    )
+
+    def no_codon() -> object:
+        raise ToolchainError("no Codon here")
+
+    def compiled(*_: object, **__: object) -> object:
+        raise AssertionError("nothing is compiled")
+
+    monkeypatch.setattr(
+        cli, "find_supported_codon", _fake_toolchain if codon else no_codon
+    )
+    monkeypatch.setattr(cli, "typecheck_library", compiled)
+    code = main(["--library", module])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out.startswith("[FAILED] ")
+    assert message in captured.out
+    assert "no Codon here" not in captured.err
+
+
+def test_ctrl_c_prints_one_line_and_exits_130(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+
+    def library(modules: object, *, toolchain: object) -> object:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "find_supported_codon", _fake_toolchain)
+    monkeypatch.setattr(cli, "typecheck_library", library)
+    code = main(["--library"])
+    captured = capsys.readouterr()
+    assert code == 130
+    assert captured.err == "scenario-check: interrupted\n"
+    assert captured.out == ""

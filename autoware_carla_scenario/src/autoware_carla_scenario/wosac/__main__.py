@@ -64,6 +64,10 @@ def _export(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.scenario_id is not None and not args.scenario_id:
         # Stored as none, which pack would refuse later (#2265).
         parser.error("--scenario-id must not be empty")
+    missing = next((path for path in args.paths if not path.exists()), None)
+    if missing is not None:
+        # A usage error, as a directory holding no log is (#2333).
+        parser.error(f"{missing}: no such file or directory")
     logs = trajectory_logs(args.paths)
     if not logs:
         parser.error("no trajectory log found")
@@ -162,6 +166,15 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """Ctrl-C prints one line, not a traceback, and exits 130 (#2333)."""
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        print("scenario-wosac: interrupted", file=sys.stderr)  # noqa: T201
+        return 130
+
+
+def _main(argv: Optional[list[str]]) -> int:
     parser = argparse.ArgumentParser(prog="scenario-wosac", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
