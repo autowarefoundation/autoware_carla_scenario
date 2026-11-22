@@ -9,19 +9,23 @@ import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
+    Response,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.convertors import Convertor, register_url_convertor
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
@@ -98,6 +102,46 @@ app = FastAPI(title="Scenario Result Viewer", lifespan=_lifespan)
 app.add_middleware(RequestGuard, hosts=HOSTS)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+def _wants_page(request: Request) -> bool:
+    """Whether an error is answered with a page: a request that accepts HTML
+    (a browser's navigation) and is not one of the API's, whose clients read
+    its JSON error (``{"detail": ...}``)."""
+    path = request.url.path
+    if path == "/api" or path.startswith("/api/"):
+        return False
+    return "text/html" in request.headers.get("accept", "").lower()
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: Exception) -> Response:
+    """A missing session or case (or any other HTTP error) as a page with a
+    way back to the sessions list, for a browser (#2344); JSON, as FastAPI
+    answers it, for ``/api/*`` and for a client that does not accept HTML."""
+    if not isinstance(exc, StarletteHTTPException) or not _wants_page(request):
+        return await http_exception_handler(request, exc)  # type: ignore[arg-type]
+    try:
+        phrase = HTTPStatus(exc.status_code).phrase
+    except ValueError:
+        phrase = "Error"
+    # A detail of its own, not the status's phrase (starlette's default).
+    detail = exc.detail if isinstance(exc.detail, str) and exc.detail != phrase else ""
+    if exc.status_code == 404 and not detail:
+        detail = "There is no such session or case here."
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context={
+            "heading": "Not found" if exc.status_code == 404 else phrase,
+            "message": detail,
+            "status_code": exc.status_code,
+            "page": "error",
+        },
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
+
 
 # Base path for multirun/ and outputs/ directories.
 # Resolved at startup; can be overridden via environment variable.
@@ -368,11 +412,22 @@ async def session_detail(
 async def scenario_detail(
     request: Request, session_type: str, date: str, time: str, index: int
 ) -> HTMLResponse:
-    """Individual scenario detail page with condition tree."""
+    """Individual scenario detail page with condition tree.
+
+    404 for a case the session does not have (#2344): a multirun session's
+    job that is not there, an index past a batch's cases, any but 0 of a
+    single run.  A case that is there but has no result yet (a job still
+    running, a batch's pending case) is served, saying so.
+    """
     _session_dir_or_404(session_type, date, time)
-    result = scanner.load_scenario(_base_path(), session_type, date, time, index)
     # Also load session items for navigation context
     items = scanner.load_session(_base_path(), session_type, date, time)
+    # A single run is its directory, listed only once its result is there.
+    if not any(it.index == index for it in items) and not (
+        session_type == "single" and index == 0
+    ):
+        raise HTTPException(status_code=404, detail="This session has no such case.")
+    result = scanner.load_scenario(_base_path(), session_type, date, time, index)
     scenario_name = ""
     for it in items:
         if it.index == index:

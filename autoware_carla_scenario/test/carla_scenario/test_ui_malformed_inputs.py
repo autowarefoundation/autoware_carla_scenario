@@ -74,7 +74,8 @@ def test_a_malformed_manifest_does_not_break_the_listing(
     _slurm_batch(base, {"cases": case_list})
     assert client.get("/").status_code == 200
     assert client.get(f"/session/batch/{DATE}/{TIME}").status_code == 200
-    assert client.get(f"/session/batch/{DATE}/{TIME}/0").status_code == 200
+    # The batch has no case to read: no such case (#2344), and no 500.
+    assert client.get(f"/session/batch/{DATE}/{TIME}/0").status_code == 404
     assert client.get(f"/compare?s=batch/{DATE}/{TIME}").status_code == 200
 
 

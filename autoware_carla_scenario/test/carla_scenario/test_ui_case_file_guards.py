@@ -143,7 +143,8 @@ def test_a_zero_padded_directory_is_no_job(base: Path, client: TestClient) -> No
     assert [it.index for it in items] == [0]
     found = results.load_results(base, "multirun", DATE, "10-00-00", metrics=False)
     assert [c.index for c in found] == [0]
-    assert client.get(f"/session/multirun/{DATE}/10-00-00/1").status_code == 200
+    # No job 1 (``01`` is none): no such case (#2344).
+    assert client.get(f"/session/multirun/{DATE}/10-00-00/1").status_code == 404
 
 
 # ── Sessions that do not exist ──────────────────────────────────────────────

@@ -31,7 +31,11 @@
       </div>
     </div>
     <div class="text-right">
-      {% if passed_count == total_count %}
+      {% if total_count == 0 %}
+        {#- No case yet: neither passed nor failed (#2344). #}
+        <div class="text-3xl font-bold text-gray-400">0/0</div>
+        <div class="text-sm text-gray-500">No results yet</div>
+      {% elif passed_count == total_count %}
         <div class="text-3xl font-bold text-green-600">{{ passed_count }}/{{ total_count }}</div>
         <div class="text-sm text-green-600">All passed</div>
       {% else %}
@@ -42,10 +46,11 @@
   </div>
 
   <!-- Pass rate bar -->
-  <div class="mt-3 w-full bg-gray-200 rounded-full h-3">
-    {% set pct = (passed_count / total_count * 100) if total_count > 0 else 0 %}
-    <div class="h-3 rounded-full {% if passed_count == total_count %}bg-green-500{% else %}bg-green-500{% endif %}"
-         style="width: {{ pct | round(1) }}%"></div>
+  <div class="mt-3 w-full bg-gray-200 rounded-full h-3" id="pass-rate-bar">
+    {% if total_count > 0 %}
+    <div class="h-3 rounded-full bg-green-500"
+         style="width: {{ (passed_count / total_count * 100) | round(1) }}%"></div>
+    {% endif %}
   </div>
 
   <!-- Result filter -->

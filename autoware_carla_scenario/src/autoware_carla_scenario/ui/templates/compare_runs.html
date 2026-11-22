@@ -31,7 +31,10 @@
         <span class="text-xs text-gray-500 truncate" title="{{ run.case.message }}">{{ run.case.message }}</span>
       {% endif %}
     </div>
-    {% if run.recording and (run.recording.rrd or converter) and viewer.base_url %}
+    {#- downloadable, as the scenario page tests it: a recording made already
+        (beside the log, or in the cache) and no older than the log, or the
+        converter to make it (#2344). #}
+    {% if run.recording and run.recording.downloadable and viewer.base_url %}
     <div class="rerun-pane w-full h-[600px] bg-gray-900 rounded-lg shadow overflow-hidden" data-make-url="{{ run.recording.make_url }}"></div>
     <p class="rerun-status mt-1 text-sm" hidden></p>
     {% elif run.recording %}
