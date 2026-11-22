@@ -94,20 +94,45 @@ _MIN_EXTENT_M = 0.1
 _ACTOR_NUMBERS = ("x", "y", "yaw", "vx", "vy", "ax", "ay", "yaw_rate", "length", "width")
 
 
+class NonFiniteError(ValueError):
+    """A number that must be finite is not: a NaN, an infinity or an int too
+    big for a float.  A ``ValueError`` as any other refusal; told apart so
+    that the worker can answer a frame holding one with its measures failed,
+    a reading gone bad in one frame, rather than the request refused
+    (:func:`failed_frame`)."""
+
+
 def _finite(name: str, value: Any) -> float:
     """*value* as a float, refused (``ValueError`` naming *name*) unless it is
-    a finite number.  A NaN read as a speed or a headway gives the least
-    critical value (TTC ``inf``, ALongReq ``0``), and one read as a position
-    makes every measure ``None``: neither says the input was bad."""
+    a finite number -- :class:`NonFiniteError` when it is a number but not
+    finite.  A NaN read as a speed or a headway gives the least critical value
+    (TTC ``inf``, ALongReq ``0``), and one read as a position makes every
+    measure ``None``: neither says the input was bad."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be a number, got {value!r}")
     try:
         number = float(value)
     except OverflowError:  # an int too big for a float
-        raise ValueError(f"{name} must be finite, got an int too big for a float") from None
+        raise NonFiniteError(f"{name} must be finite, got an int too big for a float") from None
     if not math.isfinite(number):
-        raise ValueError(f"{name} must be finite, got {number!r}")
+        raise NonFiniteError(f"{name} must be finite, got {number!r}")
     return number
+
+
+#: The error a measure that is not one of :data:`MEASURES` fails with.
+UNKNOWN_MEASURE = "unknown measure"
+
+
+def failed_frame(
+    measures: Iterable[str], error: str
+) -> tuple[dict[str, float | None], dict[str, str]]:
+    """What :meth:`Evaluator.evaluate` gives for a frame none of whose
+    *measures* could be evaluated: each known one ``None``, failed with
+    *error*; each unknown one failed with :data:`UNKNOWN_MEASURE`, as ever."""
+    wanted = list(dict.fromkeys(measures))
+    values: dict[str, float | None] = {m: None for m in wanted if m in MEASURES}
+    errors = {m: error if m in MEASURES else UNKNOWN_MEASURE for m in wanted}
+    return values, errors
 
 
 #: The CommonRoad obstacle type of each kind of road user the frame names.
@@ -138,7 +163,9 @@ class Actor:
         length, width: Its box (m).
 
     Every number but ``id`` must be finite: a NaN or an infinity is refused
-    with a ``ValueError`` naming the field (the worker answers ``ok: false``).
+    with a :class:`NonFiniteError` naming the field (the worker answers the
+    frame with each measure ``null`` and failed with that message), anything
+    but a number with a ``ValueError`` (the worker answers ``ok: false``).
     """
 
     id: int
@@ -451,7 +478,7 @@ class Evaluator:
         wanted = list(dict.fromkeys(measures))
         unknown = [m for m in wanted if m not in MEASURES]
         values: dict[str, float | None] = {}
-        errors: dict[str, str] = {m: "unknown measure" for m in unknown}
+        errors: dict[str, str] = {m: UNKNOWN_MEASURE for m in unknown}
         wanted = [m for m in wanted if m not in unknown]
         if not wanted:
             return values, errors

@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from commonroad_metrics import CRIME_MEASURES, MEASURES, Actor, Evaluator, EvaluatorSettings
+from commonroad_metrics.evaluator import NonFiniteError
 from commonroad_metrics.worker import serve
 
 MAP = Path(__file__).parent / "data" / "straight.xml"
@@ -167,25 +168,82 @@ def test_a_road_user_with_a_number_that_is_no_float_is_refused(bad: Any) -> None
         Actor.from_mapping(fields)
 
 
-def test_the_worker_answers_a_non_finite_road_user_not_ok_and_reads_on() -> None:
+def test_a_non_finite_number_is_told_apart_from_one_that_is_no_number() -> None:
+    """The worker fails a frame's measures on the first, refuses the request
+    on the second."""
+    fields = on_road(50, 1.75, 15.0, 1).__dict__
+    for bad in (math.nan, math.inf, 10**400):
+        with pytest.raises(NonFiniteError):
+            Actor.from_mapping({**fields, "vx": bad})
+    for bad in ("15", None, True):
+        with pytest.raises(ValueError) as refused:
+            Actor.from_mapping({**fields, "vx": bad})
+        assert not isinstance(refused.value, NonFiniteError)
+
+
+def test_the_worker_fails_the_measures_of_a_non_finite_frame_and_reads_on() -> None:
+    """#2342: a NaN in one road user of one frame fails that frame's measures
+    -- ``ok: true``, each ``null`` with the message -- rather than the
+    request, which made the framework give up every CommonRoad metric of the
+    run; the next frame is evaluated as ever."""
     ego: dict[str, Any] = on_road(50, 1.75, 15.0, 1).__dict__
     lead: dict[str, Any] = on_road(80, 1.75, 5.0, 2).__dict__
-    evaluate: dict[str, Any] = {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": ego}
+    measures = ["crime_ttc_s", "reach_drivable_area_m2", "crime_ttc_s"]
+    evaluate: dict[str, Any] = {"op": "evaluate", "measures": measures, "ego": ego}
     requests = [
         {"op": "init", "map": str(MAP)},
         {**evaluate, "others": [{**lead, "vx": math.nan}]},  # json writes NaN
         {**evaluate, "ego": {**ego, "x": math.inf}, "others": [lead]},
-        {**evaluate, "others": [lead]},
+        {**evaluate, "measures": ["crime_ttc_s", "nope"], "others": [{**lead, "y": -math.inf}]},
+        {**evaluate, "measures": ["crime_ttc_s"], "others": [lead]},
     ]
     stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
     stdout = io.StringIO()
     serve(stdin, stdout)
     answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
-    assert len(answers) == 4
-    assert answers[1] == {"ok": False, "error": "ValueError: vx must be finite, got nan"}
-    assert answers[2] == {"ok": False, "error": "ValueError: x must be finite, got inf"}
-    assert answers[3]["ok"]
-    assert answers[3]["values"]["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
+    assert len(answers) == 5
+    nan = "vx must be finite, got nan"
+    assert answers[1] == {
+        "ok": True,
+        "values": {"crime_ttc_s": None, "reach_drivable_area_m2": None},
+        "errors": {"crime_ttc_s": nan, "reach_drivable_area_m2": nan},
+    }
+    inf = "x must be finite, got inf"
+    assert answers[2] == {
+        "ok": True,
+        "values": {"crime_ttc_s": None, "reach_drivable_area_m2": None},
+        "errors": {"crime_ttc_s": inf, "reach_drivable_area_m2": inf},
+    }
+    # An unknown measure is unknown still.
+    assert answers[3] == {
+        "ok": True,
+        "values": {"crime_ttc_s": None},
+        "errors": {"crime_ttc_s": "y must be finite, got -inf", "nope": "unknown measure"},
+    }
+    assert answers[4]["ok"] and answers[4]["errors"] == {}
+    assert answers[4]["values"]["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
+
+
+@pytest.mark.parametrize(
+    ("ego", "error"),
+    [
+        ({"id": 1, "kind": "car", "x": 50.0, "y": 1.75}, "TypeError: "),  # no yaw
+        ({**on_road(50, 1.75, 15.0, 1).__dict__, "vx": "15"}, "ValueError: vx must be a number"),
+        ({**on_road(50, 1.75, 15.0, 1).__dict__, "vx": None}, "ValueError: vx must be a number"),
+    ],
+)
+def test_the_worker_refuses_a_malformed_road_user(ego: dict[str, Any], error: str) -> None:
+    """A field missing or of the wrong type is out of protocol: ``ok: false``."""
+    requests = [
+        {"op": "init", "map": str(MAP)},
+        {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": ego},
+    ]
+    stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert answers[1]["ok"] is False
+    assert answers[1]["error"].startswith(error)
 
 
 @pytest.mark.parametrize(

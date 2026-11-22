@@ -2182,13 +2182,15 @@ def test_the_batch_check_refuses_a_bad_metrics_heavy_in_any_case(
 
 #: A worker that knows the measures ``sys.argv[1]`` (a JSON list), answers
 #: each ``evaluate`` with ``sys.argv[2]`` (a JSON object, ``ok`` added) after
-#: sleeping ``sys.argv[3]`` seconds, and logs every request to ``sys.argv[4]``.
+#: sleeping ``sys.argv[3]`` seconds, and logs every request to ``sys.argv[4]``;
+#: the first ``evaluate`` with ``sys.argv[5]`` instead, when given.
 _ANSWERS_WITH = textwrap.dedent(
     """
     import json, sys, time
 
     measures, answer = json.loads(sys.argv[1]), json.loads(sys.argv[2])
     delay, log = float(sys.argv[3]), open(sys.argv[4], "a")
+    first = json.loads(sys.argv[5]) if len(sys.argv) > 5 else answer
     for line in sys.stdin:
         request = json.loads(line)
         log.write(line)
@@ -2198,7 +2200,8 @@ _ANSWERS_WITH = textwrap.dedent(
             reply = {"ok": True, "measures": measures}
         elif op == "evaluate":
             time.sleep(delay)
-            reply = {"ok": True, **answer}
+            reply = {"ok": True, **first}
+            first = answer
         else:
             reply = {"ok": True}
         sys.stdout.write(json.dumps(reply) + "\\n")
@@ -2214,9 +2217,11 @@ def _answering(
     measures: list[str],
     answer: dict[str, Any],
     delay: float = 0.0,
+    first: Optional[dict[str, Any]] = None,
     **settings: Any,
 ) -> Path:
-    """Configure the workers to run :data:`_ANSWERS_WITH`; its request log."""
+    """Configure the workers to run :data:`_ANSWERS_WITH`, each answering its
+    first frame *first* when given; its request log."""
     script = tmp_path / "answers_with.py"
     script.write_text(_ANSWERS_WITH)
     log = tmp_path / "requests.jsonl"
@@ -2228,6 +2233,7 @@ def _answering(
             json.dumps(answer),
             str(delay),
             str(log),
+            *([] if first is None else [json.dumps(first)]),
         ),
         cache_dir=tmp_path / "maps",
         **{"workers": 1, **settings},
@@ -2319,6 +2325,37 @@ def test_a_metric_failing_in_every_frame_fails_the_run(
     # The metric that reads is read.
     series = evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
     assert series[CRIME_TTC_S].values == [1.0, 1.0, 1.0]
+
+
+def test_a_frame_failing_every_metric_reads_nothing_and_the_run_reads_on(
+    opendrive: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2342: the worker answers a frame with a NaN reading with every metric
+    failed; those read nothing in that frame alone, with a warning, and the
+    other frames are read."""
+    nan = "vx must be finite, got nan"
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S, CRIME_HW_M],
+        {"values": {CRIME_TTC_S: 1.0, CRIME_HW_M: 2.0}, "errors": {}},
+        first={
+            "values": {CRIME_TTC_S: None, CRIME_HW_M: None},
+            "errors": {CRIME_TTC_S: nan, CRIME_HW_M: nan},
+        },
+        period_s=0.5,
+    )
+    world = _following(opendrive)
+    with caplog.at_level(logging.WARNING):
+        series = evaluate_metrics(
+            _recorded(world, TIMES), world.get_map(), [CRIME_TTC_S, CRIME_HW_M]
+        )
+    assert series[CRIME_TTC_S].values == [None, 1.0, 1.0]
+    assert series[CRIME_HW_M].values == [None, 2.0, 2.0]
+    assert f"CommonRoad metric crime_ttc_s reads nothing: {nan}" in caplog.text
+    assert f"CommonRoad metric crime_hw_m reads nothing: {nan}" in caplog.text
+    # The workers are fine, and kept.
+    (worker,) = cr_session._POOL.workers
+    assert worker.running()
 
 
 def test_a_metric_reading_nothing_with_no_one_to_measure_from_passes(
