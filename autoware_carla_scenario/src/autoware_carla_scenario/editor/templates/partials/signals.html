@@ -7,7 +7,13 @@
    to choose.
 
    Every control posts on change and swaps the whole body, like the rest of the
-   inspector, so a rename reaches the lists that offer the name immediately. #}
+   inspector, so a rename reaches the lists that offer the name immediately.
+
+   A row's form posts to a URL holding the row's position, so it also names
+   the row (`row`, and a phase its controller in `parent_row`: what they were
+   called when rendered): an edit reaching the server after a row before it
+   was removed is refused rather than applied to the row that moved up, and
+   editor.js does not carry a pending change across a swap onto it (#2348). #}
 
 {%- set groups = document.map.signal_groups -%}
 {%- set controllers = document.map.traffic_signal_controllers -%}
@@ -47,6 +53,7 @@
           hx-post="/draft/{{ draft.id }}/signal-group/{{ loop.index0 }}"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
       <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+      <input type="hidden" name="row" value="{{ group.name }}" data-row data-row-field="name">
       <div class="ed-field">
         <label class="ed-labelled"><span class="ed-label">Name</span>
         <input type="text" name="name" class="ed-input mono" value="{{ group.name }}"></label>
@@ -118,6 +125,7 @@
           hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
       <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+      <input type="hidden" name="row" value="{{ controller.name }}" data-row data-row-field="name">
       <div class="ed-field">
         <label class="ed-labelled"><span class="ed-label">Name</span>
         <input type="text" name="name" class="ed-input mono" value="{{ controller.name }}"></label>
@@ -184,6 +192,9 @@
                 hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}"
                 hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
             <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+            <input type="hidden" name="row" value="{{ phase.name }}" data-row data-row-field="name">
+            <input type="hidden" name="parent_row" value="{{ controller.name }}" data-row
+                   data-row-form="/draft/{{ draft.id }}/signal-controller/{{ ci }}">
             <div class="ed-field">
               <label class="ed-labelled"><span class="ed-label">Name</span>
               <input type="text" name="name" class="ed-input mono" value="{{ phase.name }}"></label>

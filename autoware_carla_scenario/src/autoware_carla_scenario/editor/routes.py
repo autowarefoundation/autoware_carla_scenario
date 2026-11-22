@@ -11,7 +11,7 @@ banner from ever disagreeing with each other.
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator, Mapping, Optional
+from typing import Any, Iterator, Mapping, Optional, Sequence
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
@@ -38,6 +38,7 @@ from .service import (
     EditorError,
     EditorService,
     StagedArchive,
+    StaleDraftError,
     as_port,
     find_constraint,
 )
@@ -62,6 +63,13 @@ def _service(request: Request) -> EditorService:
 #: The hidden field every inspector form carries: the draft revision it was
 #: rendered from, which the edit is refused against when it is out of date.
 REVISION_FIELD = "draft_revision"
+
+#: The hidden field an inspector form that names its row by position carries:
+#: what that row was called when the form was rendered (#2348).
+ROW_FIELD = "row"
+
+#: Likewise for the row that row belongs to: a phase's controller.
+PARENT_ROW_FIELD = "parent_row"
 
 #: The header ``editor.js`` sends with every request: a token naming the page
 #: (one tab's one load of the editor) the request comes from.
@@ -195,6 +203,47 @@ def describe_validation_error(exc: ValidationError) -> str:
             given = given[: _MAX_SHOWN_INPUT - 3] + "..."
         clauses.append(f"{field}: {error['msg']} (got {given})")
     return "Invalid value -- " + "; ".join(clauses) + "."
+
+
+def _check_row(
+    draft_id: str,
+    form: Mapping[str, Any],
+    rows: Sequence[Any],
+    index: int,
+    attribute: str,
+    *,
+    field: str = ROW_FIELD,
+    renamed_by: Optional[str] = None,
+) -> None:
+    """Refuse a form whose row index now points at another row.
+
+    The signal group, controller and phase forms and a waypoint condition's
+    vertex post to a URL holding the row's position, and are checked leniently
+    (:meth:`~EditorService.check_revision`): a page's own quick edits pass.
+    One of those may have removed or reordered the rows, so the form also
+    names its row by its *attribute* when rendered (*field*), and is refused
+    when the row now at its position has another -- unless that is what the
+    form itself posts under *renamed_by*, a rename of this row from this form
+    still on its way.  A form without *field* (a script) is not checked, nor a
+    position out of range, which the edit itself reports.
+
+    Raises:
+        StaleDraftError: If the row at *index* is not the one the form shows.
+    """
+    if field not in form or not 0 <= index < len(rows):
+        return
+    current = str(getattr(rows[index], attribute))
+    if current == str(form[field]):
+        return
+    renamed = str(form.get(renamed_by) or "").strip() if renamed_by else ""
+    if renamed and current == renamed:
+        return
+    raise StaleDraftError(
+        "The row this form edits has moved since it was shown -- one before it "
+        "was removed or the rows were reordered -- so the change was not "
+        "applied. Reload the page to see the draft as it is now, then try again.",
+        draft_id,
+    )
 
 
 def _apply(
@@ -779,13 +828,15 @@ async def move_vertex_condition(
     form = await request.form()
     vertex = form.get("vertex") or ""
     service = _service(request)
-    return _apply(
-        request,
-        draft_id,
-        action_id,
-        lambda doc: service.move_vertex_condition(doc, action_id, index, vertex),
-        form=form,
-    )
+
+    def _move(document: ScenarioDocument) -> None:
+        action = document.action(action_id)
+        if action is not None:
+            gates = action.advance_conditions
+            _check_row(draft_id, form, gates, index, "vertex", renamed_by="vertex")
+        service.move_vertex_condition(document, action_id, index, vertex)
+
+    return _apply(request, draft_id, action_id, _move, form=form)
 
 
 @router.post(
@@ -853,13 +904,13 @@ async def update_signal_group(
     form: dict[str, Any] = dict(raw)
     form["conflicts_with"] = [str(value) for value in raw.getlist("conflicts_with")]
     service = _service(request)
-    return _apply(
-        request,
-        draft_id,
-        "environment",
-        lambda doc: service.update_signal_group(doc, index, form),
-        form=form,
-    )
+
+    def _update(document: ScenarioDocument) -> None:
+        groups = document.map.signal_groups
+        _check_row(draft_id, form, groups, index, "name", renamed_by="name")
+        service.update_signal_group(document, index, form)
+
+    return _apply(request, draft_id, "environment", _update, form=form)
 
 
 @router.post(
@@ -897,13 +948,13 @@ async def update_signal_controller(
     """Apply one controller's name and offset."""
     form = dict(await request.form())
     service = _service(request)
-    return _apply(
-        request,
-        draft_id,
-        "environment",
-        lambda doc: service.update_signal_controller(doc, index, form),
-        form=form,
-    )
+
+    def _update(document: ScenarioDocument) -> None:
+        controllers = document.map.traffic_signal_controllers
+        _check_row(draft_id, form, controllers, index, "name", renamed_by="name")
+        service.update_signal_controller(document, index, form)
+
+    return _apply(request, draft_id, "environment", _update, form=form)
 
 
 @router.post(
@@ -952,13 +1003,19 @@ async def update_signal_phase(
     """Apply one phase's name, duration and colours."""
     form = dict(await request.form())
     service = _service(request)
-    return _apply(
-        request,
-        draft_id,
-        "environment",
-        lambda doc: service.update_signal_phase(doc, index, phase_index, form),
-        form=form,
-    )
+
+    def _update(document: ScenarioDocument) -> None:
+        controllers = document.map.traffic_signal_controllers
+        # Phases are named per controller, so the controller is named too:
+        # after one before it is removed, index and phase name alike may be
+        # another controller's.
+        _check_row(draft_id, form, controllers, index, "name", field=PARENT_ROW_FIELD)
+        if 0 <= index < len(controllers):
+            phases = controllers[index].phases
+            _check_row(draft_id, form, phases, phase_index, "name", renamed_by="name")
+        service.update_signal_phase(document, index, phase_index, form)
+
+    return _apply(request, draft_id, "environment", _update, form=form)
 
 
 @router.post(

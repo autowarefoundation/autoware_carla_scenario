@@ -971,6 +971,18 @@ after the swap goes through. A post without a `draft_revision` -- another
 button (add, remove by id), a script -- is not checked, so it acts on the draft
 as it is now.
 
+The forms of those rows -- a signal group's, a controller's, a phase's, the
+vertex of a waypoint condition -- post to a URL holding the row's position
+too, but are checked like any other inspector form, so a page's own quick
+edits pass. One of those edits may be the removal of a row before it, so each
+such form also names its row as it was rendered (`row`: the group's,
+controller's or phase's name, or the vertex; a phase also names its
+controller, `parent_row`), and is refused with the same 409 when the row now
+at its position is another -- unless the form is renaming its own row. A
+change pending in such a form when the answer lands is not carried across
+onto the row that took its place: it is dropped, as a change pending while
+the author moves on to another object is.
+
 **Save Draft** writes nothing when the draft is already stored as it is (every
 edit is saved as it is made), so pressing it leaves the revision, and the
 forms on the page, current.

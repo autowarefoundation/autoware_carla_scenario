@@ -408,6 +408,115 @@ class TestRowButtons:
         assert """hx-vals='{"draft_revision": "{{ draft.revision }}"}'""" in button
 
 
+class TestRowForms:
+    """A row's form names its row, so its index cannot land on another (#2348).
+
+    These forms are checked leniently: a page's own quick edits pass the
+    revision check, and one of them may have removed a row before this one.
+    """
+
+    TAB = {CLIENT_HEADER: "tab-a"}
+
+    @staticmethod
+    def _groups(client: TestClient, draft_id: str) -> list[str]:
+        return [g.name for g in _stored(client, draft_id).document.map.signal_groups]
+
+    @pytest.fixture
+    def three_groups(self, client: TestClient, draft_id: str) -> str:
+        for _ in range(3):
+            assert client.post(f"/draft/{draft_id}/signal-group").status_code == 200
+        return _revision(client.get(f"/draft/{draft_id}/inspector/environment").text)
+
+    def test_every_row_form_names_its_row(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/signal-controller")
+        page = client.get(f"/draft/{draft_id}/inspector/environment").text
+        for name in self._groups(client, draft_id):
+            assert f'name="row" value="{name}"' in page
+        controller = _stored(client, draft_id).document.map.traffic_signal_controllers[
+            0
+        ]
+        assert f'name="row" value="{controller.name}"' in page
+        assert f'name="row" value="{controller.phases[0].name}"' in page
+        assert f'name="parent_row" value="{controller.name}"' in page
+
+    def test_an_edit_behind_a_delete_before_its_row_is_refused(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        first, second, third = self._groups(client, draft_id)
+        deleted = client.post(
+            f"/draft/{draft_id}/signal-group/0/delete",
+            data={REVISION_FIELD: three_groups},
+            headers=self.TAB,
+        )
+        assert deleted.status_code == 200
+        # The form of the second group, rendered before the delete and posted
+        # after it: index 1 is now the third group.
+        stale = client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={"name": "renamed", "row": second, REVISION_FIELD: three_groups},
+            headers=self.TAB,
+        )
+        assert stale.status_code == 409
+        assert "has moved" in html.unescape(stale.text)
+        assert self._groups(client, draft_id) == [second, third]
+
+    def test_a_rename_and_a_quick_edit_after_it_both_land(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        first = self._groups(client, draft_id)[0]
+        url = f"/draft/{draft_id}/signal-group/0"
+        form = {"name": "east", "row": first, REVISION_FIELD: three_groups}
+        assert client.post(url, data=form, headers=self.TAB).status_code == 200
+        # The same form again, before the answer to the rename renumbered it.
+        again = {**form, "lanelet2_regulatory_element_ids": "1330"}
+        assert client.post(url, data=again, headers=self.TAB).status_code == 200
+        group = _stored(client, draft_id).document.map.signal_groups[0]
+        assert group.name == "east"
+        assert group.lanelet2_regulatory_element_ids == [1330]
+
+    def test_a_phase_of_a_controller_that_moved_up_is_refused(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        for _ in range(3):
+            client.post(f"/draft/{draft_id}/signal-controller")
+        page = client.get(f"/draft/{draft_id}/inspector/environment").text
+        shown = _revision(page)
+        controllers = _stored(client, draft_id).document.map.traffic_signal_controllers
+        middle = controllers[1]
+        # Every controller is born with a phase of the same name.
+        assert len({c.phases[0].name for c in controllers}) == 1
+        deleted = client.post(
+            f"/draft/{draft_id}/signal-controller/0/delete",
+            data={REVISION_FIELD: shown},
+            headers=self.TAB,
+        )
+        assert deleted.status_code == 200
+        stale = client.post(
+            f"/draft/{draft_id}/signal-controller/1/phase/0",
+            data={
+                "duration_seconds": "99",
+                "row": middle.phases[0].name,
+                "parent_row": middle.name,
+                REVISION_FIELD: shown,
+            },
+            headers=self.TAB,
+        )
+        assert stale.status_code == 409
+        after = _stored(client, draft_id).document.map.traffic_signal_controllers
+        assert all(c.phases[0].duration_seconds != 99 for c in after)
+
+    def test_a_form_without_a_row_is_not_checked(
+        self, client: TestClient, draft_id: str, three_groups: str
+    ) -> None:
+        response = client.post(
+            f"/draft/{draft_id}/signal-group/1", data={"name": "scripted"}
+        )
+        assert response.status_code == 200
+        assert self._groups(client, draft_id)[1] == "scripted"
+
+
 class TestSaveDraft:
     def test_saving_an_unchanged_draft_keeps_the_revision(
         self, client: TestClient, draft_id: str

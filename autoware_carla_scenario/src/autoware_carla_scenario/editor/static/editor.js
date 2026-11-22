@@ -861,6 +861,68 @@
     return false;
   }
 
+  /* A form that posts to a URL holding its row's position (a signal group's,
+   * a phase's, a waypoint condition's) names that row too, in hidden inputs
+   * marked `data-row`: what the row, and the row it belongs to, were called
+   * when rendered (see `_check_row` in editor/routes.py). After a row before
+   * it was removed, or the rows reordered, the same URL is another row's, and
+   * what was typed must not be put back, let alone posted, there (#2348). */
+  function rowInputs(form) {
+    return form
+      ? Array.prototype.slice.call(form.querySelectorAll('input[type="hidden"][data-row]'))
+      : [];
+  }
+
+  function formPosting(url) {
+    var forms = document.querySelectorAll('form[hx-post]');
+    for (var i = 0; i < forms.length; i++) {
+      if (forms[i].getAttribute('hx-post') === url) return forms[i];
+    }
+    return null;
+  }
+
+  // What the row a `data-row` input names may be called in the next render:
+  // what it was rendered as, what the request being answered renamed it to,
+  // or what the field that names it says now (a rename still on its way).
+  // That field is in the same form (`data-row-field`), or names the row in
+  // another one (`data-row-form`, the URL of the form of the row it is in).
+  function rowNames(input, config) {
+    var url = input.getAttribute('data-row-form');
+    if (url) {
+      var owner = formPosting(url);
+      var own = owner && owner.querySelector('input[type="hidden"][data-row-field]');
+      return own ? rowNames(own, config) : [input.value];
+    }
+    var names = [input.value];
+    var field = input.getAttribute('data-row-field');
+    var form = input.form;
+    if (!field || !form) return names;
+    if (config && config.path === form.getAttribute('hx-post') &&
+        config.formData && config.formData.getAll) {
+      config.formData.getAll(field).forEach(function (v) { names.push(String(v).trim()); });
+    }
+    var named = form.elements.namedItem(field);
+    if (named && typeof named.value === 'string') names.push(named.value.trim());
+    return names;
+  }
+
+  function rowsOf(el, config) {
+    var inputs = rowInputs(el.form);
+    if (!inputs.length) return null;
+    var rows = {};
+    inputs.forEach(function (input) { rows[input.name] = rowNames(input, config); });
+    return rows;
+  }
+
+  // Whether *el* edits the row *snap* was taken in.
+  function sameRow(snap, el) {
+    if (!snap.rows) return true;
+    return rowInputs(el.form).every(function (input) {
+      var names = snap.rows[input.name];
+      return !names || names.indexOf(input.value) >= 0;
+    });
+  }
+
   // What the page last rendered into the field: the server's value.
   function renderedOf(el) {
     if (TOGGLES.test(el.type)) return el.defaultChecked ? 'on' : '';
@@ -902,6 +964,7 @@
       el: el,
       key: key,
       index: Math.max(0, fieldsLike(key).indexOf(el)),
+      rows: rowsOf(el, config),
       posted: data ? data.getAll(el.name).map(String) : null,
     });
   }
@@ -932,7 +995,7 @@
   // wired up the new form, which it does when the swap settles.
   function restoreFocus(snap) {
     var el = fieldsLike(snap.key)[snap.index];
-    if (!el) return null;
+    if (!el || !sameRow(snap, el)) return null;
     if (document.activeElement !== el) {
       try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
     }
@@ -957,7 +1020,7 @@
   function restoreChange(snap) {
     if (wasPosted(snap)) return null;
     var el = fieldsLike(snap.key)[snap.index];
-    if (!el) return null;
+    if (!el || !sameRow(snap, el)) return null;
     if (stateOf(el) !== snap.state) {
       // Not an option any more: the server's rendering stands, and nothing is
       // posted again.
