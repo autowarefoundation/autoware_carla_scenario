@@ -32,11 +32,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..slurm.collect import stale_reason
-from ..slurm.manifest import BatchLayout, CaseOutcome, verdict_of_document
+# Whether a SLURM case's outcome is stale, compiled by the library check.
+from ..slurm.collect import _stale as _stale
+from ..slurm.collect import stale_reason as stale_reason
+from ..slurm.manifest import BatchLayout, verdict_of_document
 
-# The path guard, the case stems and a batch's stamp, compiled by the library check; every
-# name stays importable from here.
+# The path guard, the case stems, a batch's stamp and the overrides a session's jobs
+# share, compiled by the library check; every name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
@@ -47,6 +49,7 @@ from .case_paths import _TRAJECTORY as _TRAJECTORY
 from .case_paths import SESSION_TYPES as SESSION_TYPES
 from .case_paths import CaseFiles as CaseFiles
 from .case_paths import _safe as _safe
+from .case_paths import _shared_overrides as _shared_overrides
 from .case_paths import _stat as _stat
 from .case_paths import _stems_in as _stems_in
 from .case_paths import _summary_is_current as _summary_is_current
@@ -180,13 +183,7 @@ def session_overrides(directory: Path, jobs: list[list[str]]) -> set[str]:
     recorded = _multirun_task(directory)
     if recorded is not None:
         return _as_jobs_receive(recorded)
-    read = [overrides for overrides in jobs if overrides]
-    if not read:
-        return set()
-    shared = set(read[0])
-    for overrides in read[1:]:
-        shared &= set(overrides)
-    return shared
+    return _shared_overrides(jobs)
 
 
 def _same_result(entry: dict[str, Any], result: Any) -> bool:
@@ -353,23 +350,6 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             )
         entries.append(entry)
     return entries
-
-
-def _stale(layout: BatchLayout, index: int) -> str | None:
-    """Why case *index*'s outcome is stale (``slurm.collect.stale_reason``),
-    if it is; ``None`` too when the batch's records cannot be read, which
-    must not break the page: a submission record whose ``chunks`` hold a
-    number or ``null`` raises a :class:`TypeError`
-    (``SubmissionRecord.task_of``), which would break the session list of
-    every session (#2285)."""
-    try:
-        record = layout.read_result(index)
-        if record is None:
-            return None
-        outcome: CaseOutcome = record
-        return stale_reason(layout, index, outcome)
-    except (OSError, ValueError, TypeError):
-        return None
 
 
 def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:

@@ -195,6 +195,23 @@ def stale_reason(layout: BatchLayout, case: int, record: CaseOutcome) -> str | N
     return None
 
 
+def _stale(layout: BatchLayout, index: int) -> str | None:
+    """Why case *index*'s outcome is stale (:func:`stale_reason`), if it is,
+    for the viewer (``ui.cases``); ``None`` too when the batch's records
+    cannot be read, which must not break the page: a submission record whose
+    ``chunks`` hold a number or ``null`` raises a :class:`TypeError`
+    (``SubmissionRecord.task_of``), which would break the session list of
+    every session (#2285)."""
+    try:
+        record = layout.read_result(index)
+        if record is None:
+            return None
+        outcome: CaseOutcome = record
+        return stale_reason(layout, index, outcome)
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def _stopped_before(
     layout: BatchLayout, index: int, task: int, submission: SubmissionRecord
 ) -> str | None:
