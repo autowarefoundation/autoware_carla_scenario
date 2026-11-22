@@ -1,0 +1,8 @@
+{# The draft's name and id in the top bar. Outside `#editor-body`, so an edit
+   that renames the scenario sends a copy of this out of band
+   (`partials/editor_body.html`), which htmx swaps in by its id. #}
+<div class="ed-crumb" id="editor-crumb"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <span class="ed-crumb-sep">/</span>
+  <span class="ed-crumb-name">{{ document.title }}</span>
+  <span class="ed-crumb-id">{{ document.id }}</span>
+</div>

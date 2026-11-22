@@ -50,6 +50,7 @@ from .service import (
     EditorError,
     EditorService,
     EditorStorageError,
+    StaleDraftError,
     condition_actions,
     default_export_dir,
     route_yaml,
@@ -260,6 +261,27 @@ def create_app(
             name="error.html",
             context={"heading": "Not found", "message": str(exc), "page": "error"},
             status_code=404,
+        )
+
+    @application.exception_handler(StaleDraftError)
+    def _stale_draft(request: Request, exc: Exception) -> Response:
+        """Refuse a form rendered from an out-of-date draft with a 409 page.
+
+        409 Conflict, as the request is fine and the draft moved on under it.
+        ``editor.js`` shows the page's heading and message as a notice, with a
+        button that reloads the page (#2345).
+        """
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                "heading": "Changed elsewhere",
+                "message": str(exc),
+                "page": "error",
+                "back_url": f"/draft/{getattr(exc, 'draft_id', '')}",
+                "back_label": "Open the draft as it is now",
+            },
+            status_code=409,
         )
 
     @application.exception_handler(EditorStorageError)

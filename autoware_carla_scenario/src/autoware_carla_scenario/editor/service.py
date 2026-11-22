@@ -12,6 +12,7 @@ registered primitive is editable with no change to this module.
 
 from __future__ import annotations
 
+import collections
 import logging
 import math
 import os
@@ -139,6 +140,30 @@ def default_export_dir() -> Path:
 
 class EditorError(Exception):
     """Raised when a request asks for something the document cannot do."""
+
+
+class StaleDraftError(Exception):
+    """Raised when a form was rendered from an older copy of the draft.
+
+    Every inspector form posts all of its fields, so applying one rendered
+    before another tab (or window) changed the draft would put back what that
+    tab changed.  Not an :class:`EditorError`: nothing in the form is wrong,
+    the page is out of date, and the fix is to reload it (#2345).
+
+    Attributes:
+        draft_id: The draft the form was for.
+    """
+
+    def __init__(self, message: str, draft_id: str) -> None:
+        super().__init__(message)
+        self.draft_id = draft_id
+
+
+#: How many of a draft's latest saves the editor remembers the writer of: the
+#: window in which a form one revision behind is still known to be behind only
+#: its own tab's edits.  A tab has at most a request or two in flight, so this
+#: is generous; a form older than the window is refused.
+_WRITER_HISTORY = 64
 
 
 class EditorStorageError(Exception):
@@ -287,6 +312,10 @@ class EditorService:
             weakref.WeakValueDictionary()
         )
         self._locks_guard = threading.Lock()
+        # Who wrote each of a draft's latest revisions: see check_revision().
+        # In memory only, so after a restart a form one save behind is refused
+        # rather than trusted.
+        self._writers: dict[str, collections.deque[tuple[int, str]]] = {}
 
     def _lock(self, key: str) -> threading.Lock:
         """Return the lock for *key*, creating it on first use.
@@ -505,8 +534,14 @@ class EditorService:
             raise EditorError(f"No draft named {draft_id!r}.")
         return draft
 
-    def save(self, draft: Draft) -> Draft:
+    def save(self, draft: Draft, client: str = "") -> Draft:
         """Normalise the layout and persist *draft*.
+
+        Args:
+            draft: The draft to write.
+            client: The page that asked for the write (the ``X-Editor-Client``
+                header ``editor.js`` sends), or ``""`` when unknown; remembered
+                as the writer of the new revision for :meth:`check_revision`.
 
         Raises:
             EditorStorageError: If the drafts directory refused the write.  The
@@ -514,7 +549,51 @@ class EditorService:
         """
         draft.document.sync_layout()
         with _storage_errors(self.store):
-            return self.store.save(draft)
+            saved = self.store.save(draft)
+        with self._locks_guard:
+            writers = self._writers.get(draft.id)
+            if writers is None:
+                writers = collections.deque(maxlen=_WRITER_HISTORY)
+                self._writers[draft.id] = writers
+            writers.append((saved.revision, client))
+        return saved
+
+    def check_revision(self, draft: Draft, revision: Any, client: str = "") -> None:
+        """Refuse a form rendered from a revision of *draft* that is stale.
+
+        *revision* is the ``draft_revision`` the form was rendered with.  It
+        is current when it is the draft's revision.  It is also current when
+        every save since it was made by *client*, the page posting the form:
+        that page has a post in flight while it is still rendering the answer
+        to the one before -- an edit lands before the swap that would number
+        the form afresh -- and its own forms hold its own latest values.  Any
+        save in between by another page, or by one that is not known, makes
+        it stale.
+
+        Call it inside :meth:`editing`, on the draft read there.
+
+        Raises:
+            StaleDraftError: If the form is out of date.
+        """
+        try:
+            base = int(str(revision).strip())
+        except ValueError:
+            base = -1
+        if base == draft.revision:
+            return
+        if 0 <= base < draft.revision and client:
+            with self._locks_guard:
+                known = dict(self._writers.get(draft.id, ()))
+            between = range(base + 1, draft.revision + 1)
+            if all(known.get(r) == client for r in between):
+                return
+        raise StaleDraftError(
+            "This draft was changed elsewhere -- in another tab or window -- "
+            "since this page was shown, so this edit was not applied: it would "
+            "have put back what was changed there. Reload the page to see the "
+            "draft as it is now, then make the edit again.",
+            draft.id,
+        )
 
     def delete_draft(self, draft_id: str) -> bool:
         """Delete a draft and its staged wheelhouse.  Returns whether anything
@@ -538,12 +617,17 @@ class EditorService:
                         deleted = self.store.delete(draft_id)
                     if deleted:
                         shutil.rmtree(self._archive_dir(draft_id), ignore_errors=True)
+                        with self._locks_guard:
+                            self._writers.pop(draft_id, None)
                     return deleted
             except ValueError as exc:
                 raise EditorError(str(exc)) from exc
 
     def run_map_operation(
-        self, draft_id: str, operation: Callable[[ScenarioDocument], Any]
+        self,
+        draft_id: str,
+        operation: Callable[[ScenarioDocument], Any],
+        client: str = "",
     ) -> tuple[Draft, Any]:
         """Run a slow map *operation* without losing edits made while it runs.
 
@@ -559,6 +643,8 @@ class EditorService:
         this is, or one the operation also set -- the result describes a map
         that is no longer the one chosen, so nothing is applied and the
         operation is refused, for the user to run again.
+
+        *client* is the page that asked, as for :meth:`save`.
 
         Returns:
             The saved draft and whatever *operation* returned.
@@ -589,7 +675,7 @@ class EditorService:
                 )
             for f in changed:
                 setattr(current, f, getattr(after, f))
-            return self.save(draft), result
+            return self.save(draft, client), result
 
     def validate(self, draft: Draft) -> ValidationReport:
         """Return the validation report for a draft's document."""

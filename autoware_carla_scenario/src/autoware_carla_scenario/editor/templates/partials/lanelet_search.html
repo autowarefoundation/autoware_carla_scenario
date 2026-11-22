@@ -61,6 +61,7 @@
     </p>
     <form hx-post="/draft/{{ draft.id }}/lanelet-binding"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <input type="hidden" name="slot" value="{{ slot.key }}">
       {{ f.binding_picker('lanelet', slot.choice.binding, 'matched', 'Derived as', document, draft) }}
     </form>

@@ -925,6 +925,38 @@ rather than by what the process can read.
 That is a bound, not authentication: the editor still has none, so it belongs on
 a network you trust.
 
+## An edit, a swap, a revision
+
+Every inspector form is posted when a field changes (200 ms after it), and the
+answer replaces the whole editor body: canvas, inspector and validation, so
+they never disagree. The tab title and the crumb in the top bar sit outside
+it and come with the answer out of band, so a rename shows there at once.
+
+Whatever the author is doing when that answer lands carries across it
+(`editor.js`): the field being typed in keeps its focus, its caret and what
+was typed, and a change made in another field in the meantime -- a lanelet
+picked on the map included -- is posted again from the new form rather than
+lost with the old one. That needs the answer to show the same form again: a
+change still waiting its 200 ms when the author moves on to another object
+(opens another card, adds or removes one) is still lost.
+
+A form posts **all** of its fields, so one rendered from an older copy of the
+draft would put back whatever was changed since. Each draft therefore has a
+`revision`, counted up by every save and stored in its file, and each
+inspector form carries the one it was rendered from (`draft_revision`). A post
+whose revision is out of date is refused with **409 Conflict** and nothing is
+applied; the page says the draft was changed elsewhere and offers to reload.
+Two tabs' inspector forms therefore cannot undo each other's edits. One
+tab's own quick edits do not trip the check: a post sent while the answer to
+the one before is still on its way carries the revision before it, and is
+accepted as long as every save since came from the same page (`editor.js`
+names its page in an `X-Editor-Client` header). The editor remembers who made
+each of a draft's last 64 saves in memory only, so such a post is refused like
+a stale one when a save it is behind was made before the editor restarted; a
+reload puts the tab back in step. A post without a `draft_revision` -- a
+button (add, remove, move), a script -- is not checked, so a button pressed in
+a stale tab still acts on the draft as it is now.
+
 ## Save Draft vs Export Wheelhouse
 
 **Save Draft** writes the working document to `scenario_drafts/<id>.yaml`.

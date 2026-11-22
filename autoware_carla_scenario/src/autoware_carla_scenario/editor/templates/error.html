@@ -12,7 +12,7 @@
        shows the heading and message in the page the request came from. #}
     <h2 class="ed-heading" data-error-heading>{{ heading }}</h2>
     <p class="ed-help" style="margin-bottom:20px" data-error-message>{{ message }}</p>
-    <a href="/" class="ed-btn-primary">Back to drafts</a>
+    <a href="{{ back_url or '/' }}" class="ed-btn-primary">{{ back_label or 'Back to drafts' }}</a>
   </div>
 </div>
 {% endblock %}

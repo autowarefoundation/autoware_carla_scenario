@@ -2,6 +2,15 @@
    are re-rendered together so they can never drift apart. #}
 {% import "partials/icons.html" as ic %}
 
+{# What the page shows of the document outside this body: the tab title and
+   the crumb, which a rename would otherwise leave behind. Only in a swap's
+   response (`partial`): htmx takes a top-level <title> as the document's, and
+   swaps the crumb in by its id; the full page renders both in place. #}
+{% if partial %}
+<title>{{ document.title }} · Scenario Editor</title>
+{% with oob = true %}{% include "partials/crumb.html" %}{% endwith %}
+{% endif %}
+
 {# What the whole page is being told, in one band across it: the verdict on
    the document and, when an edit was refused, why. #}
 <div class="ed-body-top">
