@@ -71,7 +71,6 @@ __all__ = [
     "RecordingError",
     "WebViewer",
     "converter_available",
-    "converter_version",
     "ensure_recording",
     "existing_recording",
     "fetch_web_viewer",
@@ -121,12 +120,6 @@ def _converter() -> Any:
 def converter_available() -> bool:
     """Whether ``autoware_carla_scenario_rerun`` can be imported."""
     return _converter() is not None
-
-
-def converter_version() -> str | None:
-    """The converter's version, if it is installed."""
-    module = _converter()
-    return None if module is None else str(getattr(module, "__version__", "?"))
 
 
 def web_viewer_version() -> str:

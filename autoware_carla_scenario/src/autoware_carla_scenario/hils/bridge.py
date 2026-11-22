@@ -75,6 +75,7 @@ import numpy as np
 
 from ..canvas import use_canvas
 from ..entity_role import find_actor_in_world
+from ..sensor.base import put_dropping_oldest
 from .config import DeviceSpec, HilsConfig, MessageSpec, SensorSpec, StepSpec
 from .link import Event, RunnerLink
 from .protocol import LINK_DIRECTIONS
@@ -638,7 +639,7 @@ class _SensorDevice:
             if message is None:
                 continue
             if self._outbox is not None:
-                _put_newest(self._outbox, (generation, message))
+                put_dropping_oldest(self._outbox, (generation, message))
                 continue
             self._send_current(generation, message)
 
@@ -659,7 +660,7 @@ class _SensorDevice:
     def close(self) -> None:
         self.detach()
         if self._outbox is not None and self._thread is not None:
-            _put_newest(self._outbox, None)
+            put_dropping_oldest(self._outbox, None)
             self._thread.join(timeout=5.0)
 
 
@@ -680,19 +681,6 @@ def _drain_queue(items: "queue.Queue[Any]") -> None:
             items.get_nowait()
         except queue.Empty:
             return
-
-
-def _put_newest(items: "queue.Queue[Any]", item: Any) -> None:
-    """Put *item* in the bounded *items*, dropping the oldest when full."""
-    while True:
-        try:
-            items.put_nowait(item)
-            return
-        except queue.Full:
-            try:
-                items.get_nowait()
-            except queue.Empty:
-                pass
 
 
 class HilsBridge:

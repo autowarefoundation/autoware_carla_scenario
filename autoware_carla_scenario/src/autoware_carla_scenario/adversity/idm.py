@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .avoidance import _check_non_negative, _check_positive
+from .checks import check_non_negative, check_positive
 
 __all__ = [
     "DEFAULT_IDM",
@@ -55,12 +55,12 @@ class IdmParameters:
     emergency_deceleration: float = 9.0
 
     def __post_init__(self) -> None:
-        _check_positive("max_acceleration", self.max_acceleration)
-        _check_positive("comfortable_deceleration", self.comfortable_deceleration)
-        _check_non_negative("minimum_gap", self.minimum_gap)
-        _check_non_negative("time_headway", self.time_headway)
-        _check_positive("exponent", self.exponent)
-        _check_positive("emergency_deceleration", self.emergency_deceleration)
+        check_positive("max_acceleration", self.max_acceleration)
+        check_positive("comfortable_deceleration", self.comfortable_deceleration)
+        check_non_negative("minimum_gap", self.minimum_gap)
+        check_non_negative("time_headway", self.time_headway)
+        check_positive("exponent", self.exponent)
+        check_positive("emergency_deceleration", self.emergency_deceleration)
 
 
 #: SUMO's passenger car.

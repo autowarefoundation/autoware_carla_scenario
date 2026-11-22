@@ -352,7 +352,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "DATASET_SUFFIX INSTALL_HINT INTENSITY_SCALE LIDAR_CHANNEL T4Settings "
         "T4UnavailableError active_recording camera_channel category_of "
         "dataset_path ego_rear_axle opencv_of_ftheta offer_driver_sensors "
-        "offered_rear_axle require_writer t4_lidar_points withdraw_driver_sensors",
+        "require_writer t4_lidar_points withdraw_driver_sensors",
         "writes a run as a T4 dataset with the autoware-carla-scenario-t4 "
         "package, which the runner does (t4.enabled), not a scenario; the "
         "model declares only the T4Recorder and T4Recording the checked "

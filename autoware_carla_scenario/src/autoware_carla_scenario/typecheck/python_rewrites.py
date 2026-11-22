@@ -179,7 +179,7 @@ import string
 import unicodedata
 from collections.abc import Iterator
 
-from .scopes import ShadowScopes, _scope_bindings
+from .scopes import _COMPREHENSIONS, ShadowScopes, _scope_bindings
 from .transform import (
     _ENUM_BASES,
     _dataclass_options,
@@ -407,7 +407,6 @@ _VIEW_SET_OPERATORS: dict[type[ast.operator], str] = {
     ast.BitXor: "^",
 }
 _VIEW_COMPARISONS = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
-_COMPREHENSION_NODES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _ORDERING = ("__lt__", "__le__", "__gt__", "__ge__")
 _MAX_PASSES = 20
 
@@ -1087,7 +1086,7 @@ class _Pass(ShadowScopes):
                     ast.AsyncFunctionDef,
                     ast.ClassDef,
                     ast.Lambda,
-                    *_COMPREHENSION_NODES,
+                    *_COMPREHENSIONS,
                 ),
             ):
                 continue
