@@ -630,6 +630,51 @@ def test_json_reach_settings_are_kept() -> None:
     }
 
 
+def test_omegaconf_reach_settings_are_plain() -> None:
+    """#2316: a Hydra DictConfig was turned into a dict at its top only, so
+    a ListConfig or DictConfig inside it failed the JSON check."""
+    from omegaconf import OmegaConf
+
+    reach = OmegaConf.create(
+        {
+            "planning": {"some_list": [1, 2], "nested": {"a": [{"b": 3}]}},
+            "reachable_set": {"size_grid": "${planning.some_list}"},
+        }
+    )
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)  # type: ignore[arg-type]
+    expected = {
+        "planning": {"some_list": [1, 2], "nested": {"a": [{"b": 3}]}},
+        "reachable_set": {"size_grid": [1, 2]},
+    }
+    assert settings.reach_settings == expected
+    assert settings.worker_settings()["reach_settings"] == expected
+    assert type(settings.reach_settings["planning"]["some_list"]) is list
+    # A plain mapping that holds OmegaConf containers is made plain as well.
+    held = {"planning": OmegaConf.create({"some_list": [1, 2]})}
+    settings = cr_session.CommonRoadSettings(reach_settings=held)  # type: ignore[arg-type]
+    assert settings.reach_settings == {"planning": {"some_list": [1, 2]}}
+    periods = OmegaConf.create({"crime_ttc_s": 0.5})
+    settings = cr_session.CommonRoadSettings(metric_periods_s=periods)  # type: ignore[arg-type]
+    assert settings.metric_periods_s["crime_ttc_s"] == 0.5
+
+
+def test_a_missing_omegaconf_reach_setting_is_refused() -> None:
+    """A mandatory value left out (``???``) raises, as reading the config
+    does, rather than reach the worker as the string ``"???"``."""
+    from omegaconf import MissingMandatoryValue, OmegaConf
+
+    reach = OmegaConf.create({"planning": {"dt": "???"}})
+    with pytest.raises(MissingMandatoryValue):
+        cr_session.CommonRoadSettings(reach_settings=reach)  # type: ignore[arg-type]
+
+
+def test_plain_reach_settings_are_unchanged() -> None:
+    """Plain containers come out equal, OmegaConf or not."""
+    reach = {"planning": {"some_list": [1, (2, 3)], "dt": 0.1}}
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)
+    assert settings.reach_settings == reach
+
+
 def test_a_request_json_cannot_carry_is_a_worker_error(tmp_path: Path) -> None:
     """#2290: json.dumps' TypeError escaped request() bare; nothing is sent,
     and the worker still answers the next request."""

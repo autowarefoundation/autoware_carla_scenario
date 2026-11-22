@@ -23,7 +23,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..authoring import registry
-from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
+from ..authoring._builders_generated import (
+    ONCE_ACTIONS,
+    OVERRIDING_ACTIONS,
+    POST_RUN_CONDITIONS,
+)
 from ..authoring.hydra_config import run_map_group
 from ..authoring.models import SIGNAL_STATE_NAMES, actor_kind
 from ..authoring.persistence import DraftStore, default_draft_dir
@@ -191,6 +195,10 @@ def create_app(
         action_specs=registry.action_specs,
         acts_as=actor_kind,
         condition_specs=registry.condition_specs,
+        # Offered only as a whole fail condition: one judged once the run is
+        # over is no trigger, waypoint condition, child or pass condition
+        # (#2316).
+        post_run_conditions=POST_RUN_CONDITIONS,
         constraint_specs=registry.constraint_specs,
         binding_specs=registry.binding_specs,
         get_action_spec=registry.get_action_spec,

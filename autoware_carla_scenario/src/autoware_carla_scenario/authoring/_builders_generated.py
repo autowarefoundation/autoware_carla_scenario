@@ -32,6 +32,7 @@ __all__ = [
     "FAILURE_ONLY_CONDITIONS",
     "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
+    "POST_RUN_CONDITIONS",
     "build_and_condition",
     "build_or_condition",
     "build_not_condition",
@@ -178,6 +179,17 @@ FAILURE_ONLY_CONDITIONS: frozenset[str] = frozenset(
         "off_road_fraction",
         "collision",
         "timeout",
+    }
+)
+
+#: The condition types judged once the run is over (their class sets
+#: ``IS_POST_RUN``, which :func:`~..conditions.base.refuse_post_run` reads): they
+#: read nothing while the run goes on and can never pass a run, so they stand
+#: only on their own as a fail condition, never as a pass condition, a
+#: trigger, a waypoint condition or a child of a composition.
+POST_RUN_CONDITIONS: frozenset[str] = frozenset(
+    {
+        "metric",
     }
 )
 

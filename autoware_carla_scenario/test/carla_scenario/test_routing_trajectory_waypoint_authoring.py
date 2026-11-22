@@ -545,6 +545,17 @@ class TestEditor:
         )
         assert gates() == [3, 4]
 
+    def test_the_picker_leaves_a_metric_out(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """#2316: a vertex waits on its condition every tick, where one judged
+        once the run is over reads nothing."""
+        draft_id, card_id, _ = _card(client, tmp_path)
+        inspector = client.get(f"/draft/{draft_id}/inspector/{card_id}").text
+        assert f'name="slot" value="advance:{card_id}"' in inspector
+        assert 'value="elapsed_time"' in inspector
+        assert 'value="metric"' not in inspector
+
     def test_the_last_vertex_ends_the_run_when_its_condition_holds(
         self, client: TestClient, tmp_path: Path
     ) -> None:

@@ -675,6 +675,9 @@ class TrajectoryVertex:
     Raises:
         TypeError: If *advance* is not a condition -- in particular a number,
             or a ``time=`` keyword: a vertex no longer takes a bare time.
+        ValueError: If *advance* is judged once the run is over (a
+            :class:`~autoware_carla_scenario.conditions.MetricCondition`),
+            which never holds while the entity waits.
     """
 
     position: TrajectoryPosition
@@ -709,6 +712,15 @@ class TrajectoryVertex:
                 "TrajectoryVertex.advance must be a condition (a BaseCondition), "
                 f"got {type(advance).__name__}"
             )
+        if advance is not None and _is_post_run(advance):
+            # What ``refuse_post_run`` says for a trigger: a vertex reads its
+            # condition every tick, where one judged after the run reads
+            # nothing, so the entity would wait at it for ever (#2316).
+            raise ValueError(
+                f"TrajectoryVertex.advance: {advance.label!r} is a "
+                "MetricCondition, judged once the run is over, not every "
+                "tick: the entity would wait at this vertex for ever"
+            )
         object.__setattr__(self, "position", position)
         object.__setattr__(self, "advance", advance)
 
@@ -734,6 +746,17 @@ def _has_check(condition: "BaseCondition") -> bool:
     except AttributeError:
         return False
     return callable(check)
+
+
+def _is_post_run(condition: "BaseCondition") -> bool:
+    """Whether *condition* is judged once the run is over: what
+    :func:`~autoware_carla_scenario.conditions.base.is_post_run` reads (the
+    ``IS_POST_RUN`` marker), here so the editor need not import the condition
+    package (see ``TrajectoryVertex.__init__``)."""
+    if hasattr(type(condition), "IS_POST_RUN"):
+        if type(condition).IS_POST_RUN:  # type: ignore[attr-defined]
+            return True
+    return False
 
 
 def _vertex_advance(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:

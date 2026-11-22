@@ -55,7 +55,11 @@
 
 {# The type picker stays folded away until asked for: an always-open select in
    every lane and every composition reads as content, and there are a lot of
-   them.  `<details>` gets that for free, with no JavaScript and no popover. #}
+   them.  `<details>` gets that for free, with no JavaScript and no popover.
+   A condition judged once the run is over (a Metric) is offered only as a
+   whole fail condition: a trigger or a composition reads its conditions
+   every tick, where such a one reads nothing, and it can never pass a run
+   (#2316). #}
 {% macro add(draft, slot) %}
   <details class="ed-add">
     <summary class="ed-add-btn" title="Add a condition">{{ ic.icon('plus', 11) }} condition</summary>
@@ -63,7 +67,8 @@
           class="ed-add-form">
       <input type="hidden" name="slot" value="{{ slot }}">
       <select name="type_id" class="ed-input-xs" style="flex:1">
-        {% for spec in condition_specs() %}
+        {% for spec in condition_specs()
+               if slot == 'fail' or spec.type_id not in post_run_conditions %}
           <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
         {% endfor %}
       </select>

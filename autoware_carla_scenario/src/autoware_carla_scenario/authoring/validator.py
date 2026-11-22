@@ -45,6 +45,7 @@ from ._builders_generated import (
     FAILURE_ONLY_CONDITIONS,
     ONCE_ACTIONS,
     OVERRIDING_ACTIONS,
+    POST_RUN_CONDITIONS,
 )
 from .registry import (
     EQUAL_TO_DEFAULT_TOLERANCE,
@@ -522,6 +523,7 @@ def _check_condition(
     owner: str | None = None,
     *,
     departure: bool = False,
+    verdict: str | None = None,
 ) -> None:
     """Validate one condition subtree.
 
@@ -533,6 +535,15 @@ def _check_condition(
     one place a ``trajectory_time`` means the trajectory's clock: anywhere
     else -- inside a composition, a trigger, an assertion -- it would quietly
     read the scenario clock instead, so it is refused there.
+
+    *verdict* is ``"pass"`` or ``"fail"`` when the subtree is a whole pass or
+    fail condition.  A whole fail condition is the one place a condition
+    judged once the run is over (a Metric) means something: a trigger, a
+    waypoint condition or a composition reads its conditions every tick,
+    where such a one reads nothing, and ``register_pass_condition`` refuses
+    one as well -- the runtime refuses all of these
+    (:func:`~..conditions.base.refuse_post_run`, ``TrajectoryVertex``), but
+    only once the scenario is built (#2316).
     """
     spec: ConditionSpec | None = get_condition_spec(node.type)
     if spec is None:
@@ -545,6 +556,21 @@ def _check_condition(
             "Set Goal card's waypoint condition, as the whole of it.",
             node.id,
         )
+    if node.type in POST_RUN_CONDITIONS and verdict != "fail":
+        if verdict == "pass":
+            message = (
+                f"{spec.title} is judged once the run is over: it can fail a "
+                "run, never pass one. Use it as a fail condition."
+            )
+        else:
+            message = (
+                f"{spec.title} is judged once the run is over, not every tick: "
+                "it reads nothing while the run goes on, so it is no trigger, "
+                "waypoint condition or child of a composition (all, any, not, "
+                "sticky, persistent), which are read every tick. Use it on its "
+                "own as a fail condition."
+            )
+        out.error(path, message, node.id)
 
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
@@ -1900,9 +1926,13 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_declared_spawns(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
-        _check_condition(out, f"assertions.pass[{index}]", condition, refs)
+        _check_condition(
+            out, f"assertions.pass[{index}]", condition, refs, verdict="pass"
+        )
     for index, condition in enumerate(document.assertions.fail_conditions):
-        _check_condition(out, f"assertions.fail[{index}]", condition, refs)
+        _check_condition(
+            out, f"assertions.fail[{index}]", condition, refs, verdict="fail"
+        )
 
     if not document.assertions.pass_conditions:
         out.error(

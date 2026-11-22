@@ -24,9 +24,17 @@ __all__ = [
 
 
 def with_port(address: str, port: int) -> str:
-    """*address* (``host:port``, or a bare host) with its port set to *port*."""
-    host, sep, _ = str(address).rpartition(":")
-    return f"{host if sep else address}:{port}"
+    """*address* (``host:port``, or a bare host) with its port set to *port*.
+
+    A bracketed IPv6 host is a host too, bare (``[::1]``) or with a port
+    (``[::1]:9000``): a last colon inside the brackets starts no port, where
+    it made ``[::1]`` the ``[::<port>`` no bridge can bind to (#2316).
+    """
+    text = str(address)
+    host, sep, tail = text.rpartition(":")
+    if not sep or "]" in tail:
+        host = text
+    return f"{host}:{port}"
 
 
 def start_delay(recorded: str, spacing: float, now: float) -> float:

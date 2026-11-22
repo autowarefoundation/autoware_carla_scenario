@@ -152,12 +152,36 @@ def _check_command(command: Any) -> Optional[tuple[str, ...]]:
     )
 
 
+def _plain(value: Any) -> Any:
+    """*value* with every OmegaConf container in it a plain one.
+
+    A Hydra config's ``DictConfig`` is a mapping, but the ``ListConfig`` and
+    ``DictConfig`` values it holds are no JSON values (#2316): they become a
+    ``list`` and a ``dict`` (interpolations resolved), wherever they sit.  A
+    mandatory value left out (``???``) raises, as reading it does, rather
+    than reach the worker as the string ``"???"``.  Anything else is
+    returned as it is.
+    """
+    from omegaconf import DictConfig, ListConfig, OmegaConf  # noqa: PLC0415
+
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=True, throw_on_missing=True)
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_plain(item) for item in value)
+    return value
+
+
 def _check_mapping(name: str, value: Any, default: dict[str, Any]) -> dict[str, Any]:
-    """*value*, ``None`` (*default*) or a mapping, as a ``dict``."""
+    """*value*, ``None`` (*default*) or a mapping, as a ``dict`` -- holding
+    plain containers, not OmegaConf ones (:func:`_plain`)."""
     if value is None:
         return default
     if isinstance(value, Mapping):
-        return dict(value)
+        return dict(_plain(value))
     raise ValueError(f"{name} must be a mapping or None, got {value!r}")
 
 

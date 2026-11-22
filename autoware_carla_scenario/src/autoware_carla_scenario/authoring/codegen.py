@@ -379,6 +379,10 @@ class RenderedBuilder:
     #: The target only ever reports a failure (its class sets
     #: ``REPORTS_ONLY_FAILURE``): a persistent block never fires around it.
     failure_only: bool = False
+    #: The target is judged once the run is over (its class sets
+    #: ``IS_POST_RUN``): it reads nothing while the run goes on, so it is no
+    #: trigger, waypoint condition or child of a composition.
+    post_run: bool = False
 
     @property
     def overrides(self) -> bool:
@@ -519,6 +523,7 @@ def _build_one(
     _check_all_fields_used(by_kwarg, parameters, consumed, where)
     _check_arguments_fit(args, where)
     failure_only = not is_action and bool(getattr(cls, "REPORTS_ONLY_FAILURE", False))
+    post_run = not is_action and bool(getattr(cls, "IS_POST_RUN", False))
 
     return RenderedBuilder(
         name=spec.builder,
@@ -533,6 +538,7 @@ def _build_one(
         uses_params=uses_params,
         needs_actor_assert=isinstance(spec, ActionSpec) and spec.actor_required,
         failure_only=failure_only,
+        post_run=post_run,
     )
 
 
