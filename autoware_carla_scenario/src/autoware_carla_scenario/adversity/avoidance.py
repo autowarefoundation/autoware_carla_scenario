@@ -25,10 +25,10 @@ TeraSim's ``utils/nade/avoidance.py``, on predicted futures:
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 
+from .checks import check_non_negative, check_positive
 from .collision import trajectories_intersect
 from .command import AdversarialCommand
 from .geometry import AgentFootprint, PredictedState
@@ -55,18 +55,6 @@ def _check_probability(name: str, value: float) -> None:
     """Refuse *value* for the field *name* unless it is in [0, 1]."""
     if not (0.0 <= value <= 1.0):  # NaN fails it too
         raise ValueError(f"{name} must be in [0, 1], not {value}")
-
-
-def _check_non_negative(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is finite and >= 0."""
-    if not math.isfinite(value) or value < 0.0:
-        raise ValueError(f"{name} must be finite and not negative, not {value}")
-
-
-def _check_positive(name: str, value: float) -> None:
-    """Refuse *value* for the field *name* unless it is finite and > 0."""
-    if not math.isfinite(value) or value <= 0.0:
-        raise ValueError(f"{name} must be finite and positive, not {value}")
 
 
 @dataclass(frozen=True)
@@ -101,13 +89,13 @@ class AvoidanceSettings:
     accept_duration: float = 2.0
 
     def __post_init__(self) -> None:
-        _check_non_negative("buffer", self.buffer)
+        check_non_negative("buffer", self.buffer)
         _check_probability("unavoidable_factor", self.unavoidable_factor)
-        _check_non_negative("unavoidable_magnitude", self.unavoidable_magnitude)
+        check_non_negative("unavoidable_magnitude", self.unavoidable_magnitude)
         _check_probability("avoid_probability", self.avoid_probability)
         _check_probability("avoid_is_probability", self.avoid_is_probability)
-        _check_positive("avoid_duration", self.avoid_duration)
-        _check_positive("accept_duration", self.accept_duration)
+        check_positive("avoid_duration", self.avoid_duration)
+        check_positive("accept_duration", self.accept_duration)
 
 
 DEFAULT_AVOIDANCE = AvoidanceSettings()

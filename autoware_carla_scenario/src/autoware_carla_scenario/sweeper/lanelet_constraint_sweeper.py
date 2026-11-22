@@ -109,7 +109,6 @@ from .job_status import (
     REFUSED_EXIT_CODE,
     RESUME_FROM_ENV,
     RESUME_FROM_EXPECTED,
-    marker_reason,
     owned_dirs,
     resume_from_env,
     verdict_exit_code,
@@ -119,8 +118,6 @@ from .job_status import (
 # What a job's directory is cleared of and given (an earlier run's or a
 # failed attempt's outputs, the markers) is the checked :mod:`.job_status`'s
 # (#2306); the names they had here stay importable from here.
-from .job_status import _SERVICE_LOGS as _SERVICE_LOGS
-from .job_status import _is_service_log as _is_service_log
 from .job_status import _remove_earlier_outputs as _remove_earlier_outputs
 from .job_status import _remove_marker as _remove_marker
 from .job_status import _remove_run_stems as _remove_run_stems
@@ -131,7 +128,6 @@ logger = logging.getLogger(__name__)
 
 # The case's timeout and exit statuses are the checked :mod:`.job_status`'s;
 # the old private names stay, for what imports them from here.
-_marker_reason = marker_reason
 _owned_dirs = owned_dirs
 _DEFAULT_JOB_TIMEOUT = DEFAULT_JOB_TIMEOUT
 _MAX_JOB_TIMEOUT = MAX_JOB_TIMEOUT

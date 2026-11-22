@@ -65,7 +65,7 @@ from typing import Optional
 
 from ..route.geometry import MapFeatures
 from ..trajectory.relative_lane import _centreline, _point_at, _start_heading, _turn
-from .avoidance import _check_non_negative, _check_positive
+from .checks import check_non_negative, check_positive
 from .command import AdversarialCommand, _times, drift_path
 from .geometry import PredictedState
 from .idm import (
@@ -207,39 +207,39 @@ class TriggerThresholds:
     def __post_init__(self) -> None:
         # Refused when built, as NadeSettings and AvoidanceSettings are
         # (#1458/#1463), rather than as a ZeroDivisionError mid-tick (#2024).
-        _check_non_negative("standstill_speed", self.standstill_speed)
-        _check_non_negative("acceleration_gain", self.acceleration_gain)
-        _check_non_negative("rule_gain", self.rule_gain)
-        _check_non_negative("rule_free_flow_floor", self.rule_free_flow_floor)
-        _check_non_negative("min_speed_difference", self.min_speed_difference)
-        _check_non_negative("overlap_limit", self.overlap_limit)
-        _check_positive("duration", self.duration)
-        _check_positive("lane_change_duration", self.lane_change_duration)
-        _check_non_negative("moving_speed", self.moving_speed)
-        _check_positive("abort_resolution", self.abort_resolution)
-        _check_non_negative("head_on_angle", self.head_on_angle)
-        _check_non_negative("lane_changing_angle", self.lane_changing_angle)
-        _check_non_negative("merge_headway", self.merge_headway)
-        _check_positive("pedestrian_speed", self.pedestrian_speed)
+        check_non_negative("standstill_speed", self.standstill_speed)
+        check_non_negative("acceleration_gain", self.acceleration_gain)
+        check_non_negative("rule_gain", self.rule_gain)
+        check_non_negative("rule_free_flow_floor", self.rule_free_flow_floor)
+        check_non_negative("min_speed_difference", self.min_speed_difference)
+        check_non_negative("overlap_limit", self.overlap_limit)
+        check_positive("duration", self.duration)
+        check_positive("lane_change_duration", self.lane_change_duration)
+        check_non_negative("moving_speed", self.moving_speed)
+        check_positive("abort_resolution", self.abort_resolution)
+        check_non_negative("head_on_angle", self.head_on_angle)
+        check_non_negative("lane_changing_angle", self.lane_changing_angle)
+        check_non_negative("merge_headway", self.merge_headway)
+        check_positive("pedestrian_speed", self.pedestrian_speed)
         low, high = self.pedestrian_speed_factor
-        _check_positive("pedestrian_speed_factor[0]", low)
-        _check_positive("pedestrian_speed_factor[1]", high)
+        check_positive("pedestrian_speed_factor[0]", low)
+        check_positive("pedestrian_speed_factor[1]", high)
         if low > high:
             raise ValueError(
                 "pedestrian_speed_factor must be (low, high) with low <= high, "
                 f"not ({low}, {high})"
             )
-        _check_positive("jaywalk_duration", self.jaywalk_duration)
-        _check_positive("jaywalk_resolution", self.jaywalk_resolution)
-        _check_non_negative("waiting_speed", self.waiting_speed)
-        _check_non_negative("crosswalk_reach", self.crosswalk_reach)
-        _check_positive("pedestrian_max_speed", self.pedestrian_max_speed)
+        check_positive("jaywalk_duration", self.jaywalk_duration)
+        check_positive("jaywalk_resolution", self.jaywalk_resolution)
+        check_non_negative("waiting_speed", self.waiting_speed)
+        check_non_negative("crosswalk_reach", self.crosswalk_reach)
+        check_positive("pedestrian_max_speed", self.pedestrian_max_speed)
         # Any finite mean: a negative one (the draw is clamped at 0) is a
         # pedestrian that never waits.
         mean, deviation = self.stop_crossing_wait
         if not math.isfinite(mean):
             raise ValueError(f"stop_crossing_wait[0] must be finite, not {mean}")
-        _check_non_negative("stop_crossing_wait[1]", deviation)
+        check_non_negative("stop_crossing_wait[1]", deviation)
 
 
 DEFAULT_THRESHOLDS = TriggerThresholds()

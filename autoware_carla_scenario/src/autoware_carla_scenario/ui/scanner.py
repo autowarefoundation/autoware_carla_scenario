@@ -25,7 +25,6 @@ from .cases import _read_json
 from .cases import _seconds as _seconds
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
-from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
 from .runner import _read_raw_log as _read_raw_log
 
 logger = logging.getLogger(__name__)
