@@ -3754,7 +3754,7 @@ class _FakeTrace:
 def test_the_signal_table_reads_a_lights_links_off_the_traces() -> None:
     from autoware_carla_scenario.traffic.sumo.network import SignalTable
 
-    table = SignalTable(_FakeTrace())
+    table = SignalTable(_FakeTrace())  # type: ignore[arg-type]  # roadgen.Trace's stand-in
     assert table.links("949") == [("j_189", 12), ("j_189", 13)]
     assert table.links("1") == []
 

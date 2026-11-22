@@ -971,7 +971,8 @@ What `test_typecheck_model.py` compares, model by model:
   nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
   `find_dotenv` and `load_dotenv`, packaging's `Version` and `InvalidVersion`, eclipse-sumo's
-  `SUMO_HOME` (where it is installed), pyxodr's `RoadNetwork` and lxml's
+  `SUMO_HOME` (where it is installed), roadgen's map, trace and
+  `read_opendrive()` (where it is installed), pyxodr's `RoadNetwork` and lxml's
   element.
 
 A constant whose model value is a literal (a `str`, `int`, `float` or a tuple
@@ -1074,7 +1075,7 @@ scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not pa
 
 Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
-packaging, eclipse-sumo;
+packaging, eclipse-sumo, roadgen;
 see *Making a module compile*), and a scenario may use what
 those models declare.
 
@@ -2502,9 +2503,9 @@ and type files, with the command line of `randomTrips.py` and the options of
 each demand it generates: `traffic.sumo.options`, #1679, and where SUMO is,
 the network's files and the demand `randomTrips.py` generates for it:
 `traffic.sumo.network`, #1967, and the crossings read off the network
-with `xml.etree.ElementTree`; not the conversion of the map with roadgen or
-the signal table read off roadgen's traces, which the check leaves
-uncalled), the signal
+with `xml.etree.ElementTree`, the conversion of the map with roadgen and
+the signal table loaded from roadgen's traces, #2312; not what the table asks
+the traces, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
 checks of their periods: `heavy_metrics`, #1689, and the `commonroad`
@@ -3846,6 +3847,26 @@ What Codon 0.19 needs that Python does not, beyond
   `SUMO_HOME` and `__file__`, both `str`, and nothing else. eclipse-sumo is
   optional (the `sumo` extra), so `test_typecheck_model.py` compares the model
   with the package only where it is installed.
+- **roadgen is modelled** as far as `commonroad.map` and
+  `traffic.sumo.network` convert the map with it (#2312):
+  `codon/roadgen/__init__.codon` declares `__version__` (a `str`),
+  `read_opendrive(path, sampling=2.0, origin=None,
+  projection="local_cartesian")`, a `Map`'s `read_warnings()`,
+  `write_read_trace()`, `export_ir()`, `export_commonroad()` and
+  `commonroad_warnings()` (a light cycle, which Codon has no one type for,
+  only as `None`), `export_sumo()` (the files' prefix) and
+  `sumo_warnings()`, and `Trace.load(*paths, check_files=True)` of `str`
+  paths, with the installed package's signatures, which
+  `test_typecheck_model.py` compares where roadgen (the `map` and `sumo`
+  extras) is installed. A trace's queries (`translate()`, whose answers are
+  dicts of mixed value types) and the rest of the package are not declared,
+  so `SignalTable.links()` stays `UNCALLED`. The probes compile as they are:
+  `getattr(roadgen, "__version__", "0")` is the rewrite of a `getattr` with a
+  default, and `hasattr(roadgen.Map, "export_commonroad")` is decided on the
+  model's `Map`. `commonroad_map()` compares the version as lists, as Python
+  compares the tuples (Codon's `tuple[int, ...]` is a `List[int]`), and
+  `SignalTable.load()` passes the three trace files by name, since Codon does
+  not unpack a generator into arguments.
 - **carla_canvas** is modelled for `canvas.use_canvas()`: `codon/carla_canvas/plugin.codon`
   declares `plugin_path() -> Path` and nothing else. carla_canvas is not a
   dependency of this package, so `test_typecheck_model.py` cannot compare it with

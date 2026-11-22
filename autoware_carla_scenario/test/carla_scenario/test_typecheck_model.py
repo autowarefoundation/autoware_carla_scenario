@@ -2142,6 +2142,119 @@ def test_the_sumo_model_is_the_packages_sumo_home() -> None:
     assert isinstance(sumo.__file__, str)
 
 
+#: The model of roadgen (the `map` and `sumo` extras): what the checked
+#: commonroad.map and traffic.sumo.network convert the map with (#2312).
+_ROADGEN_MODEL = model_dir() / "roadgen"
+
+#: What the model declares, by its name in the package: compared with the
+#: installed roadgen's signatures and with its stubs (`_roadgen.pyi`).
+_ROADGEN_NAMES = (
+    "read_opendrive",
+    "Map.read_warnings",
+    "Map.write_read_trace",
+    "Map.export_ir",
+    "Map.commonroad_warnings",
+    "Map.export_commonroad",
+    "Map.export_sumo",
+    "Map.sumo_warnings",
+    "Trace.load",
+)
+
+#: roadgen's stub annotation -> the model's, where the two are spelt apart.
+#: A light cycle (a str, a bool or a list of pairs) is left untyped, and the
+#: model refuses anything but None for it.
+_ROADGEN_ANNOTATIONS = {
+    "list[str]": "List[str]",
+    "float | None": "Optional[float]",
+    "Optional[Point]": "Optional[Tuple[float, float, float]]",
+    "Union[str, bool, Sequence[tuple[str, float]], None]": None,
+    "'Trace'": "Trace",
+}
+
+
+def _roadgen_model_function(name: str) -> ast.FunctionDef:
+    *owner, function = name.split(".")
+    definitions = _definitions("__init__", _ROADGEN_MODEL)
+    if not owner:
+        node = definitions[function][0]
+    else:
+        cls = definitions[owner[0]][0]
+        assert isinstance(cls, ast.ClassDef)
+        node = _methods(cls)[function]
+    assert isinstance(node, ast.FunctionDef), name
+    return node
+
+
+def _annotation(node: ast.expr | None) -> str | None:
+    return None if node is None else ast.unparse(node)
+
+
+def test_the_roadgen_model_declares_only_what_the_package_uses() -> None:
+    definitions = _definitions("__init__", _ROADGEN_MODEL)
+    assert _public(definitions) == ["Map", "Trace", "read_opendrive"]
+    declared = ["read_opendrive"]
+    for cls_name in ("Map", "Trace"):
+        cls = definitions[cls_name][0]
+        assert isinstance(cls, ast.ClassDef)
+        assert not _model_fields(cls), f"{cls_name} has fields in the model only"
+        declared += [f"{cls_name}.{method}" for method in _methods(cls)]
+    assert sorted(declared) == sorted(_ROADGEN_NAMES)
+    assert "staticmethod" in _decorators(_roadgen_model_function("Trace.load"))
+    version = definitions["__version__"][0]
+    assert isinstance(version, ast.AnnAssign)
+    assert ast.unparse(version.annotation) == "str"
+    roadgen = pytest.importorskip("roadgen", reason="roadgen (the map extra)")
+    assert isinstance(roadgen.__version__, str)
+    assert isinstance(inspect.getattr_static(roadgen.Trace, "load"), staticmethod)
+
+
+@pytest.mark.parametrize("name", _ROADGEN_NAMES)
+def test_the_roadgen_model_is_declared_as_in_the_package(name: str) -> None:
+    roadgen = pytest.importorskip("roadgen", reason="roadgen (the map extra)")
+    node = _roadgen_model_function(name)
+    python: Any = roadgen
+    for part in name.split("."):
+        python = getattr(python, part)
+    method = name.startswith("Map.")
+    assert _model_params(node, drop_first=method) == _python_params(
+        python, drop_first=method
+    ), name
+    _assert_defaults_as_in_python(
+        name, _model_defaults(node), python, "__init__", _ROADGEN_MODEL
+    )
+
+    # The types, from the package's stubs (it is a compiled extension).
+    stub_module = _parse(Path(roadgen.__file__).parent / "_roadgen.pyi")
+    *owner, function = name.split(".")
+    scope: list[ast.stmt] = stub_module.body
+    if owner:
+        (cls,) = (
+            n for n in scope if isinstance(n, ast.ClassDef) and n.name == owner[0]
+        )
+        scope = cls.body
+    (stub,) = (
+        n for n in scope if isinstance(n, ast.FunctionDef) and n.name == function
+    )
+
+    def spelt(annotation: str | None) -> str | None:
+        return _ROADGEN_ANNOTATIONS.get(annotation, annotation) if annotation else None
+
+    def params(fn: ast.FunctionDef) -> list[ast.arg]:
+        args = fn.args
+        out = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        if args.vararg is not None:
+            out.append(args.vararg)
+        return [a for a in out if a.arg != "self"]
+
+    model_types = {a.arg: _annotation(a.annotation) for a in params(node)}
+    stub_types = {a.arg: spelt(_annotation(a.annotation)) for a in params(stub)}
+    if node.args.vararg is not None:
+        # Codon's *args is a tuple of any types: the model refuses a non-str.
+        model_types[node.args.vararg.arg] = stub_types[node.args.vararg.arg]
+    assert model_types == stub_types, name
+    assert _annotation(node.returns) == spelt(_annotation(stub.returns)), name
+
+
 # ---------------------------------------------------------------------------
 # What Python exports, the model declares or leaves out on purpose (#237)
 # ---------------------------------------------------------------------------
