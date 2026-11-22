@@ -351,7 +351,7 @@ nothing:
 uv run scenario scenario=lane_change/left map=town10hd_opt \
   ego.spawn_lanelet_id=324 ego.spawn_s=10.0 ego.goal_lanelet_id=5650
 
-# Any repository, any revision
+# Any repository, any revision (quoted for Hydra as well: see maps.md)
 uv run scenario map=town10hd_opt \
   "map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'"
 
