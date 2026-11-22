@@ -39,6 +39,7 @@
       </span>
       <form hx-post="/draft/{{ draft.id }}/signal-group/{{ loop.index0 }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <button type="submit" class="ed-del" title="Remove group" aria-label="Remove group">{{ ic.icon('x', 10) }}</button>
       </form>
     </div>
@@ -108,6 +109,7 @@
       </span>
       <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <button type="submit" class="ed-del" title="Remove controller" aria-label="Remove controller">{{ ic.icon('x', 10) }}</button>
       </form>
     </div>
@@ -159,6 +161,7 @@
                 <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/move"
                       hx-target="#editor-body" hx-swap="innerHTML">
                   <input type="hidden" name="delta" value="-1">
+                  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
                   <button type="submit" class="ed-move-btn" title="Earlier in the cycle" aria-label="Earlier in the cycle">↑</button>
                 </form>
               {% endif %}
@@ -166,11 +169,13 @@
                 <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/move"
                       hx-target="#editor-body" hx-swap="innerHTML">
                   <input type="hidden" name="delta" value="1">
+                  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
                   <button type="submit" class="ed-move-btn" title="Later in the cycle" aria-label="Later in the cycle">↓</button>
                 </form>
               {% endif %}
               <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/delete"
                     hx-target="#editor-body" hx-swap="innerHTML">
+                <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
                 <button type="submit" class="ed-del" title="Remove phase" aria-label="Remove phase">{{ ic.icon('x', 10) }}</button>
               </form>
             </span>
@@ -235,6 +240,7 @@
 
       <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase"
             hx-target="#editor-body" hx-swap="innerHTML">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <button type="submit" class="ed-btn ed-btn-xs">{{ ic.icon('plus', 10) }} Phase</button>
       </form>
     </div>

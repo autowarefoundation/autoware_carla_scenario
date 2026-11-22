@@ -23,6 +23,7 @@
       </form>
       <button class="ed-btn-xs" title="Remove this waypoint condition" aria-label="Remove this waypoint condition"
               hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}/delete"
+              hx-vals='{"draft_revision": "{{ draft.revision }}"}'
               hx-target="#editor-body" hx-swap="innerHTML">{{ ic.icon('trash', 11) }}</button>
     </div>
     <div class="ed-trigger">{{ pred.render(gate.condition, draft, selected, document) }}</div>

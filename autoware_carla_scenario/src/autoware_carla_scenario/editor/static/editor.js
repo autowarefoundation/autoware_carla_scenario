@@ -850,6 +850,17 @@
     else el.value = state;
   }
 
+  // Whether *state* can be put back into *el*. A <select> shows only one of
+  // its options: given a value the new render no longer offers (a removed
+  // actor, a phase now disabled) it would read empty, and post that (#2348).
+  function canHold(el, state) {
+    if (el.tagName !== 'SELECT') return true;
+    for (var i = 0; i < el.options.length; i++) {
+      if (el.options[i].value === state && !el.options[i].disabled) return true;
+    }
+    return false;
+  }
+
   // What the page last rendered into the field: the server's value.
   function renderedOf(el) {
     if (TOGGLES.test(el.type)) return el.defaultChecked ? 'on' : '';
@@ -926,7 +937,7 @@
       try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
     }
     var unsentTyping = snap.state !== snap.rendered && !wasPosted(snap);
-    if (unsentTyping && stateOf(el) !== snap.state) {
+    if (unsentTyping && stateOf(el) !== snap.state && canHold(el, snap.state)) {
       setState(el, snap.state);
       if (isTyped(el)) {
         select(el, snap.start, snap.end);
@@ -947,7 +958,12 @@
     if (wasPosted(snap)) return null;
     var el = fieldsLike(snap.key)[snap.index];
     if (!el) return null;
-    if (stateOf(el) !== snap.state) setState(el, snap.state);
+    if (stateOf(el) !== snap.state) {
+      // Not an option any more: the server's rendering stands, and nothing is
+      // posted again.
+      if (!canHold(el, snap.state)) return null;
+      setState(el, snap.state);
+    }
     return el;
   }
 
@@ -1154,6 +1170,23 @@
       }
     }
   }
+
+  /* htmx fires `htmx:responseError` on the element that sent the request, and
+   * an event on an element no longer in the page reaches no listener here.
+   * That is the second of two quick clicks: the answer to the first replaced
+   * the body, and with it the button, before the second was refused (409, a
+   * row button checked strictly). Its refusal is shown all the same. */
+  document.body.addEventListener('htmx:beforeSend', function (event) {
+    var detail = event.detail || {};
+    var xhr = detail.xhr;
+    var elt = detail.elt;
+    if (!xhr || !elt) return;
+    xhr.addEventListener('loadend', function () {
+      if (xhr.status >= 400 && !elt.isConnected) {
+        showRequestError({ detail: Object.assign({}, detail, { xhr: xhr }) });
+      }
+    });
+  });
 
   document.body.addEventListener('htmx:responseError', showRequestError);
   document.body.addEventListener('htmx:sendError', showRequestError);

@@ -203,6 +203,8 @@ def _apply(
     selected: str,
     mutate: Any,
     form: Optional[Mapping[str, Any]] = None,
+    *,
+    strict: bool = False,
 ) -> HTMLResponse:
     """Run *mutate* against the draft, persist it, and re-render the body.
 
@@ -219,6 +221,9 @@ def _apply(
     posts every field it shows: one rendered from a draft that has been changed
     elsewhere since is refused with :class:`StaleDraftError` (HTTP 409) before
     *mutate* runs, rather than putting back what was changed there (#2345).
+    With *strict* -- a button that names a row by its index, or posts a whole
+    order -- only the current revision passes, even from the page that made
+    the saves since: those saves may have moved the rows (#2348).
     """
     service = _service(request)
     client = _client(request)
@@ -226,7 +231,7 @@ def _apply(
     with service.editing(draft_id):
         draft = service.require_draft(draft_id)
         if form is not None and REVISION_FIELD in form:
-            service.check_revision(draft, form[REVISION_FIELD], client)
+            service.check_revision(draft, form[REVISION_FIELD], client, strict=strict)
         try:
             result = mutate(draft.document)
         except EditorError as exc:
@@ -787,16 +792,19 @@ async def move_vertex_condition(
     "/draft/{draft_id}/action/{action_id}/advance/{index}/delete",
     response_class=HTMLResponse,
 )
-def delete_vertex_condition(
+async def delete_vertex_condition(
     request: Request, draft_id: str, action_id: str, index: int
 ) -> HTMLResponse:
     """Remove a waypoint condition: the vertex goes back to the clock."""
+    form = await request.form()
     service = _service(request)
     return _apply(
         request,
         draft_id,
         action_id,
         lambda doc: service.delete_vertex_condition(doc, action_id, index),
+        form=form,
+        strict=True,
     )
 
 
@@ -807,7 +815,12 @@ async def reorder_actors(request: Request, draft_id: str) -> HTMLResponse:
     order = [str(value) for value in form.getlist("order")]
     service = _service(request)
     return _apply(
-        request, draft_id, "scenario", lambda doc: service.reorder_actors(doc, order)
+        request,
+        draft_id,
+        "scenario",
+        lambda doc: service.reorder_actors(doc, order),
+        form=form,
+        strict=True,
     )
 
 
@@ -852,14 +865,19 @@ async def update_signal_group(
 @router.post(
     "/draft/{draft_id}/signal-group/{index}/delete", response_class=HTMLResponse
 )
-def delete_signal_group(request: Request, draft_id: str, index: int) -> HTMLResponse:
+async def delete_signal_group(
+    request: Request, draft_id: str, index: int
+) -> HTMLResponse:
     """Remove a group, and every phase state and conflict naming it."""
+    form = await request.form()
     service = _service(request)
     return _apply(
         request,
         draft_id,
         "environment",
         lambda doc: service.delete_signal_group(doc, index),
+        form=form,
+        strict=True,
     )
 
 
@@ -891,30 +909,36 @@ async def update_signal_controller(
 @router.post(
     "/draft/{draft_id}/signal-controller/{index}/delete", response_class=HTMLResponse
 )
-def delete_signal_controller(
+async def delete_signal_controller(
     request: Request, draft_id: str, index: int
 ) -> HTMLResponse:
     """Remove a controller, and every offset and card that named it."""
+    form = await request.form()
     service = _service(request)
     return _apply(
         request,
         draft_id,
         "environment",
         lambda doc: service.delete_signal_controller(doc, index),
+        form=form,
+        strict=True,
     )
 
 
 @router.post(
     "/draft/{draft_id}/signal-controller/{index}/phase", response_class=HTMLResponse
 )
-def add_signal_phase(request: Request, draft_id: str, index: int) -> HTMLResponse:
+async def add_signal_phase(request: Request, draft_id: str, index: int) -> HTMLResponse:
     """Add a step to a cycle."""
+    form = await request.form()
     service = _service(request)
     return _apply(
         request,
         draft_id,
         "environment",
         lambda doc: service.add_signal_phase(doc, index),
+        form=form,
+        strict=True,
     )
 
 
@@ -941,16 +965,19 @@ async def update_signal_phase(
     "/draft/{draft_id}/signal-controller/{index}/phase/{phase_index}/delete",
     response_class=HTMLResponse,
 )
-def delete_signal_phase(
+async def delete_signal_phase(
     request: Request, draft_id: str, index: int, phase_index: int
 ) -> HTMLResponse:
     """Remove one step of a cycle."""
+    form = await request.form()
     service = _service(request)
     return _apply(
         request,
         draft_id,
         "environment",
         lambda doc: service.delete_signal_phase(doc, index, phase_index),
+        form=form,
+        strict=True,
     )
 
 
@@ -970,6 +997,8 @@ async def move_signal_phase(
         draft_id,
         "environment",
         lambda doc: service.move_signal_phase(doc, index, phase_index, delta),
+        form=form,
+        strict=True,
     )
 
 
@@ -1138,10 +1167,14 @@ async def save_draft(request: Request, draft_id: str) -> HTMLResponse:
     service = _service(request)
     with service.editing(draft_id):
         draft = service.require_draft(draft_id)
+        # Every edit is saved as it is made, so pressing Save Draft usually
+        # changes nothing; it then writes nothing and leaves the revision, which
+        # its answer -- a status line, not the forms -- would not renumber.
+        as_read = service.content(draft)
         title = str(form.get("title", "")).strip()
         if title:
             draft.document.title = title
-        service.save(draft, _client(request))
+        service.save(draft, _client(request), unless_same_as=as_read)
     return _templates(request).TemplateResponse(
         request=request,
         name="partials/status.html",
