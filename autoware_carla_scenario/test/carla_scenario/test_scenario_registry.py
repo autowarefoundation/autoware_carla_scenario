@@ -1046,6 +1046,31 @@ class TestConfDirCollisions:
             registry.register_conf_dir(tmp_path / "missing")
         assert not self._warnings(caplog)
 
+    def test_the_framework_directory_comes_first_however_registered(
+        self, tmp_path: Path
+    ) -> None:
+        """get_conf_dirs() lists the directories in the order Hydra searches
+        them, so the batch plan names the YAML Hydra composes (#2300)."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+        from autoware_carla_scenario.examples.run import (  # noqa: PLC0415
+            _find_scenario_yaml,
+        )
+
+        pkg = _conf_dir(
+            tmp_path, "pkg", {"scenario/lane_change/left.yaml": "name: shadow\n"}
+        ).resolve()
+        other = _conf_dir(tmp_path, "other", {"scenario/x/a.yaml": "{}\n"}).resolve()
+        registry._CONF_DIRS.clear()
+        registry.register_conf_dir(pkg)
+        # Without the framework's directory registered, none is added.
+        assert registry.get_conf_dirs() == [pkg]
+        registry.register_conf_dir(registry._FRAMEWORK_CONF_DIR)
+        registry.register_conf_dir(other)
+        assert registry.get_conf_dirs() == [registry._FRAMEWORK_CONF_DIR, pkg, other]
+        assert _find_scenario_yaml("lane_change/left") == (
+            registry._FRAMEWORK_CONF_DIR / "scenario" / "lane_change" / "left.yaml"
+        )
+
     def test_each_directory_is_scanned_once(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -2147,6 +2172,79 @@ class TestEgoNumbersAreRefusedByTheirKey:
         shipped = _shipped([])
         shipped.ego[key] = None
         run.check_run_config(shipped)
+
+
+class TestNullEgoSettingsAreTheirDefaults:
+    """#2294: ``ego.initial_speed_kmh``, ``ego.vehicle_type``,
+    ``entity.spawn_retry_max_count`` and ``entity.spawn_retry_{t,z}_step``
+    set to null are their defaults (``EgoVehicleConfig``'s and
+    ``EntityConfig``'s), as the pre-run check leaves them; they passed the
+    check and were then refused by the build ("must be a number, got None"),
+    or, for the vehicle type, handed to CARLA as null.  A vehicle type that
+    names no blueprint (``''``, ``false``) is refused by the check, naming
+    the key."""
+
+    @pytest.mark.parametrize(
+        ("group", "key", "attribute", "default"),
+        [
+            ("ego", "initial_speed_kmh", "initial_speed_kmh", 0.0),
+            ("ego", "vehicle_type", "vehicle_type", "vehicle.mini.cooper"),
+            ("entity", "spawn_retry_max_count", "spawn_retry_max_count", 10),
+            ("entity", "spawn_retry_t_step", "spawn_retry_t_step", 0.1),
+            ("entity", "spawn_retry_z_step", "spawn_retry_z_step", 0.5),
+        ],
+    )
+    def test_a_null_is_the_default(
+        self, group: str, key: str, attribute: str, default: object
+    ) -> None:
+        from autoware_carla_scenario import EgoVehicleConfig, EntityConfig
+        from autoware_carla_scenario.examples import run
+
+        defaults = EgoVehicleConfig() if group == "ego" else EntityConfig()
+        assert getattr(defaults, key) == default
+        cfg = TestEgoNumbersAreRefusedByTheirKey._cfg(group, key, None)
+        ego, _, _ = run.build_ego_and_spawn(cfg)
+        assert getattr(ego, attribute) == default
+        # Absent reads the same.
+        del cfg[group][key]
+        ego, _, _ = run.build_ego_and_spawn(cfg)
+        assert getattr(ego, attribute) == default
+        shipped = _shipped([])
+        shipped[group][key] = None
+        run.check_run_config(shipped)
+
+    @pytest.mark.parametrize("value", ["", "   ", False, 0, 7])
+    def test_a_vehicle_type_naming_no_blueprint_is_refused(self, value: object) -> None:
+        from autoware_carla_scenario.examples import run
+
+        match = rf"^ego\.vehicle_type must be .*, got {re.escape(repr(value))}$"
+        shipped = _shipped([])
+        shipped.ego.vehicle_type = value
+        with pytest.raises(run.RunConfigError, match=match):
+            run.check_run_config(shipped)
+        with pytest.raises(ValueError, match=match):
+            run.build_ego_and_spawn(
+                TestEgoNumbersAreRefusedByTheirKey._cfg("ego", "vehicle_type", value)
+            )
+
+    def test_the_batch_plan_logs_nulls_and_a_quoted_lanelet_id(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The plan formatted a null speed and a quoted lanelet id with
+        ``%.1f``/``%d``: a ``--- Logging error ---`` instead of its line."""
+        import logging
+
+        from autoware_carla_scenario.examples import run
+
+        cfg = _shipped([])
+        cfg.ego.initial_speed_kmh = None
+        cfg.ego.vehicle_type = None
+        cfg.ego.spawn_lanelet_id = "242"
+        with caplog.at_level(logging.INFO, logger=run.logger.name):
+            run._log_batch_plan(["intersection_passing/straight"], [cfg], [])
+        lines = [r.getMessage() for r in caplog.records if "ego  " in r.getMessage()]
+        assert len(lines) == 1, caplog.text
+        assert "vehicle.mini.cooper (0.0 km/h) spawn=lanelet:242" in lines[0]
 
 
 #: The ego's and entity's numbers a run refuses unless finite (#1809): the

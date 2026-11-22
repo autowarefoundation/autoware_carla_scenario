@@ -5254,6 +5254,7 @@ _THIRD_PARTY_MODELS = {
     "lxml",
     "packaging",
     "pyxodr",
+    "roadgen",
     "sumo",
 }
 
@@ -5678,6 +5679,136 @@ def test_the_errno_codes_scaffold_placement_reads_are_cpythons() -> None:
         value = int(getattr(errno, name))
         assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
     assert not hasattr(errno, "ENODIR")  # what the refusal above misspells
+
+
+# ---------------------------------------------------------------------------
+# errno.ENOENT, os.strerror(), os.geteuid(), os.read() and os.set_blocking():
+# what driver.hdmap_export, rerun, hils.host_setup and commonroad.worker read
+# (#2310)
+# ---------------------------------------------------------------------------
+
+
+_ERRNO_AND_OS = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+_RACES = frozenset({errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY})
+
+
+def missing(path: Path) -> str:
+    reason: str = os.strerror(errno.ENOENT)
+    return f"{path}: {reason}"
+
+
+def raced(exc: OSError) -> bool:
+    return exc.errno in _RACES
+
+
+def as_root() -> bool:
+    return os.geteuid() == 0
+
+
+def drained(fd: int) -> bytes:
+    os.set_blocking(fd, False)
+    chunk = os.read(fd, 65536)
+    return chunk
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_and_os_shims_take_what_issue_2310_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_ERRNO_AND_OS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is an AttributeError or a TypeError in CPython too.
+        ("{errno.ENOENT, errno.EEXIST", "{errno.ENOFILE, errno.EEXIST"),
+        ("os.strerror(errno.ENOENT)", "os.strerror()"),
+        ("os.strerror(errno.ENOENT)", "os.strerror(code=errno.ENOENT)"),
+        ("os.geteuid()", "os.geteuid(0)"),
+        ("os.read(fd, 65536)", "os.read(fd)"),
+        ("os.read(fd, 65536)", "os.read(fd=fd, length=65536)"),
+        ("os.set_blocking(fd, False)", "os.set_blocking(fd)"),
+        ("os.set_blocking(fd, False)", "os.set_blocking(fd, blocking=False)"),
+    ],
+    ids=[
+        "enoent-misspelt",
+        "strerror-no-code",
+        "strerror-positional-only",
+        "geteuid-arguments",
+        "read-no-length",
+        "read-positional-only",
+        "set-blocking-no-flag",
+        "set-blocking-positional-only",
+    ],
+)
+def test_the_errno_and_os_shims_refuse_what_cpython_refuses_of_issue_2310(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _ERRNO_AND_OS.replace(right, wrong, 1)
+    assert source != _ERRNO_AND_OS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_and_os_shims_of_issue_2310_declare_cpythons() -> None:
+    import errno
+    import inspect
+    import os
+
+    shim = (model_dir() / "errno.codon").read_text()
+    assert re.search(rf"^ENOENT = {int(errno.ENOENT)}$", shim, re.MULTILINE)
+    assert errno.ENOENT == 2
+    assert not hasattr(errno, "ENOFILE")  # what the refusal above misspells
+    os_source = (model_dir() / "os" / "__init__.codon").read_text()
+    os_shim = {
+        node.name: node.args
+        for node in ast.parse(os_source).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    # geteuid() takes nothing; strerror(code, /), read(fd, length, /) and
+    # set_blocking(fd, blocking, /) take their values by position only, a
+    # `*args` of that many here.
+    assert not inspect.signature(os.geteuid).parameters
+    geteuid = os_shim["geteuid"]
+    assert not geteuid.args and geteuid.vararg is None and not geteuid.kwonlyargs
+    for name, count in (("strerror", 1), ("read", 2), ("set_blocking", 2)):
+        parameters = inspect.signature(getattr(os, name)).parameters.values()
+        assert [p.kind for p in parameters] == [inspect.Parameter.POSITIONAL_ONLY] * (
+            count
+        ), name
+        assert os_shim[name].vararg is not None and not os_shim[name].args, name
+        assert f'_positional_only(args, {count}, "{name}()")' in os_source, name
+    # What CPython makes of what the check refuses.
+    with pytest.raises(TypeError):
+        os.strerror(code=errno.ENOENT)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.geteuid(0)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.read(fd=0, length=1)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.set_blocking(0, blocking=False)  # type: ignore[call-arg]
+    assert isinstance(os.strerror(errno.ENOENT), str)
+    read, write = os.pipe()
+    try:
+        os.set_blocking(read, False)
+        os.write(write, b"x")
+        assert os.read(read, 65536) == b"x"
+    finally:
+        os.close(read)
+        os.close(write)
 
 
 # ---------------------------------------------------------------------------

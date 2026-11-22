@@ -13,6 +13,7 @@ from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
 from autoware_carla_scenario.scenario_hash import (
     OTHER_SECTIONS,
     SCENARIO_SECTIONS,
+    SCENARIO_SETTINGS,
     scenario_hash,
 )
 
@@ -104,6 +105,27 @@ def test_what_is_simulated_is_part_of_it(changes: dict[str, Any]) -> None:
     assert scenario_hash(_config(**changes), CLASS) != scenario_hash(_config(), CLASS)
 
 
+def test_the_fog_density_scale_is_part_of_it_once_set() -> None:
+    """server.fog_density_scale scales how thick the environment's fog
+    renders, LiDAR fog included (#2300): runs that differ in it are not
+    rollouts of one scenario.  The rest of server is still left out, and an
+    unset scale (null, the server's own) keeps the digest it had before."""
+    assert ("server", "fog_density_scale") in SCENARIO_SETTINGS
+    base = scenario_hash(_config(), CLASS)
+    unset = {"host": "localhost", "port": 2000, "fog_density_scale": None}
+    assert scenario_hash(_config(server=unset), CLASS) == base
+
+    def scaled(scale: object, **server: object) -> str:
+        return scenario_hash(
+            _config(server={"fog_density_scale": scale, **server}), CLASS
+        )
+
+    assert scaled(0.01) != base
+    assert scaled(0.01) != scaled(0.001)
+    assert scaled(0.01) == scaled(1e-2, host="node7", world_reset="soft")
+    assert scaled(1) == scaled(1.0)
+
+
 def test_the_scenarios_class_is_part_of_it() -> None:
     assert scenario_hash(_config(), CLASS) != scenario_hash(_config(), "pkg.Other")
 
@@ -146,3 +168,27 @@ def test_build_scenario_gives_the_scenario_the_hash_of_its_config() -> None:
     assert scenario.scenario_hash == scenario_hash(
         _config(seed=3), f"{__name__}._Scenario"
     )
+
+
+def test_build_scenario_hashes_the_fog_density_scale() -> None:
+    from autoware_carla_scenario.examples.run import _set_scenario_hash
+
+    def built(scale: object) -> str | None:
+        server = {"host": "localhost", "port": 2000, "fog_density_scale": scale}
+        scenario = _Scenario(
+            EgoConfig(
+                spawn_location=SpawnTransform(
+                    carla.Transform(carla.Location(x=0, y=0, z=0))
+                ),
+                vehicle_type="vehicle.mini.cooper",
+            )
+        )
+        _set_scenario_hash(OmegaConf.create(_config(server=server)), scenario)
+        return scenario.scenario_hash
+
+    name = f"{__name__}._Scenario"
+    assert built(0.01) == scenario_hash(
+        _config(server={"fog_density_scale": 0.01}), name
+    )
+    assert built(None) == scenario_hash(_config(), name)
+    assert built(0.01) != built(None)

@@ -418,7 +418,7 @@ Key features:
   A `start()` (or `__enter__`) that fails -- the runner cannot connect, the map name is unknown, the Lanelet2 map does not load -- calls `stop()` before the error propagates, so the server the queue owns is stopped and the Autoware launcher closed even though `__exit__` does not run.
 - **Server start**: `CarlaServerManager.start()` never takes another process's server for the one it launched (#2233). Before launching on a local host it tries a plain TCP connection to `host:port`: with `reuse_if_running=False` a port that accepts one is refused at once ("in use by another process"; stop that process, choose another `server.port`, or set `reuse_if_running=True` to use the server there), and with `reuse_if_running=True` a port that accepts a connection but did not answer the first ping as CARLA (a busy server can miss its 2 s deadline) is pinged again for up to `CarlaServerManager.REUSE_PING_S` (30 s) and reused once it answers, or refused -- never launched over, since a second server could not bind the port; a port that stops accepting connections during that wait (a server still shutting down, as after a queue's restart stopped it) is launched on. While a launched server starts, its own process is checked before each ping and after the one that answers: once it has exited, `start()` fails with its exit code and where CARLA's own log is (`<launcher directory>/CarlaUnreal/Saved/Logs`), even when something answers on the port.
 - **Server lifetime**: A CARLA that `CarlaServerManager` launched does not outlive the process that launched it. `stop()` (or `with`, or `atexit`) stops it on a normal exit; a SIGTERM to `scenario` raises `KeyboardInterrupt`, so the `with` blocks unwind as on Ctrl-C, and it exits 143; and CARLA is launched under a small watchdog that leads its process group and, once that process is gone (killed with SIGKILL, say, as the lanelet sweeper does a job past `sweep.job_timeout_seconds`), sends the group SIGTERM and, 10 s later, SIGKILL; the sweeper then waits until that CARLA has exited before its next attempt. The watchdog polls its parent process rather than using `PR_SET_PDEATHSIG`, which follows the thread that started it. A server that was already running and was reused is never stopped.
-- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch or the queue fails to `start()`. It runs the scenarios with `run_all(continue_on_error=True)`, so a scenario that raises on every attempt fails its own tests rather than skipping the session: its result is a failed one naming the error, and a `CarlaScenarioFixture` for it fails each test that uses it.
+- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when the queue fails to `start()` -- among other reasons, when no server answers at its host and there is none to launch. Whether a CARLA is installed is not asked first: a remote server, or one already running, needs none. It runs the scenarios with `run_all(continue_on_error=True)`, so a scenario that raises on every attempt fails its own tests rather than skipping the session: its result is a failed one naming the error, and a `CarlaScenarioFixture` for it fails each test that uses it.
 
 ### Recordings of a run
 
@@ -1252,13 +1252,16 @@ graph LR
     CW["CarlaWorldPose<br/>(x, y, z, yaw)"]
 
     L2 -->|"to_opendrive()"| OD
-    OD -->|"to_carla_location()"| CW
+    L2 -->|"to_carla_world()"| CW
+    OD -->|"to_carla_world()"| CW
     CW -->|"to_lanelet2()"| L2
     OD -->|"snap_to_carla_road()"| CW
     CW -->|"to_opendrive()"| OD
 ```
 
 **`MapManager`** is a singleton that holds the `LaneletMap`, `RoadNetwork`, and a precomputed z-offset (averaged from CARLA spawn points, leaving out those matched to a lanelet on another level of stacked roads). It is initialized once per `ScenarioQueue.start()` when both `xodr_path` and `lanelet2_path` are provided.
+
+`to_carla_world()` returns a `CarlaWorldPose`; `to_carla_location()` takes any of the three (or a `carla.Location`) and returns the `carla.Location` of its `CarlaWorldPose`.
 
 **`snap_to_carla_road()`** uses CARLA's ray-cast API to project an OpenDRIVE position onto the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world.
 
@@ -1500,7 +1503,7 @@ graph LR
 
 | Variable | Required | Default | Used by | Description |
 |----------|----------|---------|---------|-------------|
-| **`CARLA_EXECUTABLE`** | No | the launcher `scenario-setup` installed | `CarlaServerManager` | Absolute path to the CARLA UE5 launcher (`CarlaUnreal.sh`). Unset, the one `scenario-setup` installed under `~/.autoware_carla_scenario/bin/carla` is launched. When a server is already running and `reuse_if_running=True`, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all. |
+| **`CARLA_EXECUTABLE`** | No | the launcher `scenario-setup` installed | `CarlaServerManager` | Absolute path to the CARLA UE5 launcher (`CarlaUnreal.sh`). Unset, the one `scenario-setup` installed under `~/.autoware_carla_scenario/bin/carla` is launched. When a server is already running and `reuse_if_running=True`, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all and no server answers at their host. |
 | **`AUTOWARE_CARLA_SCENARIO_HOME`** | No | `~/.autoware_carla_scenario` | `carla_install_paths` | Where `scenario-setup` installs CARLA (`bin/carla`). |
 | **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |

@@ -178,10 +178,18 @@ class CommonRoadWorker:
                 with the next request's).
 
         Raises:
-            CommonRoadWorkerError: The worker is gone, answered out of
+            CommonRoadWorkerError: *request* is not JSON-serializable
+                (nothing is sent), the worker is gone, answered out of
                 protocol (a line that is not a JSON object), answered not
                 ok, or did not answer within *timeout*.
         """
+        try:
+            encoded = json.dumps(request) + "\n"
+        except (TypeError, ValueError) as exc:
+            # A value JSON cannot carry (a NumPy float32): nothing is sent.
+            raise CommonRoadWorkerError(
+                f"cannot send {request.get('op')!r} to the CommonRoad worker: {exc}"
+            ) from exc
         deadline = None if timeout is None else time.monotonic() + timeout
         process = self._process
         if (
@@ -195,7 +203,7 @@ class CommonRoadWorker:
         try:
             with self._write_lock:
                 try:
-                    process.stdin.write(json.dumps(request) + "\n")
+                    process.stdin.write(encoded)
                     process.stdin.flush()
                 except (OSError, ValueError):
                     self._close_if_closing(process.stdin)

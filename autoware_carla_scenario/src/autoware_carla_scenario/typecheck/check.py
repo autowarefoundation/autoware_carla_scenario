@@ -79,6 +79,7 @@ from .toolchain import (
 )
 from .library import (
     CHECKED,
+    EXCLUDED,
     MODELLED_IMPORTS,
     REPLACED_MODELS,
     UNCALLED,
@@ -192,14 +193,14 @@ _LLVM_ERROR = "LLVM: error:"
 #: a value of another type is stored in (#488).
 _BAD_ALLOC = "std::bad_alloc"
 #: Codon killed by SIGKILL, with no error of its own: in practice the
-#: out-of-memory killer (a full library check takes about 8 GB), which says
-#: nothing about the program compiled.
+#: out-of-memory killer (a full library check takes about 14 GB,
+#: :mod:`.memory_gate`), which says nothing about the program compiled.
 _KILLED = (
     "Codon was killed (SIGKILL) after {seconds:.0f} s, with no error of its "
-    "own: most likely by the out-of-memory killer (the library check takes "
-    "about 8 GB; another Codon build running at the same time can use up the "
-    "memory). This says nothing about the code checked: run the check again "
-    "with more memory free"
+    "own: most likely by the out-of-memory killer (the whole library check "
+    "takes about 14 GB; another Codon build running at the same time can use "
+    "up the memory). This says nothing about the code checked: run the check "
+    "again with more memory free"
 )
 #: LLVM refusing a call that passes a function where a ``Callable`` is
 #: expected, with the signature of another: Codon 0.19 converts the function
@@ -618,27 +619,6 @@ def _linked(codon_path: Path) -> frozenset[str]:
     return frozenset(p.name.split(".")[0] for p in codon_path.iterdir())
 
 
-def _check_time_only_nodes(tree: ast.Module) -> Iterator[ast.AST]:
-    """Every node of the code only Codon reads: the body of each ``if
-    TYPE_CHECKING:`` and the ``else`` branch of each ``if not TYPE_CHECKING:``
-    (the counterpart of :func:`_run_time_only_nodes`)."""
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        if _is_type_checking(node.test):
-            check_time_only = node.body
-        elif (
-            isinstance(node.test, ast.UnaryOp)
-            and isinstance(node.test.op, ast.Not)
-            and _is_type_checking(node.test.operand)
-        ):
-            check_time_only = node.orelse
-        else:
-            continue
-        for stmt in check_time_only:
-            yield from ast.walk(stmt)
-
-
 def _missing_at_run_time(module: str, names: list[str]) -> list[str]:
     """Why ``from module import names`` (or ``import module``) fails in Python.
 
@@ -702,12 +682,19 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
         text = path.read_text(encoding="utf-8")
         tree = ast.parse(text)
         out.modules[name] = _Module(path, is_package, text, tree)
-        # What only Codon reads (`if TYPE_CHECKING:`) Python never imports.
-        check_time = {id(node) for node in _check_time_only_nodes(tree)}
+        # What only Codon reads (`if TYPE_CHECKING:`) Python never imports,
+        # and what only Python runs (its `else:`) Codon never compiles.
+        check_time, run_time_only = _type_checking_branches(tree)
         run_time = {
             (imported, lineno)
             for imported, _names, lineno in _imports(
-                tree, name, is_package, skip=check_time
+                tree, name, is_package, skip=_walked(check_time)
+            )
+        }
+        compiled = {
+            (imported, lineno)
+            for imported, _names, lineno in _imports(
+                tree, name, is_package, skip=_walked(run_time_only)
             )
         }
         for imported, names, lineno in _imports(tree, name, is_package):
@@ -715,10 +702,11 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
             if imported in modeled:
                 # A name the model leaves out on purpose: said with the
                 # reason, rather than as Codon's "cannot import name" (#237).
-                out.problems += [
-                    Diagnostic(message, str(path), lineno)
-                    for message in _not_modelled(imported, names)
-                ]
+                if (imported, lineno) in compiled:
+                    out.problems += [
+                        Diagnostic(message, str(path), lineno)
+                        for message in _not_modelled(imported, names)
+                    ]
                 # The model may declare what Python's module lacks (a
                 # model-only helper module, a name the model needs for
                 # itself): an import Python runs must find it there too (#214).
@@ -727,6 +715,10 @@ def _collect(roots: list[str], tc: Toolchain, codon_path: Path) -> _Sources:
                         Diagnostic(message, str(path), lineno)
                         for message in _missing_at_run_time(imported, names)
                     ]
+                continue
+            if (imported, lineno) not in compiled:
+                # Only Python imports it: nothing for Codon to model or to
+                # compile, as in the library check (#2288).
                 continue
             if top in shims:
                 continue
@@ -2344,22 +2336,47 @@ def _plain_lambda_names(message: str) -> str:
     return _LAMBDA_TYPE.sub("a lambda", message)
 
 
-def _checked_file(
-    file: str, ws: _Workspace, by_basename: dict[str, list[str]]
-) -> str | None:
-    """The checked file of *ws* (workspace-relative) Codon's *file* names, if any.
+#: The function (or class) a "during the realization of NAME(...)" frame
+#: names: ``bad``, ``Foo.__init__:0`` (read as ``__init__``), ``f[T]``.
+_REALIZATION = re.compile(r"^during the realization of (?P<name>[^(\[\s]+)")
 
-    Codon runs in the workspace and names a file by its path, relative to the
-    workspace or absolute: that path, normalised, is looked up among the
-    checked files, so a frame in the model (``autoware_carla_scenario/
-    __init__.codon``), typesafe_carla's library or Codon's standard library
-    is in none of them, whatever its basename (#2249).  Only a bare basename,
-    as a frame of a trace has, falls back to the one checked file of that
-    basename.
+
+def _realized_name(message: str) -> str | None:
+    """The bare name of the function or class *message*, a frame of Codon's
+    trace, says Codon was realizing, if it is such a frame."""
+    found = _REALIZATION.match(message)
+    if found is None:
+        return None
+    return found["name"].rsplit(".", 1)[-1].split(":", 1)[0] or None
+
+
+def _defines_at(tree: ast.Module, name: str, line: int) -> bool:
+    """Whether *tree* has a function or class *name* whose lines span *line*."""
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name == name
+        and node.lineno <= line <= (node.end_lineno or node.lineno)
+        for node in ast.walk(tree)
+    )
+
+
+def _checked_files(
+    file: str, ws: _Workspace, by_basename: dict[str, list[str]]
+) -> list[str]:
+    """The checked files of *ws* (workspace-relative) Codon's *file* may name.
+
+    Codon 0.19 names a file by its bare basename, the top-level error
+    included, so a bare basename is every checked file of that basename:
+    more than one when two checked modules share it (``a/util.py`` and
+    ``b/util.py``, a package's ``__init__.py``s), for the caller to tell
+    apart (#2288).  A path, relative to the workspace or absolute, is
+    normalised and looked up among the checked files, so a frame in the
+    model (``autoware_carla_scenario/__init__.codon``), typesafe_carla's
+    library or Codon's standard library is in none of them, whatever its
+    basename (#2249).
     """
     if os.sep not in file and "/" not in file:
-        candidates = by_basename.get(file, [])
-        return candidates[0] if len(candidates) == 1 else None
+        return list(by_basename.get(file, []))
     path = Path(os.path.normpath(file))
     if path.is_absolute():
         for root in (ws.root, ws.root.resolve()):
@@ -2368,10 +2385,10 @@ def _checked_file(
             except ValueError:
                 continue
             if rel in ws.files:
-                return rel
-        return None
+                return [rel]
+        return []
     rel = path.as_posix()
-    return rel if rel in ws.files else None
+    return [rel] if rel in ws.files else []
 
 
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
@@ -2386,6 +2403,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     #: The (file, line) of Codon's of each error in an f-string field, which
     #: Codon puts a line late at no column of the line (#610).
     in_fields: set[tuple[str, int]] = set()
+    #: The (file, line) of Codon's of each frame whose basename more than one
+    #: checked file has, none of which the frame tells apart: where it is in
+    #: each of them (#2288).
+    ambiguous: dict[tuple[str, int], list[str]] = {}
     trees: dict[str, tuple[ast.Module, list[str]] | None] = {}
 
     def checked_tree(rel: str) -> tuple[ast.Module, list[str]] | None:
@@ -2400,21 +2421,69 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
                 trees[rel] = None
         return trees[rel]
 
+    def narrowed(candidates: list[str], line: int, realizing: str | None) -> list[str]:
+        """The *candidates* (checked files of one basename) Codon's frame at
+        *line* can be in: those long enough to have the line and, when the
+        enclosing frame says which function Codon was realizing, those
+        defining a function or class of that name across the line (#2288)."""
+        if len(candidates) < 2:
+            return candidates
+        trees_ = {rel: checked_tree(rel) for rel in candidates}
+        fits = [
+            rel
+            for rel, checked in trees_.items()
+            # A file's text ends in a newline, after which is no line.
+            if checked is None or line <= len(checked[1]) - (checked[1][-1] == "")
+        ] or candidates
+        if realizing is not None and len(fits) > 1:
+            named = [
+                rel
+                for rel in fits
+                if (checked := trees_[rel]) is not None
+                and _defines_at(checked[0], realizing, line)
+            ]
+            fits = named or fits
+        return fits
+
     def locate(
         file: str,
         line: int,
         column: int | None = None,
         message: str = "",
         end: int | None = None,
+        realizing: str | None = None,
     ) -> tuple[str, int, bool, str | None] | None:
-        """(path to show, line, is the scenario's own file, the appended call)."""
+        """(path to show, line, is the scenario's own file, the appended call).
+
+        *realizing* is the function the enclosing frame names (its "during
+        the realization of NAME(...)"), which tells apart checked files
+        sharing *file*'s basename.  Where it does not, the frame is placed
+        in the first of them and :data:`ambiguous` holds them all.
+        """
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
             return (key if key else ws.driver_label, 0 if key else line, False, None)
-        found_rel = _checked_file(file, ws, by_basename)
-        if found_rel is None:
+        candidates = narrowed(_checked_files(file, ws, by_basename), line, realizing)
+        if not candidates:
             return None
-        rel = found_rel
+        if len(candidates) == 1:
+            return place(candidates[0], file, line, column, message, end)
+        places = [place(rel, file, line, column, message, end) for rel in candidates]
+        ambiguous[(file, line)] = [
+            f"{where}:{at}" if at else where for where, at, _own, _note in places
+        ]
+        return places[0]
+
+    def place(
+        rel: str,
+        file: str,
+        line: int,
+        column: int | None,
+        message: str,
+        end: int | None,
+    ) -> tuple[str, int, bool, str | None]:
+        """:func:`locate`'s answer for Codon's *file* at *line*, the checked
+        file *rel*."""
         if line > _PRELUDE_LINES + 1 and not message.startswith("syntax error"):
             checked = checked_tree(rel)
             field = (
@@ -2494,9 +2563,17 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
 
     diagnostics: list[Diagnostic] = []
     for message, frames in errors:
+        # Each error's own frames only: a (file, line) one error's trace
+        # leaves ambiguous, another's may tell apart.
+        ambiguous.clear()
+        # Codon prints the innermost frame first: the one after a frame says
+        # which function that frame is in ("during the realization of f").
+        realizing = [_realized_name(outer[3]) for outer in frames[1:]] + [None]
         located = [
-            (f, locate(f[0], f[1], f[2], f[3], ends.get(id(f)))) if f[0] else (f, None)
-            for f in frames
+            (f, locate(f[0], f[1], f[2], f[3], ends.get(id(f)), realizing[i]))
+            if f[0]
+            else (f, None)
+            for i, f in enumerate(frames)
         ]
         pf, primary = next(
             ((f, loc) for f, loc in located if loc and loc[2]), None
@@ -2507,6 +2584,14 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         elif column is not None and pf is not None and (pf[0], pf[1]) in moved:
             if not _column_survives(column, *moved[(pf[0], pf[1])]):
                 column = None  # a column of the rewritten line (#494)
+        if pf is not None and (pf[0], pf[1]) in ambiguous:
+            # Codon's basename is more than one checked file's: name them all.
+            column = None
+            message = (
+                f"{message} (Codon names the file {pf[0]} only, which more "
+                "than one checked file is called: this is one of "
+                f"{', '.join(ambiguous[(pf[0], pf[1])])})"
+            )
         trace = []
         if primary is not None and primary[3] is not None:
             # The error is on an appended line itself: say which call it is.
@@ -2515,7 +2600,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         for f, loc in located[1:]:
             if f[0] == DRIVER_MODULE:
                 continue  # the generated program: nothing the author wrote
-            if loc is not None:
+            if (f[0], f[1]) in ambiguous:
+                where = f"one of {', '.join(ambiguous[(f[0], f[1])])}"
+            elif loc is not None:
                 where = f"{Path(loc[0]).name}:{loc[1]}" if loc[1] else loc[0]
                 if loc[3] is not None:
                     where = f"{loc[3]}, {where}"
@@ -2715,8 +2802,8 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
 
 def _tree_digest(digest: Any, paths: list[Path], root: Path) -> None:
     """Add each of *paths*, by its path relative to *root* and its bytes, to
-    *digest*, as :func:`_package_digest` does: moving or renaming a file, or
-    adding an empty one, is another digest (#2249)."""
+    *digest*: moving or renaming a file, or adding an empty one, is another
+    digest (#2249)."""
     for path in sorted(paths):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
         digest.update(path.read_bytes() + b"\0")
@@ -2746,9 +2833,7 @@ def _package_digest() -> str:
     """
     root = Path(__file__).resolve().parent.parent
     digest = hashlib.sha256()
-    for path in sorted([*root.rglob("*.py"), *root.rglob("*.pyi")]):
-        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes() + b"\0")
+    _tree_digest(digest, [*root.rglob("*.py"), *root.rglob("*.pyi")], root)
     return digest.hexdigest()
 
 
@@ -2921,7 +3006,10 @@ def _toolchain_digest(tc: Toolchain) -> str:
     """
     digest = hashlib.sha256(str(tc.executable).encode())
     digest.update(tc.version().encode())
-    for directory in tc.library_dirs():
+    directories = tc.library_dirs()
+    for directory in directories:
+        if any(d != directory and directory.is_relative_to(d) for d in directories):
+            continue  # lib/codon, which lib/ holds: hashed with it, once (#2288)
         digest.update(f"\0{directory}\0".encode())
         _tree_digest(digest, list(directory.rglob("*.codon")), directory)
     return digest.hexdigest()
@@ -4161,28 +4249,46 @@ def _library_files(
     return files
 
 
-def _run_time_only_nodes(tree: ast.Module) -> Iterator[ast.AST]:
-    """Every node of the code only Python runs: the ``else`` branch of each
-    ``if TYPE_CHECKING:`` and the body of each ``if not TYPE_CHECKING:``.
+def _type_checking_branches(
+    tree: ast.Module,
+) -> tuple[list[ast.stmt], list[ast.stmt]]:
+    """(the statements only Codon reads, the statements only Python runs) of
+    *tree*.
 
     Codon reads ``TYPE_CHECKING`` as a compile-time true (the ``typing``
-    shim), so it compiles only the branch taken when it is true.
+    shim), so it compiles only the branch taken when it is true: the body of
+    each ``if TYPE_CHECKING:`` and the ``else`` branch of each ``if not
+    TYPE_CHECKING:``.  Python, where it is false, runs only the other one.
     """
+    check_time: list[ast.stmt] = []
+    run_time: list[ast.stmt] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.If):
             continue
         if _is_type_checking(node.test):
-            run_time_only = node.orelse
+            check_time += node.body
+            run_time += node.orelse
         elif (
             isinstance(node.test, ast.UnaryOp)
             and isinstance(node.test.op, ast.Not)
             and _is_type_checking(node.test.operand)
         ):
-            run_time_only = node.body
-        else:
-            continue
-        for stmt in run_time_only:
-            yield from ast.walk(stmt)
+            check_time += node.orelse
+            run_time += node.body
+    return check_time, run_time
+
+
+def _walked(statements: list[ast.stmt]) -> set[int]:
+    """The ``id()`` of every node of *statements*."""
+    return {id(node) for stmt in statements for node in ast.walk(stmt)}
+
+
+def _run_time_only_nodes(tree: ast.Module) -> Iterator[ast.AST]:
+    """Every node of the code only Python runs: the ``else`` branch of each
+    ``if TYPE_CHECKING:`` and the body of each ``if not TYPE_CHECKING:``
+    (:func:`_type_checking_branches`)."""
+    for stmt in _type_checking_branches(tree)[1]:
+        yield from ast.walk(stmt)
 
 
 def _is_type_checking(node: ast.expr) -> bool:
@@ -4358,6 +4464,21 @@ def typecheck_library(
     title = f"{_PACKAGE} library ({len(names)} checked modules)"
     if not names:
         return TypeCheckResult(title, ok=True, skipped="no module to check")
+    # A name the check refuses is refused before any Codon is looked for: an
+    # EXCLUDED module is not compiled, whose failure would only advise
+    # excluding it (#2288).
+    every = package_modules()
+    refused = [
+        f"{name} is EXCLUDED in typecheck/library.py: {EXCLUDED[name]}"
+        if name in EXCLUDED
+        else f"{name} is not a module of {_PACKAGE} the check can compile"
+        for name in names
+        if name in EXCLUDED or name not in every
+    ]
+    if refused:
+        return TypeCheckResult(
+            title, ok=False, diagnostics=[Diagnostic(message) for message in refused]
+        )
     if toolchain is None:
         try:
             toolchain = find_supported_codon()
@@ -4367,19 +4488,6 @@ def typecheck_library(
         codon_path = codon_path_dir()
     except ToolchainError as exc:
         return TypeCheckResult(title, ok=True, skipped=f"no CARLA API to check: {exc}")
-    every = package_modules()
-    unknown = [name for name in names if name not in every]
-    if unknown:
-        return TypeCheckResult(
-            title,
-            ok=False,
-            diagnostics=[
-                Diagnostic(
-                    f"{name} is not a module of {_PACKAGE} the check can compile"
-                )
-                for name in unknown
-            ],
-        )
     sources = _Sources()
     for name in names:
         sources.modules[name] = _read_module(every[name])

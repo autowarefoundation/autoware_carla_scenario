@@ -322,13 +322,15 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         ),
     },
     f"{_PACKAGE}.rerun": _each(
-        "INSTALL_HINT RECORDING_SUFFIX RerunConversion RerunUnavailableError "
-        "convert_outputs latest main report require_converter",
+        "INSTALL_HINT RECORDING_SUFFIX RerunStrictUnsupportedError "
+        "RerunUnavailableError check_strict_coverage convert_outputs latest "
+        "main report require_converter written_records",
         "makes Rerun recordings of a run's trajectory logs with the "
         "autoware-carla-scenario-rerun package, which the runner does after a "
         "run (rerun.enabled), not a scenario; the model declares only the "
-        "RerunConverter the checked runner hands each log to and "
-        "recording_path, which names the recording it makes",
+        "RerunConverter the checked runner hands each log to, the "
+        "RerunConversion records its wait() returns, and recording_path, "
+        "which names the recording it makes",
     ),
     f"{_PACKAGE}.hils.config": _each(
         "CLOCKS PHASES HilsConfigError InputSource InputSpec SensorSpec StepSpec",
@@ -752,6 +754,14 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "whether rerun.lidar or rerun.cameras is set, which the converter's "
             "start_sensors checks itself; the checked runner calls "
             "start_sensors and stop_sensors whatever it is"
+        ),
+    },
+    "RerunConversion": {
+        "stats": (
+            "what the converter returned for the log (a dict of mixed "
+            "values: ticks, actors, the record types and fields it skipped), "
+            "which Codon cannot express; the run's report reads it, not a "
+            "scenario, which reads whether the conversion went (ok, error)"
         ),
     },
     "T4SceneExporter": _members(

@@ -32,10 +32,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..slurm.manifest import verdict_of_document
+# Whether a SLURM case's outcome is stale, compiled by the library check.
+from ..slurm.collect import _stale as _stale
+from ..slurm.collect import stale_reason as stale_reason
+from ..slurm.manifest import BatchLayout, verdict_of_document
 
-# The path guard, the case stems and a batch's stamp, compiled by the library check; every
-# name stays importable from here.
+# The path guard, the case stems, a batch's stamp and the overrides a session's jobs
+# share, compiled by the library check; every name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
@@ -46,6 +49,7 @@ from .case_paths import _TRAJECTORY as _TRAJECTORY
 from .case_paths import SESSION_TYPES as SESSION_TYPES
 from .case_paths import CaseFiles as CaseFiles
 from .case_paths import _safe as _safe
+from .case_paths import _shared_overrides as _shared_overrides
 from .case_paths import _stat as _stat
 from .case_paths import _stems_in as _stems_in
 from .case_paths import _summary_is_current as _summary_is_current
@@ -179,13 +183,7 @@ def session_overrides(directory: Path, jobs: list[list[str]]) -> set[str]:
     recorded = _multirun_task(directory)
     if recorded is not None:
         return _as_jobs_receive(recorded)
-    read = [overrides for overrides in jobs if overrides]
-    if not read:
-        return set()
-    shared = set(read[0])
-    for overrides in read[1:]:
-        shared &= set(overrides)
-    return shared
+    return _shared_overrides(jobs)
 
 
 def _same_result(entry: dict[str, Any], result: Any) -> bool:
@@ -304,10 +302,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     has no ``batch_results.json`` yet. A case without an outcome yet has
     ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
     verdict, or a result that cannot be reported (``verdict_of_document``,
-    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
+    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it.
+    A stale outcome, an earlier submission's that the last one to give the
+    case stopped before replacing (``slurm.collect.stale_reason``, #2247),
+    is not the case's: it is pending too, with a message saying why, as
+    ``status`` and the SLURM panel count it, never its old verdict (#2285)."""
     cases = _manifest_cases(directory)
     if cases is None:
         return None
+    layout = BatchLayout(directory)
     entries: list[dict[str, Any]] = []
     for case in cases:
         overrides = case.get("case_overrides")
@@ -318,7 +321,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             "scenario": case.get("label") or case.get("scenario") or "unknown",
             "overrides": list(overrides) if isinstance(overrides, list) else [],
         }
-        if isinstance(record, dict) and isinstance(record.get("result"), dict):
+        stale = _stale(layout, int(case["index"])) if isinstance(record, dict) else None
+        if stale is not None:
+            entry.update(
+                passed=None,
+                message=f"Stale result: {stale}",
+                elapsed_seconds=None,
+                pending=True,
+            )
+        elif isinstance(record, dict) and isinstance(record.get("result"), dict):
             entry.update(record["result"])
             if record.get("errored"):
                 entry["error"] = True

@@ -155,6 +155,11 @@ def fake_slurm(
     monkeypatch.setattr(run, "resolve_map_paths", fake_world.fake_map_paths)
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
     monkeypatch.setattr(run, "use_canvas", fake_world.fake_use_canvas)
+    # As fake_world.install does in the tasks: what a batch decides is under
+    # test, not whether the installed converter could convert strictly.
+    monkeypatch.setattr(
+        "autoware_carla_scenario.rerun.check_strict_coverage", lambda _converter: None
+    )
     monkeypatch.setattr(
         run,
         "_compose_config",
@@ -5176,6 +5181,48 @@ def test_resubmit_with_nothing_to_resubmit_collects_only_without_dry_run(
     else:
         assert code == 1
         assert collected == [tmp_path]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_resubmit_refuses_an_out_of_range_option_with_nothing_to_resubmit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    dry_run: bool,
+) -> None:
+    """#2285: the options were checked only after "Nothing to resubmit", so
+    with every case done ``--array-parallelism 0`` (``--dry-run`` too)
+    exited 0; it exits 1 naming the setting, and collects nothing."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSION
+
+    tmp_path = tmp_path.resolve()
+    layout = BatchLayout(tmp_path)
+    layout.manifest.parent.mkdir(parents=True)
+    layout.manifest.write_text(
+        json.dumps({"version": MANIFEST_VERSION, "cases": [], "launcher": {}})
+    )
+    collected: list[Path] = []
+
+    def fake_collect(target: BatchLayout, **_: Any) -> int:
+        collected.append(target.batch_dir)
+        return 0
+
+    monkeypatch.setattr(cli, "collect", fake_collect)
+    argv = [
+        "resubmit",
+        str(tmp_path),
+        "--array-parallelism",
+        "0",
+        "--wait",
+        *(["--dry-run"] if dry_run else []),
+    ]
+    assert cli.main(argv) == 1
+    captured = capsys.readouterr()
+    assert captured.err.startswith("Error: ")
+    assert "launcher.array_parallelism" in captured.err
+    assert "Nothing to resubmit" not in captured.out
+    assert collected == []
 
 
 @pytest.mark.parametrize(

@@ -729,6 +729,41 @@ def test_the_cli_expands_a_packaged_logical_scenario(
     assert "ego.spawn_lanelet_id=222" not in {c[0] for c in cases}
 
 
+# `scenario-expand` takes `--multirun` and ignores it, and refuses any other
+# flag rather than hand it to Hydra as an override (#2300).
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_ignores_multirun(capsys: pytest.CaptureFixture[str]) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    assert main(["scenario=cut_in/left"]) == 0
+    plain = capsys.readouterr().out
+    assert main(["--multirun", "scenario=cut_in/left", "-m"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == plain
+    assert json.loads(plain)["cases"]
+    assert "LexerNoViableAltException" not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("args", "flag"),
+    [
+        (["--resume-from", "10", "scenario=cut_in/left"], "--resume-from"),
+        (["scenario=cut_in/left", "--resume-from=10"], "--resume-from"),
+        (["--multirun", "scenario=cut_in/left", "--cfg", "job"], "--cfg"),
+        (["-x"], "-x"),
+    ],
+)
+def test_the_cli_refuses_a_flag_it_does_not_take(
+    args: list[str], flag: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    assert main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"Error: scenario-expand does not take {flag}\n"
+
+
 # `scenario-expand` takes the same arguments as `scenario`, glob included
 # (#1160): it used to compose the glob as a config name and fail.
 @pytest.mark.usefixtures("at_repo_root")

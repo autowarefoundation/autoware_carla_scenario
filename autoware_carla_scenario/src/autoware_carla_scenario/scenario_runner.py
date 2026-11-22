@@ -60,6 +60,7 @@ from .entity_role import canonical_role_name
 from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
 from .signals.registry import clear_signal_controllers
+from .run_timeout import check_run_timeout
 from .seed import check_seed, set_run_seed
 from .server import CarlaServerManager
 from .traffic.base import DrivenEntity, TrafficBackend, TrafficContext
@@ -1091,9 +1092,13 @@ class ScenarioRunner:
 
         Raises:
             ValueError: *world_reset* is not ``"reload"`` or ``"soft"``, or
-                *reload_every* is negative.
+                *reload_every* is negative, or *timeout_seconds* is not
+                positive and finite.
         """
         check_world_reset(world_reset, reload_every)
+        # Refused now, not once a run has set the world up and spawned the
+        # ego, where the default timeout is registered (#2287).
+        check_run_timeout(timeout_seconds, key="timeout_seconds")
         self._world_reset = world_reset
         self._reload_every = reload_every
         self._soft_resets = 0
@@ -1680,14 +1685,17 @@ class ScenarioRunner:
         1. Enable synchronous mode on the world
         2. Prepare the traffic backend (synchronous mode, seed, whatever it
            needs to start), before anything is spawned
-        3. Call ``scenario.setup(world)``
+        3. Call ``scenario.setup()``
         4. Spawn the ego vehicle
         5. Start the CARLA native recorder
-        6. Register the default timeout fail condition, unless the scenario
+        6. Bring the ego up (``on_scenario_start``) and wait until it is
+           ready, release the vehicles' brakes, start the traffic backend and
+           give the vehicles their initial speeds
+        7. Register the default timeout fail condition, unless the scenario
            registered a timeout of its own
-        7. Run the tick loop
-        8. Stop the recorder and destroy the ego vehicle
-        9. Close the traffic backend and restore the world
+        8. Run the tick loop, then judge the run's metric conditions
+        9. Destroy the ego vehicle, then stop the recorder
+        10. Close the traffic backend and restore the world
 
         Args:
             scenario: The scenario to run.
@@ -1722,8 +1730,9 @@ class ScenarioRunner:
         Raises:
             ValueError: If the scenario's ``random_seed`` is not a whole
                 number from 0 to :data:`~autoware_carla_scenario.seed.MAX_SEED`
-                (:func:`~autoware_carla_scenario.seed.check_seed`), before the
-                world is touched.
+                (:func:`~autoware_carla_scenario.seed.check_seed`), or the
+                timeout (*timeout_seconds*, or the runner's) is not positive
+                and finite, before the world is touched.
         """
         if timeout_seconds is None:
             timeout_seconds = self.timeout_seconds
@@ -1731,8 +1740,10 @@ class ScenarioRunner:
         # Checked before the world is touched (autoware_carla_scenario.seed):
         # a scenario's random_seed may be assigned after it was built, and a
         # seed CARLA or SUMO refuses would otherwise raise once the world is
-        # synchronous, outside the cleanup that puts it back.
+        # synchronous, outside the cleanup that puts it back.  The timeout
+        # likewise: it is registered only after the ego is up (#2287).
         seed = check_seed("random_seed", scenario.random_seed)
+        timeout_seconds = check_run_timeout(timeout_seconds, key="timeout_seconds")
         try:
             result = self._run_scenario(
                 scenario, scenario_name, seed, timeout_seconds, case, file_stem

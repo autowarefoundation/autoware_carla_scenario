@@ -26,6 +26,7 @@ one to measure from does.
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import operator
 import os
@@ -163,10 +164,32 @@ def _check_mapping(name: str, value: Any, default: dict[str, Any]) -> dict[str, 
 def _check_reach_settings(reach_settings: Any) -> dict[str, dict[str, Any]]:
     """*reach_settings*, ``None`` (no overrides) or a mapping of
     CommonRoad-Reach configuration sections to mappings of their keys, as
-    dicts."""
+    dicts.
+
+    Section and key names are strings and every value is one JSON carries
+    as it is (``allow_nan=False``: no NaN or infinity, no NumPy ``float32``),
+    as the worker is sent them.  Whether Reach's configuration has the
+    section and key is the worker's to say, as it starts (``init``).
+    """
     checked = _check_mapping("reach_settings", reach_settings, {})
     for section, overrides in checked.items():
+        if not isinstance(section, str):
+            raise ValueError(
+                f"reach_settings section names must be strings, got {section!r}"
+            )
         checked[section] = _check_mapping(f"reach_settings[{section!r}]", overrides, {})
+        for key, value in checked[section].items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    f"reach_settings[{section!r}] key names must be strings, got {key!r}"
+                )
+            try:
+                json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"reach_settings[{section!r}][{key!r}] must be a JSON value "
+                    f"(no NaN or infinity), got {value!r}"
+                ) from None
     return checked
 
 
@@ -194,7 +217,10 @@ class CommonRoadSettings:
         radius_m: How far from the ego road users and lanelets are taken in;
             positive and finite.
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
-            section and key: a mapping of mappings; ``None`` for none.
+            section and key: a mapping of mappings
+            (``{"reachable_set": {"size_grid": 0.3}}``), names strings and
+            values JSON ones; ``None`` for none.  A section or key Reach does
+            not have is refused by a worker as it starts.
         cache_dir: Where the converted maps are kept (a ``str`` is taken as
             a :class:`~pathlib.Path`); ``None`` for
             :func:`~.map.default_cache_dir`.

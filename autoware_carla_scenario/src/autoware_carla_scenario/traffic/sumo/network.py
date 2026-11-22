@@ -33,11 +33,14 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from ...utils.opendrive import sanitize_opendrive
 from ..base import TrafficBackendError, TrafficBackendUnavailable
 from .options import random_trips_argv, ride_options, trip_options, walk_options
+
+if TYPE_CHECKING:
+    import roadgen
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +86,9 @@ class SignalTable:
     ``(tls id, link index)`` of every movement it governs in SUMO.
     """
 
-    def __init__(self, trace: Any) -> None:
+    _trace: roadgen.Trace
+
+    def __init__(self, trace: roadgen.Trace) -> None:
         self._trace = trace
 
     @classmethod
@@ -95,8 +100,8 @@ class SignalTable:
 
         # The files are this cache's own and never change, but they were renamed
         # from roadgen's prefix to `network.*` after the traces recorded them.
-        files = (str(path) for path in network.trace_files)
-        return cls(roadgen.Trace.load(*files, check_files=False))
+        ir, read, sumo = network.trace_files
+        return cls(roadgen.Trace.load(str(ir), str(read), str(sumo), check_files=False))
 
     def links(self, signal_id: str) -> list[tuple[str, int]]:
         """The ``(tls id, link index)`` pairs the signal *signal_id* switches."""

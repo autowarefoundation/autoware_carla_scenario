@@ -4,7 +4,8 @@ configuration chooses from.
 :class:`SensorSpec` (the CARLA sensor a device carries), the checks of a
 LiDAR's blueprint attributes, the resolution of a file relative to the
 configuration, the check of a field's signal name (:func:`checked_signal`),
-:data:`CLOCKS`, :data:`PHASES` and :class:`HilsConfigError`.
+the decimal text of an integer (:func:`_decimal`), :data:`CLOCKS`,
+:data:`PHASES` and :class:`HilsConfigError`.
 Nothing here reads YAML or a document of any shape, so the library check
 compiles it (docs/typecheck.md); :mod:`.config` uses it and re-exports it.
 """
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Tuple
 
+from ..value_text import huge_integer
 from .signals import SIGNALS
 
 __all__ = [
@@ -94,6 +96,17 @@ class SensorSpec:
     @property
     def is_lidar(self) -> bool:
         return self.blueprint == LIDAR_BLUEPRINT
+
+
+def _decimal(value: int, where: str) -> str:
+    """The decimal text of the integer *value*, or a :class:`HilsConfigError`
+    naming *where* when it has too many digits for ``str()``."""
+    try:
+        return str(value)
+    except ValueError:
+        raise HilsConfigError(
+            f"{where}: expected an integer of fewer digits, got {huge_integer(value)}"
+        ) from None
 
 
 def _attribute_number(attributes: Mapping[str, str], key: str, where: str) -> float:

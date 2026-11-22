@@ -336,6 +336,10 @@ def fake_map_paths(_map: Any) -> SimpleNamespace:
     )
 
 
+def _strict_coverage_unchecked(converter: Any) -> None:
+    """``rerun.check_strict_coverage`` in a task: nothing refused."""
+
+
 def install(run: Any = None) -> None:
     """Fake the world of ``examples.run`` (*run*, imported if not given)."""
     if run is None:
@@ -347,5 +351,11 @@ def install(run: Any = None) -> None:
     run.resolve_map_paths = fake_map_paths
     run.build_traffic_backend = lambda _cfg: None
     run.use_canvas = fake_use_canvas
+    # A strict converter is built whatever the installed converter knows: the
+    # settings a batch decides are under test, not whether that converter
+    # knows every record type the framework writes (#2298).
+    from autoware_carla_scenario import rerun
+
+    rerun.check_strict_coverage = _strict_coverage_unchecked
     if not hasattr(run._compose_config, "__wrapped__"):
         run._compose_config = compose_with_scenario_overrides(run._compose_config)

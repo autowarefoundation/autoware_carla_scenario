@@ -11,7 +11,11 @@ run, sweep or batch before Hydra starts, and ``ui.runner``, which reserves
 the ``multirun/...`` directory of the viewer's grouped runs.  Split out of
 ``examples.run``, which needs Hydra and omegaconf, so that the library check
 compiles it (``docs/typecheck.md``, "Checking the framework itself").  The
-callers read the clock (``datetime.now()``) and pass it in.
+callers read the clock (``datetime.now()``) and pass it in.  So are why a
+directory a batch is told to write to cannot be its own
+(:func:`_batch_output_dir_refusal`, #2294) and the removal of a reserved
+directory nothing was written in (:func:`_remove_if_empty`), ``examples.run``'s
+(#2306).
 """
 
 from __future__ import annotations
@@ -152,3 +156,37 @@ def reserve_timestamped_dir(
             suffix += 1
             continue
         return candidate
+
+
+def _remove_if_empty(directory: Path) -> None:
+    """Remove *directory* when nothing was written in it (Hydra refused the
+    overrides before its job started); keep it otherwise."""
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
+
+
+def _batch_output_dir_refusal(output_dir: Path, resume_into: Path | None) -> str | None:
+    """Why *output_dir*, the directory a batch was told to write to
+    (``hydra.run.dir=``), cannot be the batch's; ``None`` when it can.
+
+    A batch's directory is its alone, as the one it reserves is
+    (``examples.run._make_batch_output_dir``): an existing directory must be empty,
+    or the batch would mix its summary and stems with another run's.  A
+    batch resumed into its own directory (``--resume-into``) names no other.
+    """
+    if resume_into is not None:
+        return (
+            f"--resume-into {resume_into} resumes the batch in its own "
+            f"directory; it takes no output directory ({output_dir})"
+        )
+    if output_dir.exists() and (
+        not output_dir.is_dir() or any(True for _ in output_dir.iterdir())
+    ):
+        return (
+            f"{output_dir}: a batch writes to a directory of its own, and this "
+            "one is not empty; name a new directory, or resume the batch "
+            f"there with --resume-into {output_dir}"
+        )
+    return None

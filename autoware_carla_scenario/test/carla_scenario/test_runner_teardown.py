@@ -581,6 +581,8 @@ def _stand_in_run(
     reset_error: BaseException | None = None,
     setup: Any = None,
     runner_out: list[ScenarioRunner] | None = None,
+    scenario_out: list[Any] | None = None,
+    timeout_seconds: float | None = None,
 ) -> tuple[ScenarioRunner, MagicMock, MagicMock, Any]:
     """Run a scenario of one tick through run_scenario on stand-ins, with
     ``reset_world`` replaced by a mock: the runner, its world, the scenario's
@@ -617,6 +619,8 @@ def _stand_in_run(
         scenario.setup.side_effect = setup
     scenario.is_done.side_effect = [False, True]
     scenario.create_ego.return_value = ego or _Ego()
+    if scenario_out is not None:
+        scenario_out.append(scenario)
     write_result = MagicMock()
     with (
         patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
@@ -636,8 +640,37 @@ def _stand_in_run(
         ),
     ):
         clock.return_value.simulated = 0.05
-        result = runner.run_scenario(scenario, reset_world=reset_world)
+        result = runner.run_scenario(
+            scenario, timeout_seconds=timeout_seconds, reset_world=reset_world
+        )
     return runner, world, write_result, result
+
+
+@pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+def test_a_default_timeout_that_never_fires_is_refused_before_the_run_starts(
+    tmp_path: Path, seconds: float
+) -> None:
+    # Not once the ego is up and the world has ticked through its warm-up,
+    # where the default timeout is registered (#2287).
+    runners: list[ScenarioRunner] = []
+    scenarios: list[Any] = []
+    ego = _Ego()
+    with pytest.raises(
+        ValueError, match=r"^timeout_seconds must be positive and finite"
+    ):
+        _stand_in_run(
+            tmp_path,
+            ego=ego,
+            timeout_seconds=seconds,
+            runner_out=runners,
+            scenario_out=scenarios,
+        )
+    world = runners[0]._world
+    world.apply_settings.assert_not_called()  # type: ignore[union-attr]
+    world.tick.assert_not_called()  # type: ignore[union-attr]
+    scenarios[0].setup.assert_not_called()
+    ego.spawn.assert_not_called()
+    runners[0].reset_world.assert_not_called()  # type: ignore[attr-defined]
 
 
 def test_an_ego_that_gives_up_waiting_fails_the_run_before_it_begins(

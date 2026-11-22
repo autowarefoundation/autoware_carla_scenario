@@ -435,12 +435,18 @@ def unregister_conf_dir(path: str | Path) -> None:
 
 
 def get_conf_dirs() -> list[Path]:
-    """Return a copy of the ordered list of registered config directories.
+    """Return a copy of the registered config directories, in search order.
 
-    The first entry is the built-in directory (registered by the runner); any
-    directories contributed by external packages follow in registration order.
+    The framework's own directory comes first when it is registered (the
+    runner and :func:`load_scenario_plugins` register it), wherever it was
+    registered: it is the ``scenario`` CLI's primary config directory, so
+    Hydra composes a config both it and a package ship from it (#2300).  The
+    directories contributed by external packages follow in registration
+    order.  An unregistered framework directory is not added.
     """
-    return list(_CONF_DIRS)
+    if _FRAMEWORK_CONF_DIR not in _CONF_DIRS:
+        return list(_CONF_DIRS)
+    return _indexed_order()
 
 
 # ---------------------------------------------------------------------------

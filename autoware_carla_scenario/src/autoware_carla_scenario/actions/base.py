@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ..action_state import ActionState
-from ..conditions.base import BaseCondition
+from ..conditions.base import BaseCondition, refuse_post_run
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
 from ..control_domain import ControlConflictError, ControlDomain
@@ -70,6 +70,11 @@ class BaseAction(ABC):
             action, rather than raise
             :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
             (default) -- :attr:`overrides`.
+
+    Raises:
+        ValueError: *label* is empty, or *condition* or *until* is a
+            :class:`~autoware_carla_scenario.MetricCondition`, which is judged
+            once the run is over and so would never fire on a tick.
 
     Firing and finishing are two different moments.  :meth:`execute` only
     *starts* the work -- a lane change request returns long before the vehicle
@@ -140,7 +145,13 @@ class BaseAction(ABC):
                 "Provide a non-empty string to identify this action."
             )
         self.label = label
+        # Read every tick, like a wrapper's condition, where a MetricCondition
+        # (judged once the run is over) reads nothing: the action would stay
+        # in STANDBY, or never end (#2287).
+        if until is not None:
+            refuse_post_run(until, f"{type(self).__name__} {label!r}: until")
         if condition is not None:
+            refuse_post_run(condition, f"{type(self).__name__} {label!r}: condition")
             self._condition = condition
         else:
             self._condition = AlwaysTrueCondition()

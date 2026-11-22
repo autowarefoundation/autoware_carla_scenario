@@ -155,9 +155,12 @@ class MapManager:
             Path to the Lanelet2 map file (.osm or .xml).
         carla_world:
             Optional CARLA ``carla.World`` instance.  When provided, the
-            vertical offset (z_offset) is computed by averaging the
-            difference between Lanelet2 elevation and CARLA spawn-point
-            elevation across all map spawn points.  When ``None``, a
+            vertical offset (z_offset) is the mean difference between the
+            Lanelet2 elevation and the CARLA road's elevation at the map's
+            spawn points, over those whose difference is within
+            :data:`_Z_OFFSET_SAME_LEVEL_M` of the median (a spawn point
+            matched to a lanelet on another level is left out, #1874;
+            :meth:`_z_offset_from_spawn_points`).  When ``None``, a
             single-point fallback using the XODR reference line is used.
         projector_type:
             Which projection to read the Lanelet2 map with -- ``"mgrs"``,
@@ -308,7 +311,9 @@ class MapManager:
 
     @property
     def geo_origin(self) -> tuple[float, float, float]:
-        """The (lat, lon, alt) origin parsed from the XODR geoReference."""
+        """The (lat, lon, alt) origin the map is anchored at: the Lanelet2
+        map's ``map_projector_info.yaml`` origin where it gives one, else the
+        XODR geoReference's (:func:`~.projection.map_origin`)."""
         if self._geo_origin is None:
             raise RuntimeError(
                 "MapManager is not initialized. Call initialize() first."
@@ -532,12 +537,9 @@ class MapManager:
             dist = float(dists[min_idx])
             if dist < best_dist:
                 best_dist = dist
-                z_coords = road.z_coordinates
-                deltas = np.diff(ref_line, axis=0)
-                seg_lengths = np.linalg.norm(deltas, axis=1)
-                arc = np.zeros(len(ref_line))
-                arc[1:] = np.cumsum(seg_lengths)
-                best_z = float(np.interp(arc[min_idx], arc, z_coords))
+                # The elevation at that vertex: interpolating it at the
+                # vertex's own arc length gave the same (#2296).
+                best_z = float(road.z_coordinates[min_idx])
 
         return ll2_z - best_z
 

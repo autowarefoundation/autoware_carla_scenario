@@ -17,10 +17,11 @@ from .maps.pack import MapPack
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
 from .run_outputs import remove_run_outputs
+from .run_timeout import check_run_timeout
 from .t4 import T4Recorder
 from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
-from .server import CarlaServerManager
+from .server import CarlaServerManager, _unbracketed_host
 from .traffic.base import TrafficBackend
 from .world_reset import RESET_RELOAD, check_world_reset
 
@@ -177,7 +178,7 @@ class ScenarioQueue:
                 OpenDRIVE) work.
             map_name: Built-in CARLA map name to load on start (optional).
                 Used alone or together with *xodr_path*.
-            host: CARLA RPC host.
+            host: CARLA RPC host (an IPv6 address bracketed or not).
             port: CARLA RPC port.
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default per-scenario timeout, for a scenario
@@ -256,8 +257,12 @@ class ScenarioQueue:
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
-                or *world_reset* is neither ``"reload"`` nor ``"soft"``.
+                or *world_reset* is neither ``"reload"`` nor ``"soft"``, or
+                *timeout_seconds* is not positive and finite.
         """
+        # Refused before the server is made, not once each case has spawned
+        # its ego -- and on every retry -- where it is registered (#2287).
+        check_run_timeout(timeout_seconds, key="timeout_seconds")
         if server is not None:
             self._server = server
             self._owns_server = False
@@ -274,7 +279,8 @@ class ScenarioQueue:
         self._opendrive_path = opendrive_path
         self._lanelet2_path = lanelet2_path
         self._map_name = map_name
-        self._host = host
+        # Unbracketed, as the runner and a map pack connect to it ("[::1]").
+        self._host = _unbracketed_host(host)
         self._port = port
         self._tm_port = tm_port
         self._timeout_seconds = timeout_seconds
@@ -343,7 +349,13 @@ class ScenarioQueue:
             file_stem: The stem its output files are named by; ``None``
                 names them by its class, numbered past the runs already in the
                 output directory (:meth:`ScenarioRunner.run_scenario`).
+
+        Raises:
+            ValueError: *timeout_seconds* is not positive and finite; the
+                scenario is not added.
         """
+        if timeout_seconds is not None:
+            check_run_timeout(timeout_seconds, key="timeout_seconds")
         self._scenarios.append(scenario)
         if self._backends is not None and self._runner is not None:
             # Added after the queue started (a SLURM task's cases join one at
@@ -360,6 +372,16 @@ class ScenarioQueue:
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
+
+    def _forget(self, key: int) -> None:
+        """Forget what :meth:`add` kept for the scenario of ``id()`` *key*:
+        its timeout, its case and its file stem."""
+        if key in self._timeouts:
+            del self._timeouts[key]
+        if key in self._cases:
+            del self._cases[key]
+        if key in self._stems:
+            del self._stems[key]
 
     def run_all(
         self,
@@ -449,12 +471,7 @@ class ScenarioQueue:
             if release:
                 # Keyed by id(): a released scenario's id may be the next
                 # scenario's, so nothing is left keyed by it.
-                if key in self._timeouts:
-                    del self._timeouts[key]
-                if key in self._cases:
-                    del self._cases[key]
-                if key in self._stems:
-                    del self._stems[key]
+                self._forget(key)
             # The stem every attempt writes under: the one given, or the one
             # the runner names the first attempt by (the first free in the
             # output directory), settled right before that attempt runs, after
@@ -575,13 +592,7 @@ class ScenarioQueue:
                         # The cases not run yet are out of the queue already:
                         # leave nothing keyed by their ids either.
                         for rest in pending:
-                            rest_key = id(rest)
-                            if rest_key in self._timeouts:
-                                del self._timeouts[rest_key]
-                            if rest_key in self._cases:
-                                del self._cases[rest_key]
-                            if rest_key in self._stems:
-                                del self._stems[rest_key]
+                            self._forget(id(rest))
                     # All attempts exhausted — re-raise the last error.
                     raise RuntimeError(
                         f"Scenario {type(scenario).__name__} failed after "
@@ -918,10 +929,13 @@ class ScenarioQueue:
     ) -> Callable[[], Generator["ScenarioQueue", None, None]]:
         """Return a session-scoped pytest fixture that manages this queue.
 
-        The generated fixture automatically skips when there is no CARLA to
-        launch (``CARLA_EXECUTABLE`` unset and nothing installed) or when the
-        CARLA session cannot be started (:meth:`start` raises), so callers do
-        not need to add a manual ``pytest.skip`` guard.
+        The generated fixture automatically skips when the CARLA session
+        cannot be started (:meth:`start` raises): among other reasons, when
+        no server answers at *host* and there is none to launch
+        (``CARLA_EXECUTABLE`` unset and nothing installed, or a remote
+        *host*), so callers do not need to add a manual ``pytest.skip``
+        guard.  Whether a CARLA is installed here is not asked first: a
+        remote server, or one already running here, needs none.
 
         Once started, it runs every scenario with
         ``run_all(continue_on_error=True)``: a scenario that raises on every
@@ -967,11 +981,9 @@ class ScenarioQueue:
 
         @pytest.fixture(scope="session", name=fixture_name)
         def _queue_fixture() -> Generator["ScenarioQueue", None, None]:
-            if CarlaServerManager.executable() is None:
-                pytest.skip(
-                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set "
-                    "and no CARLA is installed. Skipping CARLA integration tests."
-                )
+            # No pre-check for a CARLA to launch: a remote host, or a server
+            # already running here, needs none, and start() raises -- and the
+            # fixture skips -- when there is no server and none to launch.
             try:
                 queue.start()
             except Exception as exc:

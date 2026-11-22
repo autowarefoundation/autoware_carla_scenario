@@ -135,13 +135,14 @@ def check_weather_rules(
 
     Raises:
         RulesError: When *spec*, its ``default`` or a ``vehicles`` entry is
-            not of that form, or is a blank string (no file: it would be read
-            as the directory the run started in), or it names a field other
-            than those two.
+            not of that form, or is a blank string or ``Path("")`` (no file:
+            it would be read as the directory the run started in), or a
+            ``vehicles`` pattern is blank (it would match no vehicle), or it
+            names a field other than those two.
     """
-    if spec is None or isinstance(spec, Path):
+    if spec is None:
         return spec, []
-    if isinstance(spec, str):
+    if isinstance(spec, (str, Path)):
         _refuse_blank("environment.rules", spec)
         return spec, []
     if not isinstance(spec, Mapping):
@@ -156,7 +157,7 @@ def check_weather_rules(
         # Not str() of it: a number, or a pinned {url, sha256} (which only
         # ``extends`` takes), would be read as a path that does not exist.
         raise RulesError(f"environment.rules.default: expected a file, got {default!r}")
-    if isinstance(default, str):
+    if default is not None:
         _refuse_blank("environment.rules.default", default)
     vehicles = spec.get("vehicles")
     if vehicles is None:
@@ -167,24 +168,31 @@ def check_weather_rules(
         )
     entries: list[tuple[str, Union[str, Path]]] = []
     for pattern, location in vehicles.items():
+        if isinstance(pattern, str) and not pattern.strip():
+            # A blank pattern matches no vehicle: its file would be read and
+            # recorded, and never followed (#2296).
+            raise RulesError(
+                f"environment.rules.vehicles: expected a vehicle pattern, got {pattern!r}"
+            )
         key = f"environment.rules.vehicles.{pattern}"
         if not isinstance(location, (str, Path)):
             raise RulesError(f"{key}: expected a file, got {location!r}")
-        if isinstance(location, str):
-            _refuse_blank(key, location)
+        _refuse_blank(key, location)
         entries.append((str(pattern), location))
     return default, entries
 
 
-def _refuse_blank(key: str, location: str) -> None:
-    """Refuse *location*, the rule file *key* names, when it is blank: read
-    as a path it is the directory the run started in, which fails only once
-    a run reads it, naming no key.
+def _refuse_blank(key: str, location: Union[str, Path]) -> None:
+    """Refuse *location*, the rule file *key* names, when it is blank -- a
+    blank string, or ``Path("")`` (which is ``Path(".")``): read as a path it
+    is the directory the run started in, which fails only once a run reads
+    it, naming no key.
 
     Raises:
         RulesError: Naming *key* and *location*'s repr.
     """
-    if not location.strip():
+    blank = location == Path("") if isinstance(location, Path) else not location.strip()
+    if blank:
         raise RulesError(f"{key}: expected a file, got {location!r}")
 
 

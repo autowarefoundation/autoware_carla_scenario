@@ -86,11 +86,13 @@ replaced by its type (a bool, a float, an int, a string, an enum's class),
 since Codon types it statically and reads no value at compile time. The
 cases of a sweep that differ only in their values are therefore one program,
 compiled for the first case and reused, verdict and diagnostics, for the
-others (logged as "reusing the static check made for the config with the
-same types"); a failure refuses each of them. `scenario-check` checks
+others (logged as "<name>: reusing the static check made for
+<the first case's values> for <this case's values>: the config has the same
+types, so it is the same program to Codon"); a failure refuses each of them. `scenario-check` checks
 configs side by side, and one whose program is being compiled when it
 starts waits for that compile rather than starting its own. What changes the shape
-compiles again: another key or order of keys, a value of another type (an
+compiles again: another key or order of keys (a mapping's keys too where
+its values are dataclasses, whose config paths an error names), a value of another type (an
 int where the first case had a float in a field not typed `float`, `None`
 where it had a value), another length of a list, a mapping the config
 converts in one case and not in another. A value whose literal Codon could
@@ -155,8 +157,8 @@ one from run to run, so a run compiles only the programs whose inputs changed.
 ### Builds wait for their memory
 
 Codon's peak memory grows with what it compiles: about 1.9 GB for a scenario
-or a module of the framework, about 9.3 GB for the whole library check
-(2.8 million characters of source). Builds started side by side -- the xdist
+or a module of the framework, and 2.8 GB more for each million characters of
+source, about 14 GB for the whole library check (4.3 million characters). Builds started side by side -- the xdist
 workers of the test suite, the checker's own pool of four -- would otherwise
 together outgrow a 16 GB machine, and the out-of-memory killer would take a
 build (a SIGKILL, above) or, on a CI runner, the runner itself ("The runner has
@@ -968,8 +970,9 @@ What `test_typecheck_model.py` compares, model by model:
   re-export, and the `__init__` of a checked subpackage, which models
   nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
-  `load_dotenv`, packaging's `Version` and `InvalidVersion`, eclipse-sumo's
-  `SUMO_HOME` (where it is installed), pyxodr's `RoadNetwork` and lxml's
+  `find_dotenv` and `load_dotenv`, packaging's `Version` and `InvalidVersion`, eclipse-sumo's
+  `SUMO_HOME` (where it is installed), roadgen's map, trace and
+  `read_opendrive()` (where it is installed), pyxodr's `RoadNetwork` and lxml's
   element.
 
 A constant whose model value is a literal (a `str`, `int`, `float` or a tuple
@@ -1072,7 +1075,7 @@ scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not pa
 
 Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
-packaging, eclipse-sumo;
+packaging, eclipse-sumo, roadgen;
 see *Making a module compile*), and a scenario may use what
 those models declare.
 
@@ -1242,7 +1245,7 @@ scenario has to do itself:
     only after an `is None` test), so a local named after a crash is a
     candidate, not a verdict: the crash may have another cause. A Codon
     killed with SIGKILL (exit status -9: the out-of-memory killer, as when
-    two library checks of about 8 GB each run at once) is no crash of the
+    two library checks of about 14 GB each run at once) is no crash of the
     code: the check says so, names no local, and should be run again with
     more memory free. Like a timeout, it is not kept as the verdict, so the
     next check of the same program in the process compiles it again (#694).
@@ -1289,6 +1292,9 @@ scenario has to do itself:
   ```
 
   An import under `if TYPE_CHECKING:` is exempt: Python never runs it.
+  One in its `else` branch, or in the body of `if not TYPE_CHECKING:`, is
+  checked this way only: Codon never compiles it, so it needs no Codon model
+  and what it imports is not compiled (#2288).
 - **Define every abstract method of what you build** (#215). Codon has no
   `@abstractmethod`, and the model gives `BaseScenario.is_done()`,
   `BaseCondition.check()` and `BaseAction.execute()` bodies (its built-in
@@ -2497,9 +2503,9 @@ and type files, with the command line of `randomTrips.py` and the options of
 each demand it generates: `traffic.sumo.options`, #1679, and where SUMO is,
 the network's files and the demand `randomTrips.py` generates for it:
 `traffic.sumo.network`, #1967, and the crossings read off the network
-with `xml.etree.ElementTree`; not the conversion of the map with roadgen or
-the signal table read off roadgen's traces, which the check leaves
-uncalled), the signal
+with `xml.etree.ElementTree`, the conversion of the map with roadgen and
+the signal table loaded from roadgen's traces, #2312; not what the table asks
+the traces, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
 checks of their periods: `heavy_metrics`, #1689, and the `commonroad`
@@ -3350,8 +3356,8 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's returns), `getenv(key, default=None)` (a `str` default gives a
   `str`, `None` an `Optional[str]`; a default of another type, which CPython
   takes, is refused), `fspath()`, `getpid()`, `getppid()`, `getpgid(pid)`,
-  `getuid()`, `getgid()`, `readlink(path, *, dir_fd=None)` (of a `str` or an
-  `os.PathLike`, a `str`; a bytes path is not declared),
+  `getuid()`, `geteuid()`, `getgid()`, `readlink(path, *, dir_fd=None)`
+  (of a `str` or an `os.PathLike`, a `str`; a bytes path is not declared),
   `kill(pid, signal, /)`, `killpg(pgid, signal, /)` (of an `int` or a
   `signal.Signals`), `system(command)`, what a forking parent and its child
   call (#719): `fork()` (`0`: nothing is forked), `setpgrp()`,
@@ -3381,14 +3387,19 @@ What Codon 0.19 needs that Python does not, beyond
   with: `ftruncate(fd, length, /)`, `fsync(fd)` (of an `int`; the object
   with a `fileno()` CPython also takes is not declared) and `chown(path,
   uid, gid, *, dir_fd=None, follow_symlinks=True)`; nothing is cut, synced
-  or given away. `memoryview(obj)` of bytes is declared as far as
+  or given away, and what `commonroad.worker` reads the worker's output
+  with, `read(fd, length, /)` (bytes, a `str` in the check; `""`: nothing is
+  read), and makes its input non-blocking with, `set_blocking(fd, blocking,
+  /)` (of an `int` and a `bool`; nothing is changed), and what `rerun`
+  builds a `FileNotFoundError` with, `strerror(code, /)` (a `str`, `""` in
+  the check). `memoryview(obj)` of bytes is declared as far as
   `tools.file_writes` uses it: a view is true while it is not empty and
   sliced into another (`view[n:]`), which `os.write()` takes; indexing an
   item, `tobytes()`, `release()` and the rest are not declared.
   The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
   `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
-  nothing else. `errno` declares `EPERM`, `EACCES`, `EEXIST`, `ENOTDIR`,
-  `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
+  nothing else. `errno` declares `EPERM`, `ENOENT`, `EACCES`, `EEXIST`,
+  `ENOTDIR`, `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
   `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
   declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
@@ -3817,6 +3828,8 @@ What Codon 0.19 needs that Python does not, beyond
 - **python-dotenv is modelled** as far as `server` uses it, with the
   installed package's signatures, which `test_typecheck_model.py` compares:
   `codon/dotenv/` declares
+  `find_dotenv(filename=".env", raise_error_if_not_found=False,
+  usecwd=False)`, returning a `str`, and
   `load_dotenv(dotenv_path=None, stream=None, verbose=False, override=False,
   interpolate=True, encoding="utf-8")`, of a path that is `None`, a `str` or
   an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
@@ -3834,6 +3847,26 @@ What Codon 0.19 needs that Python does not, beyond
   `SUMO_HOME` and `__file__`, both `str`, and nothing else. eclipse-sumo is
   optional (the `sumo` extra), so `test_typecheck_model.py` compares the model
   with the package only where it is installed.
+- **roadgen is modelled** as far as `commonroad.map` and
+  `traffic.sumo.network` convert the map with it (#2312):
+  `codon/roadgen/__init__.codon` declares `__version__` (a `str`),
+  `read_opendrive(path, sampling=2.0, origin=None,
+  projection="local_cartesian")`, a `Map`'s `read_warnings()`,
+  `write_read_trace()`, `export_ir()`, `export_commonroad()` and
+  `commonroad_warnings()` (a light cycle, which Codon has no one type for,
+  only as `None`), `export_sumo()` (the files' prefix) and
+  `sumo_warnings()`, and `Trace.load(*paths, check_files=True)` of `str`
+  paths, with the installed package's signatures, which
+  `test_typecheck_model.py` compares where roadgen (the `map` and `sumo`
+  extras) is installed. A trace's queries (`translate()`, whose answers are
+  dicts of mixed value types) and the rest of the package are not declared,
+  so `SignalTable.links()` stays `UNCALLED`. The probes compile as they are:
+  `getattr(roadgen, "__version__", "0")` is the rewrite of a `getattr` with a
+  default, and `hasattr(roadgen.Map, "export_commonroad")` is decided on the
+  model's `Map`. `commonroad_map()` compares the version as lists, as Python
+  compares the tuples (Codon's `tuple[int, ...]` is a `List[int]`), and
+  `SignalTable.load()` passes the three trace files by name, since Codon does
+  not unpack a generator into arguments.
 - **carla_canvas** is modelled for `canvas.use_canvas()`: `codon/carla_canvas/plugin.codon`
   declares `plugin_path() -> Path` and nothing else. carla_canvas is not a
   dependency of this package, so `test_typecheck_model.py` cannot compare it with
@@ -4010,7 +4043,7 @@ What Codon 0.19 needs that Python does not, beyond
   constructor leaves it out as Python's does.
 - **A dataclass field may hold a union or a free-form mapping**: the library
   check constructs a dataclass once per member of a union field
-  (`ScenarioRunConfig.scenario`, one of six scenario configs), as it calls a
+  (`ScenarioRunConfig.scenario`, one of seven scenario configs), as it calls a
   function once per member of a union parameter. A field with a default whose
   annotation names `Any` (`SweepConfig.constraints: dict[str, Any]`, a Hydra
   mapping of any values) keeps its declaration, its empty default is built as
@@ -4250,7 +4283,14 @@ What Codon 0.19 needs that Python does not, beyond
   `Set[X](...)` and `frozenset[X]` / `FrozenSet[X]` to `Set[X]`; the source
   keeps its `frozenset`. An empty one is `frozenset[str]()`: a bare
   `frozenset()` is a set of no element type in Codon
-  (`scenario_runner._destroy_all_dynamic_actors()`).
+  (`scenario_runner._destroy_all_dynamic_actors()`). A parameter that takes
+  either (`exclude: set[str] | frozenset[str] = frozenset()`) is a union,
+  which Codon cannot express: take `Optional[set[str]] = None` and read
+  `None` as the empty set (`sweeper.job_status._remove_run_stems()`, #2306).
+- **Whether a directory has an entry** is `any(True for _ in p.iterdir())`,
+  not `any(p.iterdir())`: Codon's `any()` asks each item's `__bool__`, which
+  a `Path` has not (CPython's neither: every path is true), so the two read
+  the same (`run_dirs._batch_output_dir_refusal()`, #2306).
 - **A variable-length tuple attribute is checked as a list**: a class-level
   `tuple[X, ...]` / `Tuple[X, ...]` becomes `List[X]`, and `tuple(x)` of a
   list or a generator becomes a list (a tuple passed to `tuple()` stays

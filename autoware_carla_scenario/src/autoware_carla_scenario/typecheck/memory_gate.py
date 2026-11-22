@@ -1,8 +1,9 @@
 """Admit a Codon build only when the machine has the memory for it.
 
-A Codon build's peak memory grows with what it compiles: about 1.8 GB for a
-scenario, about 9 GB for the whole library check (:data:`BASE_BYTES`,
-:data:`BYTES_PER_CHAR`).  Builds started side by side -- the xdist workers of
+A Codon build's peak memory grows with what it compiles: about 1.9 GB for a
+scenario (:data:`BASE_BYTES`), and 2.8 GB more for each million characters of
+source (:data:`BYTES_PER_CHAR`), about 14 GB for the whole library check
+(4.3 million characters).  Builds started side by side -- the xdist workers of
 the test suite, the scenario checker's thread pool -- do not know about each
 other, and on a 16 GB machine two library checks and a couple of scenarios
 together exhaust it: the out-of-memory killer then takes a build (reported as
@@ -102,11 +103,13 @@ GATE_ENV = "AUTOWARE_CARLA_SCENARIO_CODON_GATE"
 _GIB = 1 << 30
 
 #: Codon's peak memory for a build of next to nothing (a scenario, a module of
-#: the library alone), as measured: 1.8 GB.
+#: the library alone): 1.9 GB, a little above the 1.8 GB measured.
 BASE_BYTES = int(1.9 * _GIB)
 
-#: What each character of compiled source adds to it: the whole library check,
-#: 2.8 million characters, peaks at 9.3 GB.
+#: What each character of compiled source adds to it: 2.8 GB a million
+#: characters, a little above what was measured (the library check of 2.8
+#: million characters peaked at 9.3 GB, which :func:`codon_bytes` puts at
+#: 9.7 GB).
 BYTES_PER_CHAR = 2.8 * _GIB / 1_000_000
 
 #: Kept free for everything else on the machine: the test processes, the OS.

@@ -26,6 +26,7 @@ Neither needs CARLA.  Both need the extra:
 from __future__ import annotations
 
 import errno
+import json
 import logging
 import math
 import os
@@ -57,13 +58,16 @@ __all__ = [
     "RECORDING_SUFFIX",
     "RerunConversion",
     "RerunConverter",
+    "RerunStrictUnsupportedError",
     "RerunUnavailableError",
+    "check_strict_coverage",
     "convert_outputs",
     "latest",
     "main",
     "recording_path",
     "report",
     "require_converter",
+    "written_records",
 ]
 
 logger = logging.getLogger(__name__)
@@ -75,8 +79,70 @@ INSTALL_HINT = "pip install 'autoware-carla-scenario[rerun]'"
 _CONVERTER_MODULE = "autoware_carla_scenario_rerun"
 
 
+#: The trajectory log's schema: its discriminator names every record type
+#: the framework writes, and each record's properties the fields it writes.
+_SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "trajectory.schema.json"
+
+
 class RerunUnavailableError(RuntimeError):
     """``rerun.enabled`` is set, but the converter is not installed."""
+
+
+class RerunStrictUnsupportedError(RerunUnavailableError, ValueError):
+    """``rerun.strict`` is set, but the converter does not know every record
+    type the framework writes, so it would fail every log.
+
+    A :class:`ValueError` (a config value the run refuses) and a
+    :class:`RerunUnavailableError`, so a run refuses it before it starts as it
+    refuses a missing converter: one line, exit code 2.
+    """
+
+
+def written_records() -> dict[str, frozenset[str]]:
+    """Every record type the framework writes, with the fields it writes in
+    it: the trajectory log schema's discriminator mapping
+    (``schemas/trajectory.schema.json``), and each record's properties."""
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    definitions = schema["$defs"]
+    records: dict[str, frozenset[str]] = {}
+    for record_type, pointer in schema["discriminator"]["mapping"].items():
+        definition = definitions[str(pointer).rsplit("/", 1)[-1]]
+        records[str(record_type)] = frozenset(definition.get("properties", {}))
+    return records
+
+
+def check_strict_coverage(converter: Any) -> None:
+    """Refuse a strict conversion by *converter* that would fail every log.
+
+    The converter's ``RECORD_TYPES`` must name every record type the
+    framework writes (:func:`written_records`).  Converters expose no list
+    of the fields they know, so a field one does not know
+    (``collision.start_frame``) still fails a strict conversion of a log
+    holding it.  A converter without ``RECORD_TYPES`` is not checked.
+
+    Raises:
+        RerunStrictUnsupportedError: naming ``rerun.strict`` and what the
+            converter does not know.
+    """
+    known_types = getattr(converter, "RECORD_TYPES", None)
+    if known_types is None:
+        return
+    known = {str(t) for t in known_types}
+    missing = sorted(t for t in written_records() if t not in known)
+    if not missing:
+        return
+    version = getattr(converter, "__version__", None)
+    which = (
+        f"autoware-carla-scenario-rerun {version}"
+        if isinstance(version, str)
+        else "the converter"
+    )
+    raise RerunStrictUnsupportedError(
+        f"rerun.strict is set, but {which} does not know "
+        f"{', '.join(missing)}, which the framework writes, so every strict "
+        "conversion would fail: set rerun.strict=false, or upgrade "
+        "autoware-carla-scenario-rerun to a version that knows them"
+    )
 
 
 def require_converter() -> ModuleType:
@@ -148,13 +214,17 @@ class RerunConverter:
         """Args:
         strict: Refuse a log with a record type or a field the converter
             does not know (it raises, and the conversion fails), rather
-            than skip it with a warning.
+            than skip it with a warning.  A converter that does not know
+            every record type the framework writes is refused here
+            (:func:`check_strict_coverage`), as it would fail every log.
         converter: What converts a log (``convert(jsonl, out_rrd, *,
             strict)``); the ``autoware_carla_scenario_rerun`` package when
             ``None``.
         lidar_max_points: Also record each run's LiDAR sweeps
             (``rerun.lidar``, :mod:`.rerun_lidar`), at most this many points
-            a sweep (0: all); ``None`` records none.
+            a sweep (an explicit 0: all of them); ``None`` records none.
+            The runner reads an absent or null ``rerun.lidar_max_points``
+            as its default, 65536.
         lidar_sdk: The Rerun SDK the sensors are written with; ``rerun``
             when ``None``.
         cameras: Also record each run's camera frames (``rerun.cameras``).
@@ -166,9 +236,13 @@ class RerunConverter:
                 is not installed.
             LidarRerunUnavailableError: LiDAR sweeps or camera frames are
                 asked for and the Rerun SDK is not installed.
+            RerunStrictUnsupportedError: *strict*, and the converter does
+                not know every record type the framework writes.
         """
         self._module = converter if converter is not None else require_converter()
         self._strict = strict
+        if strict:
+            check_strict_coverage(self._module)
         self._draw_radius = _draw_radius_argument(draw_radius_m)
         self._lidar_max_points = lidar_max_points
         self._cameras = bool(cameras)

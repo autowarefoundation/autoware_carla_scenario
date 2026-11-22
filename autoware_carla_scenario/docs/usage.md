@@ -129,9 +129,25 @@ Python version, and the viewer's Run form reads it the same way.
   traceback). With `--multirun` each scenario's config is checked before its
   sweep reads the map, as the lanelet sweeper checks it, and reported as
   `Error: <scenario>: <key> ...`
+- A command line that does not compose -- an override naming a key the
+  config does not have (`ego.spawn_lanelt_id=10`) -- is reported as
+  `scenario-check` and `scenario-expand` report it: one
+  `Error: <scenario>: could not override ...` message with the closest key,
+  and exit 2, before anything runs (`HYDRA_FULL_ERROR=1` shows the traceback)
+- `--help`, `--hydra-help`, `--info` and `--cfg job` (or `hydra`, `all`) run
+  no batch: Hydra answers them for the first scenario the glob matches, and
+  a `Note:` on stderr names it
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
-  then `HH-MM-SS-2`, ...: every batch has a directory of its own). The file
+  then `HH-MM-SS-2`, ...: every batch has a directory of its own), or to the
+  directory `hydra.run.dir=` names (`hydra.sweep.dir=` with `--multirun`),
+  as for a single run. That directory is created if it does not exist; one
+  that exists must be empty, since a batch's directory is its own: one that
+  is not, or one given with `--resume-into`, is refused with
+  `Error: ...` and exit 2 before anything runs (resume a batch in its
+  directory with `--resume-into` alone). The other mode's key
+  (`hydra.sweep.dir=` without `--multirun`) is ignored with a warning, as
+  Hydra ignores it. The file
   is first written once the batch's pre-run checks have passed, just before
   its first case runs, with every case listed as `"passed": null,
   "pending": true` (as a SLURM batch's cases without an outcome are), and
@@ -354,6 +370,17 @@ optionally deriving per-job parameters via "bindings" (picks that end as
 the same case once their bindings are applied give one job). Each scenario
 YAML may declare its own `sweep:` section (see
 `traffic_light_compliance.yaml` for an example).
+
+Only this sweeper (or a glob batch with `--multirun`, see
+[Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
+expands a scenario's `sweep:`. A `--multirun` without `hydra/sweeper=` runs
+Hydra's basic sweeper, which runs one job per combination of the command
+line's own comma-separated values and ignores the scenario's `sweep:`.
+When the command line sweeps nothing of its own (one job, the scenario as
+configured) and the scenario has a `sweep:`, it warns, pointing to
+`hydra/sweeper=lanelet_constraint` or a glob; a command line that sweeps a
+value itself (`seed=1,2`, `'seed=range(0,32)'`, the rollouts of
+[WOSAC](wosac.md)) runs those jobs of the scenario as configured, unwarned.
 
 `sweep.constraints` sweeps **one** parameter: it holds a single target key
 (such as `ego.spawn_lanelet_id`) with its list of constraints, and every other
@@ -589,9 +616,13 @@ wait). The sweep then exits 130 (Ctrl-C) or 143 (`SIGTERM`) and names the case
 to resume from.
 
 To get the concrete scenarios without running them (for example, to fan them
-out over a cluster), use `scenario-expand`. It takes the same arguments as
-`scenario` and prints JSON with one list of Hydra overrides per concrete
-scenario. These are the same cases, in the same order, that the sweeper runs:
+out over a cluster), use `scenario-expand`. It takes `scenario=` and Hydra
+overrides as `scenario` does and prints JSON with one list of Hydra overrides
+per concrete scenario. These are the same cases, in the same order, that the
+sweeper runs. Of `scenario`'s flags, `--multirun` (`-m`) is taken and ignored,
+as the listing is a `--multirun` batch's cases either way; any other
+(`--resume-from`, `--cfg`, ...) is refused with
+`Error: scenario-expand does not take <flag>` and exit 2:
 
 ```bash
 uv run scenario-expand scenario=traffic_light_compliance/traffic_light_compliance
@@ -713,10 +744,10 @@ uv run scenario scenario='intersection_passing/*' \
   resume only a batch whose process has ended (stopped with Ctrl-C, killed,
   or stopped from the viewer), since a running one would go on writing the
   same directory.
-- The batch's own logs in the directory are not replaced: the Autoware
-  stack's episode logs (`autoware-NNN-<name>.log`), numbered from `000` by
-  each batch, are appended to, so the resumed batch's episodes follow the
-  killed batch's first episodes in the same files, and a Docker stack's
+- The batch's own logs in the directory are not replaced: each case's
+  Autoware stack writes to `autoware-<stem>.log`, named by the case's stem
+  (#2248), and a case run again appends to its log, so the resumed run
+  follows the killed one in the same file, and a Docker stack's
   dependency and build logs (`autoware-deps.log`, `autoware-build.log`) are
   written over.
 - `--resume-into` is for a local batch: with `launcher=slurm`, or on a
@@ -839,7 +870,7 @@ conf/
 ├── hils/                    # Ego driven by ECUs under test (ego.entity: hils)
 ├── traffic_manager/
 │   └── default.yaml         # CARLA Traffic Manager settings
-├── traffic/                 # Traffic backend: traffic_manager, sumo, none
+├── traffic/                 # Traffic backend: traffic_manager, sumo, hybrid, none
 ├── launcher/                # Who runs a batch's cases: local, slurm
 ├── hydra/sweeper/
 │   └── lanelet_constraint.yaml
@@ -882,7 +913,7 @@ Defines the default config group composition:
 | `ros2` | `default` | Ego driven by ROS 2 nodes, used when `ego.entity: ros2` ([ROS 2](ros2.md)) |
 | `hils` | `default` | Ego driven by ECUs under test, used when `ego.entity: hils` ([HILS](hils.md)) |
 | `traffic_manager` | `default` | CARLA Traffic Manager |
-| `traffic` | `traffic_manager` | Traffic backend: `traffic_manager`, `sumo` or `none` ([Traffic Backends](traffic_backends.md)) |
+| `traffic` | `traffic_manager` | Traffic backend: `traffic_manager`, `sumo`, `hybrid` or `none` ([Traffic Backends](traffic_backends.md)) |
 | `scenario` | `intersection_passing/left_turn` | Scenario to run |
 | `map` | `nishishinjuku` | Map to load |
 | `launcher` | `null` | Who runs a batch's cases: unset runs them here, one after another; `launcher=slurm` runs them as a SLURM array job ([SLURM](slurm.md)) |
@@ -911,7 +942,11 @@ Defines the default config group composition:
 | `ego.spawn_s` | float | `25.0` | Longitudinal offset along lanelet centerline (meters) |
 | `ego.spawn_t` | float | `0.0` | Lateral offset from the lanelet centerline, positive to its left (meters) |
 | `ego.spawn_heading` | float | `0.0` | Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians) |
+| `ego.goal_lanelet_id` | int \| null | `null` | Lanelet the ego is routed to; required for `ego.entity: autoware`, which plans its route to it (a scenario may name it in `setup()` instead). The other entities read no goal |
 | `ego.goal_s` | float | `0.0` | Longitudinal offset along the goal lanelet (`ego.goal_lanelet_id`) centerline (meters) |
+| `ego.waypoint_lanelet_ids` | list[int] | `[]` | Lanelets the route must pass through, in order, on the way to the goal; empty leaves the way there to the planner (for Autoware, the shortest one) |
+| `ego.entity` | str | `autopilot` | Which entity drives the ego: `autopilot` (CARLA's TrafficManager), `autoware` ([Autoware](autoware.md)), `carla_driver` ([Driver Interface](driver_interface.md)), `ros2` ([ROS 2](ros2.md)) or `hils` ([HILS](hils.md)) |
+| `ego.native_autoware_interface` | bool | `false` | `ego.entity: autoware` only: spawn the ego for CARLA 1.0's native Autoware interface (`ros2_autoware_control=true`, role name `ego`), so the server applies Autoware's control itself ([Autoware](autoware.md#carlas-native-autoware-interface)) |
 
 The speed must be finite and not negative, and the poses (`ego.spawn_s`,
 `ego.spawn_t`, `ego.spawn_heading`, `ego.goal_s`) finite: a negative or NaN
@@ -974,10 +1009,10 @@ rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
-| `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
+| `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning ([Rerun strict](#rerun-strict)) |
 | `rerun.draw_radius_m` | float | `null` | Write only what comes this near the ego's trajectory, in metres: the map, the traffic lights and other actors (`autoware-carla-scenario-rerun` 0.3 or newer). `null` writes all of it |
 | `rerun.lidar` | bool | `false` | Put the LiDAR sweeps the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
-| `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all |
+| `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all, and a missing or null one is the default, `65536` |
 | `rerun.cameras` | bool | `false` | Put the camera frames the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
 
 With `rerun.enabled=true`:
@@ -1006,6 +1041,32 @@ With `rerun.enabled=true`:
   SLURM (`launcher=slurm`, [Running a Batch on SLURM](slurm.md)): it converts
   its own cases, and `scenario-slurm collect` reports their recordings as a
   local batch does.
+
+#### Rerun strict
+
+`rerun.strict=true` fails the conversion of a log holding a record type or a
+field the converter does not know. A run writes the record types the
+[trajectory log's schema](trajectory_log.md) lists as it has something for
+them, and some in every log (`world`, `map`, `run`, `warmup`, `tick`), so a
+converter that does not know one of those would fail every log. A run asking for strict recordings checks the installed converter
+up front: when its `RECORD_TYPES` leave out a record type the schema has, the
+run is refused before anything starts (exit code 2, as a missing converter
+is), naming `rerun.strict` and the types:
+
+```text
+rerun.strict is set, but autoware-carla-scenario-rerun 0.3.0 does not know run, which the framework writes, so every strict conversion would fail: set rerun.strict=false, or upgrade autoware-carla-scenario-rerun to a version that knows them
+```
+
+The check is of record types only: a converter lists the record types it
+knows, not the fields. So a converter that knows every record type but not a
+field added to one later (`collision.start_frame`) passes the check, and a strict conversion of a log holding that field still
+fails, as any other failed conversion does (above). `autoware-carla-scenario-rerun`
+0.3, the version the `rerun` extra installs, knows neither the `run` record
+nor `collision.start_frame`: with it, `rerun.strict=true` is refused, and
+`rerun.strict=false` (the default) converts every log, skipping what the
+converter does not know with a warning. `python -m autoware_carla_scenario.rerun
+--strict` does not check up front: each log that holds what the converter
+does not know is reported as a failed conversion.
 
 #### A T4 dataset of a run
 
@@ -1037,6 +1098,15 @@ and so is a missing or null one, its default. Anything else (`ture`, `2`,
 
 ```text
 rerun.enabled must be true or false, got 'ture'
+```
+
+Their blocks, `rerun`, `t4`, `t4scene`, `background_traffic` and `ego`, are
+each a mapping, or missing or null (every switch in it off, every setting
+its default). One that is not a mapping (`rerun: true`, `rerun: false`, `0`,
+`''`) is refused the same way, as `metrics` is, rather than read as unset:
+
+```text
+rerun must be a mapping, got True
 ```
 
 A sweep's `sweep.odd_sample.tire_friction` and `sweep.odd_sample.visibility`
@@ -1334,6 +1404,99 @@ Tests that the ego vehicle stops at a stop line for a minimum duration, then res
 - Registers a latched TemporaryStopCondition over those stop lines
 - Pass condition: ego stays within `s_margin` of a stop line at speed below `speed_threshold` for at least `stop_duration` seconds, then accelerates above `restart_speed_kmh`
 
+#### Cut-in
+
+Tests that the ego copes with a vehicle that changes into its lane just ahead
+of it. NPC1 starts in the lane beside the ego's, on the `side` it cuts in
+from, and changes lanes towards the ego after `cut_in_after_seconds`. Run
+unexpanded, the ego spawns on lanelet 20 (`left`) or 19 (`right`) of the
+Nishi-Shinjuku map; the config's `sweep:` expands one case per lane with a lane
+on that side (see [Cut-in](scenarios/cut_in.md), which also covers the lanes
+ahead and placing NPC1 by the measured gap).
+
+| Config | `side` | `npc_lanelet_id` | Description |
+|--------|--------|------------------|-------------|
+| `cut_in/left` | `left` | `19` | NPC1 cuts in from the ego's left |
+| `cut_in/right` | `right` | `20` | NPC1 cuts in from the ego's right |
+
+**Scenario-specific parameters:**
+
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.side` | str | `"left"` | per config (above) | The side of the ego NPC1 comes from: `"left"` or `"right"` |
+| `scenario.npc_lanelet_id` | int | `0` | per config (above) | The lanelet beside the ego's spawn lanelet NPC1 starts on; a sweep binds it to the lane beside the pick |
+| `scenario.npc_ahead_m` | float | `10.0` | `10.0` | How far ahead of the ego NPC1 starts, along its lanelet (m) |
+| `scenario.npc_gap_m` | float \| null | null | — | The starting gap as `vehicle_ahead_gap_m` measures it (bumper to bumper, m); replaces `npc_ahead_m` when set |
+| `scenario.npc_vehicle_type` | str | `"vehicle.mini.cooper"` | `"vehicle.mini.cooper"` | NPC1's blueprint |
+| `scenario.npc_initial_speed_kmh` | float | `30.0` | `30.0` | NPC1's starting speed (km/h) |
+| `scenario.cut_in_after_seconds` | float | `2.0` | `2.0` | NPC1 changes into the ego's lane this long after the start |
+| `scenario.hold_seconds` | float | `3.0` | `3.0` | The run passes once NPC1 has been on the ego's lane this long without a collision |
+| `scenario.timeout_seconds` | float | `20.0` | `20.0` | Maximum scenario duration |
+| `scenario.fail_on_leaving_lane` | bool | `true` | `true` | Fail when the ego leaves the lanes ahead of it |
+| `scenario.lanes_ahead_m` | float | `1000.0` | `1000.0` | How far the lanes ahead reach from the start of the spawn lanelet (m) |
+| `scenario.leaving_lane_seconds` | float | `0.2` | `0.2` | How long the ego has to be off those lanes before the run fails |
+| `scenario.fail_on_any_collision` | bool | `true` | `true` | Fail on any collision of the ego; `false` fails only on a collision with NPC1 |
+
+**Behavior:**
+- Sets all traffic lights to GREEN
+- Registers a lane change of NPC1 towards the ego after `cut_in_after_seconds`
+- Pass condition: NPC1 has been on the ego's lane for `hold_seconds`, with no collision
+- Fail conditions: the ego collides (with anything, or only with NPC1 when `fail_on_any_collision` is `false`), leaves the lanes ahead of it, or the timeout is reached
+
+#### Pedestrian Dart-out
+
+Tests that the ego stops for, or avoids, a pedestrian who runs into the road
+from the kerb. Run unexpanded, the ego spawns on lanelet 19 of the
+Nishi-Shinjuku map; the config's `sweep:` expands one case per lane with no
+lane on its kerb side (see [Pedestrian Dart-out](scenarios/pedestrian_dart_out.md),
+which also covers the pedestrian who turns back).
+
+| Config |
+|--------|
+| `pedestrian_dart_out/pedestrian_dart_out` |
+
+**Scenario-specific parameters:**
+
+| Parameter | Type | Default | Shipped | Description |
+|-----------|------|---------|---------|-------------|
+| `scenario.pedestrian_ahead_m` | float | `35.0` | `35.0` | How far ahead of the ego's spawn, along its lanelet, the pedestrian waits at the kerb (m) |
+| `scenario.pedestrian_offset_m` | float | `3.0` | `3.0` | The pedestrian's distance from the lane's centreline, on its kerb side (m; the sign is ignored; not 0) |
+| `scenario.trigger_distance_m` | float | `20.0` | `20.0` | The pedestrian steps out once the ego is this close to it (m) |
+| `scenario.walk_speed_ms` | float | `2.0` | `2.0` | Walking speed into the road (m/s) |
+| `scenario.turn_back_ttc_s` | float \| null | null | — | Turn back to the kerb when a vehicle's time to collision with the pedestrian is at most this (s); `null`: not by TTC |
+| `scenario.turn_back_distance_m` | float \| null | null | — | Turn back when a vehicle is at most this far from the pedestrian along the road (m); `null`: not by distance |
+| `scenario.turn_back_within_m` | float | `1.0` | `1.0` | How far onto the road, from the kerb, the pedestrian may be and still turn back (m) |
+| `scenario.walker_type` | str | `"walker.pedestrian.0015"` | `"walker.pedestrian.0015"` | The pedestrian's blueprint |
+| `scenario.pass_beyond_m` | float | `10.0` | `10.0` | The run passes once the ego is this far past the pedestrian's crossing line, on its own lanelet (m) |
+| `scenario.timeout_seconds` | float | `25.0` | `25.0` | Maximum scenario duration |
+
+**Behavior:**
+- Sets all traffic lights to GREEN
+- Registers the pedestrian's walk across the lane, triggered when the ego comes within `trigger_distance_m`
+- Pass condition: the ego comes within 3 m of the point `pass_beyond_m` past the crossing
+- Fail conditions: the ego hits the pedestrian, or the timeout is reached
+
+#### Adversity
+
+Stages one adversarial action of an NPC or a pedestrian against the ego, picked
+by `scenario.kind`. Each case and its full parameter table are in
+[Adversities](scenarios/adversity.md); the actions themselves are in
+[Adversarial Actions and NADE](adversity.md).
+
+Unlike the other examples these are concrete cases on Town10HD_Opt: run them
+with `map=town10hd_opt` (`uv run scenario scenario=adversity/brake_check
+map=town10hd_opt`). On the default map their lanelet ids name other lanelets
+or none.
+
+| Config | `kind` | The adversity |
+|--------|--------|---------------|
+| `adversity/brake_check` | `brake_check` | NPC1, ahead of the ego, brakes hard to a stop |
+| `adversity/ignore_leader` | `ignore_leader` | NPC1, behind a slow ego, speeds up as if the ego were not there |
+| `adversity/cut_in` | `cut_in` | NPC1 changes in front of the ego from the lane beside |
+| `adversity/traffic_rule` | `traffic_rule` | NPC1 drives on through its red light |
+| `adversity/jaywalking` | `jaywalking` | A pedestrian walks straight across the road, off any crosswalk |
+| `adversity/nade` | `nade` | Background vehicles stage the adversities, sampled by NADE |
+
 ### Scenario Evaluation
 
 Each scenario registers **pass conditions** and **fail conditions**. The tick loop evaluates them every frame:
@@ -1588,7 +1751,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, a batch's command line that does not compose (an override of a key the config does not have: `Error: <scenario>: could not override ...`), a batch's `hydra.run.dir=` (`hydra.sweep.dir=`) that is not empty or is given with `--resume-into`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a
@@ -1604,8 +1767,12 @@ whose result JSON is unreadable or has no boolean `passed` (a missing key,
 `"false"`, `1`) has no verdict and counts as failed. The exceptions:
 
 - Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
-  `hydra/sweeper=`), a case that raises an exception ends the sweep at once
-  with 1, as Hydra does; a case that runs and fails does not.
+  `hydra/sweeper=`), a case that raises an exception does not end the sweep
+  either: its traceback is logged, it counts as errored, and the sweep goes
+  on. Once every case has run, `Sweep failed: N of M case(s) failed:` names
+  each failed case, an errored one with `(errored: <exception>)`, and the
+  process exits 1. A single run that raises exits 1 with the traceback, as
+  before.
 - `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
   verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
   Interrupted while it waits, it cancels the array and exits with the verdict
@@ -1894,6 +2061,24 @@ is recorded as failed, and the jobs after it do not start.
       static files included, so no page can load the viewer in a hidden frame
       and trick you into clicking Run, Rerun or a SLURM resubmit or cancel. The viewer never frames its own
       pages either.
+
+### How a session's cases are counted
+
+The session list and a session's page count a session's cases the same way
+(#2285):
+
+- **passed**: its result's `passed` is `true`;
+- **without a result** (*pending* on the session list): it has no result to
+  read -- a multirun job's or a single run's result file is missing or
+  unreadable (a job still running, or one that crashed), a batch lists it as
+  pending, or it is a SLURM case without an outcome yet or with a stale one,
+  as `scenario-slurm status` and the SLURM panel count it;
+- **failed**: every other case, a result whose `passed` is `false` or no
+  boolean at all (no verdict) among them.
+
+A session is *All passed* (green) only when every case passed; it is red
+when a case failed, and grey when the cases that did not pass are all
+without a result.
 
 ### Seeing a run in the viewer
 
@@ -2315,7 +2500,7 @@ setting each value.
 **Cause**: The `scenario.name` field in the YAML does not match any registered scenario class.
 
 **Solution**:
-- Supported scenario names: `intersection_passing`, `lane_change`, `traffic_light_compliance`, `temporary_stop`
+- Supported scenario names: `adversity`, `cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`, `temporary_stop`, `traffic_light_compliance`
 - Check the `name` field in your scenario YAML config
 
 ---

@@ -19,7 +19,7 @@ inputs:
   tags:
     description: >
       Newline-separated full image references. Defaults to '<image>:latest'
-      plus '<image>:<sha>'.
+      plus '<image>:<short sha>' (the commit's first 7 characters).
     required: false
     default: ""
   framework-path:

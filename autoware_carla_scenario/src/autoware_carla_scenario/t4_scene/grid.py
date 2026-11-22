@@ -19,6 +19,7 @@ from typing import Optional
 
 from ..constants import EGO_ROLES, tick_multiple
 from ..rerun import TRAJECTORY_SUFFIX
+from ..run_outputs import trajectory_stem
 
 __all__ = [
     "checked_max_distance",
@@ -115,21 +116,29 @@ def checked_max_distance(
 
 def scene_stem(name: str) -> str:
     """The run's stem of a trajectory log's file *name*: the name without
-    ``.trajectory.jsonl``, or without its last suffix for any other name."""
-    if name.endswith(TRAJECTORY_SUFFIX):
-        return name[: -len(TRAJECTORY_SUFFIX)]
-    return Path(name).stem
+    ``.trajectory.jsonl``, or without its last suffix for any other name:
+    the checked run_outputs's rule (:func:`.run_outputs.trajectory_stem`,
+    #2298), which names the run's other outputs too."""
+    return trajectory_stem(Path(name))
 
 
 def files_under(paths: list[Path], suffix: str) -> list[Path]:
     """The files *paths* name: a file itself, or every ``*{suffix}`` file
-    under a directory (sorted)."""
+    under a directory (sorted).
+
+    Each file once, where it is first named: a file named twice -- itself
+    and under a directory given too, or by two spellings of one path -- was
+    converted twice, and with ``-o`` refused as two logs of one stem (#2283).
+    """
     found: list[Path] = []
+    seen: set[Path] = set()
     for path in paths:
-        if path.is_dir():
-            found.extend(sorted(path.rglob(f"*{suffix}")))
-        else:
-            found.append(path)
+        named = sorted(path.rglob(f"*{suffix}")) if path.is_dir() else [path]
+        for file in named:
+            resolved = file.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                found.append(file)
     return found
 
 

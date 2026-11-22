@@ -16,7 +16,7 @@ This package provides a framework for creating and running automated scenario te
   speed / standstill, lane / area position, waypoint crossing, plus
   logical (`And` / `Or` / `Not`), latching (`Sticky`), and persistent combinators
 - Action system for side effects: turns, lane changes, traffic-light state,
-  on-demand camera attachment
+  speed and routing, spawning and despawning, adversarial NPCs and pedestrians
 - Entity management for ego (`EgoVehicle`) and NPC vehicles with spawn
   retry and ground projection
 - Coordinate transforms between Lanelet2, OpenDRIVE, and CARLA world
@@ -29,8 +29,8 @@ This package provides a framework for creating and running automated scenario te
   recording
 - `scenario-setup` downloads CARLA's nightly build, which the runner then
   launches by itself
-- pytest integration via `CarlaScenarioFixture` (auto-skip when there is no
-  CARLA to launch)
+- pytest integration via `CarlaScenarioFixture` (auto-skip when no CARLA
+  server answers and there is none to launch)
 
 ## Quick Links
 

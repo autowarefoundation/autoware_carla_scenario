@@ -9,11 +9,14 @@
 # cannot be created or written (with EPERM), which autoware_stack.docker's
 # _open_lock_file() also tells a lock file to open read-only by, and EEXIST, ENOTEMPTY and
 # ENOTDIR for scaffold.placement's _RENAME_ONTO_OCCUPIED, the codes of a
-# rename onto an occupied directory. They are ints, as in CPython; the values
+# rename onto an occupied directory, and ENOENT for driver.hdmap_export's
+# _RACES and the FileNotFoundError rerun's convert_outputs() raises (#2310).
+# They are ints, as in CPython; the values
 # are Linux's, the only system the package runs on (the same on x86_64 and
 # aarch64). The other codes and errorcode are not declared.
 
 EPERM = 1
+ENOENT = 2
 EACCES = 13
 EEXIST = 17
 ENOTDIR = 20

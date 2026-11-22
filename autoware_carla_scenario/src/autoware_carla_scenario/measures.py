@@ -59,9 +59,10 @@ So the gap does not depend on how the lanelets beside each other are cut or
 how long they are, and on a curve it is the distance along the road.  Where
 there is no lane to measure along -- no Lanelet2 map loaded, or the ego on no
 lanelet that runs its way -- the measure falls back to the **geometric**
-definition: a vehicle ahead of the ego's origin within a lane of its centre
-line (:data:`LANE_HALF_WIDTH_M`), the gap bumper to bumper along the ego's
-heading.  Which definition read the gap is recorded
+definition: a vehicle ahead of the ego's origin within three
+:data:`LANE_HALF_WIDTH_M` of its centre line (5.25 m: its lane or a lane
+beside it), but not one alongside in the next lane, the gap bumper to bumper
+along the ego's heading.  Which definition read the gap is recorded
 (:func:`vehicle_ahead_definitions`).
 
 :data:`VEHICLE_AHEAD_RELATIVE_SPEED_KPH` is read in the same frame: the
@@ -109,7 +110,7 @@ from .coordinate.transform import (
 )
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
-from .metrics import is_metric
+from .metrics import _in_frame, is_metric
 from .utils.clearance import actor_vertical_span, on_another_level
 from .utils.stop_line import regulatory_element_stop_lines
 
@@ -378,11 +379,7 @@ def in_ego_frame(
     The pedestrian measures read in it, and the vehicle-ahead measures where
     there is no lane to read along.
     """
-    yaw = math.radians(ego.rotation.yaw)
-    forward_x, forward_y = math.cos(yaw), math.sin(yaw)
-    dx = location.x - ego.location.x
-    dy = location.y - ego.location.y
-    return dx * forward_x + dy * forward_y, -dx * forward_y + dy * forward_x
+    return _in_frame(ego, location.x, location.y)
 
 
 def _pedestrians_around(

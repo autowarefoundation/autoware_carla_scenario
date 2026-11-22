@@ -27,16 +27,19 @@ folds the frames of a run into one value with :attr:`Metric.aggregation`
 (``max`` for an event: it happened at some point).
 
 An event (a collision, being off the road) reads ``1.0`` when it holds and
-``0.0`` when it does not, as AlpaSim's booleans do.  Every metric reads
-``None`` when there is no ego, and the map-based ones when the world has no
-map.
+``0.0`` when it does not, as AlpaSim's booleans do.  Every metric of the ego
+reads ``None`` when there is no ego, and the map-based ones when the world has
+no map; :data:`IMPORTANCE_SAMPLING_WEIGHT`, which reads the weight the replay
+publishes (:func:`set_importance_sampling_weight`), reads it whatever the frame
+holds, an ego or none.
 
-Four are not AlpaSim's and read the run so far rather than a frame: how the
-ego weaves from side to side (:data:`LATERAL_REVERSALS`,
-:data:`LATERAL_WOBBLE_M`, :data:`STEERING_REVERSALS`) and how often its turn
-indicators changed (:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the
-replay of a run's frames hands this module every frame
-(:func:`track_ego_motion`).
+Five are not AlpaSim's.  The run's importance-sampling weight so far
+(:data:`IMPORTANCE_SAMPLING_WEIGHT`, NADE's), and four that read the run so
+far rather than a frame: how the ego weaves from side to side
+(:data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M`,
+:data:`STEERING_REVERSALS`) and how often its turn indicators changed
+(:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the replay of a run's
+frames hands this module every frame (:func:`track_ego_motion`).
 
 Fourteen read the criticality of the frame with TU Munich's CommonRoad tools:
 eleven CriMe measures (:data:`CRIME_TTC_S`, :data:`CRIME_HW_M`,
@@ -620,13 +623,23 @@ def _use_map(world: "carla.World", carla_map: "carla.Map") -> None:
     _CACHE.driving = int(carla.LaneType.Driving)
 
 
+def _in_frame(transform: "carla.Transform", x: float, y: float) -> tuple[float, float]:
+    """The point ``(x, y)`` seen from *transform*: ``(ahead, lateral)`` in
+    metres, ``ahead`` along its heading and ``lateral`` across it (positive to
+    its right, CARLA's left-handed frame), both from its origin.
+
+    :func:`~autoware_carla_scenario.measures.in_ego_frame` reads in it too.
+    """
+    yaw = math.radians(transform.rotation.yaw)
+    forward_x, forward_y = math.cos(yaw), math.sin(yaw)
+    dx = x - transform.location.x
+    dy = y - transform.location.y
+    return dx * forward_x + dy * forward_y, -dx * forward_y + dy * forward_x
+
+
 def _along(waypoint: "carla.Waypoint", point: Point) -> float:
     """How far *point* is ahead of *waypoint* along its lane, in metres."""
-    transform = waypoint.transform
-    yaw = math.radians(transform.rotation.yaw)
-    dx = point[0] - transform.location.x
-    dy = point[1] - transform.location.y
-    return dx * math.cos(yaw) + dy * math.sin(yaw)
+    return _in_frame(waypoint.transform, point[0], point[1])[0]
 
 
 def _on_lane(waypoint: "carla.Waypoint", point: Point, z: float, driving: int) -> bool:
@@ -908,6 +921,16 @@ def reset_ego_motion() -> None:
     _MOTION[0] = _Motion()
 
 
+def _tracked_ego(world: "carla.World") -> "Optional[carla.Actor]":
+    """The ego in *world*, which :func:`track_ego_motion` and
+    :func:`track_ego_progress` follow, or ``None`` when there is none or the
+    lookup raises (a world going away)."""
+    try:
+        return find_actor_in_world(world, EGO_ROLE_NAME)
+    except Exception:
+        return None
+
+
 def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     """Add the frame of *world* at *elapsed* simulated seconds to the ego's
     motion, which :data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M`,
@@ -919,10 +942,7 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     to drift across, and its drift holds until it is back on one.  Another ego starts the motion
     anew.
     """
-    try:
-        ego = find_actor_in_world(world, EGO_ROLE_NAME)
-    except Exception:
-        ego = None
+    ego = _tracked_ego(world)
     if ego is None:
         return
     motion = _MOTION[0]
@@ -1016,10 +1036,7 @@ def track_ego_progress(world: "carla.World", elapsed: float) -> None:
     The runner calls it every tick; a frame at the time of the last one adds
     nothing, and another ego starts the progress anew.
     """
-    try:
-        ego = find_actor_in_world(world, EGO_ROLE_NAME)
-    except Exception:
-        ego = None
+    ego = _tracked_ego(world)
     if ego is None:
         return
     progress = _PROGRESS[0]
@@ -1335,11 +1352,7 @@ def _wrong_lane(world: "carla.World") -> Optional[float]:
 
 def _lateral(waypoint: "carla.Waypoint", point: Point) -> float:
     """How far *point* is to the right of *waypoint*'s centre line, in metres."""
-    transform = waypoint.transform
-    yaw = math.radians(transform.rotation.yaw)
-    dx = point[0] - transform.location.x
-    dy = point[1] - transform.location.y
-    return -dx * math.sin(yaw) + dy * math.cos(yaw)
+    return _in_frame(waypoint.transform, point[0], point[1])[1]
 
 
 def _side_width(waypoint: "carla.Waypoint", right: bool, start: float) -> float:

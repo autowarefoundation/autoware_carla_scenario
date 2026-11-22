@@ -28,7 +28,6 @@ class CarlaScenarioFixture:
         import typesafe_carla.carla as carla
         from autoware_carla_scenario import (
             CarlaScenarioFixture,
-            CarlaServerManager,
             EgoConfig,
             ScenarioQueue,
             SpawnTransform,
@@ -48,13 +47,18 @@ class CarlaScenarioFixture:
         another_result = CarlaScenarioFixture(AnotherScenario, ego, queue=_queue).as_fixture()
 
         # 3. Session fixture that starts CARLA and runs every scenario once
+        #    (or carla_queue = _queue.as_fixture(), which does the same)
         @pytest.fixture(scope="session")
         def carla_queue():
-            if CarlaServerManager.executable() is None:
-                pytest.skip("no CARLA: CARLA_EXECUTABLE unset, scenario-setup not run")
-            with _queue:
+            try:
+                _queue.start()
+            except Exception as exc:  # no server there, and none to launch
+                pytest.skip(f"CARLA session failed to start: {exc}")
+            try:
                 _queue.run_all(continue_on_error=True)
                 yield _queue
+            finally:
+                _queue.stop()
 
         # tests/my_tests/test_my.py
         def test_passes(my_result):

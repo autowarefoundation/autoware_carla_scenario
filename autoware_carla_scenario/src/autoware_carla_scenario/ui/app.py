@@ -338,8 +338,10 @@ async def session_detail(
     items = scanner.load_session(_base_path(), session_type, date, time)
     passed_count = sum(1 for it in items if it.passed is True)
     total_count = len(items)
-    # A SLURM batch's cases without an outcome yet.
-    pending_count = sum(1 for it in items if it.passed is None)
+    # The cases without a result to read (a SLURM batch's not collected, a
+    # job's missing or unreadable result), counted as the session list
+    # counts them (#2285); one without a verdict counts as failed.
+    pending_count = sum(1 for it in items if it.pending)
     return templates.TemplateResponse(
         request=request,
         name="session.html",

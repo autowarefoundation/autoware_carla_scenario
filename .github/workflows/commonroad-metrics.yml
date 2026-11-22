@@ -15,6 +15,11 @@ on:
       - "commonroad_metrics/**"
       - ".github/workflows/commonroad-metrics.yml"
 
+# The default token reads the repository and nothing else: the job installs
+# the project's locked dependencies and runs a pull request's test code (#2302).
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -36,6 +41,8 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
     - name: Install uv
       uses: astral-sh/setup-uv@v10.3.3

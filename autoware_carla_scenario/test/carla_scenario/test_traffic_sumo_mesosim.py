@@ -9,6 +9,7 @@ The backend's use of it is in ``test_traffic_sumo.py`` (the tests taking
 from __future__ import annotations
 
 import importlib.util
+import math
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Optional
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Callable, Iterator, Mapping, Optional
 import pytest
 
 from autoware_carla_scenario.traffic.fidelity import MesoscopicConfig
-from autoware_carla_scenario.traffic.mesoscopic import MesoLink
+from autoware_carla_scenario.traffic.mesoscopic import MesoLink, MesoVehicle
 
 if TYPE_CHECKING:
     from autoware_carla_scenario.traffic.sumo.mesosim import SumoMesoscopicTraffic
@@ -289,6 +290,50 @@ def test_segment_count_is_sumos() -> None:
     assert segment_count(29.0, 20.0) == 1
     assert segment_count(31.0, 20.0) == 2
     assert segment_count(5.0, 20.0) == 1
+
+
+@pytest.mark.parametrize("length", [math.inf, -math.inf, math.nan])
+def test_a_length_that_is_no_finite_number_is_one_segment(length: float) -> None:
+    # math.floor(inf) raised OverflowError, math.floor(nan) ValueError (#2283).
+    from autoware_carla_scenario.traffic.sumo.mesosim import segment_count
+
+    assert segment_count(length, 20.0) == 1
+
+
+def test_a_position_on_a_road_outside_the_links_does_not_raise() -> None:
+    # SUMO may report a vehicle on a road the backend gave the model no
+    # MesoLink of (an internal or a filtered edge): its length is unknown,
+    # math.inf, which position() cut into segments with math.floor (#2283).
+    from autoware_carla_scenario.traffic.sumo.mesosim import (
+        SumoMesoscopicTraffic,
+        _Running,
+    )
+
+    model = SumoMesoscopicTraffic.__new__(SumoMesoscopicTraffic)
+    model._links = {"A0B0": MesoLink("A0B0", 200.0, 2, 13.9)}
+    model._segment_length_m = 20.0
+    model._vehicles = {
+        "v": MesoVehicle(
+            id="v",
+            route=["A0B0", "B0C0"],
+            index=0,
+            entered_s=0.0,
+            start_m=0.0,
+            exit_s=math.inf,
+            max_speed=math.inf,
+        )
+    }
+    model._running = {
+        "v": _Running(
+            road=":B0_0", segment_start_m=3.0, segment_entered_s=1.0, speed=5.0
+        )
+    }
+    assert model.position("v", 3.0) == (":B0_0", pytest.approx(13.0))
+    # A road it knows is cut into its segments, as before.
+    model._running["v"] = _Running(
+        road="A0B0", segment_start_m=20.0, segment_entered_s=1.0, speed=5.0
+    )
+    assert model.position("v", 10.0) == ("A0B0", pytest.approx(40.0))
 
 
 def test_the_engine_is_sumos_by_default_and_checked() -> None:

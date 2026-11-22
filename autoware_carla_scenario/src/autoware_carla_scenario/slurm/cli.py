@@ -71,6 +71,13 @@ def _resubmit(args: argparse.Namespace) -> int:
     else:
         chosen = unfinished_cases(layout, failed=args.failed)
     if not chosen:
+        # The options are checked first, on their own (the batch's launcher
+        # settings are read only to resubmit): an out-of-range one exits 1
+        # even when there is nothing to resubmit, dry run or not (#2285).
+        SlurmSettings().replace(
+            array_parallelism=args.array_parallelism,
+            cases_per_task=args.cases_per_task,
+        )
         print("Nothing to resubmit: every case has a verdict.")  # noqa: T201
         # A dry run never collects: it writes nothing (#1768).
         return collect(layout) if args.wait and not args.dry_run else 0

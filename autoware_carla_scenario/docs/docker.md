@@ -217,8 +217,9 @@ scipy, numpy, and the matplotlib stack that `pyxodr` requires.
 The client is the `typesafe-carla` that `uv.lock` pins (CARLA UE5: the wheel's
 LibCarla is built from a CARLA ref, which the build prints), with the CPython
 package that wheel carries prebuilt, loaded before the image is finished. Nothing in the image
-can change it afterwards. The default tags are `:latest` and the commit
-(`:<sha>`); to see which client an image carries:
+can change it afterwards. The default tags are `:latest` and the commit's short
+SHA (`:<short sha>`, its first 7 characters); to see which client an image
+carries:
 
 ```bash
 docker run --rm --entrypoint python ghcr.io/tier4/my-scenario:latest -c \

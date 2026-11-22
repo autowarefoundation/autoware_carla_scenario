@@ -178,10 +178,17 @@ class MesoscopicTraffic:
     ) -> MesoVehicle:
         """Put a vehicle on the first road of *route*, *offset_m* along it.
 
-        It goes to the back of that road's queue whatever its offset: the
-        vehicles already on the road are ahead of it in the model, which is
-        right for the one that left a microscopic simulation last and close
-        enough for the rest.
+        It takes its place in that road's queue by the distance it has still
+        to drive, nearest the end first, as :meth:`position` and :meth:`step`
+        read the queue: ahead of every vehicle that has further to drive,
+        behind the rest -- and behind one with as far to drive, so a vehicle
+        put at the start of a road joins its back, and of several put at one
+        offset the first is first out.  A vehicle's distance is where it
+        would be driving freely (:meth:`position` before its place in the
+        queue holds it back, which that place itself decides).  Put at the
+        back whatever its offset, a vehicle near the road's end was held
+        behind ones physically behind it, reported standing, and could leave
+        only after them (#2283).
 
         Raises:
             ValueError: The route is empty, or starts on a road the model does
@@ -205,8 +212,14 @@ class MesoscopicTraffic:
             speed_cap=speed_cap,
         )
         vehicle.exit_s = self._exit_time(vehicle, link, now)
+        queue = self._queue(link.id).vehicles
+        place = len(queue)
+        for index, other in enumerate(queue):
+            if self._free_offset(self._vehicles[other], link, now) < vehicle.start_m:
+                place = index
+                break
         self._vehicles[vehicle_id] = vehicle
-        self._queue(link.id).vehicles.append(vehicle_id)
+        queue.insert(place, vehicle_id)
         return vehicle
 
     def remove(self, vehicle_id: str) -> Optional[MesoVehicle]:
@@ -279,11 +292,10 @@ class MesoscopicTraffic:
         """
         vehicle = self._vehicles[vehicle_id]
         link = self._links[vehicle.link]
-        speed = self._free_speed(vehicle, link)
-        free = vehicle.start_m + speed * max(now - vehicle.entered_s, 0.0)
+        free = self._free_offset(vehicle, link, now)
         place = self._queue(link.id).vehicles.index(vehicle_id) // max(link.lanes, 1)
         limit = link.length - place * self._jam_spacing_m
-        return link.id, max(min(free, limit, link.length), 0.0)
+        return link.id, max(min(free, limit), 0.0)
 
     def speed(self, vehicle_id: str, now: float) -> float:
         """How fast *vehicle_id* is going now, m/s: its free speed while it
@@ -335,6 +347,9 @@ class MesoscopicTraffic:
                 vehicle.entered_s = now
                 vehicle.start_m = 0.0
                 vehicle.exit_s = self._exit_time(vehicle, to_link, now)
+                # At the road's start, so at the back of its queue: every
+                # vehicle on it is at least as far along (add() keeps the
+                # queue in that order too).
                 self._queue(to_link.id).vehicles.append(vehicle.id)
         return arrived
 
@@ -359,6 +374,13 @@ class MesoscopicTraffic:
         if vehicle.speed_cap is not None:
             speed = min(speed, vehicle.speed_cap)
         return max(speed, 0.0)
+
+    def _free_offset(self, vehicle: MesoVehicle, link: MesoLink, now: float) -> float:
+        """How far along *link* *vehicle* would be at *now* driving freely,
+        whatever its place in the queue; no further than the road's end."""
+        speed = self._free_speed(vehicle, link)
+        free = vehicle.start_m + speed * max(now - vehicle.entered_s, 0.0)
+        return min(free, link.length)
 
     def _exit_time(self, vehicle: MesoVehicle, link: MesoLink, now: float) -> float:
         speed = self._free_speed(vehicle, link)

@@ -29,7 +29,8 @@ Codon types the program statically, so the values of a sweep's cases do not
 change the verdict, only their types do: :attr:`Driver.shape` is the program
 with each value replaced by its type, and the check's key
 (:func:`~.check._cache_key`), so a sweep compiles once per shape of its
-config, not once per case.
+config, not once per case.  A mapping's keys stay as written where they are
+in the config paths an error names (a value that is a dataclass, #2288).
 
 After that, the driver calls the function appended to each of the scenario's
 own modules (:func:`render_module_checks`), which calls every function and
@@ -213,12 +214,20 @@ def _render(
         ):
             return _render_dataclass(hint, value, imports, actual, path)
         key_hint, value_hint = (args + (Any, Any))[:2] if origin is dict else (Any, Any)
-        items = ", ".join(
-            f"{_render(k, key_hint, imports)}: "
-            f"{_render(v, value_hint, imports, _at(actual, k), f'{path}[{k!r}]')}"
-            for k, v in value.items()
-        )
-        return "{" + items + "}"
+
+        def item(k: Any, v: Any) -> str:
+            key = _render(k, key_hint, imports)
+            rendered = _render(v, value_hint, imports, _at(actual, k), f"{path}[{k!r}]")
+            if imports.shape and _PATH_MARK in rendered:
+                # The key is in the config paths its value's lines are marked
+                # with (`scenario.legs['north'].speed`), which an error names,
+                # a reused verdict's too: a shape keeps it as written, so cases
+                # whose keys differ do not share one.  A value with no such
+                # line (a scalar) names no key: its key stays a type (#2288).
+                key = f"{key}{k!r}"
+            return f"{key}: {rendered}"
+
+        return "{" + ", ".join(item(k, v) for k, v in value.items()) + "}"
     if isinstance(value, (list, tuple)):
         item_hint = args[0] if origin in (list, tuple) and args else Any
         items = ", ".join(
