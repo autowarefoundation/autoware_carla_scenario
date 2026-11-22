@@ -230,12 +230,16 @@ def _length(lanelet: "lanelet2.core.ConstLanelet", lengths: dict[int, float]) ->
 
 
 def _heading_at(centre: "lanelet2.core.ConstLineString2d", s: float) -> float:
-    """The heading (rad) of polyline *centre* at *s* metres along it."""
+    """The heading (rad) of polyline *centre* at *s* metres along it.
+
+    A vertex belongs to the segment that starts there, as in
+    ``trajectory.relative_lane._heading_at`` and ``coordinate.transform``.
+    """
     points = [(p.x, p.y) for p in centre]
     travelled = 0.0
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         step = math.hypot(x1 - x0, y1 - y0)
-        if travelled + step >= s or (x1, y1) == points[-1]:
+        if travelled + step > s or (x1, y1) == points[-1]:
             return math.atan2(y1 - y0, x1 - x0)
         travelled += step
     return 0.0

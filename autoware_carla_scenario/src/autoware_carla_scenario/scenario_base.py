@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
 from typing import (
     TYPE_CHECKING,
@@ -49,6 +50,10 @@ from .traffic.base import DrivenEntity, TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
+
+#: Below this horizontal length, an actor's unit forward vector is taken to
+#: point straight up or down (no heading to set an initial speed along).
+_VERTICAL_FORWARD_EPS = 1e-9
 
 #: The plain callbacks of one phase (init, pre-tick or post-tick).
 _TickCallbacks: TypeAlias = List[Callable[[carla.World], None]]
@@ -1325,8 +1330,17 @@ class BaseScenario(ABC):
                 return
             speed_ms = speed_kmh / 3.6
             fwd = actor.get_transform().get_forward_vector()
+            # On a slope the forward vector is pitched: scale its horizontal
+            # direction, not the vector itself, so the ground speed is the
+            # speed asked for rather than speed * cos(pitch).
+            horizontal = math.hypot(fwd.x, fwd.y)
+            if horizontal > _VERTICAL_FORWARD_EPS:
+                scale = speed_ms / horizontal
+            else:
+                # Facing straight up or down: no horizontal direction to go in.
+                scale = speed_ms
             actor.set_target_velocity(
-                carla.Vector3D(x=fwd.x * speed_ms, y=fwd.y * speed_ms, z=0.0)
+                carla.Vector3D(x=fwd.x * scale, y=fwd.y * scale, z=0.0)
             )
 
         for entity in self._entities:

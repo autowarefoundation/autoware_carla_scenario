@@ -71,13 +71,24 @@ def _length(lanelet: Union[ConstLanelet, Lanelet]) -> float:
 
 
 def _heading_at(points: list[tuple[float, float]], s: float) -> float:
-    """The centreline's direction (rad) at arc length *s*."""
+    """The centreline's direction (rad) at arc length *s*.
+
+    A vertex belongs to the segment that *starts* there, as in
+    :mod:`~autoware_carla_scenario.coordinate.transform`'s ``_interpolate_at_s``
+    and ``_heading_at_s``; at the last point, or past it, the last segment's
+    heading.  Zero-length segments have no direction and are skipped.
+    """
     travelled = 0.0
+    last: Optional[float] = None
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         span = math.hypot(x1 - x0, y1 - y0)
-        if span > 0.0 and travelled + span >= s:
-            return math.atan2(y1 - y0, x1 - x0)
+        if span > 0.0:
+            last = math.atan2(y1 - y0, x1 - x0)
+            if travelled + span > s:
+                return last
         travelled += span
+    if last is not None:
+        return last
     (x0, y0), (x1, y1) = points[-2], points[-1]
     return math.atan2(y1 - y0, x1 - x0)
 

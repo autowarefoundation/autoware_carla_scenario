@@ -133,3 +133,20 @@ def test_a_cached_path_is_measured_from_each_transitions_own_positions(
     assert near == pytest.approx(fresh)
     # ...and the lanelet path was still searched only once.
     assert graph.searches == 1
+
+
+def test_a_vertex_takes_the_heading_of_the_segment_leaving_it() -> None:
+    """As trajectory.relative_lane and coordinate.transform do (#2329)."""
+    import lanelet2.core
+    from lanelet2.core import LineString3d, Point3d, getId
+
+    bend = lanelet2.core.ConstLineString2d(
+        LineString3d(
+            getId(),
+            [Point3d(getId(), x, y, 0.0) for x, y in ((0, 0), (1, 0), (1, 1))],
+        )
+    )
+    assert route_match._heading_at(bend, 0.5) == pytest.approx(0.0)
+    assert route_match._heading_at(bend, 1.0) == pytest.approx(math.pi / 2)
+    assert route_match._heading_at(bend, 2.0) == pytest.approx(math.pi / 2)
+    assert route_match._heading_at(bend, 3.0) == pytest.approx(math.pi / 2)

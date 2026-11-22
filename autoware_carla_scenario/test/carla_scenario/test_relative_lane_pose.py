@@ -42,7 +42,12 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 from autoware_carla_scenario.entity_role import EntityRole
+from autoware_carla_scenario.coordinate.transform import (
+    _heading_at_s,
+    _interpolate_at_s,
+)
 from autoware_carla_scenario.trajectory.relative_lane import (
+    _heading_at,
     advance_along_lane,
     reference_lane_pose,
     relative_lane_pose,
@@ -219,6 +224,70 @@ class TestWhereTheReferenceIs:
         # Just past the fork, inside both R2 and the branch.
         assert reference_lane_pose(road[0], 20.5, -0.2, 0.0).lanelet_id == R2
         assert reference_lane_pose(road[0], 20.5, -0.2, -math.pi / 4).lanelet_id == B
+
+
+class TestTheHeadingAtAVertex:
+    """A vertex belongs to the segment that starts there, as in
+    coordinate.transform (#2329)."""
+
+    _BEND = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+
+    def test_an_interior_vertex_takes_the_leaving_segment(self) -> None:
+        assert _heading_at(self._BEND, 1.0) == pytest.approx(math.pi / 2)
+        assert _heading_at(self._BEND, 0.999) == pytest.approx(0.0)
+
+    def test_it_agrees_with_the_transform_helpers(self) -> None:
+        import numpy as np
+
+        line = np.array(self._BEND)
+        arc = np.array([0.0, 1.0, 2.0])
+        points = [(x, y, 0.0) for x, y in self._BEND]
+        for s in (0.0, 0.5, 1.0, 1.5, 2.0, 3.0):
+            assert _heading_at(self._BEND, s) == pytest.approx(
+                _heading_at_s(line, arc, s)
+            )
+            assert _heading_at(self._BEND, s) == pytest.approx(
+                _interpolate_at_s(points, s)[3]
+            )
+
+    def test_the_end_and_beyond_take_the_last_segment(self) -> None:
+        assert _heading_at(self._BEND, 2.0) == pytest.approx(math.pi / 2)
+        assert _heading_at(self._BEND, 5.0) == pytest.approx(math.pi / 2)
+
+    def test_zero_length_segments_are_skipped(self) -> None:
+        doubled = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (1.0, 1.0)]
+        assert _heading_at(doubled, 0.5) == pytest.approx(0.0)
+        assert _heading_at(doubled, 1.0) == pytest.approx(math.pi / 2)
+        assert _heading_at(doubled, 2.0) == pytest.approx(math.pi / 2)
+
+    def test_the_reference_pose_is_measured_as_the_transform_reads_it(
+        self,
+    ) -> None:
+        """A point in the wedge outside a convex bend projects onto the vertex;
+        its heading is measured against the segment to_carla_world reads
+        there, not the one arriving."""
+        from lanelet2.core import AttributeMap, Lanelet, LineString3d, Point3d, getId
+
+        def bound(coords: list[tuple[float, float]]) -> Any:
+            return LineString3d(
+                getId(), [Point3d(getId(), x, y, 0.0) for x, y in coords]
+            )
+
+        # Centreline (0, 0) -> (10, 0) -> (10, 10).
+        bend = Lanelet(
+            getId(),
+            bound([(0.0, 1.0), (9.0, 1.0), (9.0, 10.0)]),
+            bound([(0.0, -1.0), (11.0, -1.0), (11.0, 10.0)]),
+            AttributeMap(_LANE),
+        )
+        lanelet_map = lanelet2.core.LaneletMap()
+        lanelet_map.add(bend)
+        pose = reference_lane_pose(lanelet_map, 10.5, -0.5, math.pi / 2)
+        assert pose.s == pytest.approx(10.0)
+        centre = [(float(p.x), float(p.y), float(p.z)) for p in bend.centerline]
+        along = _interpolate_at_s(centre, pose.s)[3]
+        assert along == pytest.approx(math.pi / 2)
+        assert pose.heading == pytest.approx(0.0)
 
 
 def _stacked_lanelet(z0: float, z1: float, dy_end: float) -> Any:

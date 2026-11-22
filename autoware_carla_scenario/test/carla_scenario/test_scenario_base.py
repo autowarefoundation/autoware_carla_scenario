@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Iterable, Iterator, List, Optional
 from unittest.mock import MagicMock
 
@@ -744,3 +745,77 @@ class TestEntityRegistration:
         assert find_entity_by_role_name("x") is double
         assert find_vehicle_entity("x") is double
         assert find_pedestrian_entity("x") is double
+
+
+class _PitchedActor:
+    """An actor whose forward vector is *forward*, recording its velocity."""
+
+    def __init__(self, forward: carla.Vector3D) -> None:
+        self._forward = forward
+        self.velocity: Optional[carla.Vector3D] = None
+
+    def get_transform(self) -> "_PitchedActor":
+        return self
+
+    def get_forward_vector(self) -> carla.Vector3D:
+        return self._forward
+
+    def set_target_velocity(self, velocity: carla.Vector3D) -> None:
+        self.velocity = velocity
+
+    def get_world(self) -> MagicMock:
+        return MagicMock()
+
+
+class TestSetInitialSpeed:
+    """set_initial_speed gives the ego its initial speed along the ground,
+    whatever the pitch of its forward vector (#2329)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_entry_speeds(self) -> Iterator[None]:
+        from autoware_carla_scenario.entity.vehicle_entity import (
+            _clear_entry_speeds,
+        )
+
+        _clear_entry_speeds()
+        yield
+        _clear_entry_speeds()
+
+    def _velocity(self, forward: carla.Vector3D, speed_kmh: float) -> carla.Vector3D:
+        config = EgoConfig(
+            spawn_location=SpawnTransform(carla.Transform()),
+            vehicle_type="vehicle.mini.cooper",
+            initial_speed_kmh=speed_kmh,
+        )
+        actor = _PitchedActor(forward)
+        _SimpleScenario(config).set_initial_speed(actor)  # type: ignore[arg-type]
+        assert actor.velocity is not None
+        return actor.velocity
+
+    def test_a_pitched_forward_vector_keeps_the_ground_speed(self) -> None:
+        pitch = math.radians(20.0)
+        yaw = math.radians(30.0)
+        forward = carla.Vector3D(
+            x=math.cos(pitch) * math.cos(yaw),
+            y=math.cos(pitch) * math.sin(yaw),
+            z=math.sin(pitch),
+        )
+        velocity = self._velocity(forward, 36.0)
+
+        assert math.hypot(velocity.x, velocity.y) == pytest.approx(10.0)
+        assert math.atan2(velocity.y, velocity.x) == pytest.approx(yaw)
+        assert velocity.z == 0.0
+
+    def test_a_level_forward_vector_is_unchanged(self) -> None:
+        velocity = self._velocity(carla.Vector3D(x=0.0, y=1.0, z=0.0), 36.0)
+
+        assert velocity.x == pytest.approx(0.0)
+        assert velocity.y == pytest.approx(10.0)
+        assert velocity.z == 0.0
+
+    def test_a_vertical_forward_vector_sets_no_horizontal_speed(self) -> None:
+        velocity = self._velocity(carla.Vector3D(x=0.0, y=0.0, z=1.0), 36.0)
+
+        assert velocity.x == pytest.approx(0.0)
+        assert velocity.y == pytest.approx(0.0)
+        assert velocity.z == 0.0
