@@ -808,9 +808,17 @@
   var TOGGLES = /^(checkbox|radio)$/;
   var TYPED = /^(text|search|url|tel|email|password|number)$/;
 
-  function isField(el) {
+  // A field whose value a form posts. A read-only one is set by script -- a
+  // lanelet readout the map picker fills in and sends a `change` for -- so
+  // its change can be dropped by a swap like a typed one.
+  function isPosted(el) {
     return !!el && !!el.name && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) &&
-      el.type !== 'hidden' && !el.readOnly;
+      el.type !== 'hidden';
+  }
+
+  // A field the author types in or chooses from, whose focus is carried.
+  function isField(el) {
+    return isPosted(el) && !el.readOnly;
   }
 
   function isTyped(el) {
@@ -948,7 +956,7 @@
 
   document.addEventListener('change', function (event) {
     var el = event.target;
-    if (isField(el) && postOf(el) && unsent.indexOf(el) < 0) unsent.push(el);
+    if (isPosted(el) && postOf(el) && unsent.indexOf(el) < 0) unsent.push(el);
   }, true);
 
   document.body.addEventListener('htmx:configRequest', function (event) {
