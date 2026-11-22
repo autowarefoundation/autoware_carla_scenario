@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
@@ -322,6 +323,11 @@ class CarlaCameraSensor(CameraSensorBase):
     _interval_ticks: int
     _newest: Optional[carla.Image]
     _anchor: int
+    #: Moved on by :meth:`destroy`, under :attr:`_generation_lock`: a
+    #: listener is bound to the generation it was attached in, and hands on
+    #: nothing once that is not the current one (#2323).
+    _generation: int
+    _generation_lock: threading.Lock
 
     def __init__(
         self,
@@ -340,6 +346,8 @@ class CarlaCameraSensor(CameraSensorBase):
         #: the frame a frame due did not come by, or the tick before the first
         #: call, taken as the attach; -1 before the first call.
         self._anchor = -1
+        self._generation = 0
+        self._generation_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # CameraSensorBase interface
@@ -373,7 +381,9 @@ class CarlaCameraSensor(CameraSensorBase):
         )
 
         self._sensor = world.spawn_actor(camera_bp, transform, attach_to=actor)
-        self._sensor.listen(self._on_sensor_data)
+        with self._generation_lock:
+            generation = self._generation
+        self._sensor.listen(lambda data: self._on_sensor_data(data, generation))
         self._attached = True
 
         logger.info(
@@ -385,7 +395,11 @@ class CarlaCameraSensor(CameraSensorBase):
             actor.type_id,
         )
 
-    def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
+    def _on_sensor_data(
+        self,
+        data: Union["carla.Image", "carla.SensorData"],
+        generation: Optional[int] = None,
+    ) -> None:
         """The sensor's listener: queues the frame for :meth:`get_image`.
 
         With an ``on_frame`` callback the frame goes to it instead, unqueued.
@@ -400,14 +414,31 @@ class CarlaCameraSensor(CameraSensorBase):
         the ``carla.SensorData``, which ``as_image()`` turns into the image; the
         static check sees that branch, and Python, whose ``Image`` has no
         ``as_image``, never takes it.
+
+        *generation* is the one the listener was attached in (``None`` for
+        the current one): CARLA may still be inside the callback when
+        ``stop()`` returns, so a frame of a sensor :meth:`destroy` let go is
+        dropped: the generation is checked, and the frame queued, under the
+        lock :meth:`destroy` moves it on under before draining the queue
+        (#2323).
         """
         image = data.as_image() if hasattr(data, "as_image") else data
         on_frame = self._on_frame
         if on_frame is not None:
-            on_frame(image)
+            if generation is None or self._current(generation):
+                on_frame(image)
             return
-        # Never block CARLA's delivery thread: drop the oldest frame when full.
-        put_dropping_oldest(self._frame_queue, image)
+        with self._generation_lock:
+            if generation is not None and generation != self._generation:
+                return
+            # Never block CARLA's delivery thread: drop the oldest frame when
+            # full.
+            put_dropping_oldest(self._frame_queue, image)
+
+    def _current(self, generation: int) -> bool:
+        """Whether *generation* is the sensor's current one."""
+        with self._generation_lock:
+            return generation == self._generation
 
     def destroy(self) -> None:
         """Stop and destroy the CARLA sensor actor."""
@@ -416,6 +447,9 @@ class CarlaCameraSensor(CameraSensorBase):
             self._sensor.destroy()
             self._sensor = None
         self._attached = False
+        with self._generation_lock:
+            # A frame the old sensor still delivers is stale from here.
+            self._generation += 1
         # Attached again, no frame of the old actor is taken for one of the
         # new: neither the newest nor one still queued (#2265).
         drain(self._frame_queue)

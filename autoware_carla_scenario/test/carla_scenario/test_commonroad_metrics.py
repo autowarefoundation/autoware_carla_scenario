@@ -1545,6 +1545,62 @@ def test_a_worker_answering_its_init_out_of_protocol_is_not_left_running(
 
 #: A worker that answers its ``init`` and then neither reads nor answers
 #: anything more, as one deep in a long (or deadlocked) evaluation would.
+#: A worker that answers each request after a moment, naming the request's
+#: ``n``: what tells one thread's answer from another's.
+_ECHOES_SLOWLY = textwrap.dedent(
+    """
+    import json, sys, time
+
+    for line in sys.stdin:
+        request = json.loads(line)
+        if request["op"] == "close":
+            break
+        if request["op"] == "init":
+            answer = {"ok": True, "measures": ["crime_ttc_s"]}
+        else:
+            time.sleep(0.01)
+            answer = {"ok": True, "n": request["n"]}
+        sys.stdout.write(json.dumps(answer) + "\\n")
+        sys.stdout.flush()
+    """
+)
+
+
+def test_requests_from_two_threads_each_get_their_own_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2323: the write and the read were under separate locks, so a thread
+    could write its request between another's write and read, and the two
+    read each other's answers."""
+    import threading
+
+    worker, process = _started_worker(tmp_path, monkeypatch, _ECHOES_SLOWLY)
+    wrong: list[tuple[int, Any]] = []
+    errors: list[BaseException] = []
+
+    def ask(first: int) -> None:
+        try:
+            for n in range(first, first + 10):
+                answer = worker.request({"op": "echo", "n": n}, timeout=10.0)
+                if answer.get("n") != n:
+                    wrong.append((n, answer.get("n")))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=ask, args=(k * 100,)) for k in range(3)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30.0)
+        assert not any(thread.is_alive() for thread in threads)
+        assert not errors, errors
+        assert wrong == []
+    finally:
+        worker.close()
+        _kill(process)
+
+
 _STUCK = textwrap.dedent(
     """
     import json, sys, time
