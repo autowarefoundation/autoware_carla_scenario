@@ -332,6 +332,58 @@ def _tmerc_frame_origin(
     return math.degrees(lat), math.degrees(lon)
 
 
+#: The built-in ``map`` groups, whose ``${oc.env:VAR,default}`` paths
+#: :func:`missing_map_file` reads.
+_MAP_CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf" / "map"
+
+
+def _env_fallback_variable(path: Path) -> str:
+    """Return the variable a built-in map group reads *path* from, or ``""``.
+
+    A group names its files ``${oc.env:VAR,default}``; *path* matching a
+    ``default`` means the run fell back to it because ``VAR`` is unset.
+    """
+    marker = "${oc.env:"
+    for conf in sorted(_MAP_CONF_DIR.glob("*.yaml")):
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            start = line.find(marker)
+            end = line.find("}", start)
+            if start < 0 or end < 0:
+                continue
+            variable, _, default = line[start + len(marker) : end].partition(",")
+            if default.strip() and Path(default.strip()) == path:
+                return variable.strip()
+    return ""
+
+
+def missing_map_file(kind: str, path: Path, setting: str) -> str:
+    """Return the error for a map file *path* that does not exist.
+
+    A relative path is resolved against the current directory, which is why
+    the built-in maps' defaults (``data/...``) are found only from the
+    repository root (#2340); the message says so, and names the variable and
+    the ``map.<setting>=`` override that point at the file instead.
+
+    Args:
+        kind: What the file is, e.g. ``"Lanelet2"``.
+        path: The path that was looked for.
+        setting: The ``map`` setting that names it, e.g. ``"lanelet2_path"``.
+    """
+    message = f"{kind} file not found: {path}"
+    if path.is_absolute():
+        return message
+    message += (
+        f" (a relative path, resolved against the current directory {Path.cwd()})"
+    )
+    variable = _env_fallback_variable(path)
+    if variable:
+        message += (
+            f"; it is the default the map config falls back to: set {variable}"
+            f" or pass map.{setting}=<path> to point at the file"
+        )
+    return message
+
+
 def map_origin(
     lanelet2_path: Path, xodr_path: Optional[Path] = None
 ) -> tuple[tuple[float, float, float], str]:

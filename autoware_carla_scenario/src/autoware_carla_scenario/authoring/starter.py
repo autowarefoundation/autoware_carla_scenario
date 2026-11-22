@@ -9,6 +9,8 @@ that a user can run, then edit into whatever they actually wanted.
 
 from __future__ import annotations
 
+import os
+
 from .models import (
     ActionNode,
     Assertions,
@@ -33,13 +35,24 @@ __all__ = ["blank_document", "new_document"]
 #: without one would open invalid.
 _DEFAULT_GOAL_LANELET_ID = 141
 
-#: Defaults for the built-in Nishishinjuku map, matching ``conf/map/nishishinjuku.yaml``.
-_DEFAULT_MAP = MapRef(
-    group="nishishinjuku",
-    name="NishishinjukuMap",
-    xodr_path=("data/nishishinjuku_carla.xodr"),
-    lanelet2_path="data/nishishinjuku.osm",
-)
+
+def _default_map() -> MapRef:
+    """Return the built-in Nishishinjuku map, as ``conf/map/nishishinjuku.yaml`` reads it.
+
+    The same variables, with the same fallbacks relative to the current
+    directory: a starter that hard-coded the fallbacks would name files a
+    wheel install does not have even with the variables set (#2340).
+    """
+    return MapRef(
+        group="nishishinjuku",
+        name="NishishinjukuMap",
+        xodr_path=os.environ.get(
+            "NISHISHINJUKU_XODR_PATH", "data/nishishinjuku_carla.xodr"
+        ),
+        lanelet2_path=os.environ.get(
+            "NISHISHINJUKU_LANELET2_PATH", "data/nishishinjuku.osm"
+        ),
+    )
 
 
 def _condition(type_id: str, **params: object) -> ConditionNode:
@@ -73,7 +86,7 @@ def blank_document(
     document = ScenarioDocument(
         id=scenario_id,
         title=title or "New scenario",
-        map=_DEFAULT_MAP.model_copy(deep=True),
+        map=_default_map(),
         entities=[
             Entity(
                 id="ego",
@@ -184,7 +197,7 @@ def new_document(
         title=title,
         description="NPC1 cuts into the ego lane once it is close and closing.",
         timeout_seconds=30.0,
-        map=_DEFAULT_MAP.model_copy(deep=True),
+        map=_default_map(),
         entities=[ego, npc],
         actions=[lane_change],
         assertions=Assertions(
