@@ -547,26 +547,31 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
 
     local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
     capsys.readouterr()
-    # Six cases, two tasks in parallel: the first task runs cases 0, 1 and 2.
-    first_task = range(3)
-    # Its worker dies on the last of them the fake world does not error, so
-    # long as that is not the task's first: what the task finished before it
-    # must survive the crash.  The fake world crashes on a digest, and only a
-    # case that does not error records one (stems.jsonl).  _SWEEP's seed
-    # fixes the cases, so the same case is crashed on every run.
+    # Six cases, two tasks in parallel: task 0 runs cases 0, 1 and 2, task 1
+    # cases 3, 4 and 5, each in order in one process.
+    tasks = [range(0, 3), range(3, 6)]
+    # A worker dies on a case the fake world does not error: it crashes on a
+    # digest, and only such a case records one (stems.jsonl).  Best its
+    # task's middle one -- what the task finished before it must survive the
+    # crash, and what comes after it must be left missing, never started --
+    # else its last.  Never its first: something must survive.  _SWEEP's seed
+    # fixes the cases (a digest is a SHA-256 of their config), so the same
+    # case is crashed on every run.
     local_results = json.loads((local / "batch_results.json").read_text())
-    clean = [i for i in first_task if not local_results[i].get("error")]
+    clean = [i for i in range(6) if not local_results[i].get("error")]
+    preferred = [task[1] for task in tasks] + [task[-1] for task in tasks]
+    crashed = next((i for i in preferred if i in clean), None)
     assert (
-        clean and clean[-1] != first_task[0]
-    ), f"no case after the first task's first one runs in the fake world: {clean}"
-    crashed = clean[-1]
+        crashed is not None
+    ), f"only a task's first case runs in the fake world: {clean}"
+    task_index, task = next((k, t) for k, t in enumerate(tasks) if crashed in t)
     # stems.jsonl lists the cases that did not error, in the batch's order.
     ran = [json.loads(line) for line in (fake_slurm.record / "stems.jsonl").open()]
     entry = ran[clean.index(crashed)]
     assert entry["stem"].endswith(f"Scenario-{crashed}")
     fake_slurm.monkeypatch.setenv("FAKE_CRASH_DIGESTS", entry["digest"][:16])
     # The crashed case and those after it in its task never ran.
-    missing = list(range(crashed, first_task.stop))
+    missing = list(range(crashed, task.stop))
 
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     out = capsys.readouterr().out
@@ -580,13 +585,13 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     results = json.loads((batch / "batch_results.json").read_text())
     assert all(results[i]["error"] is True for i in missing)
     # The job script stopped the CARLA the dead worker left running.
-    task0 = layout.read_task(0, 0)
-    assert task0 is not None
-    port = task0.get("ports")["rpc"]
+    dead = layout.read_task(0, task_index)
+    assert dead is not None
+    port = dead.get("ports")["rpc"]
     _wait_for(
         lambda: fake_carlas(fake_slurm.record, port) == [], 20, "the orphaned CARLA"
     )
-    _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
+    _wait_for(lambda: not layout.task_port(0, task_index).exists(), 20, "the port file")
 
     # Resubmitted: the cases with no result, and those that errored (the
     # fake world's errored cases raise again, as a case without ground would).
