@@ -114,8 +114,8 @@ def build_rules(config: STLDriverConfig) -> tuple[Rule, ...]:
             weight=2.0,
             margin=1.0,
             # Checked against the target speed, not the posted limit
-            # (`STLDriverConfig.target_speed_mps`): a legal speed above the
-            # cruise speed violates it too.
+            # (`STLDriverConfig.target_speed_mps`): a legal speed more than
+            # the tolerance above the cruise speed violates it too.
             description=(
                 "Never exceed the target speed -- min(cruise speed, posted limit"
                 f" or the {limits.default_speed_limit_mps:g} m/s fallback) -- by"

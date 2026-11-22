@@ -419,22 +419,34 @@ class RobustnessOptimizer:
         temperature = self.config.optimizer.temperature_start
         with torch.inference_mode():
             batched = self._vmap_ok
-            batch = self._compiled_batch or self._score_batch_eager
             signals, scores, merit, robustness = self._vmapped(
-                batch, self._score_batch_looped, candidates, inputs, temperature
+                self._compiled_batch,
+                self._score_batch_eager,
+                self._score_batch_looped,
+                candidates,
+                inputs,
+                temperature,
             )
             used_vmap = batched and self._vmap_ok
             return signals.clone(), scores.clone(), merit.clone(), robustness.clone(), used_vmap
 
     def _vmapped(
         self,
+        compiled: Callable[_P, _T] | None,
         batched: Callable[_P, _T],
         looped: Callable[_P, _T],
         *args: _P.args,
         **kwargs: _P.kwargs,
     ) -> _T:
-        """``batched(*args, **kwargs)``, or ``looped(...)`` on the same
+        """``compiled(*args, **kwargs)`` (the compiled *batched*, when there
+        is one), else ``batched(...)``, or ``looped(...)`` on the same
         arguments once batching has failed.
+
+        A compiled stage that raises drops every compiled stage and retries
+        eagerly, as :meth:`prepare` does when compilation fails: compilation is
+        lazy, and its errors (``torch._dynamo`` raises ``RuntimeError``
+        subclasses) are no evidence that ``vmap`` is broken, so they must not
+        switch the policy to the much slower loop path for the session.
 
         Every batched stage of the search goes through here, so a ``vmap``
         failure anywhere -- sampling, a refinement step, the final scoring --
@@ -444,6 +456,14 @@ class RobustnessOptimizer:
         the same functions (``tests/test_rollout.py`` checks ``vmap`` against
         a Python loop), so batching is an optimization, not a requirement.
         """
+        if self._vmap_ok and compiled is not None:
+            try:
+                return compiled(*args, **kwargs)
+            except Exception:  # noqa: BLE001 - any compile failure falls back
+                logger.warning("torch.compile failed; continuing eagerly", exc_info=True)
+                self._compiled_batch = None
+                self._compiled_refine = None
+                self._compiled_scores = None
         if self._vmap_ok:
             try:
                 return batched(*args, **kwargs)
@@ -547,9 +567,13 @@ class RobustnessOptimizer:
             ) * (step / denominator)
 
             adam.zero_grad(set_to_none=True)
-            refine = self._compiled_refine or self._refine_losses
             losses, signals = self._vmapped(
-                refine, self._refine_losses_looped, params, inputs, temperature
+                self._compiled_refine,
+                self._refine_losses,
+                self._refine_losses_looped,
+                params,
+                inputs,
+                temperature,
             )
 
             # Score the iterates we just rolled out, before stepping away from
@@ -603,7 +627,9 @@ class RobustnessOptimizer:
     def _batched_rollout(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
         if params.shape[0] == 1:
             return rollout(params[0], inputs, self.config).unsqueeze(0)
-        return self._vmapped(self._batched_rollout_eager, self._looped_rollout, params, inputs)
+        return self._vmapped(
+            None, self._batched_rollout_eager, self._looped_rollout, params, inputs
+        )
 
     def _batched_rollout_eager(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
         """The batched body of :meth:`_batched_rollout`."""
@@ -619,8 +645,9 @@ class RobustnessOptimizer:
         Exact rather than smoothed -- the smoothing exists to make gradients
         informative, and has no business deciding anything.
         """
-        scores = self._compiled_scores or self._batched_scores_eager
-        return self._vmapped(scores, self._looped_scores, signals)
+        return self._vmapped(
+            self._compiled_scores, self._batched_scores_eager, self._looped_scores, signals
+        )
 
     def _batched_scores_eager(self, signals: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """The body of :meth:`_batched_scores`, separated so it can be compiled."""

@@ -794,6 +794,32 @@ def test_a_vmap_failure_in_any_stage_degrades_the_step_rather_than_crashing_it(m
     assert solution.robustness == pytest.approx(expected.robustness, abs=1e-3)
 
 
+@pytest.mark.parametrize("stage", ["_compiled_batch", "_compiled_refine", "_compiled_scores"])
+def test_a_compiled_stage_that_fails_falls_back_to_eager_vmap_not_the_loop(stage):
+    """`torch.compile` compiles on the first call, and its errors are
+    `RuntimeError`s: one must drop compilation, as `prepare` does, not switch
+    the session to the loop path."""
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    expected = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG).solve(inputs)
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    calls: list[str] = []
+
+    def failing_compile(*args, **kwargs):
+        calls.append(stage)
+        raise RuntimeError("BackendCompilerFailed (simulated)")
+
+    setattr(optimizer, stage, failing_compile)
+    solution = optimizer.solve(inputs)
+    assert calls == [stage]
+    assert optimizer._vmap_ok
+    assert solution.used_vmap
+    assert optimizer._compiled_batch is None
+    assert optimizer._compiled_refine is None
+    assert optimizer._compiled_scores is None
+    assert torch.equal(solution.params, expected.params)
+    assert solution.robustness == expected.robustness
+
+
 def test_the_loop_helpers_compute_what_the_batched_ones_do():
     """Each fallback against its batched stage, on the same batch."""
     optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
