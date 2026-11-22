@@ -48,7 +48,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Callable, Iterator, Mapping, Optional, Sequence
+from typing import IO, Any, Callable, Iterator, Mapping, Optional, Sequence, TypeVar
 
 from ..base import TrafficBackendError
 from ..fidelity import MesoscopicConfig
@@ -68,6 +68,8 @@ __all__ = [
     "SumoMesoscopicTraffic",
     "build_mesoscopic_model",
     "segment_count",
+    "start_sumo",
+    "stop_sumo",
 ]
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,13 @@ _CELL_M = 50.0
 _CONNECT_TIMEOUT_S = 60.0
 #: How long SUMO may take to exit, s, once told to or killed.
 _EXIT_TIMEOUT_S = 5.0
+#: How much of SUMO's standard error a failure to start quotes, characters.
+_STDERR_TAIL_CHARS = 2000
+#: How many SUMOs, one after another, a start tries when the port picked for
+#: one was taken before it bound it.
+_PORT_TRIES = 3
+#: What SUMO writes when its TraCI port is taken (strerror(EADDRINUSE)).
+_PORT_IN_USE = "Address already in use"
 
 # TraCI's variable ids (traci.constants), named here so the module does not
 # import traci until it starts SUMO.
@@ -218,77 +227,22 @@ class SumoMesoscopicTraffic:
         """Start SUMO on a free port and connect to it, without switching
         TraCI's module-level connection over to it."""
         import traci  # noqa: PLC0415
-        from traci.exceptions import FatalTraCIError, TraCIException  # noqa: PLC0415
 
-        with socket.socket() as probe:
-            probe.bind(("localhost", 0))
-            port = int(probe.getsockname()[1])
-        stderr = tempfile.TemporaryFile()  # noqa: SIM115 - closed by _stop_process()
-        self._stderr = stderr
-        try:
-            process = subprocess.Popen(  # noqa: S603 - SUMO's own binary
-                [*cmd, "--remote-port", str(port)],
-                stdout=subprocess.DEVNULL,
-                stderr=stderr,
-            )
-        except BaseException:
-            self._stop_process(kill=True)
-            raise
-        self._process = process
-        deadline = time.monotonic() + _CONNECT_TIMEOUT_S
-        try:
-            while True:
-                if process.poll() is not None:
-                    raise RuntimeError(
-                        f"SUMO (mesoscopic) did not start: {self._stderr_text()}"
-                    )
-                try:
-                    # One try each: traci.connect sleeps a second between its own.
-                    return traci.connect(port, numRetries=0, proc=process)
-                except (FatalTraCIError, TraCIException, OSError):
-                    if time.monotonic() > deadline:
-                        raise RuntimeError(
-                            "SUMO (mesoscopic) did not listen for TraCI "
-                            f"within {_CONNECT_TIMEOUT_S:g} s"
-                        ) from None
-                    time.sleep(0.02)
-        except BaseException:
-            # Killed and reaped, so no SUMO and no zombie outlives the error.
-            self._stop_process(kill=True)
-            raise
+        def connect(port: int, process: subprocess.Popen[bytes]) -> Any:
+            # One try each: traci.connect sleeps a second between its own.
+            return traci.connect(port, numRetries=0, proc=process)
 
-    def _stderr_text(self) -> str:
-        """What SUMO has written to its standard error so far."""
-        stderr = self._stderr
-        if stderr is None:
-            return ""
-        try:
-            stderr.seek(0)
-            return stderr.read().decode(errors="replace").strip()
-        except (OSError, ValueError):
-            return ""
+        conn, self._process, self._stderr = start_sumo(
+            cmd, connect, what=" (mesoscopic)"
+        )
+        return conn
 
     def _stop_process(self, *, kill: bool) -> None:
         """Stop SUMO's process -- waiting for it to exit unless *kill*, and
         killing it if it does not -- reap it, and close its standard error."""
         process, self._process = self._process, None
-        if process is not None:
-            try:
-                if kill:
-                    process.kill()
-                process.wait(timeout=_EXIT_TIMEOUT_S)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                try:
-                    process.wait(timeout=_EXIT_TIMEOUT_S)
-                except subprocess.TimeoutExpired:
-                    logger.warning(
-                        "SUMO (mesoscopic, pid %s) did not exit when killed",
-                        process.pid,
-                    )
         stderr, self._stderr = self._stderr, None
-        if stderr is not None:
-            stderr.close()
+        stop_sumo(process, stderr, kill=kill, what=" (mesoscopic)")
 
     def close(self) -> None:
         """Stop SUMO."""
@@ -857,3 +811,168 @@ def _shape(lane: Any) -> tuple[list[tuple[float, float]], list[float]]:
 
 def _cell(value: float) -> int:
     return int(math.floor(value / _CELL_M))
+
+
+# ----------------------------------------------------------------------
+# SUMO as a process of its own
+# ----------------------------------------------------------------------
+
+_Connection = TypeVar("_Connection")
+
+
+def start_sumo(
+    cmd: Sequence[str],
+    connect: Callable[[int, "subprocess.Popen[bytes]"], _Connection],
+    *,
+    what: str = "",
+    stdout: Any = subprocess.DEVNULL,
+) -> tuple[_Connection, "subprocess.Popen[bytes]", IO[bytes]]:
+    """Start SUMO (*cmd*) on a free port and connect to it with *connect*.
+
+    *connect* is called with the port and the process, once per try (it
+    tries once itself: ``numRetries=0``), until it answers, SUMO exits or
+    :data:`_CONNECT_TIMEOUT_S` passes.  Unlike ``traci.start``, which
+    launches a new SUMO for each of its tries and leaves them running, this
+    starts one SUMO, and kills and reaps it on any failure; *connect* undoes
+    whatever a failed try of its own left behind (a registered label).  Only
+    a SUMO that exits because its port was taken before it bound it is
+    started again, on another port (up to :data:`_PORT_TRIES` in all).
+
+    Returns:
+        What *connect* answered, SUMO's process and its standard error (a
+        file, not a pipe nobody drains during the run, which would block
+        SUMO once full); hand the last two to :func:`stop_sumo`.
+
+    Raises:
+        TrafficBackendError: If SUMO exits, does not listen in time or the
+            connection fails, with the tail of SUMO's standard error.
+    """
+    deadline = time.monotonic() + _CONNECT_TIMEOUT_S
+    for launch in range(1, _PORT_TRIES + 1):
+        try:
+            return _launch_sumo(cmd, connect, what, stdout, deadline)
+        except _PortTaken as exc:
+            # Something took the free port before SUMO bound it: a new port,
+            # as traci.start would, but never more than one SUMO at a time.
+            if launch == _PORT_TRIES:
+                raise
+            logger.debug("SUMO%s: %s; trying another port", what, exc)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+class _PortTaken(TrafficBackendError):
+    """SUMO exited at once because its TraCI port was taken meanwhile."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+def _launch_sumo(
+    cmd: Sequence[str],
+    connect: Callable[[int, "subprocess.Popen[bytes]"], _Connection],
+    what: str,
+    stdout: Any,
+    deadline: float,
+) -> tuple[_Connection, "subprocess.Popen[bytes]", IO[bytes]]:
+    """One SUMO of :func:`start_sumo`, on a port of its own."""
+    from traci.exceptions import FatalTraCIError, TraCIException  # noqa: PLC0415
+
+    with socket.socket() as probe:
+        probe.bind(("localhost", 0))
+        port = int(probe.getsockname()[1])
+    stderr = tempfile.TemporaryFile()  # noqa: SIM115 - closed by stop_sumo()
+    try:
+        process = subprocess.Popen(  # noqa: S603 - SUMO's own binary
+            [*cmd, "--remote-port", str(port)],
+            stdout=stdout,
+            stderr=stderr,
+        )
+    except BaseException as exc:
+        stderr.close()
+        if isinstance(exc, OSError):
+            raise TrafficBackendError(f"SUMO{what} did not start: {exc}") from exc
+        raise
+    timeout_s = _CONNECT_TIMEOUT_S
+    try:
+        while True:
+            if process.poll() is not None:
+                tail = _stderr_tail(stderr)
+                if _PORT_IN_USE in tail:
+                    raise _PortTaken(f"SUMO{what} did not start: {tail}")
+                raise TrafficBackendError(f"SUMO{what} did not start: {tail}")
+            try:
+                return connect(port, process), process, stderr
+            except Exception as exc:  # noqa: BLE001 - narrowed just below
+                if not _refused(exc, (FatalTraCIError, TraCIException, OSError)):
+                    raise
+                if time.monotonic() > deadline:
+                    raise TrafficBackendError(
+                        f"SUMO{what} did not listen for TraCI within "
+                        f"{timeout_s:g} s{_tail_suffix(stderr)}"
+                    ) from None
+                time.sleep(0.02)
+    except BaseException as exc:
+        # Killed and reaped, so no SUMO and no zombie outlives the error.
+        stop_sumo(process, None, kill=True, what=what)
+        tail = _tail_suffix(stderr)
+        stderr.close()
+        if isinstance(exc, Exception) and not isinstance(exc, TrafficBackendError):
+            raise TrafficBackendError(f"SUMO{what} did not start: {exc}{tail}") from exc
+        raise
+
+
+def stop_sumo(
+    process: Optional["subprocess.Popen[bytes]"],
+    stderr: Optional[IO[bytes]],
+    *,
+    kill: bool,
+    what: str = "",
+) -> None:
+    """Stop SUMO's *process* -- waiting for it to exit unless *kill*, and
+    killing it if it does not -- reap it, and close its *stderr*."""
+    if process is not None:
+        try:
+            if kill:
+                process.kill()
+            process.wait(timeout=_EXIT_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=_EXIT_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "SUMO%s (pid %s) did not exit when killed", what, process.pid
+                )
+    if stderr is not None:
+        stderr.close()
+
+
+def _refused(exc: Exception, errors: tuple[type[BaseException], ...]) -> bool:
+    """Whether *exc* is TraCI failing to connect, to be tried again.
+
+    By name too: importing libsumo replaces ``traci.exceptions.TraCIException``
+    with its own class, while traci's connection code still raises the one it
+    imported, so the class alone misses it.
+    """
+    return isinstance(exc, errors) or type(exc).__name__ in (
+        "TraCIException",
+        "FatalTraCIError",
+    )
+
+
+def _stderr_tail(stderr: IO[bytes]) -> str:
+    """The end of what SUMO has written to its standard error so far."""
+    try:
+        stderr.seek(0)
+        text = stderr.read().decode(errors="replace").strip()
+    except (OSError, ValueError):
+        return ""
+    if len(text) > _STDERR_TAIL_CHARS:
+        return "..." + text[-_STDERR_TAIL_CHARS:]
+    return text
+
+
+def _tail_suffix(stderr: IO[bytes]) -> str:
+    """``": <tail>"`` of SUMO's standard error, or nothing when it is empty."""
+    tail = _stderr_tail(stderr)
+    return f": {tail}" if tail else ""

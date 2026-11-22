@@ -495,10 +495,21 @@ def _policy(spec: str) -> BaseDriver:
 def _serve_in_process(spec: str) -> int:
     """Serve the *spec* policy from this process and return its port. Once per run."""
     server, port = build_server(_policy(spec), port=0, host="localhost")
-    server.start()
+    _start_or_stop(server)
     atexit.register(server.stop, None)
     logger.info("Serving policy %r in this process on port %d", spec, port)
     return port
+
+
+def _start_or_stop(server: grpc.Server) -> None:
+    """Start *server*, or stop it if it does not start: lru_cache keeps no
+    exception, so every case retries, and none may leave a server behind
+    (#2321)."""
+    try:
+        server.start()
+    except BaseException:
+        server.stop(None)
+        raise
 
 
 #: The longest path a Unix socket address may carry (``sun_path``, less its NUL).
@@ -521,7 +532,7 @@ def _serve_on_unix_socket(spec: str) -> str:
     address = f"unix://{os.path.join(directory, 'policy.sock')}"
     try:
         server, _ = build_server(policy, host=address)
-        server.start()
+        _start_or_stop(server)
     except BaseException:
         # lru_cache keeps no exception, so every case retries: leave nothing behind.
         shutil.rmtree(directory, ignore_errors=True)

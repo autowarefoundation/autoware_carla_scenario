@@ -110,8 +110,9 @@ from __future__ import annotations
 import logging
 import math
 import random
+import subprocess
 from pathlib import Path
-from typing import Any, ClassVar, Collection, Optional, Union
+from typing import IO, Any, ClassVar, Collection, Optional, Union
 
 from ...constants import EGO_ROLE_NAME
 from ...entity_role import canonical_role_name
@@ -145,7 +146,13 @@ from ..parameters import (
     VehicleParameters,
 )
 from ..mesoscopic import MesoscopicTraffic
-from .mesosim import MesoRoads, SumoMesoscopicTraffic, build_mesoscopic_model
+from .mesosim import (
+    MesoRoads,
+    SumoMesoscopicTraffic,
+    build_mesoscopic_model,
+    start_sumo,
+    stop_sumo,
+)
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
 from .geometry import (
@@ -331,6 +338,40 @@ _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
+#: The label of SUMO's TraCI connection: traci's own default, the one its
+#: module-level functions use.
+_TRACI_LABEL = "default"
+
+
+def _drop_traci_connection(traci: Any, label: str) -> None:
+    """Close TraCI's connection *label*, if one is registered, and make sure
+    it is no longer, even when SUMO broke the socket mid-handshake."""
+    try:
+        conn = traci.getConnection(label)
+    except Exception:  # noqa: BLE001 - none registered
+        return
+    try:
+        conn.close(False)
+    except Exception as exc:  # noqa: BLE001 - the socket is gone
+        logger.debug("SUMO close after a failed start: %s", exc)
+        # Without its socket, close() only unregisters the connection.
+        sock = getattr(conn, "_socket", None)
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            conn._socket = None
+        try:
+            conn.close(False)
+        except Exception as again:  # noqa: BLE001 - nothing more to do
+            logger.debug("SUMO connection %r stays registered: %s", label, again)
+
+
+def _is_gui(binary: str) -> bool:
+    """Whether *binary* is sumo-gui (``sumo-gui``, ``sumo-gui.exe``, a path
+    to either), which shows the run in a window."""
+    return Path(binary).name.lower().startswith("sumo-gui")
 
 
 def _load_traci(use_libsumo: bool) -> Any:
@@ -635,6 +676,12 @@ class SumoTrafficBackend(TrafficBackend):
         #: ``close`` still closes the connection (#1216).  Not ``_started``,
         #: which says start() has put the run's vehicles into SUMO.
         self._connected = False
+        #: SUMO's process and its standard error when it runs through TraCI
+        #: (libsumo runs it in this process): started by _start_traci().
+        self._sumo_process: Optional[subprocess.Popen[bytes]] = None
+        self._sumo_stderr: Optional[IO[bytes]] = None
+        #: Whether that SUMO is sumo-gui, which close() leaves open.
+        self._sumo_gui = False
         self._failures = 0
         #: Simulated seconds at which tick gave up stepping SUMO, ``None``
         #: while it has not: the result records it (describe(), #2082).
@@ -1109,10 +1156,13 @@ class SumoTrafficBackend(TrafficBackend):
             # anything else recorded on CARLA's (camera frames, a rosbag).
             self._clock_log = (out / "clock.csv").open("w")
             self._clock_log.write("sumo_time,carla_elapsed_seconds,carla_frame\n")
-        try:
-            self._traci.start(cmd)
-        except Exception as exc:
-            raise TrafficBackendError(f"SUMO did not start: {exc}") from exc
+        if self._traci.__name__ == "libsumo":
+            try:
+                self._traci.start(cmd)
+            except Exception as exc:
+                raise TrafficBackendError(f"SUMO did not start: {exc}") from exc
+        else:
+            self._start_traci(cmd)
         self._connected = True
         self._running = True
         logger.info("SUMO started on %s", self._network.net_file)
@@ -1124,6 +1174,63 @@ class SumoTrafficBackend(TrafficBackend):
             )
         if self._tm_drives_scenario:
             self._tm.prepare(context)
+
+    def _start_traci(self, cmd: list[str]) -> None:
+        """Start SUMO (*cmd*) as a process and connect TraCI's module-level
+        connection to it.
+
+        Not ``traci.start``: that launches a new SUMO for each of its 60
+        tries, leaves every one running when it fails, and keeps SUMO's
+        standard error out of its message (#2321).  A failed try here leaves
+        no connection registered under the label, and a failed start no SUMO.
+
+        Raises:
+            TrafficBackendError: If SUMO did not start, with the end of what it
+                wrote to its standard error.
+        """
+        traci = self._traci
+        try:
+            traci.getConnection(_TRACI_LABEL)
+        except Exception:  # noqa: BLE001 - none registered
+            # A TraCIException, but not always traci.exceptions' class:
+            # importing libsumo replaces that one with its own.
+            pass
+        else:
+            raise TrafficBackendError(
+                f"SUMO did not start: TraCI connection {_TRACI_LABEL!r} is already active"
+            )
+
+        def connect(port: int, process: subprocess.Popen[bytes]) -> None:
+            try:
+                # One try each: traci sleeps a second between its own.
+                traci.init(port, numRetries=0, label=_TRACI_LABEL, proc=process)
+            except BaseException:
+                # A handshake that failed after connecting left the label
+                # registered, and the next try (or start) refused.
+                _drop_traci_connection(traci, _TRACI_LABEL)
+                raise
+
+        # SUMO's standard output stays the run's, as with traci.start.
+        _, self._sumo_process, self._sumo_stderr = start_sumo(cmd, connect, stdout=None)
+        self._sumo_gui = _is_gui(cmd[0])
+
+    def _stop_sumo_process(self) -> None:
+        """Reap SUMO's process (killing it if it does not exit once its
+        connection is closed) and close its standard error.
+
+        Not a sumo-gui still open: without ``--quit-on-end`` it stays open
+        after the run, for the user to look at the end of it, as it did when
+        traci.start ran it; closing its window ends it.
+        """
+        process, self._sumo_process = self._sumo_process, None
+        stderr, self._sumo_stderr = self._sumo_stderr, None
+        if self._sumo_gui and process is not None and process.poll() is None:
+            logger.info(
+                "sumo-gui (pid %d) stays open after the run; close it to end it",
+                process.pid,
+            )
+            process = None
+        stop_sumo(process, stderr, kill=False)
 
     def adopt(self, entity: Any) -> None:
         """Remember *entity*; it joins SUMO when the run starts, an emergency
@@ -1521,6 +1628,7 @@ class SumoTrafficBackend(TrafficBackend):
                     self._traci.close(False)
             except Exception as exc:  # noqa: BLE001 - teardown must go on
                 logger.debug("SUMO close: %s", exc)
+        self._stop_sumo_process()
         self._connected = False
         self._running = False
         if self._meso is not None and self._level_changes != [0, 0]:

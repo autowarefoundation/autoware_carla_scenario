@@ -12,7 +12,7 @@ import math
 import time
 import threading
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 import grpc
 import pytest
@@ -175,6 +175,45 @@ def test_bind_failure_raises() -> None:
             GrpcAutowareBridgeServer(
                 AutowareBridgeConfig(address=f"localhost:{first.port}")
             )
+    finally:
+        first.close()
+
+
+def test_a_failed_bind_stops_the_server_and_its_handler_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #2321: neither the half-made server nor its executor is left behind
+    # when the bind fails; close() only stops a bridge that started.
+    first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    second = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address=f"localhost:{first.port}"), autostart=False
+    )
+    made: list[Any] = []
+    stopped: list[Any] = []
+    new_server = second._new_server
+
+    def recording_new_server() -> Any:
+        server = new_server()
+        stop = server.stop
+
+        def recording_stop(grace: Any) -> Any:
+            stopped.append(grace)
+            return stop(grace)
+
+        server.stop = recording_stop
+        made.append((server, second._executor))
+        return server
+
+    monkeypatch.setattr(second, "_new_server", recording_new_server)
+    try:
+        with pytest.raises(RuntimeError, match="Failed to bind"):
+            second.start()
+        ((_server, executor),) = made
+        assert stopped == [None]
+        assert executor._shutdown
+        assert second._server is None and second._executor is None
+        assert second.port is None
+        second.close()  # still harmless
     finally:
         first.close()
 

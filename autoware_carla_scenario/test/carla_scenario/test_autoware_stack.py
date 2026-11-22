@@ -868,6 +868,45 @@ def test_a_build_whose_output_fails_mid_stream_is_ended(
     assert (tmp_path / "out" / "autoware-build.log").read_text() == "first\n"
 
 
+def test_a_write_failure_mid_stream_is_not_docker_failing_to_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #2321: a full disk while writing the build's output is said to be that,
+    # not "Could not run 'docker'", which means docker itself did not start.
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+    _FakePopen.instances.clear()
+    monkeypatch.setattr(
+        docker_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FakePopen(OSError(28, "No space left on device")),
+    )
+
+    with pytest.raises(AutowareStackError) as raised:
+        launcher._stream(["docker", "build"], "autoware-build.log")
+
+    assert "Could not run" not in str(raised.value)
+    assert "Could not stream the output of" in str(raised.value)
+    assert "No space left on device" in str(raised.value)
+    (process,) = _FakePopen.instances
+    assert process.killed and process.waited
+
+
+def test_a_command_that_cannot_start_is_docker_failing_to_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+
+    def no_docker(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(docker_module.subprocess, "Popen", no_docker)
+
+    with pytest.raises(AutowareStackError, match="Could not run"):
+        launcher._stream(["docker", "build"], "autoware-build.log")
+
+
 def test_docker_launcher_does_not_build_when_told_not_to(
     tmp_path: Path, fake_docker
 ) -> None:

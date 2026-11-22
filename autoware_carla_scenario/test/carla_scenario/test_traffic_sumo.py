@@ -14,6 +14,7 @@ import logging
 import itertools
 import math
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1234,6 +1235,60 @@ def test_ride_options_are_the_ones_network_built(
     assert ride_options(
         out, min_distance, max_distance, bicycle_type
     ) == _old_ride_options(out, min_distance, max_distance, bicycle_type)
+
+
+def test_a_tool_that_cannot_run_is_a_backend_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2321: netconvert missing, or randomTrips.py's interpreter, is a
+    TrafficBackendError naming it, not a raw FileNotFoundError."""
+    import sys
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    def no_sumo() -> Path:
+        raise network_module.TrafficBackendUnavailable("SUMO is not installed")
+
+    monkeypatch.setattr(network_module, "sumo_home", no_sumo)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    with pytest.raises(TrafficBackendError, match="netconvert was not found"):
+        network_module._binary("netconvert")
+
+    home = tmp_path / "sumo_home"
+    monkeypatch.setattr(network_module, "sumo_home", lambda: home)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "no-python"))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    with pytest.raises(
+        TrafficBackendError, match=r"^Could not run randomTrips\.py .*no-python"
+    ):
+        network_module.generate_trips(
+            network, tmp_path / "out" / "a.rou.xml", seed=3, period=1.5, end=9.0
+        )
+
+
+@needs_sumo
+def test_a_netconvert_that_cannot_run_is_a_backend_error(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2321: a netconvert found but not runnable (here a script whose
+    interpreter is gone) is a TrafficBackendError, not a raw OSError."""
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    netconvert = tmp_path / "netconvert"
+    netconvert.write_text(f"#!{tmp_path / 'no-interpreter'}\n")
+    netconvert.chmod(0o755)
+    monkeypatch.setattr(network_module, "_binary", lambda name: str(netconvert))
+    with pytest.raises(
+        TrafficBackendError, match=r"^Could not run SUMO's netconvert \("
+    ):
+        network_module.build_network(crossroads.read_text(), tmp_path / "cache")
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
 
 
 def test_generate_demand_runs_the_command_network_built(
@@ -6345,9 +6400,10 @@ def test_the_default_walker_blueprints_are_ones_carla_0_10_has() -> None:
 class _DeadTraci:
     """A traci (or libsumo) whose SUMO dies right after it starts.
 
-    It keeps traci's module-level registry of connections: ``start`` refuses
-    while "default" is open, as traci does, and ``close`` frees it.  Anything
-    else fails, as with a SUMO process that is gone.
+    It keeps traci's module-level registry of connections: ``start`` (libsumo)
+    and ``init`` (traci, on the process the backend started) refuse while
+    "default" is open, as traci does, and ``close`` frees it.  Anything else
+    fails, as with a SUMO process that is gone.
     """
 
     active: set[str] = set()
@@ -6363,6 +6419,20 @@ class _DeadTraci:
         _DeadTraci.active.add("default")
         self.starts += 1
 
+    def init(self, port: int, *, numRetries: int, label: str, proc: Any) -> None:  # noqa: N803 - traci's name
+        assert numRetries == 0 and proc.poll() is None
+        if label in _DeadTraci.active:
+            raise RuntimeError(f"Connection {label!r} is already active.")
+        _DeadTraci.active.add(label)
+        self.starts += 1
+
+    def getConnection(self, label: str) -> Any:  # noqa: N802 - traci's name
+        from traci.exceptions import TraCIException
+
+        if label not in _DeadTraci.active:
+            raise TraCIException(f"Connection {label!r} is not known.")
+        return self
+
     def close(self, *args: Any) -> None:
         self.closes.append(args)
         if "default" not in _DeadTraci.active:
@@ -6371,6 +6441,31 @@ class _DeadTraci:
 
     def __getattr__(self, name: str) -> Any:
         raise RuntimeError(f"connection closed by SUMO ({name})")
+
+
+class _SumoProcess:
+    """A SUMO process that runs until it is waited for (its connection
+    closed) or killed."""
+
+    started: list["_SumoProcess"] = []
+
+    def __init__(self, args: list[str]) -> None:
+        self.args = args
+        self.pid = 4242
+        self.returncode: Any = None
+        _SumoProcess.started.append(self)
+
+    def poll(self) -> Any:
+        return self.returncode
+
+    def kill(self) -> None:
+        if self.returncode is None:
+            self.returncode = -9
+
+    def wait(self, timeout: Any = None) -> int:
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
 
 
 def _dead_sumo_backend(
@@ -6382,6 +6477,17 @@ def _dead_sumo_backend(
 
     monkeypatch.setattr(backend_module, "_load_traci", lambda use_libsumo: traci)
     monkeypatch.setattr(_DeadTraci, "active", set())
+    # Through traci the backend starts SUMO's process itself: a stand-in that
+    # runs until its connection closes (netconvert and the rest run).
+    popen = subprocess.Popen
+
+    def sumo_or_popen(args: Any, **kwargs: Any) -> Any:
+        if "--remote-port" in args:
+            return _SumoProcess(args)
+        return popen(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", sumo_or_popen)
+    monkeypatch.setattr(_SumoProcess, "started", [])
     backend = SumoTrafficBackend(
         SumoBackendConfig(
             scenario_vehicles="sumo",
@@ -6417,6 +6523,9 @@ def test_close_closes_sumo_after_the_steps_were_given_up_on(
     backend.close()
     assert traci.closes == [() if name == "libsumo" else (False,)]
     assert _DeadTraci.active == set()
+    # Through traci, SUMO's process is reaped too.
+    assert backend._sumo_process is None
+    assert all(p.returncode is not None for p in _SumoProcess.started)
     backend.close()  # closed once only
     assert len(traci.closes) == 1
 

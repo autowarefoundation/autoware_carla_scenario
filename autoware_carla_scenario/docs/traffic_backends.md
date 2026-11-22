@@ -1150,7 +1150,15 @@ uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
 uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
 uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
 uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{stem}.sumo/fcd.xml
+uv run scenario ... traffic=sumo traffic.options.use_libsumo=false traffic.options.binary=sumo-gui
 ```
+
+**To watch a run**, run SUMO as a TraCI process (`use_libsumo: false`) with
+`binary: sumo-gui`. Its window stays open after the run, for a look at how it
+ended, until it is closed (or `--quit-on-end` in `sumo_args` closes it at
+once). A headless `sumo` is ended with the run: it is given 5 s to exit once
+its connection closes, then killed, and a failed start kills it and quotes
+what it wrote to its standard error.
 
 **Its switches** -- `publish_walkers`, `pedestrian_crossings`,
 `cycle_on_sidewalks`, `use_libsumo`, `fcd_output`, `ambient.enabled`,
