@@ -290,7 +290,14 @@ def _run_in_child(
         signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
         code = run_case()
     except SystemExit as exc:
-        code = exc.code if isinstance(exc.code, int) else 1
+        # As the interpreter reads it: sys.exit() (code None) succeeded, an
+        # int is the status, anything else (a message) failed (#2321).
+        if exc.code is None:
+            code = 0
+        elif isinstance(exc.code, int):
+            code = exc.code
+        else:
+            code = 1
     except KeyboardInterrupt as exc:
         code = 128 + _interrupt_signal(exc)
         # An exception is always true (`exc or "SIGINT"` was always `exc`).

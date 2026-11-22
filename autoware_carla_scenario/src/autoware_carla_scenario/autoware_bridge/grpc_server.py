@@ -196,19 +196,37 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         self._port = None
         self._server = self._new_server()
         try:
-            # The port bound: the one asked for, or the ephemeral one ":0"
-            # picked.  A failed bind raises a RuntimeError naming no server
-            # (as grpcio does from the package's floor, 1.60, on); it never
-            # returns 0.
-            port = self._server.add_insecure_port(self._config.address)
-        except RuntimeError as exc:
-            raise RuntimeError(
-                f"Failed to bind the AutowareBridge server to "
-                f"{self._config.address!r} (port already in use?): {exc}"
-            ) from exc
+            try:
+                # The port bound: the one asked for, or the ephemeral one ":0"
+                # picked.  A failed bind raises a RuntimeError naming no server
+                # (as grpcio does from the package's floor, 1.60, on); it never
+                # returns 0.
+                port = self._server.add_insecure_port(self._config.address)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Failed to bind the AutowareBridge server to "
+                    f"{self._config.address!r} (port already in use?): {exc}"
+                ) from exc
+            self._server.start()
+        except BaseException:
+            # Neither the server nor its handler pool outlives a failed start
+            # (#2321): close() stops only a bridge that started.
+            self._stop_server()
+            raise
         self._port = port
-        self._server.start()
         logger.info("AutowareBridge server listening on port %d", self._port)
+
+    def _stop_server(self) -> None:
+        """Stop the server, wait for it to have stopped and end its handler
+        pool, which grpc.Server.stop() does not."""
+        server, self._server = self._server, None
+        executor, self._executor = self._executor, None
+        if server is not None:
+            # grace=None stops immediately; only one short-lived client ever
+            # connects.
+            server.stop(grace=None).wait()
+        if executor is not None:
+            executor.shutdown(wait=True)
 
     # ------------------------------------------------------------------
     # Properties
@@ -379,10 +397,6 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         if self._port is None or self._server is None:
             # Never bound: there is nothing listening to stop.
             return
-        # grace=None stops immediately; only one short-lived client ever connects.
-        # Wait for it to have stopped, then end the handler pool, which stop()
-        # does not: no thread of the server outlives close() (#2257).
-        self._server.stop(grace=None).wait()
-        if self._executor is not None:
-            self._executor.shutdown(wait=True)
+        # No thread of the server outlives close() (#2257).
+        self._stop_server()
         logger.info("AutowareBridge server on port %d stopped", self._port)

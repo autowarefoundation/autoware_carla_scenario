@@ -244,19 +244,27 @@ def build_network(
             ) from exc
         for warning in road_map.sumo_warnings():
             logger.debug("roadgen: %s", warning)
-        proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
-            [
-                _binary("netconvert"),
-                "-c",
-                f"{prefix}.netccfg",
-                *(["--crossings.guess"] if pedestrian_crossings else []),
-            ],
-            cwd=tmp,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        netconvert = _binary("netconvert")
+        try:
+            proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
+                [
+                    netconvert,
+                    "-c",
+                    f"{prefix}.netccfg",
+                    *(["--crossings.guess"] if pedestrian_crossings else []),
+                ],
+                cwd=tmp,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as exc:
+            # Found but not runnable: gone since, not executable, or a
+            # script whose interpreter is missing (#2321).
+            raise TrafficBackendError(
+                f"Could not run SUMO's netconvert ({netconvert}): {exc}"
+            ) from exc
         if proc.returncode != 0 or not (tmp / f"{prefix}.net.xml").is_file():
             raise TrafficBackendError(
                 f"netconvert failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
@@ -312,14 +320,20 @@ def _random_trips(
     home = str(sumo_home())
     env = os.environ.copy()
     env["SUMO_HOME"] = home
-    proc = subprocess.run(  # noqa: S603
-        cmd,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            check=False,
+        )
+    except OSError as exc:
+        # The interpreter that runs it could not be started (#2321).
+        raise TrafficBackendError(
+            f"Could not run randomTrips.py{what} ({cmd[0]}): {exc}"
+        ) from exc
     if proc.returncode != 0 or not out.is_file():
         raise TrafficBackendError(
             f"randomTrips.py{what} failed ({proc.returncode}): "
