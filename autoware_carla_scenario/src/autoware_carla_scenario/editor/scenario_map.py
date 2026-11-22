@@ -101,14 +101,12 @@ class MapAreaView:
         owner_id: The condition, which the inspector opens when it is clicked.
         entity_id: The actor measured, for the colour, or ``None``.
         title: The card's title ("Distance to an area").
-        description: The area in words ("crosswalks (lanelet 587)").
         preview: What it matches on the map.
     """
 
     owner_id: str
     entity_id: Optional[str]
     title: str
-    description: str
     preview: map_preview.AreaPreview
 
 
@@ -343,7 +341,6 @@ def _areas(
     """Every area a condition measures to, matched on the map when it is
     parsed (or *load_map* asks for it)."""
     from ..authoring.registry import get_condition_spec  # noqa: PLC0415
-    from ..conditions.map_area import map_area_from_fields  # noqa: PLC0415
 
     areas: list[MapAreaView] = []
     for root in document.condition_roots():
@@ -351,26 +348,15 @@ def _areas(
             spec = get_condition_spec(node.type)
             if spec is None or not any(b.target == _AREA_BUILDER for b in spec.builds):
                 continue
-            params = dict(node.params)
             preview = map_preview.evaluate_area(
-                document, params, load_map=load_map, paths=paths
+                document, dict(node.params), load_map=load_map, paths=paths
             )
-            try:
-                description = map_area_from_fields(
-                    str(params.get("ground") or "CROSSWALK"),
-                    params.get("lanelet_ids") or None,
-                    str(params.get("attributes") or ""),
-                    params.get("relief_m"),
-                ).describe()
-            except (TypeError, ValueError):
-                description = "an area that cannot be read"
             refs = condition_refs(node, "entity")
             areas.append(
                 MapAreaView(
                     owner_id=node.id,
                     entity_id=refs[0] if refs else None,
                     title=spec.title,
-                    description=description,
                     preview=preview,
                 )
             )

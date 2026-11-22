@@ -66,7 +66,14 @@ from .constants import EGO_ROLE_NAME
 from .entity_role import find_actor_in_world
 from .failure import FailureCategory
 from .utils.clearance import HIDDEN_BELOW_M, actor_vertical_span, level_gap
-from .utils.polygon import ground_box
+from .utils.polygon import (
+    Box,
+    Point,
+    cross,
+    ground_box,
+    point_segment_distance,
+    segments_cross,
+)
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -286,11 +293,6 @@ _OFFROAD = 8
 _ANY_COLLISION = _FRONT | _REAR | _LATERAL
 _AT_FAULT = _FRONT | _LATERAL
 
-#: A point on the ground, ``(x, y)`` in CARLA's world frame.
-Point = tuple[float, float]
-#: An oriented box on the ground: its four corners, front left, front right,
-#: rear right, rear left.
-Box = list[Point]
 #: A point on a lane's centre line: ``(x, y, z, yaw, half_width)``, the yaw
 #: in degrees along the lane's direction of travel, the half width in metres.
 _LaneSample = tuple[float, float, float, float, float]
@@ -327,10 +329,6 @@ class Metric:
 # ---------------------------------------------------------------------------
 
 
-def _cross(o: Point, a: Point, b: Point) -> float:
-    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
 def _inside(point: Point, box: Box) -> bool:
     """Whether *point* is in the convex *box* or on its edge.
 
@@ -340,7 +338,7 @@ def _inside(point: Point, box: Box) -> bool:
     """
     sign = 0.0
     for i in range(len(box)):
-        side = _cross(box[i], box[(i + 1) % len(box)], point)
+        side = cross(box[i], box[(i + 1) % len(box)], point)
         if abs(side) <= 1e-12:
             continue
         if sign == 0.0:
@@ -351,34 +349,10 @@ def _inside(point: Point, box: Box) -> bool:
         # Every side is in line with the point: the box is a point or a
         # segment (or the point is a corner of a box that is); on it or not.
         for i in range(len(box)):
-            if _point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
+            if point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
                 return True
         return False
     return True
-
-
-def _point_segment_distance(p: Point, a: Point, b: Point) -> float:
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    length2 = dx * dx + dy * dy
-    t = 0.0
-    if length2 > 0.0:
-        t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2))
-    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
-
-
-def _segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
-    """Whether segment *ab* meets segment *cd*, touching included."""
-    if (
-        _cross(c, d, a) * _cross(c, d, b) < 0.0
-        and _cross(a, b, c) * _cross(a, b, d) < 0.0
-    ):
-        return True
-    return (
-        _point_segment_distance(a, c, d) <= 1e-9
-        or _point_segment_distance(b, c, d) <= 1e-9
-        or _point_segment_distance(c, a, b) <= 1e-9
-        or _point_segment_distance(d, a, b) <= 1e-9
-    )
 
 
 def _edges(box: Box) -> list[tuple[Point, Point]]:
@@ -389,7 +363,7 @@ def _segment_meets_box(a: Point, b: Point, box: Box) -> bool:
     if _inside(a, box) or _inside(b, box):
         return True
     for c, d in _edges(box):
-        if _segments_cross(a, b, c, d):
+        if segments_cross(a, b, c, d):
             return True
     return False
 
@@ -410,10 +384,10 @@ def _box_distance(one: Box, other: Box) -> float:
     best = math.inf
     for p in one:
         for a, b in other_edges:
-            best = min(best, _point_segment_distance(p, a, b))
+            best = min(best, point_segment_distance(p, a, b))
     for p in other:
         for a, b in one_edges:
-            best = min(best, _point_segment_distance(p, a, b))
+            best = min(best, point_segment_distance(p, a, b))
     return best
 
 

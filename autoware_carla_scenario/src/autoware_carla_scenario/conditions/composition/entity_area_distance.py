@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
-from ...utils.polygon import Point, bounding_circle, ground_box, polygon_distance
+from ...utils.polygon import (
+    Point,
+    bounding_circle,
+    ground_box,
+    polygon_distance,
+    polygon_gap,
+)
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ComparisonRule, ScalarComparisonRule
 from ..map_area import MapArea, area_shapes, surface_regions
@@ -18,6 +24,28 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
+
+
+class _Outline:
+    """One element of an area, in CARLA's world frame: its outline, which
+    layer it is from (``lanelet``, ``polygon``, ``surface``), its id there (a
+    surface region's: its index), what to call it, and the circle round it
+    ``(x, y, radius)`` that skips it when it is far."""
+
+    points: list[Point]
+    layer: str
+    element_id: int
+    name: str
+    circle: tuple[float, float, float]
+
+    def __init__(
+        self, points: list[Point], layer: str, element_id: int, name: str = ""
+    ) -> None:
+        self.points = points
+        self.layer = layer
+        self.element_id = element_id
+        self.name = name if name else f"{layer} {element_id}"
+        self.circle = bounding_circle(points)
 
 
 class EntityAreaDistanceCondition(CompositionCondition):
@@ -73,15 +101,8 @@ class EntityAreaDistanceCondition(CompositionCondition):
     # Declared for the static check (docs/typecheck.md).
     _area: MapArea
     _comparison: ScalarComparisonRule
-    # The area's outlines in CARLA's world frame, which layer each is from
-    # (lanelet, polygon, surface), its id there (a surface region's: its
-    # index), what to call it, and the circle round each (x, y, radius) that
-    # skips the far ones.
-    _outlines: list[list[Point]]
-    _layers: list[str]
-    _element_ids: list[int]
-    _names: list[str]
-    _circles: list[tuple[float, float, float]]
+    # The area's outlines in CARLA's world frame.
+    _outlines: list[_Outline]
     _closest_m: Optional[float]
     _closest_at_s: Optional[float]
     _closest_index: int
@@ -106,10 +127,6 @@ class EntityAreaDistanceCondition(CompositionCondition):
         area.validate()
         self._area = area
         self._outlines = []
-        self._layers = []
-        self._element_ids = []
-        self._names = []
-        self._circles = []
         self._problem = ""
         self._resolve()
         self._closest_m = None
@@ -133,28 +150,13 @@ class EntityAreaDistanceCondition(CompositionCondition):
         for shape in shapes:
             # Lanelet2's frame is MGRS and right-handed; CARLA's is the
             # OpenDRIVE origin's and left-handed (coordinate.transform).
-            outline: list[Point] = []
+            points: list[Point] = []
             for x, y in shape.points:
-                outline.append((x - offset_x, -(y - offset_y)))
-            if not outline:
-                continue
-            self._hold(
-                outline,
-                shape.layer,
-                shape.element_id,
-                f"{shape.layer} {shape.element_id}",
-            )
+                points.append((x - offset_x, -(y - offset_y)))
+            if points:
+                self._outlines.append(_Outline(points, shape.layer, shape.element_id))
         if not self._outlines:
             self._unheld(f"no {self._area.describe()} on the map")
-
-    def _hold(
-        self, outline: list[Point], layer: str, element_id: int, name: str
-    ) -> None:
-        self._outlines.append(outline)
-        self._layers.append(layer)
-        self._element_ids.append(element_id)
-        self._names.append(name)
-        self._circles.append(bounding_circle(outline))
 
     def _resolve_surface(self, xodr_path: Path) -> None:
         """Read the raised or grooved parts of the roads' surface off the
@@ -171,11 +173,11 @@ class EntityAreaDistanceCondition(CompositionCondition):
         for reason in skipped:
             logger.warning("%s: an OpenCRG grid is passed over: %s", self.label, reason)
         for index, region in enumerate(regions):
-            outline: list[Point] = []
+            points: list[Point] = []
             try:
                 for s, t in region.outline:
                     placed = to_carla_world(OpenDrivePose(region.road_id, 0, s, t))
-                    outline.append((float(placed.x), float(placed.y)))
+                    points.append((float(placed.x), float(placed.y)))
             except KeyError:
                 logger.warning(
                     "%s: road %s of an OpenCRG grid is not on the OpenDRIVE map",
@@ -183,8 +185,10 @@ class EntityAreaDistanceCondition(CompositionCondition):
                     region.road_id,
                 )
                 continue
-            if outline:
-                self._hold(outline, "surface", index, region.describe())
+            if points:
+                self._outlines.append(
+                    _Outline(points, "surface", index, region.describe())
+                )
         if not self._outlines:
             problem = f"no {self._area.describe()} on the map"
             if skipped:
@@ -235,14 +239,12 @@ class EntityAreaDistanceCondition(CompositionCondition):
             details["problem"] = self._problem
         closest = self._closest_m
         if closest is not None:
+            nearest = self._outlines[self._closest_index]
             details["closest_m"] = closest
             details["closest_at_s"] = self._closest_at_s
-            index = self._closest_index
-            details["closest"] = self._names[index]
-            if self._layers[index] == "surface":
-                details["closest_surface"] = self._names[index]
-            else:
-                details[f"closest_{self._layers[index]}"] = self._element_ids[index]
+            details["closest"] = nearest.name
+            if nearest.layer != "surface":
+                details[f"closest_{nearest.layer}"] = nearest.element_id
         return details
 
     def reset(self) -> None:
@@ -254,22 +256,35 @@ class EntityAreaDistanceCondition(CompositionCondition):
 
     def _measure(self, world: "carla.World") -> Optional[tuple[float, int]]:
         """Return the distance from the entity's body to the area and the
-        index of the nearest outline, or ``None`` while it is not there."""
+        index of the nearest outline, or ``None`` while it is not there.
+
+        Outlines are visited nearest first by their bounding circles, so the
+        loop stops at the first whose circle is no nearer than the best
+        found -- most of a city's crosswalks are never measured; one whose
+        circle is clear of the body's cannot overlap it, so only its gap is
+        measured."""
         assert self._entity_name is not None  # noqa: S101
         entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
             return None
         box = ground_box(entity, entity.get_transform())
         box_x, box_y, box_reach = bounding_circle(box)
+        bounds: list[tuple[float, int]] = []
+        for i in range(len(self._outlines)):
+            cx, cy, radius = self._outlines[i].circle
+            bounds.append((math.hypot(cx - box_x, cy - box_y) - radius - box_reach, i))
+        bounds.sort()
         best = math.inf
         nearest = -1
-        for i in range(len(self._outlines)):
-            cx, cy, radius = self._circles[i]
-            # No point of this outline is nearer than this: skip it once a
-            # nearer one is known, which is most of a city's crosswalks.
-            if math.hypot(cx - box_x, cy - box_y) - radius - box_reach >= best:
-                continue
-            distance = polygon_distance(box, self._outlines[i])
+        for bound, i in bounds:
+            if bound >= best:
+                break
+            points = self._outlines[i].points
+            distance = 0.0
+            if bound > 0.0:
+                distance = polygon_gap(box, points)
+            else:
+                distance = polygon_distance(box, points)
             if distance < best:
                 best = distance
                 nearest = i
@@ -295,7 +310,7 @@ class EntityAreaDistanceCondition(CompositionCondition):
         # Which element was nearest, where the area has more than one.
         nearest_text = ""
         if len(self._outlines) > 1:
-            nearest_text = f" (nearest: {self._names[nearest]})"
+            nearest_text = f" (nearest: {self._outlines[nearest].name})"
         return ScenarioResult(
             passed=True,
             message=(

@@ -51,6 +51,7 @@ from typing import Optional
 from xml.etree.ElementTree import Element, iterparse
 
 __all__ = [
+    "DEFAULT_RELIEF_M",
     "CrgGrid",
     "CrgReference",
     "ReliefRegion",
@@ -58,6 +59,10 @@ __all__ = [
     "read_crg",
     "relief_regions",
 ]
+
+#: How far (m) off the design a surface has to stand to count, unless asked:
+#: above a road's ordinary unevenness, below any hump or rut a wheel feels.
+DEFAULT_RELIEF_M = 0.01
 
 #: The kinds of a region: above the design, and below it.
 RAISED = "raised"
@@ -397,6 +402,11 @@ def _on_road(
     return (reference.s_start + along, v + reference.t_offset)
 
 
+#: How many answers each cache below keeps before it starts again: a session
+#: edits one map, so a handful covers a threshold being typed and a file being
+#: saved; the bound only stops a long editor session growing without end.
+_CACHE_SIZE = 32
+
 #: Regions already read, by the OpenDRIVE file's path, its and its grids'
 #: modification times, and what was asked.
 _CACHE: dict[str, tuple[list[ReliefRegion], list[str]]] = {}
@@ -404,6 +414,10 @@ _CACHE: dict[str, tuple[list[ReliefRegion], list[str]]] = {}
 #: The ``<CRG>``s of an OpenDRIVE file, by its path and modification time:
 #: the scenario editor asks on every edit, and the file may be a city.
 _REFERENCES: dict[str, list[CrgReference]] = {}
+
+#: The grids read, by their path and modification time: a threshold typed in
+#: the editor asks again of the same grids, which are the slow part to read.
+_GRIDS: dict[str, CrgGrid] = {}
 
 
 def _stamp(path: Path) -> str:
@@ -418,7 +432,7 @@ def relief_regions(
     *,
     raised: bool = True,
     grooved: bool = True,
-    threshold_m: float = 0.01,
+    threshold_m: float = DEFAULT_RELIEF_M,
 ) -> tuple[list[ReliefRegion], list[str]]:
     """The raised and/or grooved regions of every road of the OpenDRIVE file,
     and what could not be read (a missing or binary grid, a mode that lays its
@@ -435,15 +449,19 @@ def relief_regions(
         references = _REFERENCES[xodr_stamp]
     else:
         references = crg_references(xodr_path)
+        if len(_REFERENCES) >= _CACHE_SIZE:
+            _REFERENCES.clear()
         _REFERENCES[xodr_stamp] = references
-    stamps = [xodr_stamp] + [_stamp(r.path) for r in references]
+    grid_stamps: dict[str, str] = {}
+    for reference in references:
+        grid_stamps[str(reference.path)] = _stamp(reference.path)
+    stamps = [xodr_stamp] + [grid_stamps[str(r.path)] for r in references]
     key = f"{'|'.join(stamps)}|{raised}|{grooved}|{threshold_m!r}"
     if key in _CACHE:
         held = _CACHE[key]
         return (list(held[0]), list(held[1]))
     regions: list[ReliefRegion] = []
     problems: list[str] = []
-    grids: dict[str, CrgGrid] = {}
     for reference in references:
         if reference.purpose != "elevation":
             continue
@@ -454,14 +472,17 @@ def relief_regions(
                 "only attached grids are read"
             )
             continue
-        name = str(reference.path)
-        if name not in grids:
+        grid_stamp = grid_stamps[str(reference.path)]
+        if grid_stamp not in _GRIDS:
             try:
-                grids[name] = read_crg(reference.path)
+                read = read_crg(reference.path)
             except (OSError, ValueError) as exc:
                 problems.append(f"road {reference.road_id}: {exc}")
                 continue
-        grid = grids[name]
+            if len(_GRIDS) >= _CACHE_SIZE:
+                _GRIDS.clear()
+            _GRIDS[grid_stamp] = read
+        grid = _GRIDS[grid_stamp]
         if not grid.u:
             continue
         sides: list[tuple[str, float]] = []
@@ -481,5 +502,7 @@ def relief_regions(
                 for u, v in _outline(grid, component):
                     outline.append(_on_road(reference, grid.u[0], u, v))
                 regions.append(ReliefRegion(reference.road_id, kind, extreme, outline))
+    if len(_CACHE) >= _CACHE_SIZE:
+        _CACHE.clear()
     _CACHE[key] = (list(regions), list(problems))
     return (regions, problems)

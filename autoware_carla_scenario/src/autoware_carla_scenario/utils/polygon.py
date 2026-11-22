@@ -23,10 +23,12 @@ __all__ = [
     "Box",
     "Point",
     "bounding_circle",
+    "cross",
     "ground_box",
     "point_in_polygon",
     "point_segment_distance",
     "polygon_distance",
+    "polygon_gap",
     "segments_cross",
 ]
 
@@ -91,16 +93,15 @@ def point_segment_distance(p: Point, a: Point, b: Point) -> float:
     return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
 
 
-def _cross(o: Point, a: Point, b: Point) -> float:
+def cross(o: Point, a: Point, b: Point) -> float:
+    """The z of ``(a - o) x (b - o)``: positive when *b* is to the left of
+    *o* -> *a* in a right-handed frame."""
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
 
 def segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
     """Whether segment *ab* meets segment *cd*, touching included."""
-    if (
-        _cross(c, d, a) * _cross(c, d, b) < 0.0
-        and _cross(a, b, c) * _cross(a, b, d) < 0.0
-    ):
+    if cross(c, d, a) * cross(c, d, b) < 0.0 and cross(a, b, c) * cross(a, b, d) < 0.0:
         return True
     return (
         point_segment_distance(a, c, d) <= _ON_EDGE_M
@@ -154,19 +155,11 @@ def _edges_meet(one: list[Point], other: list[Point]) -> bool:
     return False
 
 
-def polygon_distance(one: list[Point], other: list[Point]) -> float:
-    """Metres between two simple polygons on the ground: ``0.0`` when they
-    touch, overlap or one holds the other, otherwise the shortest distance
-    from a corner of either to an edge of the other.  ``inf`` when either has
-    no corners."""
-    if not one or not other:
-        return math.inf
-    if (
-        point_in_polygon(one[0], other)
-        or point_in_polygon(other[0], one)
-        or _edges_meet(one, other)
-    ):
-        return 0.0
+def polygon_gap(one: list[Point], other: list[Point]) -> float:
+    """The shortest distance from a corner of either polygon to an edge of the
+    other: the distance between two polygons known not to meet (their
+    bounding circles apart, say), without asking whether they do.  ``inf``
+    when either has no corners."""
     best = math.inf
     count, other_count = len(one), len(other)
     for p in one:
@@ -178,6 +171,21 @@ def polygon_distance(one: list[Point], other: list[Point]) -> float:
         for i in range(count):
             best = min(best, point_segment_distance(p, one[i], one[(i + 1) % count]))
     return best
+
+
+def polygon_distance(one: list[Point], other: list[Point]) -> float:
+    """Metres between two simple polygons on the ground: ``0.0`` when they
+    touch, overlap or one holds the other, otherwise :func:`polygon_gap`.
+    ``inf`` when either has no corners."""
+    if not one or not other:
+        return math.inf
+    if (
+        point_in_polygon(one[0], other)
+        or point_in_polygon(other[0], one)
+        or _edges_meet(one, other)
+    ):
+        return 0.0
+    return polygon_gap(one, other)
 
 
 def bounding_circle(polygon: list[Point]) -> tuple[float, float, float]:

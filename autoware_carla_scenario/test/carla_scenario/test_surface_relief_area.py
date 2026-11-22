@@ -299,7 +299,8 @@ class TestOnTheMap:
         # road bends a little, so the plan distance is within a few cm of it.
         assert condition.closest_m == pytest.approx(7.975, abs=0.1)
         details = condition.get_details()
-        assert details["closest_surface"] == "raised 0.060 m on road 80"
+        assert details["closest"] == "raised 0.060 m on road 80"
+        assert "closest_surface" not in details
         assert details["area"] == "raised road surface (0.01 m and more)"
 
     def test_over_the_hump_is_zero_and_the_groove_is_another_ground(

@@ -736,6 +736,8 @@ class AreaPreview:
             are in it, read from the OpenDRIVE map's OpenCRG grids; counted,
             not drawn, as polygons are.
         skipped: What of those grids could not be read, each said in words.
+        description: The area in words ("crosswalks (lanelet 587)"), or
+            ``""`` when its fields cannot be read (:attr:`error` says why).
         map_loaded: Whether the map was parsed, so the match is known.
         error: Why the area could not be matched -- one no map could hold, a
             picked lanelet of another ground -- or ``""``.
@@ -745,6 +747,7 @@ class AreaPreview:
     polygon_count: int = 0
     surface_count: int = 0
     skipped: list[str] = field(default_factory=list)
+    description: str = ""
     map_loaded: bool = False
     error: str = ""
 
@@ -791,6 +794,7 @@ def evaluate_area(
     except (TypeError, ValueError) as exc:
         result.error = str(exc)
         return result
+    result.description = area.describe()
     if area.ground.on_surface:
         # On the OpenDRIVE map, not the Lanelet2 one: its grids are read (and
         # remembered) without parsing a Lanelet2 map, so on every render.

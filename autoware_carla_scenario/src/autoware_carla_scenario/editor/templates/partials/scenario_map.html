@@ -204,7 +204,7 @@
                 <span class="ed-point-name">
                   {{ area.title }} <span class="role">area</span>
                 </span>
-                <span class="ed-point-meta">{{ area.description }}</span>
+                <span class="ed-point-meta">{{ preview.description or 'an area that cannot be read' }}</span>
                 <span class="ed-point-note">
                   {% if preview.error %}
                     {{ preview.error }}

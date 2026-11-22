@@ -651,47 +651,25 @@ _FILTER_RANGES = ("distance", "ahead", "left")
 
 def _check_map_area(out: _Collector, path: str, node: ConditionNode) -> None:
     """An area card names an area some map could hold, as
-    :func:`~..conditions.map_area_from_fields` asks (#1111): no picked
-    lanelets for a ground of polygons, and attributes written ``key=value``.
+    :func:`~..conditions.map_area_from_fields` asks (#1111): its rules, read
+    from the one place they are written (:meth:`~..conditions.MapArea.validate`).
     Whether the map holds it -- a picked lanelet of another ground, a ground
     the map has none of -- is the map's to say: the places panel outlines
     the area, and the run says so once and does not hold."""
     if node.type != "area_distance":
         return
-    from ..conditions.map_area import (  # noqa: PLC0415
-        AreaGround,
-        parse_attributes,
-    )
+    from ..conditions.map_area import map_area_from_fields  # noqa: PLC0415
 
-    ground = str(node.params.get("ground") or "").upper()
-    picked = node.params.get("lanelet_ids") or []
-    surface = ground in {g.name for g in AreaGround if g.on_surface}
-    if picked and surface:
-        out.error(
-            f"{path}.lanelet_ids",
-            "The road surface is read from the OpenDRIVE map's OpenCRG grids, "
-            "not from lanelets: pick no lanelets.",
-            node.id,
-        )
-    elif picked and ground in {g.name for g in AreaGround if not g.on_lanelets}:
-        out.error(
-            f"{path}.lanelet_ids",
-            "This ground is polygons, not lanelets: narrow it by attributes, "
-            "not by picked lanelets.",
-            node.id,
-        )
-    attributes = str(node.params.get("attributes") or "")
+    params = node.params
     try:
-        parsed = parse_attributes(attributes)
-    except ValueError as exc:
-        out.error(f"{path}.attributes", f"Attributes: {exc}.", node.id)
-    else:
-        if parsed and surface:
-            out.error(
-                f"{path}.attributes",
-                "The road surface has no tags to filter by: give no attributes.",
-                node.id,
-            )
+        map_area_from_fields(
+            str(params.get("ground") or "CROSSWALK"),
+            params.get("lanelet_ids") or None,
+            str(params.get("attributes") or ""),
+            params.get("relief_m"),
+        )
+    except (TypeError, ValueError) as exc:
+        out.error(path, f"Area: {exc}.", node.id)
 
 
 def _check_filter_ranges(out: _Collector, path: str, node: ConditionNode) -> None:

@@ -40,7 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
-from ..maps.opencrg import ReliefRegion, relief_regions
+from ..lanelet_junction import is_junction_lanelet
+from ..maps.opencrg import DEFAULT_RELIEF_M, ReliefRegion, relief_regions
 
 if TYPE_CHECKING:
     from lanelet2.core import AttributeMap, ConstLanelet, Lanelet, LaneletMap, Polygon3d
@@ -55,9 +56,6 @@ __all__ = [
     "parse_attributes",
     "surface_regions",
 ]
-
-#: The Lanelet2 tag that marks a lanelet through a junction.
-_TURN_DIRECTION = "turn_direction"
 
 
 class AreaGround(enum.Enum):
@@ -172,7 +170,7 @@ class MapArea:
     ground: AreaGround = AreaGround.CROSSWALK
     lanelet_ids: tuple[int, ...] = ()
     attributes: tuple[tuple[str, str], ...] = ()
-    relief_m: float = 0.01
+    relief_m: float = DEFAULT_RELIEF_M
 
     def validate(self) -> None:
         """Refuse an area no map could hold.
@@ -271,7 +269,7 @@ def map_area_from_fields(
     if lanelet_ids is not None:
         for lanelet in lanelet_ids:
             lanelets.append(int(lanelet))
-    threshold = 0.01
+    threshold = DEFAULT_RELIEF_M
     if relief_m is not None:
         threshold = float(relief_m)
     area = MapArea(
@@ -323,7 +321,7 @@ def _has_attributes(
 def _of_ground(lanelet: "ConstLanelet", ground: AreaGround) -> bool:
     attributes = lanelet.attributes
     if ground is AreaGround.JUNCTION:
-        return _tag(attributes, _TURN_DIRECTION) is not None
+        return is_junction_lanelet(lanelet)
     return ground is AreaGround.LANELET or _tag(attributes, "subtype") == ground.value
 
 
