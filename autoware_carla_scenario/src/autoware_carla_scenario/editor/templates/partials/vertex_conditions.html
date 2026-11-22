@@ -67,7 +67,7 @@
         <input type="number" name="vertex" min="1" step="1" value="{{ ns.free }}"
                class="ed-input-xs" aria-label="Vertex" title="Vertex, counted from 1" style="width:4.5em">
         <select name="type_id" class="ed-input-xs" style="flex:1">
-          {% for spec in condition_specs() %}
+          {% for spec in condition_specs() if spec.type_id not in post_run_conditions %}
             <option value="{{ spec.type_id }}">{{ spec.category }} · {{ spec.title }}</option>
           {% endfor %}
         </select>

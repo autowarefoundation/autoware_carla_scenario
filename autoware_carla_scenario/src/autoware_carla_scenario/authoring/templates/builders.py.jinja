@@ -32,6 +32,7 @@ __all__ = [
     "FAILURE_ONLY_CONDITIONS",
     "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
+    "POST_RUN_CONDITIONS",
 {% for b in builders %}
     "{{ b.name }}",
 {% endfor %}
@@ -63,6 +64,19 @@ ONCE_ACTIONS: frozenset[str] = frozenset(
 FAILURE_ONLY_CONDITIONS: frozenset[str] = frozenset(
     {
 {% for b in builders if b.failure_only %}
+        "{{ b.type_id }}",
+{% endfor %}
+    }
+)
+
+#: The condition types judged once the run is over (their class sets
+#: ``IS_POST_RUN``, which :func:`~..conditions.base.refuse_post_run` reads): they
+#: read nothing while the run goes on, so they stand only on their own as a
+#: pass or fail condition, never as a trigger, a waypoint condition or a child
+#: of a composition.
+POST_RUN_CONDITIONS: frozenset[str] = frozenset(
+    {
+{% for b in builders if b.post_run %}
         "{{ b.type_id }}",
 {% endfor %}
     }

@@ -87,6 +87,24 @@ def test_with_port_replaces_or_adds_the_port() -> None:
     assert worker._with_port is with_port
 
 
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("[::1]", "[::1]:20024"),
+        ("[::1]:9000", "[::1]:20024"),
+        ("[fe80::1%eth0]", "[fe80::1%eth0]:20024"),
+        ("[2001:db8::7]:50052", "[2001:db8::7]:20024"),
+    ],
+)
+def test_with_port_keeps_a_bracketed_ipv6_host(address: str, expected: str) -> None:
+    """#2316: a bare bracketed IPv6 host became ``[::20024``; what the
+    worker writes is now a host:port the bridge accepts."""
+    from autoware_carla_scenario.autoware_bridge.base import _is_host_port
+
+    assert with_port(address, 20024) == expected
+    assert _is_host_port(expected)
+
+
 # -- start_delay -------------------------------------------------------------
 
 
