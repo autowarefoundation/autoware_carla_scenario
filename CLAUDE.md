@@ -230,6 +230,7 @@ If pre-commit hooks fail:
 - `examples/scenario_package_template/` - A standalone scenario package to copy
 - `stl_driver/` - The STL policy, a simulated ego for tuning scenarios. A project of its own with its own `uv.lock`, excluded from the workspace because it pulls torch; test it from that directory (`uv sync && uv run pytest`), and add it to the framework's environment with `uv run --with-editable ./stl_driver ...` (`stl_driver/README.md`)
 - `commonroad_metrics/` - The CommonRoad worker: CriMe's criticality measures and CommonRoad-Reach's drivable area, behind the framework's CommonRoad metrics (`crime_ttc_s`, `reach_drivable_area_m2`, ...; docs/metrics.md). A project of its own with its own `uv.lock`, excluded from the workspace because commonroad-io pins protobuf 3 and CommonRoad-Reach builds for CPython 3.10-3.11 only; the framework runs it as a process (`autoware_carla_scenario/commonroad/`) and speaks JSON lines to it. Test it from that directory (`uv sync && uv run pytest`)
+- `skills/` - The scenario-writing agent skills (`write-scenario`, `review-scenario`, `debug-concrete-scenario` and the `scenario-*` knowledge they build on), one directory per skill, agent-neutral (no Claude Code-only tool names). `scripts/scenario_agent.py` installs them into Claude Code or Codex with agent-skill-installer and starts the agent (`uv run --group agent scripts/scenario_agent.py claude "..."`; docs/tutorial.md). The installer writes a discoverability block per skill at the end of this file and of `AGENTS.md`: those blocks are generated -- edit the skill's `description` and re-run the script with `--install-only` for both agents (`test_agent_skills.py` checks they match)
 - `.github/actions/pack-scenario-image/` - Composite action that packs a scenario package into an image
 - `pyproject.toml` - Workspace root: dev dependencies and tool configuration
 - `uv.lock` - Locked dependency versions for reproducible builds
@@ -747,3 +748,51 @@ The settings file should include these git operation restrictions using the perm
 - `.claude/settings.local.json` now contains explicit deny rules for dangerous git operations
 - These settings will prevent Claude from executing prohibited commands
 - The permissions system provides automatic enforcement without requiring manual checks
+
+<!-- DEBUG-CONCRETE-SCENARIO-DISCOVERABILITY-START -->
+## debug-concrete-scenario Discoverability
+
+Execute a CARLA concrete scenario, analyze its results, and iterate until it passes. Use when the user names a scenario/variant to run and debug.
+
+Use `/debug-concrete-scenario` when a prompt explicitly asks for this skill.
+<!-- DEBUG-CONCRETE-SCENARIO-DISCOVERABILITY-END -->
+
+<!-- REVIEW-SCENARIO-DISCOVERABILITY-START -->
+## review-scenario Discoverability
+
+Review a CARLA scenario's parameter design for orthogonality and sweeper compatibility. Use when the user names an existing scenario (or its YAML config) and asks for its parameters to be reviewed.
+
+Use `/review-scenario` when a prompt explicitly asks for this skill.
+<!-- REVIEW-SCENARIO-DISCOVERABILITY-END -->
+
+<!-- SCENARIO-DEBUGGING-DISCOVERABILITY-START -->
+## scenario-debugging Discoverability
+
+This skill should be used when the user asks to "debug a scenario", "run a scenario", "fix a scenario", "why does my scenario fail", "scenario timeout", "spawn failure", "analyze scenario output", or discusses troubleshooting CARLA test scenario execution. Provides guidance on log analysis, common failure patterns, and iterative debugging.
+
+Use `/scenario-debugging` when a prompt explicitly asks for this skill.
+<!-- SCENARIO-DEBUGGING-DISCOVERABILITY-END -->
+
+<!-- SCENARIO-REVIEW-DISCOVERABILITY-START -->
+## scenario-review Discoverability
+
+This skill should be used when reviewing CARLA scenario parameters for orthogonality, analyzing parameter dependencies, deciding which values should be parameters vs. computed, validating the parameter design of a logical scenario, or checking sweep compatibility. Use when "review parameters", "check orthogonality", "parameter design", "review scenario parameters", "parameter independence", or discussing parameter selection for sweeper constraints.
+
+Use `/scenario-review` when a prompt explicitly asks for this skill.
+<!-- SCENARIO-REVIEW-DISCOVERABILITY-END -->
+
+<!-- SCENARIO-WRITING-DISCOVERABILITY-START -->
+## scenario-writing Discoverability
+
+This skill should be used when the user asks to "write a scenario", "create a CARLA scenario", "add a test scenario", "write a concrete scenario", "create a logical scenario", "add constraints", "run multirun", "spawn NPC", "add condition", "add action", mentions scenario writing for autoware_carla_scenario, or discusses CARLA test scenario creation workflow. Provides comprehensive guidance for the full scenario lifecycle from concrete to logical scenarios.
+
+Use `/scenario-writing` when a prompt explicitly asks for this skill.
+<!-- SCENARIO-WRITING-DISCOVERABILITY-END -->
+
+<!-- WRITE-SCENARIO-DISCOVERABILITY-START -->
+## write-scenario Discoverability
+
+Interactively create a CARLA test scenario for autoware_carla_scenario step by step, from a natural-language description to a concrete scenario, its review, and a logical scenario with sweep constraints. Use when the user asks to write or create a new scenario end to end.
+
+Use `/write-scenario` when a prompt explicitly asks for this skill.
+<!-- WRITE-SCENARIO-DISCOVERABILITY-END -->

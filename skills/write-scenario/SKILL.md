@@ -1,14 +1,13 @@
 ---
-description: Interactively create a CARLA test scenario step by step
-argument-hint: [scenario description in natural language]
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv:*), Bash(git:*), Agent, AskUserQuestion
+name: write-scenario
+description: Interactively create a CARLA test scenario for autoware_carla_scenario step by step, from a natural-language description to a concrete scenario, its review, and a logical scenario with sweep constraints. Use when the user asks to write or create a new scenario end to end.
 ---
 
 Guide the user through creating a CARLA test scenario for the `autoware_carla_scenario` package. Use the `scenario-writing` skill for domain knowledge.
 
 ## Input
 
-The user describes the scenario they want in natural language: $ARGUMENTS
+The user describes the scenario they want in natural language, in the request that invoked this skill. If they gave no description, ask for one.
 
 ## Interactive Workflow
 
@@ -22,7 +21,7 @@ Parse the user's natural language description and clarify:
 3. What constitutes failure? (fail conditions)
 4. Are NPC vehicles needed? Where relative to ego?
 
-Ask the user focused clarifying questions using AskUserQuestion. Do not assume — confirm the scenario concept before writing code.
+Ask the user focused clarifying questions. Do not assume — confirm the scenario concept before writing code.
 
 ### Stage 2: Discover Available Building Blocks
 
@@ -41,7 +40,7 @@ If existing building blocks are insufficient:
 ### Stage 3: Write Concrete Scenario
 
 Generate the following files:
-1. **Python scenario class** (`examples/<name>.py`) — inheriting BaseScenario
+1. **Python scenario class** (`examples/<name>.py`) — inheriting BaseScenario, following `scenario-writing`'s `references/code-generation.md`
 2. **Dataclass config** (add to `examples/configs.py`)
 3. **YAML config** (`examples/conf/scenario/<name>/<variant>.yaml`) — with Lanelet2 spawn coordinates
 4. **Registration** (update `examples/run.py`) — import, config, build_scenario branch
@@ -52,9 +51,9 @@ Show the user each file before writing. Confirm the overall design, then write a
 
 ### Stage 4: Debug Concrete Scenario
 
-Use `/debug-concrete-scenario <name>/<variant>` to execute the scenario, analyze results, and iterate until it passes.
+Follow the `debug-concrete-scenario` skill for `<name>/<variant>` to execute the scenario, analyze results, and iterate until it passes.
 
-This stage is handled by the `debug-concrete-scenario` command, which autonomously runs the execute → analyze → fix loop and reports back. Once the user confirms the behavior matches their intent, proceed to Stage 5.
+That skill autonomously runs the execute → analyze → fix loop and reports back. Once the user confirms the behavior matches their intent, proceed to Stage 5.
 
 ### Stage 5: Review and Define Logical Scenario Parameters
 

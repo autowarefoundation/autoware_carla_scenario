@@ -1,16 +1,15 @@
 ---
-description: Execute a CARLA concrete scenario, analyze results, and iterate until it passes
-argument-hint: <scenario/variant> [additional uv run options]
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(uv:*), Agent, AskUserQuestion
+name: debug-concrete-scenario
+description: Execute a CARLA concrete scenario, analyze its results, and iterate until it passes. Use when the user names a scenario/variant to run and debug.
 ---
 
 Debug and iterate on a CARLA concrete scenario until it passes. Use the `scenario-debugging` skill for domain knowledge on log analysis and common failure patterns.
 
 ## Input
 
-The scenario to run: $ARGUMENTS
+The scenario to run (`<scenario>/<variant>`, optionally followed by extra `uv run scenario` options) comes from the request that invoked this skill.
 
-If no argument is provided, ask the user which scenario to run using AskUserQuestion.
+If no scenario is given, ask the user which scenario to run.
 
 ## Workflow
 
@@ -47,7 +46,7 @@ If the scenario fails or behaves unexpectedly:
 
 Repeat Step 1 → Step 2 → Step 3 until the scenario passes as intended.
 
-If you are stuck after 3 iterations on the same issue, stop and ask the user for guidance using AskUserQuestion rather than continuing to loop.
+If you are stuck after 3 iterations on the same issue, stop and ask the user for guidance rather than continuing to loop.
 
 ### Step 5: Report
 

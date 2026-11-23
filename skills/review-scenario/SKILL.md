@@ -1,14 +1,13 @@
 ---
-description: Review a CARLA scenario's parameter design for orthogonality and sweeper compatibility
-argument-hint: [scenario name or path to YAML config]
-allowed-tools: Read, Grep, Glob, Bash(uv:*), Bash(git:*), Agent, AskUserQuestion
+name: review-scenario
+description: Review a CARLA scenario's parameter design for orthogonality and sweeper compatibility. Use when the user names an existing scenario (or its YAML config) and asks for its parameters to be reviewed.
 ---
 
 Review the parameter design of an existing CARLA test scenario. Use the `scenario-review` skill for domain knowledge.
 
 ## Input
 
-The user specifies a scenario to review: $ARGUMENTS
+The user specifies a scenario (its name or the path to its YAML config) in the request that invoked this skill.
 
 ## Review Workflow
 
@@ -18,7 +17,7 @@ The user specifies a scenario to review: $ARGUMENTS
 2. Read the corresponding Python scenario class in `examples/`
 3. Read the dataclass config in `examples/configs.py`
 
-If no specific scenario is given, ask the user which scenario to review using AskUserQuestion.
+If no specific scenario is given, ask the user which scenario to review.
 
 ### Step 2: Identify All Hardcoded Values
 
@@ -58,7 +57,7 @@ Present the review summary using the format from the `scenario-review` skill:
 - Specific recommendations for improvements
 - Any anti-patterns found
 
-Use AskUserQuestion to confirm the recommendations with the user before suggesting changes.
+Confirm the recommendations with the user before suggesting changes.
 
 ### Step 7: Apply Changes (if requested)
 

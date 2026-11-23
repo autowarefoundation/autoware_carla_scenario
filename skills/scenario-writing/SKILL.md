@@ -48,7 +48,7 @@ class MyScenario(BaseScenario):
 
 ### Stage 2: Debug Concrete Scenario
 
-Use the `debug-concrete-scenario` command (or `scenario-debugging` skill) to execute, analyze, and iterate on the scenario until it passes.
+Use the `debug-concrete-scenario` skill (with the `scenario-debugging` skill for domain knowledge) to execute, analyze, and iterate on the scenario until it passes.
 
 This stage autonomously runs the execute → analyze → fix loop. See the `scenario-debugging` skill for log analysis patterns and common failure fixes. Once the user confirms the behavior matches intent, proceed to Stage 3.
 
@@ -134,6 +134,7 @@ uv run scenario scenario=<name>/<variant> map=nishishinjuku
 For detailed patterns and type catalogs, consult:
 - **`references/constraints-reference.md`** — Sweeper constraint types, binding types, and YAML examples
 - **`references/scenario-patterns.md`** — Complete scenario examples and common composition patterns
+- **`references/code-generation.md`** — How to generate the scenario class, dataclass config, YAML and registration, and the rules every generated file follows
 
 ### Key Source Locations
 

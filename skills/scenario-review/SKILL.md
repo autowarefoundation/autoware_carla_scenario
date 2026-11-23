@@ -188,6 +188,6 @@ sweep:
 
 ## Integration with Write Workflow
 
-This review should be performed at **Stage 5** of the `/write-scenario` workflow (after the concrete scenario passes, before adding sweep constraints). The review ensures that the transition from concrete to logical scenario maintains correctness and efficiency.
+This review should be performed at **Stage 5** of the `write-scenario` workflow (after the concrete scenario passes, before adding sweep constraints). The review ensures that the transition from concrete to logical scenario maintains correctness and efficiency.
 
 After the review is confirmed by the user, proceed to Stage 6 (Discover Constraints/Bindings and Add Sweep Config) using the agreed parameter design.

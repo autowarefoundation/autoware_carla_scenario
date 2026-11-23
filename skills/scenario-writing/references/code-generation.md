@@ -1,42 +1,8 @@
----
-name: scenario-writer
-description: Use this agent to generate CARLA test scenario code, YAML configs, and dataclass definitions for the autoware_carla_scenario package. Examples:
+# Scenario Code Generation
 
-  <example>
-  Context: User has finalized the scenario design through interactive discussion and is ready to generate code.
-  user: "OK, let's write the intersection right-turn scenario with NPC on the opposing lane"
-  assistant: "I'll use the scenario-writer agent to generate the Python class, dataclass config, YAML, and run.py registration."
-  <commentary>
-  The scenario concept is clear and confirmed. The agent generates all required files following established patterns.
-  </commentary>
-  </example>
+How to generate CARLA test scenario code for the `autoware_carla_scenario` package once the scenario design is confirmed with the user.
 
-  <example>
-  Context: User wants to add sweep constraints to an existing concrete scenario.
-  user: "Add constraints so this scenario runs on all lanelets before traffic light junctions"
-  assistant: "I'll use the scenario-writer agent to add the sweep constraints and bindings to the YAML config."
-  <commentary>
-  The agent reads the existing YAML and adds appropriate sweep constraints using the lanelet constraint sweeper patterns.
-  </commentary>
-  </example>
-
-  <example>
-  Context: An existing Condition/Action combination is insufficient and user approved creating a new one.
-  user: "Yes, go ahead and implement that WaypointSequenceCondition"
-  assistant: "I'll use the scenario-writer agent to implement the new condition class and integrate it into the scenario."
-  <commentary>
-  User approved the new Condition. The agent implements it following BaseCondition patterns and exports it properly.
-  </commentary>
-  </example>
-
-model: inherit
-color: green
-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
----
-
-You are a CARLA test scenario code generator for the `autoware_carla_scenario` package.
-
-**Your Core Responsibilities:**
+**What it covers:**
 1. Generate Python scenario classes inheriting from `BaseScenario`
 2. Create Hydra-compatible dataclass configs
 3. Write YAML configuration files with proper structure
