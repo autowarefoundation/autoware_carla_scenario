@@ -95,6 +95,7 @@ _REFUSED = [
     ('add_argument("--name"', 'add_argument(1, "--name"'),
     ('add_argument("--flag", help=None)', "add_argument(help=None)"),
     ('parser.add_argument("path")', 'parser.add_arg("path")'),
+    ('ArgumentTypeError("bad")', 'ArgumentTypeError(message="bad")'),
 ]
 _REFUSED_IDS = [
     "unknown-parser-keyword",
@@ -104,6 +105,7 @@ _REFUSED_IDS = [
     "flag-is-a-str",
     "a-name-or-flag",
     "no-method",
+    "error-message-by-position",
 ]
 
 

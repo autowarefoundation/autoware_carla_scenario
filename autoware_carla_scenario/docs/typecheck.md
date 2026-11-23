@@ -3431,8 +3431,9 @@ What Codon 0.19 needs that Python does not, beyond
   `hils.host_devices` sets the devices up for when `SUDO_USER` is unset;
   `getpass()`, the prompt for a password, and `GetPassWarning` are not
   declared. `argparse` declares what `serve_cli` adds the web applications'
-  `--host` and `--port` with (#2374): `ArgumentTypeError(message="")`, the
-  error a `type=` callable raises, `ArgumentParser(prog=None, usage=None,
+  `--host` and `--port` with (#2374): `ArgumentTypeError()`, the
+  error a `type=` callable raises, of none or one `str` message by position
+  (an `Exception`, it takes no keyword), `ArgumentParser(prog=None, usage=None,
   description=None, epilog=None, *, add_help=True, allow_abbrev=True,
   exit_on_error=True)` (CPython 3.10 takes the last three by position too,
   after `parents` and the rest, which are not declared) and its

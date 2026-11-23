@@ -5,7 +5,7 @@
 #
 # - ArgumentTypeError, the exception a `type=` callable raises for a value it
 #   refuses (argparse makes it a usage error), built from nothing or one
-#   message;
+#   str message, by position (CPython's, an Exception, takes no keyword);
 # - ArgumentParser(prog=None, usage=None, description=None, epilog=None, *,
 #   add_help=True, allow_abbrev=True, exit_on_error=True). CPython takes all
 #   of these by position too, after parents, formatter_class, prefix_chars,
@@ -35,8 +35,17 @@ def _keyword_only(extra, where: Literal[str]):
 
 
 class ArgumentTypeError(Static[Exception]):
-    def __init__(self, message: str = ""):
-        super().__init__(message)
+    # CPython's takes any values by position, as Exception does, and no
+    # keyword; declared are none and one str message.
+    def __init__(self, *args):
+        if static.len(args) == 0:
+            super().__init__("")
+        elif static.len(args) == 1:
+            if not isinstance(args[0], str):
+                compile_error("ArgumentTypeError() takes one str message here")
+            super().__init__(args[0])
+        else:
+            compile_error("ArgumentTypeError() takes one str message here")
 
 
 # What add_argument() returns (CPython's Action): nothing of it is declared.
