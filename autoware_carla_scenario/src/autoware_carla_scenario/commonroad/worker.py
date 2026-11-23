@@ -194,7 +194,6 @@ class CommonRoadWorker:
             raise CommonRoadWorkerError(
                 f"cannot send {request.get('op')!r} to the CommonRoad worker: {exc}"
             ) from exc
-        deadline = None if timeout is None else time.monotonic() + timeout
         process = self._process
         if (
             process.stdin is None
@@ -206,6 +205,9 @@ class CommonRoadWorker:
             )
         try:
             with self._request_lock:
+                # Counted from here, not before the lock: a request that waited
+                # behind a slow one does not spend its own time waiting (#2403).
+                deadline = None if timeout is None else time.monotonic() + timeout
                 with self._write_lock:
                     try:
                         process.stdin.write(encoded)

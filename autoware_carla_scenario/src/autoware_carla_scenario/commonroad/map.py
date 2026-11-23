@@ -8,7 +8,8 @@ CARLA's ``(x, y)`` is that frame's ``(x, -y)``
 (:func:`~autoware_carla_scenario.commonroad.frame.to_commonroad`).
 
 A map is converted once per machine: the file is cached under a directory
-named after a hash of the OpenDRIVE and roadgen's version.
+named after a hash of the OpenDRIVE roadgen reads (sanitized, so that a
+change to the sanitizer converts the map again) and roadgen's version.
 """
 
 from __future__ import annotations
@@ -82,7 +83,8 @@ def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
         roadgen.Map, "export_commonroad"
     ):
         raise ImportError(f"roadgen {version} does not write CommonRoad: {_INSTALL}")
-    root, key = _cache_place(opendrive, version, cache_dir)
+    sanitized = sanitize_opendrive(opendrive)
+    root, key = _cache_place(sanitized, version, cache_dir)
     target = root / key
     path = target / MAP_FILE
     if path.is_file():
@@ -92,7 +94,7 @@ def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
     tmp = Path(tempfile.mkdtemp(prefix=f".{key}.", dir=root))
     try:
         xodr = tmp / "map.xodr"
-        xodr.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
+        xodr.write_text(sanitized, encoding="utf-8")
         road_map = roadgen.read_opendrive(str(xodr))
         for warning in road_map.read_warnings():
             logger.debug("roadgen read: %s", warning)

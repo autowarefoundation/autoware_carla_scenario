@@ -29,6 +29,7 @@ import pytest
 
 from autoware_carla_scenario import heavy_metrics, metrics
 from autoware_carla_scenario.commonroad import frame as cr_frame
+from autoware_carla_scenario.commonroad import map as cr_map
 from autoware_carla_scenario.commonroad import session as cr_session
 from autoware_carla_scenario.commonroad import worker as cr_worker
 from autoware_carla_scenario.commonroad.map import MAP_FILE, commonroad_map
@@ -258,6 +259,42 @@ def test_the_map_is_converted_once(opendrive: str, tmp_path: Path) -> None:
     )
     assert commonroad_map(opendrive, tmp_path) == path
     assert len([p for p in tmp_path.iterdir() if not p.name.startswith(".")]) == 1
+
+
+def test_the_map_cache_is_keyed_on_the_sanitized_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2403: the key hashes what roadgen converts, so a sanitizer change
+    converts the map again rather than serving the old conversion."""
+    read: list[str] = []
+
+    class _Map:
+        def read_warnings(self) -> list[str]:
+            return []
+
+        def export_commonroad(self, path: str, **_: Any) -> None:
+            Path(path).write_text("<commonRoad/>", encoding="utf-8")
+
+        def commonroad_warnings(self) -> list[str]:
+            return []
+
+    def read_opendrive(path: str) -> _Map:
+        read.append(Path(path).read_text(encoding="utf-8"))
+        return _Map()
+
+    roadgen = SimpleNamespace(
+        __version__="0.42.0", Map=_Map, read_opendrive=read_opendrive
+    )
+    monkeypatch.setitem(sys.modules, "roadgen", roadgen)
+    opendrive = "<OpenDRIVE/>"
+    before = cr_map.commonroad_map(opendrive, tmp_path)
+    assert cr_map.commonroad_map(opendrive, tmp_path) == before
+    monkeypatch.setattr(
+        cr_map, "sanitize_opendrive", lambda text: text + "<!-- fixed -->"
+    )
+    after = cr_map.commonroad_map(opendrive, tmp_path)
+    assert after != before
+    assert read == [opendrive, opendrive + "<!-- fixed -->"]
 
 
 @pytest.mark.xfail(
@@ -2465,6 +2502,60 @@ def test_an_answer_written_in_pieces_is_read_whole(tmp_path: Path) -> None:
         assert worker.measures == [CRIME_TTC_S]
         values, errors = worker.evaluate([CRIME_TTC_S], {}, [], timeout=30)
         assert values == {CRIME_TTC_S: 2.5} and errors == {}
+    finally:
+        worker.close()
+
+
+#: A worker that answers each request at once.
+_ANSWERS_AT_ONCE = textwrap.dedent(
+    """
+    import json, sys
+
+    for line in sys.stdin:
+        op = json.loads(line)["op"]
+        if op == "close":
+            break
+        if op == "init":
+            answer = {"ok": True, "measures": ["crime_ttc_s"]}
+        else:
+            answer = {"ok": True, "values": {"crime_ttc_s": 2.5}, "errors": {}}
+        sys.stdout.write(json.dumps(answer) + "\\n")
+        sys.stdout.flush()
+    """
+)
+
+
+def test_waiting_for_another_request_spends_none_of_the_timeout(
+    tmp_path: Path,
+) -> None:
+    """#2403: the deadline is counted once the request holds the worker, so a
+    request that waited behind a slow one longer than its timeout is still
+    answered, and the worker is not killed."""
+    import threading
+
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_AT_ONCE)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml", timeout=30
+    )
+    outcome: list[Any] = []
+
+    def evaluate() -> None:
+        try:
+            outcome.append(worker.evaluate([CRIME_TTC_S], {}, [], timeout=0.2))
+        except BaseException as exc:  # noqa: BLE001
+            outcome.append(exc)
+
+    requesting = threading.Thread(target=evaluate, daemon=True)
+    try:
+        with worker._request_lock:  # a slow request in another thread
+            requesting.start()
+            requesting.join(0.5)
+            assert requesting.is_alive()
+        requesting.join(10)
+        assert not requesting.is_alive()
+        assert outcome == [({CRIME_TTC_S: 2.5}, {})]
+        assert worker._process.poll() is None
     finally:
         worker.close()
 
