@@ -359,7 +359,7 @@ def test_reducing_straight_to_the_value_matches_the_trace(approx_method, lower, 
 
     A rule's robustness is `trace[0]`, and no rule here nests one temporal
     operator inside another, so the rest of the trace is constructed and
-    discarded -- which over ten rules, forward and backward, was most of the
+    discarded -- which over nine rules, forward and backward, was most of the
     operations in a refinement step. This asserts the shortcut agrees with the
     trace it replaces, including where the interval starts partway in.
     """

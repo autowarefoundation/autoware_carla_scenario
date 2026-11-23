@@ -393,7 +393,7 @@ def test_an_emergency_stop_starts_at_the_ego(policy, speed_mps):
     assert result.debug_scalars["stl_fallback"] == 1.0
     positions = result.trajectory_in_rig.positions
     dt = CONFIG.horizon.step_s
-    first_step = (speed_mps - CONFIG.limits.emergency_decel_mps2 * dt) * dt
+    first_step = speed_mps * dt - 0.5 * CONFIG.limits.emergency_decel_mps2 * dt**2
     assert positions[0, 0] == pytest.approx(first_step, abs=1e-6)
     assert np.all(np.diff(positions[:, 0]) >= 0.0)
     assert positions[-1, 0] == pytest.approx(
