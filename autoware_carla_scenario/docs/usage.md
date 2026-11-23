@@ -437,17 +437,17 @@ replaces the pick, several picks that walk back to the same predecessor can
 end as the same case. Each distinct case runs once, as the first of those
 picks gives it, and the log names the picks that were merged.
 
-A walk-back that runs out of predecessors stops at the start of the last
-lanelet it reached and logs how much of the offset it could not satisfy. On a
-pick with no lanelet before it, that is the pick's own start, which is the
-stop line itself where the line is at the start, as a junction lanelet's
-usually is. The shipped `intersection_passing` and `temporary_stop` sweeps
-leave such picks out by requiring a lanelet before the pick (any lanelet, as
-`lanelet_length` of 0 m or more matches). That drops every pick with nothing
-before it, including one whose line is far enough in that it falls only a
-little short, and it does not make the offset fit: at each step the walk-back
-takes the routing graph's first predecessor, and the lane it reaches can
-itself run out.
+A walk-back that runs out of predecessors before it has covered the offset
+fails, and the sweep drops the pick with a warning naming how much road there
+is behind the line: no spawn on that road is `offset` metres before it, so
+every case a sweep expands to starts the full offset before its line (#2392).
+At each step the walk-back takes the routing graph's first predecessor, so a
+pick is dropped when that lane runs out, even if another lane before it is
+long enough. The shipped `intersection_passing` and `temporary_stop` sweeps
+also require a lanelet before the pick (any lanelet, as `lanelet_length` of
+0 m or more matches), which leaves out every pick with nothing before it
+(#2350), including one whose line is far enough in for the offset to fit on
+the pick.
 
 ```yaml
 - type: following_of
