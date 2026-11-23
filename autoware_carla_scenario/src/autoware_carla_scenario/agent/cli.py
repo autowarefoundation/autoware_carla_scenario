@@ -1,21 +1,20 @@
 """``scenario-agent``: install the scenario skills into a coding agent and start it.
 
-The skills ship with the package (``autoware_carla_scenario/agent/skills/``).
-This command installs them for one coding agent with agent-skill-installer
-(the ``agent`` extra) into the Git repository holding the working directory
--- this framework's checkout, or a scenario package's repository -- under the
-agent's own skills directory (``.claude/skills/``, ``.codex/skills/``), and
-then starts that agent in the repository, optionally on a first prompt that
-invokes one of the skills::
+The skills ship inside this package (``autoware_carla_scenario/agent/skills/``),
+each a bundled skill of agent-skill-installer (the ``agent`` extra): a
+:class:`agent_skill_installer.SkillProject` per skill, read from the installed
+package with :mod:`importlib.resources`. This command installs them for one
+coding agent into the Git repository holding the working directory -- this
+framework's checkout, or a scenario package's repository -- under the agent's
+own skills directory (``.claude/skills/``, ``.codex/skills/``), and then starts
+that agent in the repository, optionally on a first prompt that invokes one of
+the skills::
 
     scenario-agent claude "stop at a stop sign"
     scenario-agent codex --skill review-scenario lane_change
 
-Where the skills sit inside that repository (this framework's checkout, with
-the package installed editable) they are installed as symlinks, so edits to
-them are live; otherwise they are copied, and running the command again
-updates the copies.
-
+The installs are copies, recorded as owned by this package and its version;
+running the command again replaces them with the installed package's skills.
 The installer also keeps a discoverability block per skill in the agent's
 instruction file (``CLAUDE.md``, ``AGENTS.md``) of the repository.
 """
@@ -23,15 +22,25 @@ instruction file (``CLAUDE.md``, ``AGENTS.md``) of the repository.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import shutil
-import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+import yaml
+
+if TYPE_CHECKING:
+    from agent_skill_installer import SkillProject
+
+#: The distribution the skills ship in, and the package they are read from.
+DISTRIBUTION = "autoware-carla-scenario"
+IMPORT_NAME = "autoware_carla_scenario"
+#: Where the skills sit inside the package (``bundled_skill_path``'s parent).
+SKILLS_PATH = "agent/skills"
 SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 DEFAULT_SKILL = "write-scenario"
 
@@ -40,8 +49,8 @@ DEFAULT_SKILL = "write-scenario"
 class Agent:
     """A coding agent the skills can be installed into and started."""
 
-    # Both agent-skill-installer's ``--agent`` value and the command that
-    # starts the agent's interactive session.
+    # Both agent-skill-installer's agent name and the command that starts the
+    # agent's interactive session.
     name: str
     # How a prompt invokes a skill: ``/name`` in Claude Code, ``$name`` in Codex.
     skill_sigil: str
@@ -59,8 +68,54 @@ AGENTS: dict[str, Agent] = {
 
 
 def available_skills() -> list[str]:
-    """Return the names of the skills in ``SKILLS_DIR``, sorted."""
+    """Return the names of the bundled skills, sorted."""
     return sorted(p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md"))
+
+
+def skill_description(name: str) -> str:
+    """Return the ``description`` of a bundled skill's ``SKILL.md`` frontmatter."""
+    text = (SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8")
+    header = text.removeprefix("---\n").partition("\n---\n")[0]
+    return str(yaml.safe_load(header)["description"])
+
+
+def skill_projects() -> list[SkillProject]:
+    """Return one agent-skill-installer project per bundled skill."""
+    from agent_skill_installer import SkillProject
+
+    version = metadata.version(DISTRIBUTION)
+    return [
+        SkillProject(
+            package_name=DISTRIBUTION,
+            import_name=IMPORT_NAME,
+            version=version,
+            skill_name=name,
+            description=skill_description(name),
+            bundled_skill_path=f"{SKILLS_PATH}/{name}",
+            # A skill installed from its directory before it was bundled
+            # (`--skill-path`) is owned under its own name: take it over.
+            manifest_package_aliases=frozenset({name}),
+        )
+        for name in available_skills()
+    ]
+
+
+def install(agents: Sequence[Agent], repository: Path) -> list[str]:
+    """Install every bundled skill for ``agents`` into ``repository``.
+
+    Returns one line per installed skill and agent. Raises
+    ``agent_skill_installer.InstallerError`` when the installer refuses.
+    """
+    from agent_skill_installer import Installer
+
+    names = [agent.name for agent in agents]
+    lines = []
+    for project in skill_projects():
+        for result in Installer(project).install(
+            names, "dir", repo_target=True, repo=repository
+        ):
+            lines.append(f"{project.skill_name} -> {result.agent}: {result.skill_dir}")
+    return lines
 
 
 def find_repository_root(start: Path) -> Path | None:
@@ -69,35 +124,6 @@ def find_repository_root(start: Path) -> Path | None:
         if (directory / ".git").exists() or (directory / ".sl").exists():
             return directory
     return None
-
-
-def install_command(
-    agents: Sequence[Agent], repository: Path, skills_dir: Path = SKILLS_DIR
-) -> list[str]:
-    """Return the agent-skill-installer command installing every skill.
-
-    The skills go into ``repository`` for every agent in ``agents`` at once:
-    as symlinks when ``skills_dir`` is inside ``repository``, else as copies.
-    """
-    editable = skills_dir.resolve().is_relative_to(repository.resolve())
-    return [
-        sys.executable,
-        "-m",
-        "agent_skill_installer",
-        "--no-ui",
-        "install",
-        "--skill-path",
-        str(skills_dir),
-        "--all-src-skills",
-        "--editable" if editable else "--copy",
-        "--agent",
-        ",".join(agent.name for agent in agents),
-        "--scope",
-        "dir",
-        "--target-dir",
-        str(repository),
-        "--repo",
-    ]
 
 
 def first_prompt(agent: Agent, skill: str, request: Sequence[str]) -> str | None:
@@ -176,16 +202,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"`{agent.name}` is not on PATH; install it first ({agent.install_hint})."
         )
 
-    if importlib.util.find_spec("agent_skill_installer") is None:
+    try:
+        from agent_skill_installer import InstallerError
+    except ImportError:
         return _error(
             "agent-skill-installer is not installed: install the `agent` extra "
             "(`uv pip install 'autoware-carla-scenario[agent]'`)"
         )
-
-    installed = subprocess.run(install_command([agent], repository), check=False)
-    if installed.returncode != 0:
-        print("scenario-agent: installing the skills failed.", file=sys.stderr)
-        return installed.returncode
+    try:
+        for line in install([agent], repository):
+            print(f"scenario-agent: installed {line}")
+    except InstallerError as error:
+        return _error(f"installing the skills failed: {error}")
     if executable is None or args.install_only:
         return 0
 

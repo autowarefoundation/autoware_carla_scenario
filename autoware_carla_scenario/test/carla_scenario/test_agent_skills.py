@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -79,11 +79,7 @@ def test_committed_discoverability_blocks_match_an_install(tmp_path: Path) -> No
     # The installer's `--repo` asserts a Git repository root.
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
 
-    # The skills lie outside this repository, as for an installed framework:
-    # they are copied.
-    command = cli.install_command(list(cli.AGENTS.values()), repo)
-    assert "--copy" in command
-    subprocess.run(command, check=True, capture_output=True)
+    cli.install(list(cli.AGENTS.values()), repo)
 
     for name in ("CLAUDE.md", "AGENTS.md"):
         assert (repo / name).read_text(encoding="utf-8") == (
@@ -118,22 +114,37 @@ def test_no_request_starts_the_agent_without_a_prompt() -> None:
     assert cli.launch_command(agent, None) == ["claude"]
 
 
-def test_install_command_installs_every_skill_into_the_repository(
-    tmp_path: Path,
-) -> None:
-    command = cli.install_command(list(cli.AGENTS.values()), tmp_path)
-    assert command[:3] == [sys.executable, "-m", "agent_skill_installer"]
-    assert "--all-src-skills" in command
-    assert command[command.index("--skill-path") + 1] == str(_SKILLS_DIR)
-    assert command[command.index("--target-dir") + 1] == str(tmp_path)
-    assert command[command.index("--agent") + 1] == "claude,codex"
-    assert command[command.index("--scope") + 1] == "dir"
+def test_each_skill_is_a_bundled_skill_project_of_the_package() -> None:
+    projects = cli.skill_projects()
+    assert [project.skill_name for project in projects] == cli.available_skills()
+    for project in projects:
+        assert project.package_name == "autoware-carla-scenario"
+        assert (
+            project.description
+            == _frontmatter(_SKILLS_DIR / project.skill_name / "SKILL.md")[
+                "description"
+            ]
+        )
+        # The installer reads the skill from the installed package.
+        bundled = resources.files(project.import_name).joinpath(
+            project.required_bundled_skill_path()
+        )
+        assert bundled.joinpath("SKILL.md").is_file()
 
 
-def test_skills_inside_the_repository_are_symlinked(tmp_path: Path) -> None:
-    skills = tmp_path / "pkg" / "skills"
-    command = cli.install_command([cli.AGENTS["claude"]], tmp_path, skills)
-    assert "--editable" in command and "--copy" not in command
+def test_installs_are_copies_owned_by_the_package(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    lines = cli.install([cli.AGENTS["claude"]], tmp_path)
+    assert len(lines) == len(cli.available_skills())
+    installed = tmp_path / ".claude" / "skills" / "scenario-writing"
+    assert not installed.is_symlink()
+    assert (installed / "references" / "code-generation.md").is_file()
+    manifest = yaml.safe_load(
+        (installed / ".scenario-writing-install.json").read_text(encoding="utf-8")
+    )
+    assert manifest["package"] == "autoware-carla-scenario"
 
 
 def test_find_repository_root_walks_up(tmp_path: Path) -> None:
@@ -164,7 +175,7 @@ def test_missing_agent_command_is_reported_before_installing(
     def no_install(*args: object, **kwargs: object) -> None:
         raise AssertionError("installed although the agent is missing")
 
-    monkeypatch.setattr(cli.subprocess, "run", no_install)
+    monkeypatch.setattr(cli, "install", no_install)
     assert cli.main(["codex", "something"]) == 2
     assert "`codex` is not on PATH" in capsys.readouterr().err
 
@@ -172,17 +183,17 @@ def test_missing_agent_command_is_reported_before_installing(
 def test_install_only_does_not_start_the_agent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    commands: list[list[str]] = []
+    calls: list[tuple[list[str], Path]] = []
 
-    def fake_run(command: list[str], check: bool) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        return subprocess.CompletedProcess(command, 0)
+    def fake_install(agents: list[cli.Agent], repository: Path) -> list[str]:
+        calls.append(([agent.name for agent in agents], repository))
+        return []
 
     def no_exec(*args: object) -> None:
         raise AssertionError("started the agent with --install-only")
 
     monkeypatch.setattr(cli, "find_repository_root", lambda _: tmp_path)
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli, "install", fake_install)
     monkeypatch.setattr(cli.os, "execv", no_exec)
     assert cli.main(["claude", "--install-only"]) == 0
-    assert commands == [cli.install_command([cli.AGENTS["claude"]], tmp_path)]
+    assert calls == [(["claude"], tmp_path)]

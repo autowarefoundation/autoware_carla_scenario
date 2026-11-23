@@ -41,9 +41,8 @@ scenario_drafts/
 scenario_packages/
 .lycheecache
 
-# Agent skills installed by `scenario-agent` (editable symlinks into the
-# package's agent/skills/, and the installer's manifests). Their
-# discoverability blocks in CLAUDE.md and AGENTS.md are committed; the installs
-# are per checkout.
+# Agent skills installed by `scenario-agent` (copies of the package's
+# agent/skills/, and the installer's manifests). Their discoverability blocks
+# in CLAUDE.md and AGENTS.md are committed; the installs are per checkout.
 .claude/skills/
 .codex/

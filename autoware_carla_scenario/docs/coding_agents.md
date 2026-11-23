@@ -63,10 +63,10 @@ uv run scenario-agent codex "I want to test that the ego stops at a stop sign, w
 2. installs every skill for that agent into the repository's
    `.claude/skills/` (Claude Code) or `.codex/skills/` (Codex), and writes each
    skill's discoverability block at the end of the repository's `CLAUDE.md` /
-   `AGENTS.md` (creating the file if there is none). Skills that lie inside the
-   repository — this framework's checkout, with the package installed
-   editable — are installed as symlinks, so edits to them are live; otherwise
-   (an installed framework) they are copied;
+   `AGENTS.md` (creating the file if there is none). Each skill is a bundled
+   skill of agent-skill-installer, read from the installed package and copied;
+   the install records it as owned by `autoware-carla-scenario` and its
+   version, so running `scenario-agent` again replaces it;
 3. starts the agent in the repository root, with a first prompt that invokes
    the skill on your request: `/write-scenario <request>` in Claude Code,
    `$write-scenario <request>` in Codex.
@@ -133,9 +133,9 @@ and [Usage](usage.md); where a skill and the code disagree, the code wins.
 
 The skills are plain Markdown under the package's `agent/skills/<name>/`;
 change them in this framework's checkout
-(`autoware_carla_scenario/src/autoware_carla_scenario/agent/skills/`). There the
-installs are symlinks, so an edit is live in the next agent session with no
-reinstall.
+(`autoware_carla_scenario/src/autoware_carla_scenario/agent/skills/`). The
+installs are copies: after an edit, run `scenario-agent <agent> --install-only`
+(for each agent you use) and start a new session to see it.
 
 - **Changing a skill's text**: edit its `SKILL.md` (or its `references/`). Keep
   it agent-neutral: no names only one agent understands (`$ARGUMENTS`,
@@ -182,7 +182,7 @@ skills from a repository. In this repository, do not run the installer's own
 | `scenario-agent: run it inside a Git repository ...` (exit 2) | Run it from inside a Git checkout; `git init` a new scenario package first |
 | `scenario-agent: agent-skill-installer is not installed ...` (exit 2) | Install the `agent` extra (section 1) |
 | `scenario-agent: unknown skill ...` (exit 2) | The `--skill` name is not one of the shipped skills; the message lists them |
-| `installing the skills failed` | The installer's own error is printed above it. The usual one is a skill directory in `.claude/skills/` or `.codex/skills/` that the installer did not create (no manifest beside it): remove that directory and run `scenario-agent` again |
+| `scenario-agent: installing the skills failed: ...` (exit 2) | The installer's error follows. The usual one is a skill directory in `.claude/skills/` or `.codex/skills/` that the installer did not create (no manifest beside it): remove that directory and run `scenario-agent` again |
 | The agent does not list the skills | Start it from the repository root (`scenario-agent` does), and start a new session after installing; check that `.claude/skills/<name>` or `.codex/skills/<name>` exists |
 | `git status` shows this repository's `CLAUDE.md` / `AGENTS.md` changed after a run | A skill's `description` changed without regenerating the blocks: commit the change (section 4) |
 | A debugging step cannot run the scenario | No CARLA server is reachable: start one (`scenario-setup`, `server.host` / `server.port`), then ask the agent to continue |
