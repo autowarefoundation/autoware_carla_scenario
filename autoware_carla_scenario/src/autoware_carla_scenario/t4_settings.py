@@ -328,11 +328,11 @@ def category_of(type_id: str, base_type: str = "", wheels: int = 0) -> str:
 #: What :func:`fed_key_frame` makes of a fed sweep or camera frame: written on
 #: the key frame.
 FED_KEPT = 0
-#: A sweep whose frame has no snapshot, is before the recording, or is not
-#: after the key frame written last: dropped.
+#: A sweep, new by :data:`FED_NOT_NEW`, whose frame has no snapshot: dropped.
 FED_NO_SNAPSHOT = 1
-#: A camera frame from before the recording, or not after the key frame
-#: written last: dropped.
+#: A sweep or camera frame from before the recording, or not after the key
+#: frame written last -- a sweep a driver entity feeds again on every tick
+#: until the LiDAR's next one (#2362): dropped.
 FED_NOT_NEW = 2
 #: A camera frame not after that camera's frame written last, which a camera
 #: slower than the policy hands it again (#2352): dropped.
@@ -352,7 +352,7 @@ def fed_key_frame(
     camera_written: dict[str, int],
 ) -> tuple[list[int], list[int], int]:
     """Which of what a driver entity fed on *frame* is written, and on which
-    key frame (``t4``'s ``_record_fed``, #951, #2352).
+    key frame (``t4``'s ``_record_fed``, #951, #2352, #2362).
 
     *sweep_frames* are the frames the fed sweeps were taken on,
     *image_frames* the fed camera frames' ``(frame rendered on, logical
@@ -372,11 +372,10 @@ def fed_key_frame(
     sweep_fates: list[int] = []
     oldest_sweep = -1
     for taken_on in sweep_frames:
-        if (
-            taken_on < start_frame
-            or taken_on <= last_frame
-            or taken_on not in snapshots
-        ):
+        if taken_on < start_frame or taken_on <= last_frame:
+            sweep_fates.append(FED_NOT_NEW)
+            continue
+        if taken_on not in snapshots:
             sweep_fates.append(FED_NO_SNAPSHOT)
             continue
         sweep_fates.append(FED_KEPT)

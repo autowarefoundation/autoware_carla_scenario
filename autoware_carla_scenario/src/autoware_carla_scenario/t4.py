@@ -670,12 +670,12 @@ class T4Recording:
         key frame all the same, the step's sample: the writer stamps a sample's
         data with the sample's time, and a camera faster than the LiDAR, or on
         the other ticks of its interval, would otherwise never be written
-        (#951).  It is at most a policy step off.  A sweep whose frame has no
-        snapshot, or a sweep or camera frame from before the recording started
-        or not after the key frame written last, is dropped, and the frame
-        written without it; so is a camera frame not after that camera's
-        frame written last, which a camera slower than the policy hands it
-        again (#2352).
+        (#951).  It is at most a policy step off.  A sweep or camera frame
+        from before the recording started or not after the key frame written
+        last (a sweep fed again, #2362), or a sweep whose frame has no
+        snapshot, is dropped, and the frame written without it; so is a
+        camera frame not after that camera's frame written last, which a
+        camera slower than the policy hands it again (#2352).
         """
         fed, self._fed = self._fed, None
         if fed is None or fed[0] != frame or frame < self.start_frame:
@@ -692,7 +692,18 @@ class T4Recording:
             self._camera_written,
         )
         for (taken_on, _), fate in zip(fed[1], sweep_fates):
-            if fate == FED_NO_SNAPSHOT:
+            if fate == FED_NOT_NEW:
+                # The sweep a driver entity feeds again on every tick until
+                # the LiDAR's next one (#2362).
+                logger.debug(
+                    "T4 dataset: %s taken on frame %d, fed on frame %d, is not after "
+                    "frame %d; dropped",
+                    "a sweep",
+                    taken_on,
+                    frame,
+                    max(self.start_frame - 1, self._last_frame),
+                )
+            elif fate == FED_NO_SNAPSHOT:
                 logger.debug(
                     "T4 dataset: no snapshot of frame %d for %s fed on frame %d; "
                     "dropped",
