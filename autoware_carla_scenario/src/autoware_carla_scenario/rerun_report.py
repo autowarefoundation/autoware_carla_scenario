@@ -6,7 +6,10 @@ them; :func:`_draw_radius_argument` is the converter's keyword for the radius
 a recording draws in.  :mod:`.rerun`, which converts the logs, re-exports them
 under the names they had there (#2124): free of the converter, the thread
 pool and the Rerun SDK, they are compiled by the library check
-(docs/typecheck.md).
+(docs/typecheck.md).  :func:`strict_coverage_refusal` is why
+:func:`.rerun.check_strict_coverage` refuses a strict conversion, and
+:func:`rerun_errors` which cases' recordings failed, for ``examples.run``'s
+summary (#2364).
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ __all__ = [
     "RerunConversion",
     "latest",
     "report",
+    "rerun_errors",
+    "strict_coverage_refusal",
 ]
 
 
@@ -92,3 +97,55 @@ def _draw_radius_argument(draw_radius_m: Optional[float]) -> dict[str, float]:
     if draw_radius_m is not None:
         argument["draw_radius_m"] = draw_radius_m
     return argument
+
+
+def strict_coverage_refusal(
+    known: Optional[set[str]], written: list[str], version: Optional[str]
+) -> Optional[str]:
+    """Why a strict conversion by a converter that knows the record types
+    *known* would fail every log; ``None`` when it would not.
+
+    *written* is the record types the framework writes
+    (:func:`.rerun.written_records`), *known* the converter's
+    ``RECORD_TYPES`` (``None``: it has none, and is not checked) and
+    *version* its ``__version__`` when that is text.
+    """
+    if known is None:
+        return None
+    missing = sorted([t for t in written if t not in known])
+    if not missing:
+        return None
+    which = (
+        f"autoware-carla-scenario-rerun {version}"
+        if version is not None
+        else "the converter"
+    )
+    return (
+        f"rerun.strict is set, but {which} does not know "
+        f"{', '.join(missing)}, which the framework writes, so every strict "
+        "conversion would fail: set rerun.strict=false, or upgrade "
+        "autoware-carla-scenario-rerun to a version that knows them"
+    )
+
+
+def rerun_errors(
+    recordings: list[Optional[str]], conversions: list[RerunConversion]
+) -> dict[int, str]:
+    """Why each case's Rerun recording failed, by its position in
+    *recordings* (each case's ``rerun_recording``): the cases whose recording
+    is among the failed *conversions*.
+
+    A recording converted more than once (a retried case, which writes under
+    the stem of the attempt it replaces) goes by its last conversion."""
+    last_error: dict[str, Optional[str]] = {}
+    for conversion in conversions:
+        last_error[str(conversion.recording)] = conversion.error
+    failed: dict[str, str] = {}
+    for path, error in last_error.items():
+        if error is not None:
+            failed[path] = error
+    errors: dict[int, str] = {}
+    for i, recording in enumerate(recordings):
+        if recording is not None and recording in failed:
+            errors[i] = failed[recording]
+    return errors

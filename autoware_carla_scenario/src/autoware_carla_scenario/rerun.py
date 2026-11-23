@@ -44,6 +44,7 @@ from .rerun_report import RerunConversion as RerunConversion
 from .rerun_report import _draw_radius_argument as _draw_radius_argument
 from .rerun_report import latest as latest
 from .rerun_report import report as report
+from .rerun_report import strict_coverage_refusal
 
 # The suffix of the log a recording is made from, and of the recording, and
 # the run a log is of (``_label``): the path rule is the checked
@@ -127,22 +128,14 @@ def check_strict_coverage(converter: Any) -> None:
     known_types = getattr(converter, "RECORD_TYPES", None)
     if known_types is None:
         return
-    known = {str(t) for t in known_types}
-    missing = sorted(t for t in written_records() if t not in known)
-    if not missing:
-        return
     version = getattr(converter, "__version__", None)
-    which = (
-        f"autoware-carla-scenario-rerun {version}"
-        if isinstance(version, str)
-        else "the converter"
+    refusal = strict_coverage_refusal(
+        {str(t) for t in known_types},
+        list(written_records()),
+        version if isinstance(version, str) else None,
     )
-    raise RerunStrictUnsupportedError(
-        f"rerun.strict is set, but {which} does not know "
-        f"{', '.join(missing)}, which the framework writes, so every strict "
-        "conversion would fail: set rerun.strict=false, or upgrade "
-        "autoware-carla-scenario-rerun to a version that knows them"
-    )
+    if refusal is not None:
+        raise RerunStrictUnsupportedError(refusal)
 
 
 def require_converter() -> ModuleType:

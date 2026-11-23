@@ -5,6 +5,13 @@ still exporting every moved name, as the same objects."""
 
 from __future__ import annotations
 
+import contextlib
+import io
+import random
+import sys
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from autoware_carla_scenario.examples import argv, run
@@ -21,7 +28,7 @@ _MOVED = (
 
 
 #: What examples.argv has gained since, which examples.run imports too.
-_ADDED = ("_extract_resume_into",)
+_ADDED = ("_extract_resume_into", "_batch_dir_text", "_split_batch_output_dir")
 
 
 @pytest.mark.parametrize("name", _MOVED + _ADDED)
@@ -276,3 +283,120 @@ def test_resume_into_without_a_value_is_a_usage_error(
         argv._extract_resume_into(given)
     assert raised.value.code == 2
     assert capsys.readouterr().err.startswith("Error: --resume-into requires a value")
+
+
+# ---------------------------------------------------------------------------
+# hydra.run.dir / hydra.sweep.dir of a batch, moved from examples.run (#2364)
+# ---------------------------------------------------------------------------
+#
+# ``_old_extract_batch_output_dir`` is examples.run._extract_batch_output_dir()
+# before #2364, verbatim but for the names, the logger (a list it appends
+# to) and the ``${...}`` resolution, which did not move and is left out: the
+# values below hold none.
+
+_OLD_RUN_DIR_KEY = "hydra.run.dir"
+_OLD_SWEEP_DIR_KEY = "hydra.sweep.dir"
+
+
+def _old_extract_batch_output_dir(
+    argv: list[str], *, multirun: bool, warnings: list[str]
+) -> tuple[Path | None, list[str]]:
+    wanted = _OLD_SWEEP_DIR_KEY if multirun else _OLD_RUN_DIR_KEY
+    value: str | None = None
+    kept: list[str] = []
+    for arg in argv:
+        name, _, given = arg.lstrip("+~").partition("=")
+        if name not in (_OLD_RUN_DIR_KEY, _OLD_SWEEP_DIR_KEY):
+            kept.append(arg)
+            continue
+        if arg.startswith("~"):
+            continue
+        if name == wanted:
+            value = given
+        else:
+            warnings.append(
+                "%s is ignored: a batch%s writes to %s"
+                % (
+                    arg,
+                    " run with --multirun" if multirun else " without --multirun",
+                    wanted,
+                )
+            )
+    if value is None:
+        return None, kept
+    text = value.strip().strip("'\"")
+    assert "${" not in text
+    if not text:
+        print(f"Error: {wanted}= names no directory", file=sys.stderr)
+        sys.exit(2)
+    return Path(text), kept
+
+
+_BATCH_ARGS = (
+    "hydra.run.dir=out",
+    "hydra.sweep.dir=sweep",
+    "+hydra.run.dir=plus",
+    "++hydra.sweep.dir=plusplus",
+    "~hydra.run.dir",
+    "~hydra.sweep.dir=x",
+    "hydra.run.dir=",
+    "hydra.sweep.dir=  ",
+    "hydra.run.dir='quoted dir'",
+    'hydra.sweep.dir="dq"',
+    "hydra.run.dir=a=b",
+    "hydra.run.dirx=1",
+    "hydra.run=1",
+    "hydra.job.chdir=true",
+    "seed=3",
+    "scenario=demo",
+    "--multirun",
+    "+~hydra.run.dir=odd",
+    "hydra.sweep.dir= 'x' ",
+)
+
+
+def _batch_outcome(call: Any) -> tuple[object, str]:
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr):
+            return call(), stderr.getvalue()
+    except SystemExit as exc:
+        return ("exit", exc.code), stderr.getvalue()
+
+
+def test_the_batch_output_dir_is_split_off_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    new_warnings: list[str] = []
+
+    class _Logger:
+        def warning(self, message: str, *args: object) -> None:
+            new_warnings.append(message % args)
+
+    monkeypatch.setattr(run, "logger", _Logger())
+    rng = random.Random(2364)
+    for _ in range(3000):
+        args = [rng.choice(_BATCH_ARGS) for _ in range(rng.randrange(0, 6))]
+        multirun = rng.random() < 0.5
+        old_warnings: list[str] = []
+        new_warnings.clear()
+        old = _batch_outcome(
+            lambda: _old_extract_batch_output_dir(
+                args, multirun=multirun, warnings=old_warnings
+            )
+        )
+        new = _batch_outcome(
+            lambda: run._extract_batch_output_dir(args, multirun=multirun)
+        )
+        assert new == old, args
+        assert new_warnings == old_warnings, args
+
+
+def test_the_split_returns_the_value_the_kept_and_the_ignored() -> None:
+    assert argv._split_batch_output_dir(
+        ["seed=1", "hydra.sweep.dir=s", "+hydra.run.dir= 'r' ", "~hydra.run.dir"],
+        multirun=False,
+    ) == (" 'r' ", ["seed=1"], ["hydra.sweep.dir=s"])
+    assert argv._batch_dir_text(" 'r' ") == "r"
+    assert run._RUN_DIR_KEY is argv._RUN_DIR_KEY
+    assert run._SWEEP_DIR_KEY is argv._SWEEP_DIR_KEY

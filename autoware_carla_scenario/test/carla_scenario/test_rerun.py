@@ -1358,3 +1358,133 @@ def test_the_converter_gets_the_radius_only_when_there_is_one(tmp_path: Path) ->
         with RerunConverter(converter=_Module(), draw_radius_m=radius) as converter:
             converter.submit(log, "Case")
     assert calls == [{"strict": False}, {"strict": False, "draw_radius_m": 100.0}]
+
+
+# ---------------------------------------------------------------------------
+# The strict-coverage decision and the failed recordings of a batch's cases,
+# moved into the checked rerun_report (#2364)
+# ---------------------------------------------------------------------------
+#
+# The ``_old_*`` functions are rerun.check_strict_coverage() and
+# examples.run.rerun_errors() before #2364, verbatim but for the names (and
+# written_records() passed in).
+
+
+def _old_check_strict_coverage(converter: Any, written: list[str]) -> None:
+    known_types = getattr(converter, "RECORD_TYPES", None)
+    if known_types is None:
+        return
+    known = {str(t) for t in known_types}
+    missing = sorted(t for t in written if t not in known)
+    if not missing:
+        return
+    version = getattr(converter, "__version__", None)
+    which = (
+        f"autoware-carla-scenario-rerun {version}"
+        if isinstance(version, str)
+        else "the converter"
+    )
+    raise RerunStrictUnsupportedError(
+        f"rerun.strict is set, but {which} does not know "
+        f"{', '.join(missing)}, which the framework writes, so every strict "
+        "conversion would fail: set rerun.strict=false, or upgrade "
+        "autoware-carla-scenario-rerun to a version that knows them"
+    )
+
+
+def _old_rerun_errors(
+    results: list[ScenarioResult], conversions: list[RerunConversion]
+) -> dict[int, str]:
+    latest = {str(c.recording): c.error for c in conversions}
+    failed = {path: error for path, error in latest.items() if error is not None}
+    return {
+        i: failed[result.rerun_recording]
+        for i, result in enumerate(results)
+        if result.rerun_recording is not None and result.rerun_recording in failed
+    }
+
+
+def _outcome(call: Any) -> tuple[str, str]:
+    try:
+        call()
+    except RerunStrictUnsupportedError as exc:
+        return ("refused", str(exc))
+    return ("ok", "")
+
+
+def test_the_strict_coverage_decision_is_as_before() -> None:
+    import random  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    rng = random.Random(2364)
+    written = sorted(written_records())
+    pool = [*written, "extra", "other", 7]
+    for _ in range(2000):
+        converter = types.SimpleNamespace()
+        if rng.random() < 0.85:
+            kind = rng.choice((list, tuple, set, frozenset))
+            converter.RECORD_TYPES = kind(
+                rng.sample(pool, rng.randrange(0, len(pool) + 1))
+            )
+        if rng.random() < 0.7:
+            converter.__version__ = rng.choice(("0.4.1", "", 3, None, b"1.0"))
+        old = _outcome(lambda: _old_check_strict_coverage(converter, written))
+        new = _outcome(lambda: check_strict_coverage(converter))
+        assert new == old
+
+
+def test_the_strict_coverage_refusal_takes_plain_values() -> None:
+    from autoware_carla_scenario.rerun_report import (  # noqa: PLC0415
+        strict_coverage_refusal,
+    )
+
+    assert strict_coverage_refusal(None, ["a"], "1.0") is None
+    assert strict_coverage_refusal({"a", "b"}, ["b", "a"], None) is None
+    assert strict_coverage_refusal({"a"}, ["c", "a", "b"], "1.0") == (
+        "rerun.strict is set, but autoware-carla-scenario-rerun 1.0 does not "
+        "know b, c, which the framework writes, so every strict conversion "
+        "would fail: set rerun.strict=false, or upgrade "
+        "autoware-carla-scenario-rerun to a version that knows them"
+    )
+
+
+def test_the_failed_recordings_of_the_cases_are_as_before(tmp_path: Path) -> None:
+    import random  # noqa: PLC0415
+
+    from autoware_carla_scenario import rerun_report  # noqa: PLC0415
+    from autoware_carla_scenario.examples.run import rerun_errors  # noqa: PLC0415
+
+    rng = random.Random(1097)
+    names = ["A", "B", "C", "D"]
+    for _ in range(2000):
+        results = [
+            ScenarioResult(
+                True,
+                "ok",
+                1.0,
+                rerun_recording=(
+                    str(tmp_path / f"{rng.choice(names)}.rrd")
+                    if rng.random() < 0.8
+                    else None
+                ),
+            )
+            for _ in range(rng.randrange(0, 5))
+        ]
+        conversions = []
+        for _ in range(rng.randrange(0, 6)):
+            name = rng.choice(names)
+            conversions.append(
+                RerunConversion(
+                    name,
+                    tmp_path / f"{name}.trajectory.jsonl",
+                    tmp_path / f"{name}.rrd",
+                    error=rng.choice((None, f"E: {name}", "", "kept: S")),
+                    skipped=rng.random() < 0.2,
+                )
+            )
+        expected = _old_rerun_errors(results, conversions)
+        assert rerun_errors(results, conversions) == expected
+        assert (
+            rerun_report.rerun_errors([r.rerun_recording for r in results], conversions)
+            == expected
+        )

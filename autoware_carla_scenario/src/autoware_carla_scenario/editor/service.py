@@ -90,6 +90,7 @@ from .gate_fields import (
     GATE_ITEM_FIELD,
     GateField,
 )
+from .naming import unique_entity_id
 from .naming import unused_name as _unused_name
 from .revisions import (
     WRITER_DRAFTS,
@@ -2113,19 +2114,9 @@ def _as_int_list(raw: Any, label: str) -> Any:
 
 
 def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:
-    """Return an entity id based on *stem* that nothing else uses.
-
-    Non-ego entities are always numbered (``npc1``, ``npc2``, ...) so that ids
-    line up with the ``npc<N>`` CARLA role names the compiler assigns.
-    """
-    taken = {e.id for e in document.entities}
-    if stem == "ego":
-        if stem not in taken:
-            return stem
-    index = 1
-    while f"{stem}{index}" in taken:
-        index += 1
-    return f"{stem}{index}"
+    """Return an entity id based on *stem* that nothing else uses (the checked
+    :func:`.naming.unique_entity_id`)."""
+    return unique_entity_id({e.id for e in document.entities}, stem)
 
 
 def route_yaml(document: ScenarioDocument) -> str:
