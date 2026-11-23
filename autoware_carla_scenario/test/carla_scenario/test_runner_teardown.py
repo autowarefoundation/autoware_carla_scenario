@@ -672,6 +672,26 @@ def test_the_recorder_is_handed_an_absolute_path_for_a_relative_output_dir(
     assert Path(handed).suffix == ".log"
 
 
+def test_the_recorder_keeps_a_symlinked_output_dir_as_given(tmp_path: Path) -> None:
+    """An absolute ``output_dir`` reaches the recorder as it was spelled, its
+    symlinks not resolved: a CARLA server in another mount namespace may see
+    the link's path but not its target."""
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    (tmp_path / "real").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    runner, _world, _write, result = _stand_in_run(
+        tmp_path,
+        pass_conditions=[AlwaysTrueCondition(label="done")],
+        output_dir=link,
+    )
+    assert result is not None and result.passed
+    client = runner._client
+    (handed,) = client.start_recorder.call_args.args  # type: ignore[attr-defined]
+    assert Path(handed).parent == link
+
+
 @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
 def test_a_default_timeout_that_never_fires_is_refused_before_the_run_starts(
     tmp_path: Path, seconds: float

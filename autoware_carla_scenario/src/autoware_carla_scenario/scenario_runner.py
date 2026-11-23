@@ -1077,8 +1077,8 @@ class ScenarioRunner:
             output_dir: Directory where each run's outputs are saved, CARLA's
                 recorder log among them.  A relative one is taken from this
                 process's working directory; the recorder is handed it
-                resolved, since the CARLA server would take a relative path
-                from its own.
+                made absolute (symlinks kept), since the CARLA server would
+                take a relative path from its own.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
                 that down to the rate of the slowest client reading the
@@ -2046,8 +2046,11 @@ class ScenarioRunner:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 # Absolute: the CARLA server resolves a relative path against
-                # its own directory, not this process's (#2382).
-                self._client.start_recorder(str(output_path.resolve()))
+                # its own directory, not this process's (#2382).  Not
+                # resolved: a symlinked output_dir keeps the spelling it was
+                # given, which a server in another mount namespace may share
+                # where it does not share the link's target.
+                self._client.start_recorder(str(output_path.absolute()))
             except RuntimeError as error:
                 # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
                 # log must not fail an otherwise healthy scenario run.
