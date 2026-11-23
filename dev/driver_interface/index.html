@@ -3450,7 +3450,8 @@ OpenDRIVE is converted by <a href="https://pypi.org/project/roadgen/">roadgen</a
 and written to <code>&lt;map_dir&gt;/&lt;map_id&gt;/</code>, in the formats <code>driver.map_formats</code> names
 (Lanelet2 by default; <code>lanelet2</code>, <code>opendrive</code>, <code>osm</code>, <code>clipgt</code> and <code>commonroad</code>, a
 CommonRoad 2020a scenario), beside the OpenDRIVE source, roadgen's IR and its traces. <code>map_id</code>
-is <code>&lt;map name&gt;-&lt;first 12 hex digits of the OpenDRIVE's SHA-256&gt;</code>, so a set is written
+is <code>&lt;map name&gt;-&lt;first 12 hex digits of the OpenDRIVE's SHA-256&gt;</code> (with the SHA-256 of
+each file given rather than converted in it too: see below), so a set is written
 once per map and a changed map gets a new id. The id does not depend on the formats:
 a run asking for a format the set lacks writes it again with the formats it already
 holds and the new ones, under the same id, so a set only grows -- except by a format
@@ -3480,7 +3481,9 @@ with <code>driver.lanelet2_path</code>:</p>
 </code></pre></div>
 <p>The file is copied into the set as <code>lanelet2_map.osm</code>, as it is (with the
 <code>map_projector_info.yaml</code> beside it, if any), and its content is part
-of <code>map_id</code>, so another file gets another set. roadgen is not needed unless
+of <code>map_id</code>, as is the projector's, so another file -- or the same file with
+another projector, say another MGRS grid -- gets another set. A file with no
+projector beside it keeps the id it had before projectors were part of it. roadgen is not needed unless
 <code>driver.map_formats</code> names other formats too. The file carries no roadgen trace (the
 manifest marks the format <code>"provided": true</code>, its trace empty), so <code>ctx.stop_lines()</code>
 finds each light on the map instead (carla-driver-interface 2.3 and later):</p>
@@ -3736,7 +3739,7 @@ drift from the <code>.proto</code> files (<code>compile_protos.py --check</code>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 22:35:52 UTC"><span class="timeago" datetime="2026-11-21T22:35:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 22:35:52 UTC">2026-11-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 09:13:15 UTC"><span class="timeago" datetime="2026-11-23T09:13:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 09:13:15 UTC">2026-11-23</span>
   </span>
 
     
