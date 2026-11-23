@@ -51,6 +51,7 @@ runs:
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_codon_route.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_call_diagnostics.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_threading.py | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_argparse.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py | \
                 autoware_carla_scenario/test/*conftest.py | \
                 .github/workflows/ci.yml | .github/actions/*)

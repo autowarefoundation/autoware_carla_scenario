@@ -1,0 +1,110 @@
+# The part of Python's argparse the checked framework uses, for the checker
+# (docs/typecheck.md), with CPython 3.10's signatures or narrower ones, the
+# oldest Python the package supports: what serve_cli adds the web
+# applications' bind options with.
+#
+# - ArgumentTypeError, the exception a `type=` callable raises for a value it
+#   refuses (argparse makes it a usage error), built from nothing or one
+#   message;
+# - ArgumentParser(prog=None, usage=None, description=None, epilog=None, *,
+#   add_help=True, allow_abbrev=True, exit_on_error=True). CPython takes all
+#   of these by position too, after parents, formatter_class, prefix_chars,
+#   fromfile_prefix_chars, argument_default and conflict_handler, which are
+#   not declared: Codon 0.19 has no `*,`, so the last three follow `*_kw`
+#   and are passed by keyword only;
+# - its add_argument(*flags, default=None, type=None, help=None): the names
+#   or flags of an argument (at least one, each a str) and those three
+#   keywords (CPython's is add_argument(*args, **kwargs), so they are
+#   keyword-only there too). argparse passes a str default through `type`
+#   when it parses, so the check compiles `type` called with a str for a str
+#   default: a `type` that cannot take one fails it. It returns an opaque
+#   stand-in for the Action CPython returns, of which nothing is declared.
+#
+# parse_args(), Namespace, Action, add_argument()'s other keywords (action,
+# nargs, dest, metavar, choices, required, ...), subparsers, groups and the
+# rest are not declared, so the check refuses them. Nothing here runs: no
+# argument is added and none is parsed.
+
+import internal.static as static
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
+
+
+class ArgumentTypeError(Static[Exception]):
+    def __init__(self, message: str = ""):
+        super().__init__(message)
+
+
+# What add_argument() returns (CPython's Action): nothing of it is declared.
+class _Action:
+    pass
+
+
+# The names or flags of an argument: at least one, each a str.
+def _check_flags(flags):
+    if static.len(flags) == 0:
+        compile_error("add_argument() takes the argument's name or flags")
+    for flag in flags:
+        if not isinstance(flag, str):
+            compile_error("add_argument(): a name or flag is a str")
+
+
+# The keywords add_argument() declares; any other is refused here. Codon 0.19
+# cannot use a parameter named `type` that holds a function (passing it on
+# fails with "Partial takes 4 generics"), so add_argument() takes them as
+# `**kwargs`, checks them against this signature and reads them by name.
+def _declared_keywords(default=None, type=None, help=None):
+    pass
+
+
+# The help text: a str or None.
+def _check_help(help):
+    if isinstance(help, None) or isinstance(help, Optional[NoneType]):
+        pass
+    elif isinstance(help, str) or isinstance(help, Optional[str]):
+        pass
+    else:
+        compile_error("add_argument(): help is a str or None")
+
+
+# argparse passes a str default through `type` when it parses: compiled,
+# never made (`parsed` is False).
+def _convert_default(convert, default, parsed: bool):
+    if isinstance(convert, None) or isinstance(convert, Optional[NoneType]):
+        pass
+    elif isinstance(default, str) or isinstance(default, Optional[str]):
+        if parsed:
+            convert("")
+
+
+class ArgumentParser:
+    _parsed: bool
+
+    def __init__(
+        self,
+        prog: Optional[str] = None,
+        usage: Optional[str] = None,
+        description: Optional[str] = None,
+        epilog: Optional[str] = None,
+        *_kw,
+        add_help: bool = True,
+        allow_abbrev: bool = True,
+        exit_on_error: bool = True,
+    ):
+        _keyword_only(_kw, "ArgumentParser(): add_help, allow_abbrev and exit_on_error")
+        self._parsed = False
+
+    # add_argument(*flags, default=None, type=None, help=None).
+    def add_argument(self, *flags, **kwargs) -> _Action:
+        _check_flags(flags)
+        _declared_keywords(**kwargs)
+        if hasattr(kwargs, "help"):
+            _check_help(kwargs["help"])
+        if hasattr(kwargs, "type"):
+            if hasattr(kwargs, "default"):
+                _convert_default(kwargs["type"], kwargs["default"], self._parsed)
+        return _Action()

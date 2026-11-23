@@ -2638,7 +2638,7 @@ the first:
   Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
   `importlib.metadata`, or more of `os`, `pathlib`, `shutil`,
   `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
-  `getpass`, `importlib.metadata` or `urllib.parse` than their shims
+  `getpass`, `importlib.metadata`, `urllib.parse` or `argparse` than their shims
   declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
@@ -3252,7 +3252,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `array`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
+  `__future__`, `abc`, `argparse`, `array`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
   `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions`, `urllib.parse`, `uuid` and `xml.etree.ElementTree`
@@ -3430,7 +3430,21 @@ What Codon 0.19 needs that Python does not, beyond
   CPython 3.10, giving a `str` (empty in the check, as nothing runs), the user
   `hils.host_devices` sets the devices up for when `SUDO_USER` is unset;
   `getpass()`, the prompt for a password, and `GetPassWarning` are not
-  declared. `fcntl` declares `flock(fd, operation, /)`, of
+  declared. `argparse` declares what `serve_cli` adds the web applications'
+  `--host` and `--port` with (#2374): `ArgumentTypeError(message="")`, the
+  error a `type=` callable raises, `ArgumentParser(prog=None, usage=None,
+  description=None, epilog=None, *, add_help=True, allow_abbrev=True,
+  exit_on_error=True)` (CPython 3.10 takes the last three by position too,
+  after `parents` and the rest, which are not declared) and its
+  `add_argument(*flags, default=None, type=None, help=None)`, of one or more
+  `str` names or flags. argparse passes a `str` default through `type` when
+  it parses, so the check compiles `type` called with a `str` for a `str`
+  default, and a `type` that cannot take one fails it (CPython fails only
+  in `parse_args()`). What `add_argument()` returns is opaque.
+  `parse_args()` and its `Namespace`, `Action`, `add_argument()`'s other
+  keywords (`action`, `nargs`, `dest`, `metavar`, `choices`, ...),
+  subparsers and the rest are not declared: a module that reads its command
+  line by the Namespace's attributes stays excluded. `fcntl` declares `flock(fd, operation, /)`, of
   an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
   `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
   `os.path` declares `join()`,
