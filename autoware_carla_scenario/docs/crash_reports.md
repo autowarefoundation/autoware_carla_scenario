@@ -20,7 +20,7 @@ outputs/2026-11-22/10-15-00/crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d
 ├── traceback.txt   # the traceback, chained exceptions included
 ├── log.txt         # the last log records of the process (5000 by default)
 ├── context.json    # command line, overrides, output directory, versions, environment
-├── config.yaml     # the run's composed config (a run through Hydra)
+├── config.yaml     # the case's composed config (none outside a case)
 └── repro.sh        # the command that runs the same case again
 ```
 
@@ -115,7 +115,7 @@ under the Functional Source License, which is not an open-source license.
 | `SCENARIO_CRASH_REPORT_DSN` | Also send each report to this project (a Sentry DSN, such as GlitchTip's); nothing is sent without it |
 | `SCENARIO_CRASH_REPORT_ITEMS` | What a report holds ([items](#choosing-what-a-report-holds)); default `all` |
 | `SCENARIO_CRASH_REPORT_SEND_ITEMS` | What of a report is sent with a DSN; default: what it holds |
-| `SCENARIO_CRASH_REPORT_MAX_FILE_SIZE` | The largest file of a report (`1MiB`, `512KB`, `1048576`; `0` for no limit); default `1MiB` |
+| `SCENARIO_CRASH_REPORT_MAX_FILE_SIZE` | The largest `log.txt`, `traceback.txt` and `config.yaml` of a report (`1MiB`, `512KB`, `1048576`; `0` for no limit); default `1MiB` |
 | `SCENARIO_CRASH_REPORT_MAX_REPORTS` | How many reports one process writes at most (`0` for no limit); default `20` |
 | `SCENARIO_CRASH_REPORT_LOG_LINES` | How many log records `log.txt` keeps; default `5000` |
 
@@ -149,24 +149,27 @@ export SCENARIO_CRASH_REPORT_SEND_ITEMS=log,config,repro  # write all, send less
 sent. Only what a report holds can be sent. The files on disk are written
 whole either way, so you can keep everything locally and send a narrower
 report. For example, leaving out `environment` from the sent items drops it
-from the sent `context.json` and drops the `export` lines from the sent
-`repro.sh`.
+from the sent `context.json` and sends a `repro.sh` written without the
+`export` lines.
 
 ## Size limits
 
 The defaults keep a report useful while bounding what a failing batch can
 write:
 
-- **`MAX_FILE_SIZE` (1 MiB):** applies to each file of a report except
-  `event.json`. A longer file is cut, with a line saying how many bytes were
-  dropped. `log.txt` and `traceback.txt` keep their end, where the error is.
-  Other files keep their start. At the default length, `log.txt` fits in this
-  limit, and a config is a few kilobytes. The Sentry SDK bounds `event.json`
-  itself: it shortens long values and caps how much of each frame it keeps.
+- **`MAX_FILE_SIZE` (1 MiB):** applies to `log.txt`, `traceback.txt` and
+  `config.yaml`. A longer file is cut, with a line saying how many bytes were
+  dropped. `log.txt` and `traceback.txt` keep their end, where the error is;
+  `config.yaml` keeps its start. At the default length, `log.txt` fits in this
+  limit, and a config is a few kilobytes. `context.json` and `repro.sh` are
+  small and never cut: cut, they would be neither JSON nor a script. The
+  Sentry SDK bounds `event.json` itself: it shortens long values and caps how
+  much of each frame it keeps.
 - **`MAX_REPORTS` (20):** applies to each process. A batch whose every case
   fails on every attempt would otherwise write a report per attempt. After the
   limit, one warning says so, and nothing more is written or sent. The limit
   counts every report the process writes, so in a batch the first failures use
   it up. Native-crash reports are not counted.
-- **`LOG_LINES` (5000):** applies to `log.txt`. 5000 records is a few minutes
-  of a run's log, including the start of the case.
+- **`LOG_LINES` (5000):** applies to `log.txt`, which keeps the records at
+  `INFO` and above. 5000 records is a few minutes of a run's log, including
+  the start of the case.

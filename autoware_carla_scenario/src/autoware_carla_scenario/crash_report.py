@@ -12,7 +12,7 @@ its own under ``crash_reports/`` in the run's output directory::
         traceback.txt    # the traceback, chained exceptions included
         log.txt          # the last log records of the process
         context.json     # command line, overrides, versions, environment
-        config.yaml      # the run's composed config (a Hydra run only)
+        config.yaml      # the case's composed config (none outside a case)
         repro.sh         # the command that runs the same case again
 
 What is captured:
@@ -283,10 +283,16 @@ class _LocalTransport(Transport):
             self._reporter.write_envelope(envelope)
         except Exception:  # noqa: BLE001 - a report must never end the run
             logger.warning("Cannot write the crash report", exc_info=True)
-        if self.upstream is not None:
+        if self.upstream is None:
+            return
+        # Never lets the report written above go unnamed: what raises here
+        # would be swallowed by the SDK, and capture() return None.
+        try:
             self.upstream.capture_envelope(
                 _for_sending(envelope, self._reporter.settings)
             )
+        except Exception:  # noqa: BLE001 - a report must never end the run
+            logger.warning("Cannot send the crash report", exc_info=True)
 
     def flush(self, timeout: float, callback: Any | None = None) -> None:
         if self.upstream is not None:
@@ -303,6 +309,12 @@ def _for_sending(envelope: Envelope, settings: Settings) -> Envelope:
     if not left_out:
         return envelope
     sent = Envelope(headers=dict(envelope.headers))
+    context: dict[str, Any] | None = None
+    if "environment" in left_out:
+        for item in envelope.items:
+            if item.headers.get("filename") == "context.json":
+                # Never cut (context_files()): whole JSON.
+                context = json.loads(item.get_bytes())
     for item in envelope.items:
         event = item.get_event()
         if event is not None:
@@ -315,15 +327,20 @@ def _for_sending(envelope: Envelope, settings: Settings) -> Envelope:
         if _ITEM_FILES.get(name) in left_out:
             continue
         data = item.get_bytes()
-        if "environment" in left_out and name == "context.json":
-            context = json.loads(data)
-            context.pop("environment", None)
-            data = json.dumps(context, indent=2).encode()
+        if context is not None and name == "context.json":
+            data = json.dumps(
+                {k: v for k, v in context.items() if k != "environment"}, indent=2
+            ).encode()
         elif "environment" in left_out and name == "repro.sh":
-            data = b"".join(
-                line
-                for line in data.splitlines(keepends=True)
-                if not line.startswith(b"export ")
+            if context is None:
+                continue  # nothing to write it again from: not sent
+            # Written again without the environment, not filtered line by
+            # line: a value of several lines spans several.
+            data = repro_script(
+                [str(a) for a in context["argv"]],
+                str(context["cwd"]),
+                {},
+                [str(a) for a in context["repro"]],
             )
         sent.add_item(Item(payload=data, headers=dict(item.headers)))
     return sent
@@ -407,21 +424,37 @@ class _Reporter:
         return repro_script(self.argv, str(self.cwd), env, self.repro_command())
 
     def context_files(self) -> dict[str, bytes]:
-        """The files of a report that say how to run it again."""
+        """The files of a report that say how to run it again.
+
+        Only ``config.yaml`` is cut to :attr:`Settings.max_file_size`:
+        ``context.json`` and ``repro.sh`` are small, and cut they would be
+        neither JSON nor a script.
+        """
         items = self.settings.items
-        limit = self.settings.max_file_size
         files = {"context.json": json.dumps(self.context_dict(), indent=2).encode()}
         if "repro" in items:
             files["repro.sh"] = self.repro_script()
         if self.context.config_yaml is not None and "config" in items:
-            files["config.yaml"] = self.context.config_yaml.encode()
-        return {name: _truncate(data, limit) for name, data in files.items()}
+            files["config.yaml"] = _truncate(
+                self.context.config_yaml.encode(), self.settings.max_file_size
+            )
+        return files
 
     def log_text(self) -> bytes:
         """``log.txt``, cut to :attr:`Settings.max_file_size` from its start."""
         return _truncate(
             self.log_buffer.text(), self.settings.max_file_size, keep_end=True
         )
+
+    def attach_log_buffer(self) -> None:
+        """Put :attr:`log_buffer` on the root logger, unless it is there or
+        reports hold no log: a ``logging.config.dictConfig()`` (Hydra's, at
+        the start of each job) takes the root logger's handlers off."""
+        if "log" not in self.settings.items:
+            return
+        root = logging.getLogger()
+        if self.log_buffer not in root.handlers:
+            root.addHandler(self.log_buffer)
 
     # -- writing -------------------------------------------------------------
 
@@ -572,10 +605,10 @@ def install(argv: Sequence[str] | None = None) -> bool:
         scope.clear_breadcrumbs()
     if dsn:
         transport.upstream = HttpTransport(sentry_sdk.get_client().options)
-    if "log" in settings.items:
-        # It sees what reaches the root logger: INFO and up once the CLI's
-        # logging.basicConfig() has run.
-        logging.getLogger().addHandler(reporter.log_buffer)
+    # It sees what reaches the root logger: INFO and up once the CLI's
+    # logging.basicConfig() has run, which it does before this (a handler on
+    # the root logger first would make basicConfig() do nothing).
+    reporter.attach_log_buffer()
     for name in CAPTURED_LOGGERS:
         logging.getLogger(name).addHandler(reporter.capture_handler)
     _REPORTER[0] = reporter
@@ -645,6 +678,7 @@ def set_output_dir(output_dir: Path) -> None:
     if reporter is None:
         return
     reporter.context = _RunContext(report_dir=Path(output_dir) / CRASH_REPORTS_DIRNAME)
+    reporter.attach_log_buffer()
     reporter.arm_native()
 
 
@@ -674,12 +708,15 @@ def run_context(
         overrides=None if overrides is None else [str(o) for o in overrides],
         config_yaml=config_yaml,
     )
+    # Again, if a dictConfig() (a Hydra job's) took it off.
+    reporter.attach_log_buffer()
     reporter.arm_native()
     try:
         yield
     finally:
         reporter.context = previous
         if rearm and _REPORTER[0] is reporter:
+            reporter.attach_log_buffer()
             reporter.arm_native()
         else:
             reporter.disarm_native()
