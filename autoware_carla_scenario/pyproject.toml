@@ -36,6 +36,9 @@ dependencies = [
     # Linux x86_64 and aarch64 (aarch64 from typesafe-carla 0.4.0 on).
     "typesafe-carla>=0.8.1,<0.9; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
     "pyxodr>=0.1.0",
+    # maps/road_network_cache.py parses OpenDRIVE with lxml directly; pyxodr
+    # depends on it too, but that is pyxodr's choice, not a promise to us.
+    "lxml>=5.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
     # build would add ~125 MB of GTK/GStreamer libraries (and a libGL system
