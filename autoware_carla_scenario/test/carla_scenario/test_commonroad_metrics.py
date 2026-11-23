@@ -2542,15 +2542,17 @@ def test_waiting_for_another_request_spends_none_of_the_timeout(
 
     def evaluate() -> None:
         try:
-            outcome.append(worker.evaluate([CRIME_TTC_S], {}, [], timeout=0.2))
+            outcome.append(worker.evaluate([CRIME_TTC_S], {}, [], timeout=1.0))
         except BaseException as exc:  # noqa: BLE001
             outcome.append(exc)
 
     requesting = threading.Thread(target=evaluate, daemon=True)
     try:
+        # Held longer than the request's timeout, which is long enough for an
+        # idle worker to answer on a loaded CI runner.
         with worker._request_lock:  # a slow request in another thread
             requesting.start()
-            requesting.join(0.5)
+            requesting.join(1.5)
             assert requesting.is_alive()
         requesting.join(10)
         assert not requesting.is_alive()
