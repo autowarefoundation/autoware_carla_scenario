@@ -88,9 +88,11 @@ class Settings:
     Attributes:
         items: What reports hold (:data:`ITEMS`).
         send_items: What of them is sent, with a DSN (within :attr:`items`).
-        max_file_size: The largest file of a report other than
-            ``event.json``, in bytes; ``None``: no limit.  1 MiB: ``log.txt``
-            at its default length fits, a config is a few kilobytes.
+        max_file_size: The largest ``log.txt``, ``traceback.txt`` and
+            ``config.yaml`` of a report, in bytes; ``None``: no limit
+            (``context.json`` and ``repro.sh`` are never cut).  1 MiB:
+            ``log.txt`` at its default length fits, a config is a few
+            kilobytes.
         max_reports: How many reports a process writes at most; ``None``: no
             limit.  20: a batch whose every case fails on every attempt does
             not fill the disk, nor a Sentry project's quota.

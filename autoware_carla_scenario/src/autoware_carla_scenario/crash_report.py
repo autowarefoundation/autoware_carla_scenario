@@ -12,7 +12,7 @@ its own under ``crash_reports/`` in the run's output directory::
         traceback.txt    # the traceback, chained exceptions included
         log.txt          # the last log records of the process
         context.json     # command line, overrides, versions, environment
-        config.yaml      # the run's composed config (a Hydra run only)
+        config.yaml      # the case's composed config (none outside a case)
         repro.sh         # the command that runs the same case again
 
 What is captured:

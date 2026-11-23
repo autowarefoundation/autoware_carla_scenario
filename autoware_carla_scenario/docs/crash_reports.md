@@ -20,7 +20,7 @@ outputs/2026-11-22/10-15-00/crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d
 ├── traceback.txt   # the traceback, chained exceptions included
 ├── log.txt         # the last log records of the process (5000 by default)
 ├── context.json    # command line, overrides, output directory, versions, environment
-├── config.yaml     # the run's composed config (a run through Hydra)
+├── config.yaml     # the case's composed config (none outside a case)
 └── repro.sh        # the command that runs the same case again
 ```
 
