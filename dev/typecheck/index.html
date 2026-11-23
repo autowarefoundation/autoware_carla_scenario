@@ -321,6 +321,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../coding_agents/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Writing Scenarios with a Coding Agent
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../usage/" class="md-tabs__link">
         
   
@@ -1067,6 +1086,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../coding_agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Scenarios with a Coding Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../usage/" class="md-nav__link">
         
   
@@ -1134,10 +1180,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
             
   
   
@@ -1155,8 +1201,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_7">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5055,9 +5101,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-353 of the package's 484
-modules (73%; about 112,400 of
-187,600 lines) are <code>CHECKED</code>: the kinematics, the
+354 of the package's 486
+modules (73%; about 112,500 of
+187,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5164,7 +5210,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 353 CHECKED modules</summary>
+<summary>The 354 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5352,6 +5398,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>adversity_event</code></td>
 <td>What an action reports for the run's log, beside its lifecycle (#397).</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td>Scenario-writing skills for coding agents, and <code>scenario-agent</code>.</td>
 </tr>
 <tr>
 <td><code>atomic_file</code></td>
@@ -6807,7 +6857,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), traffic.sumo.config's option checks (the SUMO backend's), traffic.authoring._number and _spread (the traffic-parameter form's fields), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 131 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 132 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6837,10 +6887,11 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 131 EXCLUDED modules, and why</summary>
+<summary>The 132 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
+<li><code>agent.cli</code>: imports agent_skill_installer (inside its functions), yaml and argparse, and hands the process to the agent with <code>os.execv()</code>, which are not checked or declared</li>
 <li><code>authoring</code>: re-exports authoring.models (pydantic), authoring.compiler, authoring.hydra_config, authoring.starter and authoring.validator (pydantic, through authoring.models), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging.specifiers) and authoring.registry (<code>Any</code> field defaults), none of which is checked or modelled</li>
 <li><code>authoring._builders_generated</code>: its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models</li>
 <li><code>authoring.builders</code>: dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked</li>
