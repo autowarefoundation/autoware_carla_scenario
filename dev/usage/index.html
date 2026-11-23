@@ -4497,17 +4497,17 @@ key's own spawn (<code>ego.spawn_s</code> when the sweep picks <code>ego.spawn_l
 replaces the pick, several picks that walk back to the same predecessor can
 end as the same case. Each distinct case runs once, as the first of those
 picks gives it, and the log names the picks that were merged.</p>
-<p>A walk-back that runs out of predecessors stops at the start of the last
-lanelet it reached and logs how much of the offset it could not satisfy. On a
-pick with no lanelet before it, that is the pick's own start, which is the
-stop line itself where the line is at the start, as a junction lanelet's
-usually is. The shipped <code>intersection_passing</code> and <code>temporary_stop</code> sweeps
-leave such picks out by requiring a lanelet before the pick (any lanelet, as
-<code>lanelet_length</code> of 0 m or more matches). That drops every pick with nothing
-before it, including one whose line is far enough in that it falls only a
-little short, and it does not make the offset fit: at each step the walk-back
-takes the routing graph's first predecessor, and the lane it reaches can
-itself run out.</p>
+<p>A walk-back that runs out of predecessors before it has covered the offset
+fails, and the sweep drops the pick with a warning naming how much road there
+is behind the line: no spawn on that road is <code>offset</code> metres before it, so
+every case a sweep expands to starts the full offset before its line (#2392).
+At each step the walk-back takes the routing graph's first predecessor, so a
+pick is dropped when that lane runs out, even if another lane before it is
+long enough. The shipped <code>intersection_passing</code> and <code>temporary_stop</code> sweeps
+also require a lanelet before the pick (any lanelet, as <code>lanelet_length</code> of
+0 m or more matches), which leaves out every pick with nothing before it
+(#2350), including one whose line is far enough in for the offset to fit on
+the pick.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">following_of</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">constraints</span><span class="p">:</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lanelet_length</span>
@@ -7635,7 +7635,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 15:27:49 UTC"><span class="timeago" datetime="2026-11-23T15:27:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 15:27:49 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 16:27:24 UTC"><span class="timeago" datetime="2026-11-23T16:27:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 16:27:24 UTC">2026-11-23</span>
   </span>
 
     
