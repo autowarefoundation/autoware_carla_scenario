@@ -4,7 +4,8 @@ The ego is spawned on ``ego.spawn_lanelet_id``. Without expanding, that is
 lanelet 285 of the Nishi-Shinjuku map, the default in
 ``conf/scenario/temporary_stop/temporary_stop.yaml``. The YAML's ``sweep:``
 expands one case per stop line that no traffic light governs (a stop sign's),
-skipping the map's lanelets with no 3D model; each case replaces
+skipping the map's lanelets with no 3D model and the lines with less than
+15 m of road behind them; each case replaces
 ``ego.spawn_lanelet_id``, ``ego.spawn_s`` (15 m short of the line, on the
 lanelet before when the line is nearer its lanelet's start than that) and
 ``ego.goal_lanelet_id`` (the lanelet past the line).

@@ -123,6 +123,12 @@ class StopLineOffsetBinding:
         Returns:
             A :class:`BindingResult` with the spawn position on a
             predecessor lanelet and the predecessor's ID as override.
+
+        Raises:
+            ValueError: If the walk runs out of predecessors before it has
+                covered *shortfall*: the road before the stop line is shorter
+                than the offset, and no spawn on it is *offset* metres before
+                the line (#2392).
         """
         current: ConstLanelet = lanelet
         remaining = shortfall
@@ -130,18 +136,16 @@ class StopLineOffsetBinding:
         while remaining > 0:
             predecessors = routing_graph.previous(current)
             if not predecessors:
-                logger.warning(
-                    "[%s] No more predecessors for lanelet %d; "
-                    "%.2f m of offset could not be satisfied. "
-                    "Placing at start of lanelet %d.",
-                    self.target_key,
-                    current.id,
-                    remaining,
-                    current.id,
+                # The start of the last lanelet would be short of the offset,
+                # so the case would not start where the scenario says (#2392):
+                # refuse, and the sweep drops the pick.
+                raise ValueError(
+                    f"[{self.target_key}] lanelet {current.id} has no lanelet "
+                    f"before it: the road behind the stop line of lanelet "
+                    f"{original_lanelet_id} is {self.offset - remaining:.2f} m "
+                    f"long, short of the {self.offset:g} m offset; cannot "
+                    "resolve stop_line_offset binding."
                 )
-                result_lanelet = current
-                result_s = 0.0
-                break
 
             prev = predecessors[0]
             prev_length = lanelet2.geometry.length2d(prev)
@@ -189,7 +193,9 @@ class StopLineOffsetBinding:
         result would be negative), the method walks backwards through
         predecessor lanelets to find a position that satisfies the full
         offset distance, returning a :class:`BindingResult` with the
-        predecessor lanelet ID as ``lanelet_id_override``.
+        predecessor lanelet ID as ``lanelet_id_override``.  It raises
+        :class:`ValueError` where the predecessors run out first, so the
+        sweep drops the pick rather than start a case short of the offset.
 
         The search terminates when the accumulated distance from the spawn
         lanelet end exceeds the offset (further stop lines would only clamp

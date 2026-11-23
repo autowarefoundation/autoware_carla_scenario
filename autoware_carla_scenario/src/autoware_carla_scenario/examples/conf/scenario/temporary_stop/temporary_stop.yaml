@@ -31,10 +31,10 @@ sweep:
       - type: and
         constraints:
           # A lane before it, which stop_line_offset walks back onto where the
-          # line is nearer its lanelet's start than 15 m: a pick with none
-          # starts the ego at its own start, already stopped, which is on the
-          # line where the line is at the start and passes the run at once
-          # (#2350). A lanelet_length of 0 m or more is any lanelet.
+          # line is nearer its lanelet's start than 15 m (#2350). The binding
+          # drops a pick whose road behind the line runs out short of 15 m
+          # (#2392), so every case starts 15 m before the line. A
+          # lanelet_length of 0 m or more is any lanelet.
           - type: following_of
             constraints:
               - type: lanelet_length
@@ -49,7 +49,8 @@ sweep:
               values: ${map.no_3d_model_lanelet_ids}
   bindings:
     # 15 m short of the stop line, walking back onto the lane before where the
-    # line is nearer its lanelet's start than that.
+    # line is nearer its lanelet's start than that; a pick with less than
+    # 15 m of road behind the line is dropped.
     ego.spawn_s:
       type: stop_line_offset
       offset: 15.0
