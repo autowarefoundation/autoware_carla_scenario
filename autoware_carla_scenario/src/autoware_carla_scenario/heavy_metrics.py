@@ -100,7 +100,7 @@ def _check_period(name: str, period: float) -> None:
             f"{name} must be positive and finite, got {shown(period)}"
         ) from None
     if not (finite and period > 0.0):
-        raise ValueError(f"{name} must be positive and finite, got {period}")
+        raise ValueError(f"{name} must be positive and finite, got {shown(period)}")
 
 
 def evaluates(heavy: bool, key: str) -> bool:

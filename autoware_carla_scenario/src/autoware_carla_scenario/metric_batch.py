@@ -37,7 +37,7 @@ from .metric_frames import (
     Frame,
     FrameRecorder,
     MetricSeries,
-    _finite,
+    _not_nan,
     sampled,
 )
 from . import metrics as _metrics
@@ -218,7 +218,7 @@ def _replay(
                             exc_info=error,
                         )
                 series[key].times.append(frame.t)
-                series[key].values.append(_finite(value))
+                series[key].values.append(_not_nan(value))
     finally:
         _metrics._MOTION[0] = held_motion  # noqa: SLF001
         _metrics._RUN["weight"] = held_weight  # noqa: SLF001
@@ -292,5 +292,5 @@ def evaluate_metrics(
             values = evaluate_commonroad(picked, carla_map, keys_at)
             for key in keys_at:
                 series[key].times = [frame.t for frame in picked]
-                series[key].values = [_finite(v) for v in values[key]]
+                series[key].values = [_not_nan(v) for v in values[key]]
     return series

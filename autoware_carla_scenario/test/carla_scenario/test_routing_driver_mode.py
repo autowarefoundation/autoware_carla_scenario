@@ -527,6 +527,30 @@ class TestNpcCollisions:
             falls += monitor.tick(world, tick * 0.05)[1]  # type: ignore[arg-type]
         assert [round(f.t, 2) for f in falls] == [8.5]
 
+    def test_a_walker_already_gone_is_logged_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A walker whose destroy() raises was already gone: that is the one
+        line logged, not "despawned" as well (#2401)."""
+
+        def destroy() -> None:
+            raise RuntimeError("actor already destroyed")
+
+        walker = SimpleNamespace(id=5, destroy=destroy)
+        world = SimpleNamespace(
+            get_actor=lambda actor_id: walker,
+            get_actors=lambda: SimpleNamespace(filter=lambda pattern: []),
+        )
+        monitor = NpcCollisionMonitor()
+        with caplog.at_level(logging.INFO, logger="autoware_carla_scenario"):
+            removed = monitor._remove_walker(world, 5, "w1")  # type: ignore[arg-type]
+        assert removed
+        lines = [
+            r.getMessage() for r in caplog.records if "fallen walker" in r.getMessage()
+        ]
+        assert lines == ["fallen walker: 'w1' was already gone from the world"]
+        monitor.close()
+
     def test_a_walker_that_appears_is_not_fallen(self) -> None:
         walker = _actor(5, "walker.pedestrian.0001", "w1")
         world = _MonitoredWorld([walker])
