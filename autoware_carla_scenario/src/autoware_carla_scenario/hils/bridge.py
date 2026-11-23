@@ -72,6 +72,7 @@ from typing import (
 import numpy as np
 
 from ..canvas import use_canvas
+from ..constants import FIXED_DELTA_SECONDS
 from ..entity_role import find_actor_in_world
 from ..sensor.base import put_dropping_oldest
 from .config import DeviceSpec, HilsConfig, MessageSpec, SensorSpec, StepSpec
@@ -1013,7 +1014,7 @@ class HilsBridge:
         )
         for message_device in self._messages:
             message_device.start(self._signals)
-        dt = float(snapshot.delta_seconds) or 0.05
+        dt = float(snapshot.delta_seconds) or FIXED_DELTA_SECONDS
         try:
             self._run_steps("scenario_start", strict=True)
         finally:

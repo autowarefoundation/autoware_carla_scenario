@@ -70,10 +70,12 @@ def map_pose_to_carla(
     sense (counter-clockwise radians to clockwise degrees).  ``z`` and the yaw
     stay ``None`` when the pose does not state them.
     """
-    offset_x, offset_y = mgrs_offset
+    from ..coordinate.transform import map_xy_to_carla  # noqa: PLC0415
+
+    x, y = map_xy_to_carla(pose.x, pose.y, mgrs_offset)
     return (
-        pose.x - offset_x,
-        -(pose.y - offset_y),
+        x,
+        y,
         None if pose.z is None else pose.z - z_offset,
         None if pose.yaw is None else -math.degrees(pose.yaw),
     )

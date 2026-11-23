@@ -22,7 +22,6 @@ import json
 import os
 import re
 import shlex
-import signal
 import subprocess
 import sys
 import threading
@@ -45,6 +44,10 @@ from ..slurm.manifest import (
 )
 from ..slurm.queue import ACTIVE_STATES, squeue_states
 from ..slurm.records import JsonMembers
+
+# SIGKILLs a submitting process's group: the ``scenario`` it ran, the ``uv
+# run`` in front of it and the sbatch or checks it started.
+from ..utils.process_group import kill_group as _kill_group
 from .case_paths import session_order
 from .slurm_case_state import case_state, no_job_case_state
 
@@ -277,16 +280,6 @@ def _new_manifests(base: Path, before: set[Path]) -> list[Path]:
 #: past them the submit is recorded as failed (:data:`TIMED_OUT`), and the
 #: viewer takes a new one.
 SUBMIT_TIMEOUT_SECONDS = 1800.0
-
-
-def _kill_group(process: subprocess.Popen[str]) -> None:
-    """SIGKILL *process*'s group (its own session's, ``start_new_session``):
-    the ``scenario`` it ran, the ``uv run`` in front of it and the sbatch or
-    checks it started."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass  # Every process of the group has ended already.
 
 
 def _joined(stdout: str | None, stderr: str | None) -> str:

@@ -40,6 +40,7 @@ import math
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition
+from ..constants import tick_seconds
 from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 from ..entity.pedestrian_entity import DEFAULT_WALKING_SPEED_MPS, PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
@@ -61,7 +62,6 @@ from ._trajectory_run import (
     ARRIVAL_TOLERANCE_M,
     TrajectoryRun,
     _entity_actor,
-    _tick_seconds,
 )
 from ..control_domain import ControlDomain, movement_of
 from .base import TickTiming
@@ -1025,7 +1025,7 @@ class RoutingAction(TrajectoryRun):
             cruise,
             limit,
             (location.x, location.y),
-            _tick_seconds(world),
+            tick_seconds(world),
         )
         if abs(speed - self._sent) >= _SPEED_RESEND_MPS or (
             speed == 0.0 and self._sent != 0.0
@@ -1148,7 +1148,7 @@ class RoutingAction(TrajectoryRun):
                 self._cruise_walk(),
                 _WALKER_LIMIT_MPS,
                 (location.x, location.y),
-                _tick_seconds(world),
+                tick_seconds(world),
             )
         if actor is not None:
             from ._trajectory_run import _vehicle_before_walker  # noqa: PLC0415
@@ -1482,11 +1482,15 @@ def _matched_lanes(
     """The lane stops a track of CARLA ``(x, y, yaw)`` samples runs along,
     or none and why (:func:`~autoware_carla_scenario.traffic.route_match.match_track`)."""
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.transform import carla_xy_to_map  # noqa: PLC0415
     from ..traffic.route_match import TrackMatchError, match_track  # noqa: PLC0415
 
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    frame = [(x + offset_x, -y + offset_y, -math.radians(yaw)) for x, y, yaw in samples]
+    offset = mm.mgrs_offset
+    frame: list[tuple[float, float, float]] = []
+    for x, y, yaw in samples:
+        map_x, map_y = carla_xy_to_map(x, y, offset)
+        frame.append((map_x, map_y, -math.radians(yaw)))
     try:
         return match_track(frame, mm.lanelet_map, mm.routing_graph), ""
     except TrackMatchError as error:

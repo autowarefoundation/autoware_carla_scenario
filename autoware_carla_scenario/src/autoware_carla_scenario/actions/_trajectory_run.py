@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Callable, Optional, Union
 from ..action_state import ActionState
 from ..conditions import BaseCondition
 from ..conditions.base import ScenarioResult
+from ..constants import tick_seconds
 from ..coordinate.poses import CarlaWorldPose
 from ..entity.pedestrian_entity import (
     WALKER_LOOKAHEAD_M,
@@ -833,12 +834,12 @@ class TrajectoryRun(BaseAction):
         # reaches it: the same tolerance as the timed branch above.
         if not resolved.closed and self._distance >= resolved.length - 1e-9:
             self._finished = True
-        self._distance += self._speed * _tick_seconds(world)
+        self._distance += self._speed * tick_seconds(world)
         return sample
 
     def _drive(self, world: "carla.World", actor: "carla.Actor") -> None:
         """One tick of ``FOLLOW`` mode for a vehicle."""
-        from carla_driver_interface.geometry import Pose  # noqa: PLC0415
+        from ..driver.observation import to_local_pose  # noqa: PLC0415
 
         resolved = self._resolved
         assert resolved is not None and self._follower is not None
@@ -902,14 +903,9 @@ class TrajectoryRun(BaseAction):
             plan,
             # The plan's frame is CARLA's with y flipped: right-handed, as the
             # controller expects.
-            Pose.from_xyz_yaw(
-                transform.location.x,
-                -transform.location.y,
-                transform.location.z,
-                -math.radians(transform.rotation.yaw),
-            ),
+            to_local_pose(transform),
             math.hypot(velocity.x, velocity.y),
-            _tick_seconds(world),
+            tick_seconds(world),
             yaw_rate_rps=-math.radians(angular.z),
             now_us=int(round(self._elapsed * 1e6)),
             gear=int(gear),
@@ -1626,11 +1622,6 @@ def _resolve_in_world(
     return resolve_trajectory(
         trajectory, road_height(run_carla_map(world)), reference=reference
     )
-
-
-def _tick_seconds(world: "carla.World") -> float:
-    """How much simulated time the last tick covered."""
-    return float(world.get_snapshot().timestamp.delta_seconds)
 
 
 def _walker_speed(speed_mps: float) -> float:

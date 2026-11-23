@@ -73,7 +73,13 @@ from .registry import (
     read_bool,
 )
 
-__all__ = ["Issue", "Severity", "ValidationReport", "validate_document"]
+__all__ = [
+    "Issue",
+    "Severity",
+    "ValidationReport",
+    "signal_controller_nodes",
+    "validate_document",
+]
 
 Severity = Literal["error", "warning"]
 
@@ -2398,7 +2404,7 @@ def _check_signal_uses(
     out: _Collector, document: ScenarioDocument, by_name: "dict[str, Any]"
 ) -> None:
     """Every action and condition naming a controller and phase must resolve."""
-    for path, node in _signal_controller_nodes(document):
+    for path, node in signal_controller_nodes(document):
         controller_name = str(node.params.get("controller") or "").strip()
         phase_name = str(node.params.get("signal_phase") or "").strip()
         controller = by_name.get(controller_name)
@@ -2432,13 +2438,15 @@ def _check_signal_uses(
             )
 
 
-def _signal_controller_nodes(
+def signal_controller_nodes(
     document: ScenarioDocument,
 ) -> "list[tuple[str, Any]]":
     """Every action and condition in *document* of the controller type.
 
     Conditions are reached wherever they are written -- a trigger, a nested
     composition, an assertion -- because a phase name is just as wrong in each.
+    The editor renames a controller or a phase through the same walk
+    (editor.service), so a rename reaches every card this check reads.
     """
     found: "list[tuple[str, Any]]" = []
 

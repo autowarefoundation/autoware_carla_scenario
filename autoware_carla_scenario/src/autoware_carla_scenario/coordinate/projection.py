@@ -89,11 +89,24 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
     """Return the map's descriptor as a mapping, empty when there is none.
 
     Both things read out of it -- the projection and the origin -- come through
-    here, so "is there a descriptor, and is it usable" is decided once.
+    here, so "is there a descriptor, and is it usable" is decided once
+    (:func:`read_projector_info`).
+    """
+    info = read_projector_info(lanelet2_path)
+    return {} if info is None else info
+
+
+def read_projector_info(lanelet2_path: Path) -> Optional[dict[str, Any]]:
+    """Return the map's descriptor as read, or ``None`` when there is none.
+
+    A descriptor that cannot be read, or whose root is not a mapping, counts
+    as none, with a warning.  The trajectory log records what this returns
+    (trajectory_recorder), so it records the descriptor the run read the map
+    with.
 
     yaml is imported here, the one place that reads it: the check
-    (docs/typecheck.md) compiles neither this nor the two readers, which
-    hand out YAML values of any type.
+    (docs/typecheck.md) compiles neither this nor its readers, which hand out
+    YAML values of any type.
     """
     import yaml  # type: ignore[import-untyped]
 
@@ -105,7 +118,7 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
     # let a repository have a file elsewhere on the host read as its projection.
     found = projector_info_path(Path(lanelet2_path).parent)
     if found is None:
-        return {}
+        return None
     info_path: Path = found
     try:
         info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
@@ -113,7 +126,7 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
         # UnicodeDecodeError is a ValueError, not an OSError: a descriptor
         # with one legacy Shift-JIS or Latin-1 comment is unreadable too.
         logger.warning("Could not read %s; falling back", info_path, exc_info=True)
-        return {}
+        return None
     if not isinstance(info, dict):
         # yaml.safe_load is happy with a list or a bare scalar at the root, and
         # .get() on either is an AttributeError rather than the fallback.
@@ -122,7 +135,7 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
             info_path,
             type(info).__name__,
         )
-        return {}
+        return None
     return info
 
 

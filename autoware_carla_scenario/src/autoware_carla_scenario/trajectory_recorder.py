@@ -247,20 +247,19 @@ def _file_ref(path: Optional[Path]) -> Optional[dict[str, Any]]:
 
 
 def _projector_info(lanelet2_path: Optional[Path]) -> Optional[dict[str, Any]]:
-    """The Lanelet2 map's ``map_projector_info.yaml``, as read, or None."""
+    """The Lanelet2 map's ``map_projector_info.yaml``, as read, or None.
+
+    The descriptor the run read the map with
+    (:func:`~autoware_carla_scenario.coordinate.projection.read_projector_info`):
+    one that is a link out of the map directory was ignored there, so it is
+    not recorded here either, nor is one that cannot be read or is not a
+    mapping.
+    """
     if lanelet2_path is None:
         return None
-    import yaml  # noqa: PLC0415 - read once a run, where it is needed
+    from .coordinate.projection import read_projector_info  # noqa: PLC0415
 
-    from .maps.resolver import projector_info_path  # noqa: PLC0415
-
-    # The descriptor the run read the map with: one that is a link out of the
-    # map directory was ignored there, so it is not recorded here either.
-    info_path = projector_info_path(Path(lanelet2_path).parent)
-    if info_path is None:
-        return None
-    info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
-    return info if isinstance(info, dict) else None
+    return read_projector_info(Path(lanelet2_path))
 
 
 def map_frame_offset() -> Optional[tuple[float, float, float]]:
