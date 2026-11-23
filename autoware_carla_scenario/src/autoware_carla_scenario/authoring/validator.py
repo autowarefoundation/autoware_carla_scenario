@@ -1119,18 +1119,30 @@ def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
     zone's length against its tapers and buffer, over the numbers read with
     their defaults, as the compiler builds them (#2281): an end_s of 50
     before the default start_s of 100 is no zone either.
+
+    ``FOREVER_S`` is read only when it is compared, for a stalled object
+    that ends after it starts: its lazy import pulls in the actions (and
+    CARLA), which a card with no end time never needed.
     """
+    start_time = _node_number(node, "start_time")
+    end_time = _node_number(node, "end_time")
+    compared = (
+        node.type == "stalled_object"
+        and start_time is not None
+        and end_time is not None
+        and end_time > start_time
+    )
     found = check_spans(
         path,
         node.type,
         _node_number(node, "start_s"),
         _node_number(node, "end_s"),
-        _node_number(node, "start_time"),
-        _node_number(node, "end_time"),
+        start_time,
+        end_time,
         _node_number(node, "taper_length_in"),
         _node_number(node, "buffer_zone_length"),
         _node_number(node, "taper_length_out"),
-        _stalled_forever_s() if node.type == "stalled_object" else math.inf,
+        _stalled_forever_s() if compared else math.inf,
     )
     _report(out, found, node.id)
 

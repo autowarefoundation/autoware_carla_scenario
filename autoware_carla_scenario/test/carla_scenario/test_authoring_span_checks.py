@@ -348,6 +348,44 @@ def test_spans_match_the_old_checks_on_any_float(
         assert _issues(new) == _issues(old)
 
 
+@pytest.mark.parametrize("seed", range(5))
+def test_forever_is_read_only_where_the_old_check_read_it(
+    seed: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_stalled_forever_s() imports the actions (and CARLA): it is called for
+    the cards the old check called it for, and no others -- not for a
+    stalled object with no end time."""
+    rng = random.Random(600 + seed)
+    calls: list[str] = []
+
+    def forever() -> float:
+        calls.append("forever")
+        return _old_stalled_forever_s()
+
+    monkeypatch.setattr(validator, "_stalled_forever_s", forever)
+    for _ in range(250):
+        node = _span_node(rng)
+        old = _Collector()
+        _old_check_spans(old, "p", node)
+        start = validator._node_number(node, "start_time")
+        end = validator._node_number(node, "end_time")
+        read = (
+            node.type == "stalled_object"
+            and start is not None
+            and end is not None
+            and end > start
+        )
+        calls.clear()
+        validator._check_spans(_Collector(), "p", node)
+        assert calls == (["forever"] if read else [])
+    calls.clear()
+    stalled = ActionNode.model_validate(
+        {"id": "s", "type": "stalled_object", "params": {"start_time": 1}}
+    )
+    validator._check_spans(_Collector(), "p", stalled)
+    assert calls == []
+
+
 def test_a_short_highway_zone_and_a_stalled_object_forever() -> None:
     found = check_spans(
         "p", "construction_zone", 0.0, 50.0, None, None, 30.0, 20.0, 10.0, 0.0
