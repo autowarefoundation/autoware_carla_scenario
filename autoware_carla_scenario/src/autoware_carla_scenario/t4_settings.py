@@ -7,7 +7,8 @@ that needs neither: the settings (:class:`T4Settings`), where the dataset
 goes (:func:`dataset_path`), a camera's channel (:func:`camera_channel`), an
 actor's category (:func:`category_of`), a sweep's points on T4's intensity
 scale (:func:`t4_lidar_points`) and the fit of OpenCV's rational camera model
-to an F-theta lens (:func:`opencv_of_ftheta`).  ``t4``
+to an F-theta lens (:func:`opencv_of_ftheta`), and which of what a driver
+entity fed is written, on which key frame (:func:`fed_key_frame`).  ``t4``
 re-exports every name, and the library check compiles this module
 (docs/typecheck.md, #731).
 """
@@ -28,12 +29,18 @@ from .sensor.carla_lidar import CarlaLidarSensorConfig
 
 __all__ = [
     "DATASET_SUFFIX",
+    "FED_KEPT",
+    "FED_LATER",
+    "FED_NOT_NEW",
+    "FED_NO_SNAPSHOT",
+    "FED_REPEATED",
     "INTENSITY_SCALE",
     "LIDAR_CHANNEL",
     "T4Settings",
     "camera_channel",
     "category_of",
     "dataset_path",
+    "fed_key_frame",
     "opencv_of_ftheta",
     "t4_lidar_points",
 ]
@@ -316,3 +323,87 @@ def category_of(type_id: str, base_type: str = "", wheels: int = 0) -> str:
     if category is not None:
         return category
     return "motorcycle" if wheels == 2 else "car"
+
+
+#: What :func:`fed_key_frame` makes of a fed sweep or camera frame: written on
+#: the key frame.
+FED_KEPT = 0
+#: A sweep whose frame has no snapshot, is before the recording, or is not
+#: after the key frame written last: dropped.
+FED_NO_SNAPSHOT = 1
+#: A camera frame from before the recording, or not after the key frame
+#: written last: dropped.
+FED_NOT_NEW = 2
+#: A camera frame not after that camera's frame written last, which a camera
+#: slower than the policy hands it again (#2352): dropped.
+FED_REPEATED = 3
+#: A sweep taken after the key frame: it joins nothing, as a LiDAR's on another
+#: tick of the interval does not, and is dropped.
+FED_LATER = 4
+
+
+def fed_key_frame(
+    frame: int,
+    sweep_frames: list[int],
+    image_frames: list[tuple[int, str]],
+    snapshots: set[int],
+    start_frame: int,
+    last_frame: int,
+    camera_written: dict[str, int],
+) -> tuple[list[int], list[int], int]:
+    """Which of what a driver entity fed on *frame* is written, and on which
+    key frame (``t4``'s ``_record_fed``, #951, #2352).
+
+    *sweep_frames* are the frames the fed sweeps were taken on,
+    *image_frames* the fed camera frames' ``(frame rendered on, logical
+    id)``, *snapshots* the frames the recording holds a world snapshot of,
+    *start_frame* the recording's first frame, *last_frame* the key frame
+    written last (``-1`` for none) and *camera_written* the frame each
+    camera's frame written last was rendered on, by logical id.
+
+    Returns each sweep's and each camera frame's fate (``FED_*``, in the
+    order fed) and the key frame, ``-1`` when nothing is written.  The key
+    frame is the oldest kept sweep's; without one, the oldest kept camera
+    frame's that has a snapshot (*frame* when none has).  Every kept camera
+    frame goes on it, a sweep only when taken on it.  Nothing is written when
+    nothing is kept (no fate is ``FED_KEPT``), nor when the key frame is not
+    after *last_frame*.
+    """
+    sweep_fates: list[int] = []
+    oldest_sweep = -1
+    for taken_on in sweep_frames:
+        if (
+            taken_on < start_frame
+            or taken_on <= last_frame
+            or taken_on not in snapshots
+        ):
+            sweep_fates.append(FED_NO_SNAPSHOT)
+            continue
+        sweep_fates.append(FED_KEPT)
+        if oldest_sweep < 0 or taken_on < oldest_sweep:
+            oldest_sweep = taken_on
+    image_fates: list[int] = []
+    any_image = False
+    oldest_image = -1
+    for taken_on, logical_id in image_frames:
+        if taken_on < start_frame or taken_on <= last_frame:
+            image_fates.append(FED_NOT_NEW)
+        elif logical_id in camera_written and taken_on <= camera_written[logical_id]:
+            image_fates.append(FED_REPEATED)
+        else:
+            image_fates.append(FED_KEPT)
+            any_image = True
+            if taken_on in snapshots and (oldest_image < 0 or taken_on < oldest_image):
+                oldest_image = taken_on
+    if oldest_sweep < 0 and not any_image:
+        return sweep_fates, image_fates, -1
+    if oldest_sweep >= 0:
+        key_frame = oldest_sweep
+        for index, taken_on in enumerate(sweep_frames):
+            if sweep_fates[index] == FED_KEPT and taken_on != key_frame:
+                sweep_fates[index] = FED_LATER
+    else:
+        key_frame = oldest_image if oldest_image >= 0 else frame
+    if key_frame <= last_frame:
+        return sweep_fates, image_fates, -1
+    return sweep_fates, image_fates, key_frame

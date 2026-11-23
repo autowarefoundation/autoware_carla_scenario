@@ -25,7 +25,8 @@ key frame: it turns the CARLA states into the map frame, keeps the tables, and
 hands the files to threads of its own, which write the sweeps, encode the raw
 camera frames and count each box's points.  This module only reads the world
 and hands it over; what the dataset holds (:class:`T4Settings`), its names
-and categories and the OpenCV model of an F-theta camera are
+and categories, the OpenCV model of an F-theta camera and which of what a
+driver entity fed is written are
 :mod:`autoware_carla_scenario.t4_settings`'s, which this module re-exports
 and the library check compiles (#731).
 
@@ -65,12 +66,18 @@ from .sensor.carla_camera import CarlaCameraSensorConfig, configure_camera_bluep
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
     DATASET_SUFFIX,
+    FED_KEPT,
+    FED_LATER,
+    FED_NO_SNAPSHOT,
+    FED_NOT_NEW,
+    FED_REPEATED,
     INTENSITY_SCALE,
     LIDAR_CHANNEL,
     T4Settings,
     camera_channel,
     category_of,
     dataset_path,
+    fed_key_frame,
     opencv_of_ftheta,
     t4_lidar_points,
 )
@@ -81,6 +88,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DATASET_SUFFIX",
+    "FED_KEPT",
+    "FED_LATER",
+    "FED_NOT_NEW",
+    "FED_NO_SNAPSHOT",
+    "FED_REPEATED",
     "INSTALL_HINT",
     "INTENSITY_SCALE",
     "LIDAR_CHANNEL",
@@ -93,6 +105,7 @@ __all__ = [
     "category_of",
     "dataset_path",
     "ego_rear_axle",
+    "fed_key_frame",
     "opencv_of_ftheta",
     "offer_driver_sensors",
     "require_writer",
@@ -667,18 +680,46 @@ class T4Recording:
         fed, self._fed = self._fed, None
         if fed is None or fed[0] != frame or frame < self.start_frame:
             return
-        sweeps = [
-            (taken_on, points)
-            for taken_on, points in fed[1]
-            if self._has_snapshot(taken_on, frame, "a sweep")
-        ]
-        images = [
-            (taken_on, logical_id, jpeg)
-            for taken_on, logical_id, jpeg in fed[2]
-            if self._is_new(taken_on, frame, f"a {logical_id} frame")
-            and self._is_unwritten(taken_on, logical_id, frame)
-        ]
-        if not sweeps and not images:
+        # Which of it is written, and on which key frame, is the checked
+        # t4_settings's (#2355); what is logged and applied is here.
+        sweep_fates, image_fates, key_frame = fed_key_frame(
+            frame,
+            [taken_on for taken_on, _ in fed[1]],
+            [(taken_on, logical_id) for taken_on, logical_id, _ in fed[2]],
+            set(self._snapshots),
+            self.start_frame,
+            self._last_frame,
+            self._camera_written,
+        )
+        for (taken_on, _), fate in zip(fed[1], sweep_fates):
+            if fate == FED_NO_SNAPSHOT:
+                logger.debug(
+                    "T4 dataset: no snapshot of frame %d for %s fed on frame %d; "
+                    "dropped",
+                    taken_on,
+                    "a sweep",
+                    frame,
+                )
+        for (taken_on, logical_id, _), fate in zip(fed[2], image_fates):
+            if fate == FED_NOT_NEW:
+                logger.debug(
+                    "T4 dataset: %s taken on frame %d, fed on frame %d, is not after "
+                    "frame %d; dropped",
+                    f"a {logical_id} frame",
+                    taken_on,
+                    frame,
+                    max(self.start_frame - 1, self._last_frame),
+                )
+            elif fate == FED_REPEATED:
+                logger.debug(
+                    "T4 dataset: a %s frame taken on frame %d, fed on frame %d, is "
+                    "not after its frame written last (frame %d); dropped",
+                    logical_id,
+                    taken_on,
+                    frame,
+                    self._camera_written[logical_id],
+                )
+        if FED_KEPT not in sweep_fates and FED_KEPT not in image_fates:
             # Everything fed was dropped (a camera slower than the policy
             # hands it the frame written already): a sample without sensor
             # data is no key frame, as the recorder's own sensors never make
@@ -688,24 +729,21 @@ class T4Recording:
                 frame,
             )
             return
-        if sweeps:
-            key_frame = min(taken_on for taken_on, _ in sweeps)
-        else:
-            key_frame = min(
-                (taken_on for taken_on, _, _ in images if taken_on in self._snapshots),
-                default=frame,
-            )
-        if key_frame <= self._last_frame:
+        if key_frame < 0:
             return
-        points_on_key = [points for taken_on, points in sweeps if taken_on == key_frame]
-        if len(points_on_key) < len(sweeps):
+        points_on_key = [
+            points for (_, points), fate in zip(fed[1], sweep_fates) if fate == FED_KEPT
+        ]
+        later = sweep_fates.count(FED_LATER)
+        if later:
             logger.debug(
                 "T4 dataset: %d sweep(s) fed on frame %d not taken on frame %d; "
                 "dropped",
-                len(sweeps) - len(points_on_key),
+                later,
                 frame,
                 key_frame,
             )
+        images = [image for image, fate in zip(fed[2], image_fates) if fate == FED_KEPT]
         for taken_on, logical_id, _ in images:
             if taken_on != key_frame:
                 logger.debug(
@@ -727,61 +765,6 @@ class T4Recording:
             jpegs_on_key,
             [],
         )
-
-    def _has_snapshot(self, taken_on: int, frame: int, what: str) -> bool:
-        """Whether *what*, taken on *taken_on* and fed on *frame*, can be
-        written on its own frame: its frame has a snapshot, and is not one
-        written already."""
-        if (
-            taken_on < self.start_frame
-            or taken_on <= self._last_frame
-            or taken_on not in self._snapshots
-        ):
-            logger.debug(
-                "T4 dataset: no snapshot of frame %d for %s fed on frame %d; dropped",
-                taken_on,
-                what,
-                frame,
-            )
-            return False
-        return True
-
-    def _is_new(self, taken_on: int, frame: int, what: str) -> bool:
-        """Whether *what*, taken on *taken_on* and fed on *frame*, is from the
-        recording and after the key frame written last."""
-        if taken_on < self.start_frame or taken_on <= self._last_frame:
-            logger.debug(
-                "T4 dataset: %s taken on frame %d, fed on frame %d, is not after "
-                "frame %d; dropped",
-                what,
-                taken_on,
-                frame,
-                max(self.start_frame - 1, self._last_frame),
-            )
-            return False
-        return True
-
-    def _is_unwritten(self, taken_on: int, logical_id: str, frame: int) -> bool:
-        """Whether camera *logical_id*'s frame, rendered on *taken_on* and fed
-        on *frame*, is after the one of it written last.
-
-        The key frame written last is no measure of that: with a sweep older
-        than the step, or with cameras at other rates, it can be before the
-        frame of a camera slower than the policy, which then hands the policy
-        the same frame on its next step too (#2352).
-        """
-        written = self._camera_written.get(logical_id)
-        if written is not None and taken_on <= written:
-            logger.debug(
-                "T4 dataset: a %s frame taken on frame %d, fed on frame %d, is "
-                "not after its frame written last (frame %d); dropped",
-                logical_id,
-                taken_on,
-                frame,
-                written,
-            )
-            return False
-        return True
 
     def _write_frame(
         self,

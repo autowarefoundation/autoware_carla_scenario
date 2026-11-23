@@ -34,6 +34,7 @@ from ..authoring.registry import TRUTHY_VALUES, is_checked
 from ..maps import opendrive
 from ..web_guard import refuse_cross_site
 from . import map_preview, scenario_map
+from .revisions import row_is_shown
 from .service import (
     EditorError,
     EditorService,
@@ -233,10 +234,8 @@ def _check_row(
     if field not in form or not 0 <= index < len(rows):
         return
     current = str(getattr(rows[index], attribute))
-    if current == str(form[field]):
-        return
-    renamed = str(form.get(renamed_by) or "").strip() if renamed_by else ""
-    if renamed and current == renamed:
+    renamed = str(form.get(renamed_by) or "") if renamed_by else ""
+    if row_is_shown(current, str(form[field]), renamed):
         return
     raise StaleDraftError(
         "The row this form edits has moved since it was shown -- one before it "
