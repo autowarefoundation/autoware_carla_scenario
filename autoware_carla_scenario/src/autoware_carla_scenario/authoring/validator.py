@@ -29,7 +29,7 @@ from .models import (
     actor_kind,
     condition_refs,
 )
-from ..route.model import anchor_problem, parse_anchor, parse_route_search
+from ..route.model import anchor_problem, parse_route_search
 from ..trajectory.authoring import (
     parse_relative_vertices,
     parse_route_vertices,
@@ -43,12 +43,14 @@ from .field_bounds import bounds_text, within_bounds
 from .field_bounds import traffic_mean_bounds as _traffic_mean_bounds
 from .hydra_config import MAP_EXCLUSION_REF
 from .package_names import framework_name_problem, scenario_id_problem
+from .route_progress_checks import route_bound, route_progress_warning
 from ._builders_generated import (
     FAILURE_ONLY_CONDITIONS,
     ONCE_ACTIONS,
     OVERRIDING_ACTIONS,
     POST_RUN_CONDITIONS,
 )
+from .span_checks import check_spans, check_vertex_times
 from .signal_checks import (
     SignalController,
     SignalGroup,
@@ -893,32 +895,17 @@ def _check_vertex_times(
     """The timing rules of a trajectory, on the card's time conditions.
 
     Once any vertex departs at a time, every vertex departs on a condition
-    (a time or another), and the times do not decrease along the path.
+    (a time or another), and the times do not decrease along the path: the
+    checked :func:`~.span_checks.check_vertex_times`' (#2386), over the
+    vertices with a condition and each time (``None`` for one that is not a
+    finite number).
     """
-    times = _vertex_times(node)
-    if not times or count < 2:
-        return
+    times: dict[int, Optional[float]] = {
+        vertex: float(time) if _coercible_float(time) else None
+        for vertex, time in _vertex_times(node).items()
+    }
     gated = {gate.vertex for gate in node.advance_conditions}
-    bare = [vertex for vertex in range(1, count + 1) if vertex not in gated]
-    if bare:
-        out.error(
-            f"{path}.advance_conditions",
-            "Either every vertex has a time or none has (a vertex with another "
-            f"waypoint condition counts as having one): vertex {bare[0]} has "
-            "none.",
-            node.id,
-        )
-    ordered = [
-        float(times[vertex])
-        for vertex in sorted(times)
-        if vertex <= count and _coercible_float(times[vertex])
-    ]
-    if any(later < earlier for earlier, later in zip(ordered, ordered[1:])):
-        out.error(
-            f"{path}.advance_conditions",
-            "The vertex times decrease along the path.",
-            node.id,
-        )
+    _report(out, check_vertex_times(path, count, gated, times), node.id)
 
 
 def _vertex_count(node: ActionNode) -> Optional[int]:
@@ -1126,61 +1113,38 @@ def _number(params: dict[str, Any], key: str) -> Optional[float]:
 def _check_spans(out: _Collector, path: str, node: ActionNode) -> None:
     """A construction zone ends after it starts, along its lane and in time;
     a stalled object is taken away after it is put down, as the actions ask
-    (an end of ``1e9`` s or more is "never", which the empty field says)."""
-    if node.type != "stalled_object":
-        # Read with their defaults, as the compiler builds them (#2281): an
-        # end_s of 50 before the default start_s of 100 is no zone either.
-        start_s, end_s = _node_number(node, "start_s"), _node_number(node, "end_s")
-        if start_s is not None and end_s is not None and not end_s > start_s:
-            out.error(
-                f"{path}.end_s",
-                "The zone's end (end_s) must be further along than its start "
-                "(start_s).",
-                node.id,
-            )
-        elif start_s is not None and end_s is not None:
-            if node.type == "construction_zone":
-                _check_highway_zone_length(out, path, node, end_s - start_s)
-    start, end = _node_number(node, "start_time"), _node_number(node, "end_time")
-    if start is None or end is None:
-        return
-    if not end > start:
-        out.error(
-            f"{path}.end_time",
-            "The end time must be after the start time; leave it empty for never.",
-            node.id,
-        )
-    elif node.type == "stalled_object" and end > _stalled_forever_s():
-        out.error(
-            f"{path}.end_time",
-            f"An end time past {_stalled_forever_s():g} s is never: leave it empty.",
-            node.id,
-        )
+    (an end of ``1e9`` s or more is "never", which the empty field says).
 
-
-def _check_highway_zone_length(
-    out: _Collector, path: str, node: ActionNode, length: float
-) -> None:
-    """Warn of a construction zone shorter than its tapers and buffer: it has
-    no work zone, and the three are shortened to fit it (#2263), as
-    ``construction_zones`` does."""
-    parts: list[tuple[str, float]] = []
-    for key in ("taper_length_in", "buffer_zone_length", "taper_length_out"):
-        value = _node_number(node, key)
-        if value is None:
-            return
-        parts.append((key, value))
-    needed = sum(value for _, value in parts)
-    if not length < needed:
-        return
-    named = " + ".join(f"{key} {value:g} m" for key, value in parts)
-    out.warn(
-        f"{path}.end_s",
-        f"The zone is {length:g} m long (start_s to end_s), shorter than "
-        f"{named} = {needed:g} m: it has no work zone, and the tapers and "
-        "the buffer are shortened in proportion to fit it.",
-        node.id,
+    The checked :func:`~.span_checks.check_spans`' (#2386), with a highway
+    zone's length against its tapers and buffer, over the numbers read with
+    their defaults, as the compiler builds them (#2281): an end_s of 50
+    before the default start_s of 100 is no zone either.
+    """
+    found = check_spans(
+        path,
+        node.type,
+        _node_number(node, "start_s"),
+        _node_number(node, "end_s"),
+        _node_number(node, "start_time"),
+        _node_number(node, "end_time"),
+        _node_number(node, "taper_length_in"),
+        _node_number(node, "buffer_zone_length"),
+        _node_number(node, "taper_length_out"),
+        _stalled_forever_s() if node.type == "stalled_object" else math.inf,
     )
+    _report(out, found, node.id)
+
+
+def _report(
+    out: _Collector, found: "list[tuple[str, str, str]]", object_id: str
+) -> None:
+    """Turn a checked module's ``(severity, path, message)`` triples into
+    issues of *object_id*, in the order they were found."""
+    for severity, where, message in found:
+        if severity == "error":
+            out.error(where, message, object_id)
+        else:
+            out.warn(where, message, object_id)
 
 
 def _stalled_forever_s() -> float:
@@ -2187,31 +2151,13 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
 
 def _route_bound(anchor: Any, route: RouteSearch) -> Optional[str]:
     """``"start"`` when *anchor* is route s 0 on every match of *route*,
-    ``"end"`` when it is the route's length on every match, else ``None``.
-
-    The route's length is only known once the search runs on a map, but its
-    first segment always starts at 0 and its last always ends at the length,
-    so these anchors are pinned to a bound whatever the map.
-    """
-    text = "start" if anchor is None or not str(anchor).strip() else str(anchor)
-    try:
-        kind, index, end = parse_anchor(text)
-    except ValueError:
-        return None
-    if kind in ("start", "end"):
-        return kind
-    if kind == "junction":
-        junction_at = [
-            k for k, segment in enumerate(route.segments) if segment.kind == "junction"
-        ]
-        if index >= len(junction_at):
-            return None
-        index = junction_at[index]
-    if index == 0 and end in ("start", "entry"):
-        return "start"
-    if index == len(route.segments) - 1 and end in ("end", "exit"):
-        return "end"
-    return None
+    ``"end"`` when it is the route's length on every match, else ``None``:
+    the checked :func:`~.route_progress_checks.route_bound`' (#2386), over
+    the anchor's text and the route's segment kinds."""
+    return route_bound(
+        "" if anchor is None else str(anchor),
+        [str(segment.kind) for segment in route.segments],
+    )
 
 
 def _check_route_progress_bounds(
@@ -2219,74 +2165,28 @@ def _check_route_progress_bounds(
 ) -> None:
     """Warn about a ``route_progress`` whose target lies off the route (#1385).
 
-    An entity's route s is clamped to ``[0, length]``, so a target before the
-    route's start or past its end is one the rule always or never meets: from
-    ``start - 15 m``, ``>=`` holds from the first tick the entity is on the map
-    (one not spawned yet, or hidden below the route, has no progress), even
-    behind the start; to ``end + 5 m`` it never holds, and a waypoint waiting
-    on it never departs.  A target exactly on a bound with a strict rule
-    pointing off the route never holds either (#1389): ``<`` the start, ``>``
-    the end.  The other rules there -- the default ``>=`` the start, and
-    ``<=`` the end, ``>`` the start, ``<`` the end, ``=`` either -- can all
-    hold.  Only an anchor pinned to a bound (:func:`_route_bound`) is judged,
+    The warning is the checked
+    :func:`~.route_progress_checks.route_progress_warning`' (#2386): a
+    target before the route's start or past its end, or on a bound with a
+    strict rule pointing off the route, is one the rule always or never
+    meets.  Only an anchor pinned to a bound (:func:`_route_bound`) is judged,
     the length being the map's.  A warning, not an error, as for the other
     conditions that never fire (:func:`_check_persistent_child`,
     :func:`_check_equal_tolerance`): the document builds and runs as it did.
     """
-    params = node.params
     value = _node_number(node, "value")
     if value is None:
         return
-    bound = _route_bound(params.get("anchor"), route)
     rule = str(_value(node, "rule") or "greater_than_or_equal")
-    hint = "Give a distance that puts the target on the route."
-    if bound == "start" and value < 0:
-        where = f"{-value:g} m before the route's start"
-        below = True
-    elif bound == "end" and value > 0:
-        where = f"{value:g} m past the route's end"
-        below = False
-    elif bound == "start" and value == 0 and rule == "less_than":
-        where = "the route's start"
-        below = True
-        hint = 'Use "less than or equal" (or a positive distance) instead.'
-    elif bound == "end" and value == 0 and rule == "greater_than":
-        where = "the route's end"
-        below = False
-        hint = 'Use "greater than or equal" (or a negative distance) instead.'
-    else:
-        return
-    rising = rule in ("greater_than", "greater_than_or_equal")
-    falling = rule in ("less_than", "less_than_or_equal")
-    if rule == "equal_to":
-        tolerance = _node_number(node, "tolerance")
-        if tolerance is None:
-            tolerance = EQUAL_TO_DEFAULT_TOLERANCE
-        if abs(value) <= tolerance:
-            return
-        always = False
-    elif rising or falling:
-        always = rising == below
-    else:
-        return  # an unknown rule is the field check's
-    reading = rule.replace("_", " ")
-    if always:
-        extreme = "behind the route's start" if below else "at the route's end"
-        verdict = (
-            f'"{reading}" holds from the first tick the entity is on the map, '
-            f"even for one {extreme}"
-        )
-    else:
-        verdict = (
-            f'"{reading}" can never hold: an action waiting on it never '
-            "fires, and a waypoint never departs"
-        )
-    out.warn(
-        node.id,
-        f"Route progress: the target is {where}. Progress is clamped to the "
-        f"route, from 0 to its length, so {verdict}. {hint}",
-        node.id,
+    message = route_progress_warning(
+        value,
+        _route_bound(node.params.get("anchor"), route),
+        rule,
+        _node_number(node, "tolerance") if rule == "equal_to" else None,
+        EQUAL_TO_DEFAULT_TOLERANCE,
     )
+    if message is not None:
+        out.warn(node.id, message, node.id)
 
 
 def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:

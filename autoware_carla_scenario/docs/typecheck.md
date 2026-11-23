@@ -2561,7 +2561,11 @@ and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scenario-new` (`scaffold.names`, #1654) and those of the Scenario Editor's
 export, which ids it refuses and the framework pin's lines in
 the package's README (`authoring.package_names`, #1695; the rule against the
-framework's own name is `scaffold.names`', which both apply), the whole
+framework's own name is `scaffold.names`', which both apply), the checks
+of its validator that read no pydantic model: a route-progress target off the
+route (`authoring.route_progress_checks`) and an action's spans and a
+trajectory's vertex times (`authoring.span_checks`, #2386; not
+`authoring.validator`, which reads the document for them), the whole
 numbers the Scenario Editor's forms post, a list field's ids and a record
 list's row count (`editor.form_values`, #2135; not the parsing of a form
 against a field's spec, `editor.forms`, which re-exports them), where the viewer keeps its
