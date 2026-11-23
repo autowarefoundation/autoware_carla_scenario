@@ -1,4 +1,4 @@
-"""{{ scenario_class }} -- verify the ego reaches its goal roads.
+"""{{ scenario_class }} -- verify the ego reaches its goal lanelets.
 
 This module lives in a separate installable package, not inside
 ``autoware_carla_scenario``.  It only depends on the framework's public API.
@@ -36,7 +36,11 @@ logger = logging.getLogger(__name__)
 
 
 class {{ scenario_class }}(BaseScenario):
-    """Pass when the ego has visited every configured goal road."""
+    """Pass when the ego has been on every configured goal lanelet.
+
+    The lanelets themselves, not their roads: each latched once the ego has
+    been on it, in any order.
+    """
 
     # Declared for the static check (docs/typecheck.md): Codon types an
     # attribute of a subclass from its class-level annotation.
@@ -62,7 +66,7 @@ class {{ scenario_class }}(BaseScenario):
         # anything starts.
 
         # 1. Every scenario says where its ego is going, and this one already
-        #    has: the last road it asserts the ego reaches is the destination.
+        #    has: the last lanelet it asserts the ego reaches is the destination.
         #    A goal given in the config wins.
         self.derive_goal_from_route(cfg.goal_lanelet_ids)
 

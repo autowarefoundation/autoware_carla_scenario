@@ -46,6 +46,7 @@ from autoware_carla_scenario.coordinate import (
     OpenDrivePose,
     lane_beside,
     lanelets_ahead,
+    lanelet_length,
     lanelets_beside,
     on_lanelet,
     to_carla_world,
@@ -54,6 +55,7 @@ from autoware_carla_scenario.examples.configs import CutInConfig
 from autoware_carla_scenario.examples.cut_in import (
     CUT_IN_ROLE,
     ego_lanes_ahead,
+    goal_ahead,
     lanes_ahead_before_junction,
     left_lanes_ahead,
     npc_in_lanes_ahead,
@@ -390,10 +392,12 @@ class TestLeftLanesAhead:
 # ---------------------------------------------------------------------------
 
 
-def _cut_in_conditions(
-    config: CutInConfig,
-) -> tuple[list[BaseCondition], list[BaseCondition]]:
-    """``CutInScenario.setup()``'s pass and fail conditions, CARLA and the map stubbed."""
+def _cut_in_setup(config: CutInConfig, goal: Lanelet2Pose | None = None) -> Any:
+    """A ``CutInScenario`` after ``setup()``, CARLA and the map stubbed.
+
+    *goal* is the one its ``EgoConfig`` is given, as ``ego.goal_lanelet_id``
+    gives one.
+    """
     from autoware_carla_scenario import EgoConfig, Lanelet2Pose, SpawnTransform
     from autoware_carla_scenario.examples import cut_in
 
@@ -403,6 +407,7 @@ def _cut_in_conditions(
         EgoConfig(
             spawn_location=SpawnTransform(carla.Transform(carla.Location())),
             vehicle_type="vehicle.mini.cooper",
+            goal_pose=goal,
         ),
         spawn_pose=Lanelet2Pose(lanelet_id=A1, s=5.0),
         config=config,
@@ -428,13 +433,21 @@ def _cut_in_conditions(
         ),
     ):
         scenario.setup()
-    # Once for the lanes the NPC cuts in on; for the ones the ego is to stay
-    # on, once more and once for the lanes before the junction, whose
-    # neighbours are left out of them.
-    calls = 3 if config.fail_on_leaving_lane else 1
+    # Once for the goal, when none is given; once for the lanes the NPC cuts
+    # in on; for the ones the ego is to stay on, once more and once for the
+    # lanes before the junction, whose neighbours are left out of them.
+    calls = (3 if config.fail_on_leaving_lane else 1) + (1 if goal is None else 0)
     assert (
         ahead.call_args_list == [unittest.mock.call(A1, config.lanes_ahead_m)] * calls
     )
+    return scenario
+
+
+def _cut_in_conditions(
+    config: CutInConfig,
+) -> tuple[list[BaseCondition], list[BaseCondition]]:
+    """``CutInScenario.setup()``'s pass and fail conditions, CARLA and the map stubbed."""
+    scenario = _cut_in_setup(config)
     return scenario._pass_conditions, scenario._fail_conditions
 
 
@@ -509,6 +522,32 @@ class TestCutInPassCondition:
         assert child["lanelet_id"] == A1
 
 
+class TestCutInGoal:
+    """An ego that plans its own route needs a goal: cut_in sends it down its
+    lane unless one is configured (#2390)."""
+
+    def test_with_none_configured_it_is_down_the_lane(self, loaded: None) -> None:
+        # A1 -> A2 -> A3 before F's junction: the middle of A3.
+        goal = _cut_in_setup(CutInConfig(npc_lanelet_id=B1)).goal_pose
+        assert goal == Lanelet2Pose(lanelet_id=A3, s=25.0)
+
+    def test_it_stops_short_of_the_reach(self, loaded: None) -> None:
+        # A3 begins 100 m on: out of a 60 m reach.
+        goal = _cut_in_setup(
+            CutInConfig(npc_lanelet_id=B1, lanes_ahead_m=60.0)
+        ).goal_pose
+        assert goal == Lanelet2Pose(lanelet_id=A2, s=25.0)
+
+    def test_on_the_spawn_lanelet_it_is_ahead_of_the_spawn(self, loaded: None) -> None:
+        # Nothing follows A3 (the spawn at s = 5): halfway on to its end.
+        assert goal_ahead(A3, 5.0, 1000.0) == Lanelet2Pose(lanelet_id=A3, s=27.5)
+
+    def test_a_configured_goal_is_kept(self, loaded: None) -> None:
+        configured = Lanelet2Pose(lanelet_id=B2, s=3.0)
+        goal = _cut_in_setup(CutInConfig(npc_lanelet_id=B1), goal=configured).goal_pose
+        assert goal == configured
+
+
 # ---------------------------------------------------------------------------
 # cut_in's pass condition on the fixture map (#1078)
 # ---------------------------------------------------------------------------
@@ -561,6 +600,16 @@ class TestCutInOnTheFixtureMap:
         successor = lanelets_ahead(EGO_LANELET, 1000.0)[1]
         assert successor != EGO_LANELET
         assert self._cut_in(Lanelet2Pose(lanelet_id=successor, s=10.0))
+
+    def test_the_goal_is_down_the_lane(self) -> None:
+        # Both shipped cases: the ego on 20 (left) or 19 (right) is sent to
+        # the lanelet after it, the last before the junction (315 / 316).
+        reach = CutInConfig().lanes_ahead_m
+        for spawn, goal_lanelet in ((EGO_LANELET, 22), (NPC_LANELET, 21)):
+            goal = goal_ahead(spawn, 5.0, reach)
+            assert goal.lanelet_id == goal_lanelet
+            assert goal.lanelet_id in lanes_ahead_before_junction(spawn, reach)
+            assert 0.0 < goal.s < lanelet_length(goal_lanelet)
 
     def test_not_in_the_lane_beside(self) -> None:
         beside_next = lanelets_ahead(NPC_LANELET, 1000.0)[1]

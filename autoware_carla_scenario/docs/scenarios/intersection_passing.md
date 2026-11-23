@@ -17,7 +17,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **Ego** | Constraint search: a junction lanelet whose `turn_direction` is the movement and which has a stop line -- any, or a traffic light's (see the variants) -- excluding the map's lanelets with no 3D model and those that lead onto one. Position *before stop line*: 25 m short of it -- which walks back onto the lane that approaches the junction, where the run starts. Goal *from the search*: the lanelet after the junction lanelet. |
 | **Initialization** | Every traffic light green. |
 | **Ego, from the start** | Turn at the next junction, in the movement's direction. |
-| **Pass** | The ego has been on the road of the junction lanelet (*the matched lanelet*), *and* on the road of the lane it comes out on (*along the route*, one step on). Any lane of each road counts. |
+| **Pass** | The ego has been on the road of the lane it comes out on (*along the route*, one step past the matched junction lanelet). Any lane of that road counts. The junction lanelet itself is not checked: a junction's lanelets overlap, and a point on one reads as another road (`route_road_ids` leaves them out). |
 | **Fail** | The timeout -- and, going straight, slowing below 3 km/h after 0.3 s. |
 
 ## Variants

@@ -173,8 +173,9 @@ class IntersectionPassingConfig:
     #: Gives the ego time to reach cruising speed after spawn.
     speed_check_delay_seconds: float = 0.3
 
-    #: Turn direction at the intersection (``"left"``, ``"right"``, or
-    #: ``None`` for straight-through).
+    #: Turn direction at the intersection: ``"left"``, ``"right"`` or
+    #: ``"straight"``, each registering a ``TurnAction``; ``None`` registers
+    #: none (straight through, left to the TrafficManager).
     turn_direction: str | None = None
 
     #: From this many metres before the junction (the start of the route's

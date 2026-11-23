@@ -10,6 +10,14 @@ lanelet and the lanelets that follow it -- for ``leaving_lane_seconds``: a lane
 change, a turn onto a lanelet that does not follow it, or leaving the road
 (``fail_on_leaving_lane``).
 
+An ego that plans its own route (Autoware, or a driver given a bridge) needs a
+goal. Unless one is configured (``ego.goal_lanelet_id``), the ego is sent down
+its own lane (:func:`goal_ahead`): to the middle of the last lanelet of
+:func:`lanes_ahead_before_junction` -- the lanelet before the next junction,
+on the lanes where the cut-in is judged.  Every ego is given that goal: a
+TrafficManager ego follows the route there, its own lane changes off until it
+has used the route up, and a driver policy is shown the road ahead along it.
+
 ``side`` is the side of the ego the NPC comes from, so it changes lanes the
 other way. Its lanelet is the one beside the ego's, which a sweep binds with
 the ``adjacent`` binding.
@@ -204,6 +212,24 @@ def ego_lanes_ahead(lanelet_id: int, distance_m: float) -> list[int]:
     return kept
 
 
+def goal_ahead(lanelet_id: int, s: float, distance_m: float) -> Lanelet2Pose:
+    """Where an ego spawned at *s* on *lanelet_id* is sent when no goal is configured.
+
+    Down its own lane, as the scenario has it drive: the last lanelet of
+    :func:`lanes_ahead_before_junction` -- *lanelet_id* and the lanelets that
+    follow it, up to *distance_m* from its start, before the next junction --
+    at the middle of its centerline, clear of the seams at either end.  No
+    turn through a junction is chosen for the ego.  When that is *lanelet_id*
+    itself (a junction, or the end of the road, follows it), the middle of
+    what is left of it past *s*, so the goal is still ahead of the spawn.
+    """
+    last = lanes_ahead_before_junction(lanelet_id, distance_m)[-1]
+    length = _length(last)
+    if last == lanelet_id:
+        return Lanelet2Pose(lanelet_id=last, s=(s + length) / 2.0)
+    return Lanelet2Pose(lanelet_id=last, s=length / 2.0)
+
+
 def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:
     """The cut-in NPC is in the ego's lane: on one of the lanes ahead of *lanelet_id*.
 
@@ -266,6 +292,11 @@ class CutInScenario(BaseScenario):
                 f"not {cfg.side!r}"
             )
 
+        # The ego is sent down its lane -- the goal an ego that plans its own
+        # route cannot start without -- before _setup_ego_spawn hands the goal
+        # over.  A goal given in the config wins.
+        if self.goal_pose is None:
+            self.goal_pose = goal_ahead(spawn.lanelet_id, spawn.s, cfg.lanes_ahead_m)
         self._setup_ego_spawn()
         self.register_init(
             TrafficSignalAction(
