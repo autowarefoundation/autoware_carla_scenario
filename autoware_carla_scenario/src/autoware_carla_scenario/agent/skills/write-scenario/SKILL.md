@@ -3,6 +3,8 @@ name: write-scenario
 description: Interactively create a CARLA test scenario for autoware_carla_scenario step by step, from a natural-language description to a concrete scenario, its review, and a logical scenario with sweep constraints. Use when the user asks to write or create a new scenario end to end.
 ---
 
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in the `scenario-writing` skill's "Where Things Are".
+
 Guide the user through creating a CARLA test scenario for `autoware_carla_scenario`. Use the `scenario-writing` skill for domain knowledge (and its `references/`).
 
 ## Input
@@ -27,8 +29,8 @@ Ask the user focused clarifying questions. Do not assume — confirm the scenari
 ### Stage 2: Discover Available Building Blocks
 
 Before writing code, dynamically discover existing Conditions and Actions:
-1. Search for the conditions (`BaseCondition` / `CompositionCondition` subclasses) in `autoware_carla_scenario/src/autoware_carla_scenario/conditions/`
-2. Search for the actions (`BaseAction` subclasses) in `autoware_carla_scenario/src/autoware_carla_scenario/actions/`
+1. Search for the conditions (`BaseCondition` / `CompositionCondition` subclasses) in `<framework>/conditions/`
+2. Search for the actions (`BaseAction` subclasses) in `<framework>/actions/`
 3. Read constructor signatures of relevant classes
 4. Read the built-in scenario closest to the user's (`examples/*.py`)
 
@@ -53,7 +55,7 @@ uv pip install -e <package>
 3. **YAML config** (`<package>/src/<package>/conf/scenario/<name>/<variant>.yaml`) — with Lanelet2 spawn coordinates
 4. **Registration** — already wired by `scenario-new` (`register()` in `__init__.py`, the `autoware_carla_scenario.scenarios` entry point)
 
-**Built-in scenario** — under `autoware_carla_scenario/src/autoware_carla_scenario/`:
+**Built-in scenario** — under `<framework>/`:
 1. **Python scenario class** (`examples/<name>.py`)
 2. **Dataclass config** (add to `examples/configs.py`)
 3. **YAML config** (`examples/conf/scenario/<name>/<variant>.yaml`)

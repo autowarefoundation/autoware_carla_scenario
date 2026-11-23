@@ -1,15 +1,17 @@
 # Sweeper Constraint and Binding Reference
 
-The lanelet constraint sweeper (`hydra/sweeper=lanelet_constraint`) expands one scenario config into one job per lanelet that matches the constraints, deriving the rest of each job's parameters from that lanelet with bindings. The user-facing description is `autoware_carla_scenario/docs/usage.md`, "Lanelet Constraint Sweeping".
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in `../SKILL.md`'s "Where Things Are".
+
+The lanelet constraint sweeper (`hydra/sweeper=lanelet_constraint`) expands one scenario config into one job per lanelet that matches the constraints, deriving the rest of each job's parameters from that lanelet with bindings. The user-facing description is `docs/usage.md`, "Lanelet Constraint Sweeping".
 
 ## Discovery: Always Read the Source
 
-The type lists live in the source, not here. Under `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/`:
+The type lists live in the source, not here. Under `<framework>/sweeper/`:
 
 1. **Constraints** (`constraints.py`): the leaf types are the `_LEAF_REGISTRY` mapping (`type:` string → class); the combinators `and`, `or`, `not` (one `constraint`) and `previous_of`, `following_of` (depth 1 through the routing graph) take nested constraints and are parsed in `parse_constraint()`.
 2. **Bindings** (`bindings.py`): the `_BINDING_REGISTRY` mapping.
 
-A class's docstring shows its YAML, and its dataclass fields are its keys (a binding's, except `target_key`). The user-facing description of the types and of the bindings' walk-back is `autoware_carla_scenario/docs/usage.md`, "Lanelet Constraint Sweeping". An unknown `type`, a key a type does not take, a missing key or a bad value is refused when the sweep is expanded, naming the type and the key.
+A class's docstring shows its YAML, and its dataclass fields are its keys (a binding's, except `target_key`). The user-facing description of the types and of the bindings' walk-back is `docs/usage.md`, "Lanelet Constraint Sweeping". An unknown `type`, a key a type does not take, a missing key or a bad value is refused when the sweep is expanded, naming the type and the key.
 
 ## The `sweep:` Section
 
@@ -31,7 +33,7 @@ sweep:
   exclude:
     ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
   ```
-- Other keys: `job_timeout_seconds` (per job, default 120), `resume_from`, `case_index`, and `odd_sample` (cases drawn from the ODD for scalar knobs such as speeds: `autoware_carla_scenario/docs/odd.md`, "Sampling scenarios from the ODD").
+- Other keys: `job_timeout_seconds` (per job, default 120), `resume_from`, `case_index`, and `odd_sample` (cases drawn from the ODD for scalar knobs such as speeds: `docs/odd.md`, "Sampling scenarios from the ODD").
 
 Two bindings that set one key to different values on a pick are refused. Map-specific exclusions (`no_3d_model_lanelet_ids`) are in `conf/map/<map_name>.yaml`, referenced as `${map.no_3d_model_lanelet_ids}`.
 

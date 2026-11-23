@@ -100,6 +100,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.adversity.triggers",
     "autoware_carla_scenario.adversity_activity",
     "autoware_carla_scenario.adversity_event",
+    "autoware_carla_scenario.agent",
     "autoware_carla_scenario.atomic_file",
     "autoware_carla_scenario.authoring.framework_pin",
     "autoware_carla_scenario.authoring.package_names",
@@ -719,6 +720,7 @@ UNCALLED: dict[str, str] = {
 EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario": "loads its public names lazily with importlib (a PEP 562 `__getattr__` returning `object`), and Codon reads its `TYPE_CHECKING` re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)",
     "autoware_carla_scenario.actions.smart_pedestrian": "imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (`need_prepare()`) and prepare.pool (`running_backend()`), which are neither checked nor modelled; applies `@need_prepare(ArdyBackend)` to its class, a class decorator the check does not support, and hands a class as a value (`running_backend(ArdyBackend)`), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped",
+    "autoware_carla_scenario.agent.cli": "imports argparse and importlib.util, and hands the process to the agent with `os.execv()`, which are not checked or declared",
     "autoware_carla_scenario.authoring": "re-exports authoring.models (pydantic), authoring.compiler, authoring.hydra_config, authoring.starter and authoring.validator (pydantic, through authoring.models), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging.specifiers) and authoring.registry (`Any` field defaults), none of which is checked or modelled",
     "autoware_carla_scenario.authoring._builders_generated": "its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models",
     "autoware_carla_scenario.authoring.builders": "dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked",

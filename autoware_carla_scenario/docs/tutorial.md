@@ -11,16 +11,17 @@ This tutorial shows two paths to creating a scenario:
 
 ## Quick Start with a Coding Agent
 
-This repository ships scenario-writing **agent skills** (`skills/`) that a
-coding agent — Claude Code or Codex — loads to walk you through a scenario:
+The framework ships scenario-writing **agent skills** that a coding agent —
+Claude Code or Codex — loads to walk you through a scenario:
 it asks clarifying questions, writes the scenario class, config and YAML, runs
 the static check, debugs the run in CARLA, reviews the parameters and adds the
-sweep. One command installs the skills and starts the agent on your
+sweep. In a Git repository — this checkout, or your scenario package's — one
+command (the `agent` extra) installs the skills and starts the agent on your
 description:
 
 ```bash
-uv run --group agent scripts/scenario_agent.py claude "I want to test that the ego stops at a stop sign"
-# or: uv run --group agent scripts/scenario_agent.py codex "..."
+uv run scenario-agent claude "I want to test that the ego stops at a stop sign"
+# or: uv run scenario-agent codex "..."
 ```
 
 [Writing Scenarios with a Coding Agent](coding_agents.md) has the whole

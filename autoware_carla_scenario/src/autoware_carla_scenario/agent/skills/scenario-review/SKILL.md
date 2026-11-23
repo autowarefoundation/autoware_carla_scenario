@@ -5,11 +5,13 @@ description: This skill should be used when reviewing CARLA scenario parameters 
 
 # Scenario Parameter Review Guide
 
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in the `scenario-writing` skill's "Where Things Are".
+
 ## Purpose
 
 Review and validate the parameter design of CARLA test scenarios before converting concrete scenarios to logical scenarios. Ensure parameters are orthogonal, minimal, and compatible with the lanelet constraint sweeper.
 
-**How the sweeper works** (`scenario-writing`'s `references/constraints-reference.md`): `sweep.constraints` sweeps exactly **one** key -- a lanelet ID, usually `ego.spawn_lanelet_id` -- picking every lanelet that matches its constraints; `sweep.bindings` derives every other value a case needs from that pick; `sweep.exclude` drops cases by the values they end with. Scalar knobs (speeds, weather, ...) are not swept by constraints: `sweep.odd_sample` draws them from the ODD (`autoware_carla_scenario/docs/odd.md`, "Sampling scenarios from the ODD").
+**How the sweeper works** (`scenario-writing`'s `references/constraints-reference.md`): `sweep.constraints` sweeps exactly **one** key -- a lanelet ID, usually `ego.spawn_lanelet_id` -- picking every lanelet that matches its constraints; `sweep.bindings` derives every other value a case needs from that pick; `sweep.exclude` drops cases by the values they end with. Scalar knobs (speeds, weather, ...) are not swept by constraints: `sweep.odd_sample` draws them from the ODD (`docs/odd.md`, "Sampling scenarios from the ODD").
 
 ## Parameter Review Process
 

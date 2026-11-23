@@ -20,6 +20,7 @@ The package provides these CLI commands:
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
 | [`scenario-editor`](scenario_editor.md) | FastAPI + Uvicorn | Web UI for authoring scenarios and exporting reproducible packages |
+| [`scenario-agent`](coding_agents.md) | argparse | Install the scenario-writing skills into Claude Code or Codex and start the agent; needs the `agent` extra |
 | [`scenario-hils`](hils.md) | argparse | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra |
 | [`scenario-t4scene`](t4_scene.md) | argparse | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit |
 | [`scenario-wosac`](wosac.md) | argparse | Write runs' trajectory logs as WOSAC rollouts, and pack them as a submission |

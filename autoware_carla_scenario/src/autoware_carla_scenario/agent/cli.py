@@ -1,24 +1,29 @@
-"""Install the repository's agent skills into a coding agent and start it.
+"""``scenario-agent``: install the scenario skills into a coding agent and start it.
 
-The scenario-writing skills live in ``skills/`` at the repository root, one
-directory per skill (``SKILL.md`` and its references). This script installs
-them for one coding agent with agent-skill-installer -- as editable symlinks
-under the agent's own skills directory (``.claude/skills/``, ``.codex/skills/``)
--- and then starts that agent in the repository, optionally on a first prompt
-that invokes one of the skills::
+The skills ship with the package (``autoware_carla_scenario/agent/skills/``).
+This command installs them for one coding agent with agent-skill-installer
+(the ``agent`` extra) into the Git repository holding the working directory
+-- this framework's checkout, or a scenario package's repository -- under the
+agent's own skills directory (``.claude/skills/``, ``.codex/skills/``), and
+then starts that agent in the repository, optionally on a first prompt that
+invokes one of the skills::
 
-    uv run --group agent scripts/scenario_agent.py claude "stop at a stop sign"
-    uv run --group agent scripts/scenario_agent.py codex --skill review-scenario lane_change
+    scenario-agent claude "stop at a stop sign"
+    scenario-agent codex --skill review-scenario lane_change
+
+Where the skills sit inside that repository (this framework's checkout, with
+the package installed editable) they are installed as symlinks, so edits to
+them are live; otherwise they are copied, and running the command again
+updates the copies.
 
 The installer also keeps a discoverability block per skill in the agent's
-instruction file (``CLAUDE.md``, ``AGENTS.md``). Those blocks are committed, and
-the install rewrites them identically, so a run leaves the tracked files as
-they were; the installed skills themselves are ignored by git.
+instruction file (``CLAUDE.md``, ``AGENTS.md``) of the repository.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -27,8 +32,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SKILLS_DIR = REPO_ROOT / "skills"
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 DEFAULT_SKILL = "write-scenario"
 
 
@@ -59,14 +63,23 @@ def available_skills() -> list[str]:
     return sorted(p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md"))
 
 
+def find_repository_root(start: Path) -> Path | None:
+    """Return the Git (or Sapling) repository root holding ``start``, if any."""
+    for directory in (start, *start.parents):
+        if (directory / ".git").exists() or (directory / ".sl").exists():
+            return directory
+    return None
+
+
 def install_command(
-    agents: Sequence[Agent], skills_dir: Path = SKILLS_DIR
+    agents: Sequence[Agent], repository: Path, skills_dir: Path = SKILLS_DIR
 ) -> list[str]:
     """Return the agent-skill-installer command installing every skill.
 
-    The skills go into the repository holding ``skills_dir``, for every agent
-    in ``agents`` at once.
+    The skills go into ``repository`` for every agent in ``agents`` at once:
+    as symlinks when ``skills_dir`` is inside ``repository``, else as copies.
     """
+    editable = skills_dir.resolve().is_relative_to(repository.resolve())
     return [
         sys.executable,
         "-m",
@@ -76,13 +89,13 @@ def install_command(
         "--skill-path",
         str(skills_dir),
         "--all-src-skills",
-        "--editable",
+        "--editable" if editable else "--copy",
         "--agent",
         ",".join(agent.name for agent in agents),
         "--scope",
         "dir",
         "--target-dir",
-        str(skills_dir.parent),
+        str(repository),
         "--repo",
     ]
 
@@ -106,8 +119,10 @@ def launch_command(agent: Agent, prompt: str | None) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="scenario-agent",
         description=(
-            "Install the scenario-writing skills into a coding agent and start it."
+            "Install the scenario-writing skills into a coding agent, in the Git "
+            "repository holding the working directory, and start the agent there."
         ),
     )
     parser.add_argument("agent", choices=sorted(AGENTS), help="The agent to start.")
@@ -132,6 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _error(message: str) -> int:
+    print(f"scenario-agent: {message}", file=sys.stderr)
+    return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # Intermixed, so options may come between the agent and the request
     # (`codex --skill review-scenario lane_change`).
@@ -140,32 +160,37 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     skills = available_skills()
     if args.skill not in skills:
-        print(
-            f"scenario_agent: unknown skill {args.skill!r}; "
-            f"choose from: {', '.join(skills)}",
-            file=sys.stderr,
+        return _error(f"unknown skill {args.skill!r}; choose from: {', '.join(skills)}")
+
+    repository = find_repository_root(Path.cwd())
+    if repository is None:
+        return _error(
+            "run it inside a Git repository (this framework's checkout or a "
+            "scenario package's): the skills are installed into its root"
         )
-        return 2
 
     # Looked up before installing, so a missing agent fails fast.
     executable = shutil.which(agent.name)
     if executable is None and not args.install_only:
-        print(
-            f"scenario_agent: `{agent.name}` is not on PATH; "
-            f"install it first ({agent.install_hint}).",
-            file=sys.stderr,
+        return _error(
+            f"`{agent.name}` is not on PATH; install it first ({agent.install_hint})."
         )
-        return 2
 
-    installed = subprocess.run(install_command([agent]), check=False)
+    if importlib.util.find_spec("agent_skill_installer") is None:
+        return _error(
+            "agent-skill-installer is not installed: install the `agent` extra "
+            "(`uv pip install 'autoware-carla-scenario[agent]'`)"
+        )
+
+    installed = subprocess.run(install_command([agent], repository), check=False)
     if installed.returncode != 0:
-        print("scenario_agent: installing the skills failed.", file=sys.stderr)
+        print("scenario-agent: installing the skills failed.", file=sys.stderr)
         return installed.returncode
     if executable is None or args.install_only:
         return 0
 
     command = launch_command(agent, first_prompt(agent, args.skill, args.request))
-    os.chdir(REPO_ROOT)
+    os.chdir(repository)
     # Hand the terminal over to the agent: its session replaces this process.
     os.execv(executable, command)
 

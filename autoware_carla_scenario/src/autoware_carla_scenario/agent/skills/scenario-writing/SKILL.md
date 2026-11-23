@@ -9,7 +9,17 @@ description: This skill should be used when the user asks to "write a scenario",
 
 Guide the interactive creation of CARLA test scenarios for `autoware_carla_scenario`. Cover the full lifecycle: concrete scenario authoring, the static check, parameter tuning, logical scenario conversion (sweep constraints and bindings), and multirun execution.
 
-The user-facing walkthrough this skill follows is `autoware_carla_scenario/docs/tutorial.md`; when this skill and the code disagree, the code (and that tutorial) wins.
+The user-facing walkthrough this skill follows is the framework's Tutorial (`docs/tutorial.md`); when this skill and the code disagree, the code (and that tutorial) wins.
+
+## Where Things Are
+
+These skills work in the framework's own checkout and in a scenario package's repository alike. Paths in them mean:
+
+- **`<framework>/`** — the installed `autoware_carla_scenario` package, the framework's source to read (find it with `uv run python -c "import autoware_carla_scenario, pathlib; print(pathlib.Path(autoware_carla_scenario.__file__).parent)"`). In the framework's own checkout it is `autoware_carla_scenario/src/autoware_carla_scenario/`.
+- **`docs/<page>.md`** — a page of the framework's documentation: https://autowarefoundation.github.io/autoware_carla_scenario/ (the page of that name), or `autoware_carla_scenario/docs/<page>.md` in the framework's checkout.
+- Paths of a scenario package (`src/<package>/...`) are relative to its repository.
+
+Editing the framework itself (a built-in scenario, a new Condition or constraint) needs the framework's checkout.
 
 ## Where the Scenario Lives
 
@@ -17,7 +27,7 @@ Decide this first, with the user:
 
 | | Scenario package (default for the user's own scenarios) | Built-in scenario (shipped with the framework) |
 |---|---|---|
-| Create | `uv run scenario-new <package> --scenario <name>` (`--output-dir DIR`) | Edit the framework under `autoware_carla_scenario/src/autoware_carla_scenario/examples/` |
+| Create | `uv run scenario-new <package> --scenario <name>` (`--output-dir DIR`) | Edit the framework under `<framework>/examples/` |
 | Scenario class | `src/<package>/<name>.py` | `examples/<name>.py` |
 | Config dataclass | `src/<package>/configs.py` | `examples/configs.py` |
 | Concrete YAML | `src/<package>/conf/scenario/<name>/<variant>.yaml` | `examples/conf/scenario/<name>/<variant>.yaml` |
@@ -74,7 +84,7 @@ Then statically check it before CARLA is involved:
 uv run scenario-check scenario='<name>/*'
 ```
 
-It compiles the scenario with Codon and reports type errors, misspelled config keys and bad values at their line (`autoware_carla_scenario/docs/typecheck.md`). A built-in module is also checked with `uv run scenario-check --library autoware_carla_scenario.examples.<name>`.
+It compiles the scenario with Codon and reports type errors, misspelled config keys and bad values at their line (`docs/typecheck.md`). A built-in module is also checked with `uv run scenario-check --library autoware_carla_scenario.examples.<name>`.
 
 ### Stage 2: Debug Concrete Scenario
 
@@ -140,11 +150,11 @@ Results go to `outputs/` (single runs, batches) and `multirun/` (sweeps); browse
 - **`references/scenario-patterns.md`** — Scenario class patterns and common condition compositions
 - **`references/code-generation.md`** — How to generate the scenario class, dataclass config, YAML and registration, and the rules every generated file follows
 
-### Key Source Locations (under `autoware_carla_scenario/src/autoware_carla_scenario/`)
+### Key Source Locations (under `<framework>/`)
 
 - Scenario base class: `scenario_base.py`
 - Conditions: `conditions/`; actions: `actions/`
 - Coordinate transforms and the map: `coordinate/` (`MapManager`, `snap_to_carla_road`, `to_opendrive`)
 - Sweeper: `sweeper/`
 - Built-in scenarios: `examples/` (the patterns to copy); their Hydra configs: `examples/conf/`
-- Scenario package generator: `scaffold/`; template: `examples/scenario_package_template/` at the repository root
+- Scenario package generator: `scaffold/`; template: `examples/scenario_package_template/` in the framework's repository

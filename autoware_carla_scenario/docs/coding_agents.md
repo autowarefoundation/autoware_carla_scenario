@@ -1,95 +1,119 @@
 # Writing Scenarios with a Coding Agent
 
-The repository ships agent skills for writing, reviewing and debugging
+The framework ships agent skills for writing, reviewing and debugging
 scenarios. A **coding agent** — [Claude Code](https://code.claude.com/docs/en/setup)
 or [Codex](https://github.com/openai/codex) — can load them and walk you
 through a scenario, from a plain-text description to a logical scenario with
-its sweep. This page is the procedure, from setup to editing the skills
-themselves.
+its sweep. `scenario-agent` installs the skills and starts the agent. It works
+in this framework's checkout and in your own scenario package's repository
+alike. This page is the procedure, from setup to editing the skills.
 
 ## What Is Shipped
 
-| Path | What it is |
+| What | Where |
 |---|---|
-| `skills/` | One directory per skill (`SKILL.md`, plus `references/` for `scenario-writing`), written for any agent |
-| `scripts/scenario_agent.py` | Installs every skill into one agent, then starts that agent in the repository |
-| `agent` dependency group (root `pyproject.toml`) | [agent-skill-installer](https://github.com/omry/agent-skill-installer), which the script uses for the install |
+| The skills: one directory per skill (`SKILL.md`, plus `references/` for `scenario-writing`), written for any agent | In the package: `autoware_carla_scenario/agent/skills/` (in this checkout, `autoware_carla_scenario/src/autoware_carla_scenario/agent/skills/`) |
+| `scenario-agent`: installs every skill into one agent, then starts that agent | Console script of the package |
+| [agent-skill-installer](https://github.com/omry/agent-skill-installer), which `scenario-agent` installs with | The `agent` extra |
 
 | Skill | Use it to |
 |---|---|
-| `write-scenario` | Create a new scenario end to end (the default the script invokes) |
+| `write-scenario` | Create a new scenario end to end (the default `scenario-agent` invokes) |
 | `debug-concrete-scenario` | Run a concrete scenario, read the result, fix it until it passes |
 | `review-scenario` | Review a scenario's parameter design before adding a sweep |
 | `scenario-writing`, `scenario-debugging`, `scenario-review` | The domain knowledge the three above build on; the agent loads them when a task needs them |
 
 ## 1. Prerequisites
 
-1. **The repository's environment**, as in [Installation](installation.md):
-   `uv sync --dev` at the repository root.
+1. **The framework with the `agent` extra**:
+    - in this framework's checkout, `uv sync --dev` at the repository root (the
+      dev group includes it);
+    - in a scenario package's project, add the extra to its dependency on the
+      framework: `uv add 'autoware-carla-scenario[agent]'` (or
+      `uv pip install 'autoware-carla-scenario[agent]'` in its environment).
 2. **A coding agent on `PATH`, signed in**: `claude` (Claude Code) or `codex`
-   (Codex). Start it once by hand to log in; the script does not sign you in.
-3. **A CARLA server**, for the steps that run a scenario (debugging and the
+   (Codex). Start it once by hand to log in; `scenario-agent` does not sign you
+   in.
+3. **A Git repository** to work in: the skills are installed into the root of
+   the repository holding the working directory, found through `.git`. A
+   scenario package from [`scenario-new`](tutorial.md#packaging-scenarios-in-a-separate-package)
+   is not one until you `git init` it.
+4. **A CARLA server**, for the steps that run a scenario (debugging and the
    multirun). `uv run scenario-setup` downloads one; see
    [Installation](installation.md). Writing, the static check and the sweep
    preview need no CARLA.
-4. **A Git checkout**: the skills are installed into the repository root, which
-   the installer finds through `.git`.
 
 ## 2. Start the Agent
 
-From anywhere in the checkout:
+From anywhere in the repository:
 
 ```bash
 # Claude Code
-uv run --group agent scripts/scenario_agent.py claude "I want to test that the ego stops at a stop sign, waits 3 seconds, then goes"
+uv run scenario-agent claude "I want to test that the ego stops at a stop sign, waits 3 seconds, then goes"
 
 # Codex
-uv run --group agent scripts/scenario_agent.py codex "I want to test that the ego stops at a stop sign, waits 3 seconds, then goes"
+uv run scenario-agent codex "I want to test that the ego stops at a stop sign, waits 3 seconds, then goes"
 ```
 
-`--group agent` adds agent-skill-installer to the environment for the run.
+`scenario-agent` then:
 
-The script then:
-
-1. checks that the skill to invoke exists in `skills/`, and that the agent's
-   command is on `PATH` (otherwise it stops with exit code 2, before
-   installing anything);
-2. installs every skill for that agent, as symlinks into the repository's
-   `.claude/skills/` (Claude Code) or `.codex/skills/` (Codex) — both ignored by
-   git — and rewrites each skill's discoverability block at the end of
-   `CLAUDE.md` / `AGENTS.md`, identically to what is committed;
+1. checks that the skill to invoke exists, that the working directory is in a
+   Git repository, and that the agent's command is on `PATH` (otherwise it
+   stops with exit code 2, before installing anything);
+2. installs every skill for that agent into the repository's
+   `.claude/skills/` (Claude Code) or `.codex/skills/` (Codex), and writes each
+   skill's discoverability block at the end of the repository's `CLAUDE.md` /
+   `AGENTS.md` (creating the file if there is none). Skills that lie inside the
+   repository — this framework's checkout, with the package installed
+   editable — are installed as symlinks, so edits to them are live; otherwise
+   (an installed framework) they are copied;
 3. starts the agent in the repository root, with a first prompt that invokes
    the skill on your request: `/write-scenario <request>` in Claude Code,
    `$write-scenario <request>` in Codex.
 
-The agent's session replaces the script: from there on you are talking to the
-agent.
+The agent's session replaces `scenario-agent`: from there on you are talking to
+the agent.
 
 ### Options
 
 | Command | Effect |
 |---|---|
-| `scenario_agent.py claude "<request>"` | Install, then start Claude Code on `/write-scenario <request>` |
-| `scenario_agent.py codex --skill review-scenario lane_change` | Install, then start Codex on `$review-scenario lane_change` |
-| `scenario_agent.py claude` | Install, then start Claude Code with no prompt; pick a skill in the session |
-| `scenario_agent.py codex --install-only` | Install only; start the agent yourself later |
+| `scenario-agent claude "<request>"` | Install, then start Claude Code on `/write-scenario <request>` |
+| `scenario-agent codex --skill review-scenario lane_change` | Install, then start Codex on `$review-scenario lane_change` |
+| `scenario-agent claude` | Install, then start Claude Code with no prompt; pick a skill in the session |
+| `scenario-agent codex --install-only` | Install only; start the agent yourself later |
 
 The options may come before or after the request. `--help` lists them.
 
 Once installed, the skills stay: starting `claude` or `codex` in the repository
 root by hand finds them too.
 
+### In a scenario package's repository
+
+The installs and the discoverability blocks land in your repository. Keep the
+installs out of version control, as this repository does:
+
+```gitignore
+.claude/skills/
+.codex/
+```
+
+The blocks in `CLAUDE.md` / `AGENTS.md` are yours to commit or not; each run
+writes them the same way for the same framework version. The copied skills
+are those of the installed framework: after upgrading it, run
+`scenario-agent <agent> --install-only` again to update them.
+
 ## 3. Work Through the Scenario
 
 In the session, a skill is invoked by name followed by what you want —
-`/write-scenario ...` in Claude Code, `$write-scenario ...` in Codex. The
-script's first prompt does that for you. `write-scenario` then goes through
-these stages, asking you to confirm at each one:
+`/write-scenario ...` in Claude Code, `$write-scenario ...` in Codex.
+`scenario-agent`'s first prompt does that for you. `write-scenario` then goes
+through these stages, asking you to confirm at each one:
 
 | Stage | What the agent does | What you do |
 |---|---|---|
-| 1. Understand | Restates the behaviour under test, the pass and fail conditions, the NPCs, and asks where the scenario lives: a scenario package of its own (the default, made with `scenario-new`) or a built-in scenario of the framework | Answer its questions; name the package |
-| 2. Discover | Searches the source for the Conditions, Actions and the built-in scenario closest to yours | Approve any new Condition/Action it proposes |
+| 1. Understand | Restates the behaviour under test, the pass and fail conditions, the NPCs, and asks where the scenario lives: a scenario package of its own (the default, made with `scenario-new`) or a built-in scenario of the framework (in its checkout) | Answer its questions; name the package |
+| 2. Discover | Searches the framework's source for the Conditions, Actions and the built-in scenario closest to yours | Approve any new Condition/Action it proposes |
 | 3. Write | Writes the scenario class, its config dataclass and the concrete YAML (and the registration, for a built-in), then runs the static check (`scenario-check`) | Review the files it shows before it writes them |
 | 4. Debug | Runs the concrete scenario in CARLA (the `debug-concrete-scenario` skill), reads the result and fixes it, up to 3 tries on one issue before asking you | Keep a CARLA server reachable; confirm the behaviour is what you meant |
 | 5. Review | Reviews the parameters (the `scenario-review` skill): the one swept lanelet, what is derived from it with bindings, what stays constant | Confirm the parameter design |
@@ -100,34 +124,41 @@ You can also call the other skills directly at any time, e.g.
 `/debug-concrete-scenario <name>/<variant>` for a scenario that fails, or
 `/review-scenario <name>` before adding a sweep.
 
-The skills discover the framework's API from the source each time, so they do
-not need updating for every new Condition or constraint. What they describe
-follows the [Tutorial](tutorial.md) and [Usage](usage.md); where a skill and the
-code disagree, the code wins.
+The skills discover the framework's API from its source each time — the
+installed package, wherever it is — so they do not need updating for every new
+Condition or constraint. What they describe follows the [Tutorial](tutorial.md)
+and [Usage](usage.md); where a skill and the code disagree, the code wins.
 
 ## 4. Edit or Add a Skill
 
-The skills are plain Markdown under `skills/<name>/`. The installs are symlinks,
-so an edit is live in the next agent session with no reinstall.
+The skills are plain Markdown under the package's `agent/skills/<name>/`;
+change them in this framework's checkout
+(`autoware_carla_scenario/src/autoware_carla_scenario/agent/skills/`). There the
+installs are symlinks, so an edit is live in the next agent session with no
+reinstall.
 
-- **Changing a skill's text**: edit `skills/<name>/SKILL.md` (or its
-  `references/`). Keep it agent-neutral: no names only one agent understands
-  (`$ARGUMENTS`, `allowed-tools`, `AskUserQuestion`); `test_agent_skills.py`
-  refuses them.
+- **Changing a skill's text**: edit its `SKILL.md` (or its `references/`). Keep
+  it agent-neutral: no names only one agent understands (`$ARGUMENTS`,
+  `allowed-tools`, `AskUserQuestion`); `test_agent_skills.py` refuses them.
+  Refer to the framework's source as `<framework>/` and to its documentation as
+  `docs/<page>.md` (`scenario-writing`'s "Where Things Are"), so the skill
+  works outside this checkout too.
 - **Changing a skill's `description`** (its frontmatter), **adding or renaming
-  a skill**: the discoverability blocks in `CLAUDE.md` and `AGENTS.md` come
-  from the descriptions, so regenerate them and commit the result:
+  a skill**: the discoverability blocks in this repository's `CLAUDE.md` and
+  `AGENTS.md` come from the descriptions, so regenerate them and commit the
+  result:
 
   ```bash
-  uv run --group agent scripts/scenario_agent.py claude --install-only
-  uv run --group agent scripts/scenario_agent.py codex --install-only
+  uv run scenario-agent claude --install-only
+  uv run scenario-agent codex --install-only
   ```
 
   `test_agent_skills.py` installs into a temporary repository and fails while
   the committed blocks differ from what an install writes.
-- A new skill is a directory `skills/<name>/` with a `SKILL.md` whose
+- A new skill is a directory `agent/skills/<name>/` with a `SKILL.md` whose
   frontmatter has `name: <name>` (the directory's name) and a `description`
-  saying when to use it.
+  saying when to use it. Everything under the package directory goes into the
+  wheel, so it ships with the next release.
 
 Run the skill tests with:
 
@@ -137,9 +168,9 @@ uv run pytest -o addopts= autoware_carla_scenario/test/carla_scenario/test_agent
 
 ## 5. Remove the Installed Skills
 
-The installs are only the ignored directories `.claude/skills/` and
-`.codex/skills/` (with the installer's manifests beside each skill); delete
-them to remove the skills from this checkout. Do not run the installer's own
+The installs are only the directories `.claude/skills/` and `.codex/skills/`
+(with the installer's manifests beside each skill); delete them to remove the
+skills from a repository. In this repository, do not run the installer's own
 `uninstall`: it also removes the discoverability blocks from the committed
 `CLAUDE.md` and `AGENTS.md`.
 
@@ -147,9 +178,11 @@ them to remove the skills from this checkout. Do not run the installer's own
 
 | Symptom | Cause and fix |
 |---|---|
-| ``scenario_agent: `claude` is not on PATH`` (exit 2) | Install the agent (the message links to it) or fix `PATH`; or use `--install-only` and start the agent another way |
-| `scenario_agent: unknown skill ...` (exit 2) | The `--skill` name is not a directory of `skills/`; the message lists the names |
-| `installing the skills failed` | The installer's own error is printed above it. The usual one is a skill directory in `.claude/skills/` or `.codex/skills/` that the installer did not create (no manifest beside it): remove that directory and run the script again |
-| The agent does not list the skills | Start it from the repository root (the script does), and start a new session after installing; check that `.claude/skills/<name>` or `.codex/skills/<name>` exists |
-| `git status` shows `CLAUDE.md` / `AGENTS.md` changed after a run | A skill's `description` changed without regenerating the blocks: commit the change (section 4) |
+| ``scenario-agent: `claude` is not on PATH`` (exit 2) | Install the agent (the message links to it) or fix `PATH`; or use `--install-only` and start the agent another way |
+| `scenario-agent: run it inside a Git repository ...` (exit 2) | Run it from inside a Git checkout; `git init` a new scenario package first |
+| `scenario-agent: agent-skill-installer is not installed ...` (exit 2) | Install the `agent` extra (section 1) |
+| `scenario-agent: unknown skill ...` (exit 2) | The `--skill` name is not one of the shipped skills; the message lists them |
+| `installing the skills failed` | The installer's own error is printed above it. The usual one is a skill directory in `.claude/skills/` or `.codex/skills/` that the installer did not create (no manifest beside it): remove that directory and run `scenario-agent` again |
+| The agent does not list the skills | Start it from the repository root (`scenario-agent` does), and start a new session after installing; check that `.claude/skills/<name>` or `.codex/skills/<name>` exists |
+| `git status` shows this repository's `CLAUDE.md` / `AGENTS.md` changed after a run | A skill's `description` changed without regenerating the blocks: commit the change (section 4) |
 | A debugging step cannot run the scenario | No CARLA server is reachable: start one (`scenario-setup`, `server.host` / `server.port`), then ask the agent to continue |

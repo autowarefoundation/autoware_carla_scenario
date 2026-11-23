@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Project guidance for coding agents lives in [CLAUDE.md](CLAUDE.md): read it first.
-The skills below come from `skills/`; `scripts/scenario_agent.py` installs them.
+The skills below ship with the package (`autoware_carla_scenario/agent/skills/`); `scenario-agent` installs them.
 
 <!-- DEBUG-CONCRETE-SCENARIO-DISCOVERABILITY-START -->
 ## debug-concrete-scenario Discoverability

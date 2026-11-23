@@ -1,6 +1,8 @@
 # Scenario Patterns Reference
 
-The built-in scenarios under `autoware_carla_scenario/src/autoware_carla_scenario/examples/` are the patterns to copy: `traffic_light_compliance.py`, `temporary_stop.py`, `intersection_passing.py`, `lane_change.py`, `cut_in.py` (an NPC), `pedestrian_dart_out.py` (a pedestrian), `adversity.py`. Read the closest one before writing a new scenario. Everything below is imported from the top-level package (`from autoware_carla_scenario import ...`); the CARLA API is `import typesafe_carla.carla as carla` (never `import carla`).
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in `../SKILL.md`'s "Where Things Are".
+
+The built-in scenarios under `<framework>/examples/` are the patterns to copy: `traffic_light_compliance.py`, `temporary_stop.py`, `intersection_passing.py`, `lane_change.py`, `cut_in.py` (an NPC), `pedestrian_dart_out.py` (a pedestrian), `adversity.py`. Read the closest one before writing a new scenario. Everything below is imported from the top-level package (`from autoware_carla_scenario import ...`); the CARLA API is `import typesafe_carla.carla as carla` (never `import carla`).
 
 ## Scenario Class Anatomy
 
