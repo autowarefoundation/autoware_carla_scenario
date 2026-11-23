@@ -277,34 +277,51 @@ class TemporaryStopCondition(CompositionCondition):
     ) -> None:
         """Walk *overflow* metres on from one end of *road_id*.
 
-        *reach* keeps the largest overflow any branch has brought to each
-        ``(road, contact)``; *order* lists them as first reached.  A road is
-        walked again only when a branch brings strictly more than before.
-        What a road passes on is less than what it was given (its length is
-        taken off), so going round a loop brings less, never more, and the
-        walk ends; a zero-length road passes on as much as it got, which is
-        not more, so it ends there too.
+        *reach* keeps the largest overflow any branch brings to each
+        ``(road, contact)``; *order* lists them as first reached.  The road
+        with the most left is walked on next, as in a shortest-path search,
+        so each is walked on once, with the most any branch brings it (walking
+        depth-first, and again whenever a branch brings more, takes time
+        exponential in the forks the margin crosses).  A road passes on what
+        it was given less its length, never more, so a loop, or a zero-length
+        road, ends the walk.  The keys already in *reach* -- *road_id*'s own
+        -- are never walked.
         """
-        for linked_id, contact in cls._find_linked_roads(
-            road_id, "successor" if past_end else "predecessor"
-        ):
-            key = (linked_id, contact)
-            if key in reach:
-                if overflow <= reach[key]:
-                    continue
-            else:
-                order.append(key)
-            reach[key] = overflow
-            linked_length = cls._get_road_length(linked_id)
-            if overflow > linked_length:
-                # Entered at its start, the margin leaves it through its end.
-                cls._reach_roads(
-                    linked_id,
-                    overflow - linked_length,
-                    contact == "start",
-                    reach,
-                    order,
-                )
+        walked: set[tuple[str, str]] = set(reach.keys())
+        current = road_id
+        carried = overflow
+        leaves_at_end = past_end
+        passes_on = True
+        while True:
+            if passes_on:
+                for linked_id, contact in cls._find_linked_roads(
+                    current, "successor" if leaves_at_end else "predecessor"
+                ):
+                    key = (linked_id, contact)
+                    if key in walked:
+                        continue
+                    if key in reach:
+                        if carried <= reach[key]:
+                            continue
+                    else:
+                        order.append(key)
+                    reach[key] = carried
+            # The road not yet walked with the most left (the first reached
+            # of a tie).
+            best = -1
+            for index in range(len(order)):
+                if order[index] not in walked and (
+                    best < 0 or reach[order[index]] > reach[order[best]]
+                ):
+                    best = index
+            if best < 0:
+                return
+            current, contact = order[best]
+            walked.add((current, contact))
+            carried = reach[(current, contact)] - cls._get_road_length(current)
+            passes_on = carried > 0.0
+            # Entered at its start, the margin leaves it through its end.
+            leaves_at_end = contact == "start"
 
     @classmethod
     def _build_lanelet_conditions(
@@ -405,26 +422,45 @@ class TemporaryStopCondition(CompositionCondition):
     ) -> None:
         """Walk *overflow* metres on from *lanelet_id* in *direction*.
 
-        *reach* keeps the largest overflow any branch has brought to each
-        lanelet; *order* lists them as first reached.  A lanelet is walked
-        again only when a branch brings strictly more than before.  What a
-        lanelet passes on is less than what it was given (its length is taken
-        off), so going round a loop brings less, never more, and the walk
-        ends; a zero-length lanelet passes on as much as it got, which is not
-        more, so it ends there too.
+        *reach* keeps the largest overflow any branch brings to each lanelet;
+        *order* lists them as first reached.  The lanelet with the most left
+        is walked on next, as in a shortest-path search, so each is walked on
+        once, with the most any branch brings it (walking depth-first, and
+        again whenever a branch brings more, takes time exponential in the
+        forks the margin crosses).  A lanelet passes on what it was given less
+        its length, never more, so a loop, or a zero-length lanelet, ends the
+        walk.  The lanelets already in *reach* -- *lanelet_id* -- are never
+        walked.
         """
-        for linked in cls._find_linked_lanelets(lanelet_id, direction):
-            if linked in reach:
-                if overflow <= reach[linked]:
-                    continue
-            else:
-                order.append(linked)
-            reach[linked] = overflow
-            linked_length = cls._get_lanelet_length(linked)
-            if overflow > linked_length:
-                cls._reach_lanelets(
-                    linked, overflow - linked_length, direction, reach, order
-                )
+        walked: set[int] = set(reach.keys())
+        current = lanelet_id
+        carried = overflow
+        passes_on = True
+        while True:
+            if passes_on:
+                for linked in cls._find_linked_lanelets(current, direction):
+                    if linked in walked:
+                        continue
+                    if linked in reach:
+                        if carried <= reach[linked]:
+                            continue
+                    else:
+                        order.append(linked)
+                    reach[linked] = carried
+            # The lanelet not yet walked with the most left (the first reached
+            # of a tie).
+            best = -1
+            for index in range(len(order)):
+                if order[index] not in walked and (
+                    best < 0 or reach[order[index]] > reach[order[best]]
+                ):
+                    best = index
+            if best < 0:
+                return
+            current = order[best]
+            walked.add(current)
+            carried = reach[current] - cls._get_lanelet_length(current)
+            passes_on = carried > 0.0
 
     @staticmethod
     def _make_lanelet_segment_condition(

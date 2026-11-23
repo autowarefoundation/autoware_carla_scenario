@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Generator
 from pathlib import Path
 from typing import Optional
@@ -798,11 +799,11 @@ class TestAStopMarginReachesAsFarAsItReaches:
         [
             (
                 [2, 1],
-                [(10, 0.0, 10.0), (2, 0.0, 10.0), (3, 87.0, 100.0), (1, 0.0, 1.0)],
+                [(10, 0.0, 10.0), (2, 0.0, 10.0), (1, 0.0, 1.0), (3, 87.0, 100.0)],
             ),
             (
                 [1, 2],
-                [(10, 0.0, 10.0), (1, 0.0, 1.0), (3, 87.0, 100.0), (2, 0.0, 10.0)],
+                [(10, 0.0, 10.0), (1, 0.0, 1.0), (2, 0.0, 10.0), (3, 87.0, 100.0)],
             ),
         ],
     )
@@ -847,6 +848,44 @@ class TestAStopMarginReachesAsFarAsItReaches:
                 label="stop",
             )
         assert stretches == expected
+
+    def test_each_lanelet_is_walked_on_once_across_many_forks(self) -> None:
+        # A chain of 16 forks that join again, the first branch listed always
+        # the longer, and the gap narrowing down the chain: walked
+        # depth-first, and again whenever a branch brings more, each fork
+        # would double the walks of the forks after it (2**18 queries).
+        lengths: dict[int, float] = {0: 10.0}
+        following: dict[int, list[int]] = {0: []}
+        join = 0
+        for i in range(16):
+            long, short, after = 3 * i + 1, 3 * i + 2, 3 * i + 3
+            lengths.update({long: 1.0 + 0.5**i, short: 1.0, after: 0.001})
+            following.update({join: [long, short], long: [after], short: [after]})
+            following[after] = []
+            join = after
+        queried: list[int] = []
+
+        def linked(lanelet_id: int, direction: str) -> list[int]:
+            queried.append(lanelet_id)
+            return following[lanelet_id] if direction == "following" else []
+
+        reach: dict[int, float] = {0: math.inf}
+        order: list[int] = []
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_lanelet_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition, "_find_linked_lanelets", side_effect=linked
+            ),
+        ):
+            TemporaryStopCondition._reach_lanelets(0, 1000.0, "following", reach, order)
+        assert sorted(queried) == sorted(lengths)
+        assert sorted(order) == sorted(set(lengths) - {0})
+        # Every join gets what the short branches leave.
+        assert reach[48] == pytest.approx(1000.0 - 16 * 1.001 + 0.001)
 
 
 class TestAStopMarginReachesAcrossShortRoads:
@@ -1016,8 +1055,8 @@ class TestAStopMarginReachesAcrossShortRoads:
         assert stretches == [
             ("10", 0.0, 10.0),
             spans[first],
-            ("3", 87.0, 100.0),
             spans[second],
+            ("3", 87.0, 100.0),
         ]
 
 
