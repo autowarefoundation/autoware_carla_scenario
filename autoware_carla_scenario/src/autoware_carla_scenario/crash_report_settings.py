@@ -5,8 +5,9 @@ and choose what they hold (:data:`CRASH_REPORT_ENV`, :data:`ITEMS_ENV`, ...),
 the items a report can hold (:data:`ITEMS`), the :class:`Settings` read from
 them and the parsers of their values (a list of items, a size, a count), the
 cut of a file to the size limit (:func:`_truncate`), a name made safe for a
-file (:func:`_safe_name`) and the environment variables a report keeps
-(:data:`_ENV_PATTERNS`).
+file (:func:`_safe_name`), the environment variables a report keeps
+(:data:`_ENV_PATTERNS`), and the command and script that run a crashed case
+again (:func:`repro_command`, :func:`repro_script`, #2364).
 
 Split out of :mod:`.crash_report`, which re-exports every name moved here and
 keeps what reads the environment (``read_settings()``) and writes and sends
@@ -17,7 +18,9 @@ the reports (sentry_sdk, faulthandler), so that the library check compiles it
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
+from typing import Optional
 
 __all__ = [
     "CRASH_REPORT_DIR_ENV",
@@ -180,3 +183,31 @@ _ENV_PATTERNS = (
 
 def _safe_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("._") or "file"
+
+
+def repro_command(argv: list[str], overrides: Optional[list[str]]) -> list[str]:
+    """The command that runs the same case again: the `scenario` CLI with
+    the case's *overrides*, or, before they are known, the process's *argv*."""
+    if overrides is None:
+        return list(argv)
+    # Overrides are the `scenario` CLI's, whatever runs them here (a SLURM
+    # task's worker, a script calling main()).
+    return ["scenario"] + overrides
+
+
+def repro_script(
+    argv: list[str], cwd: str, env: dict[str, str], command: list[str]
+) -> bytes:
+    """``repro.sh``: from *cwd*, with the kept environment *env*, run
+    *command* (:func:`repro_command`), naming the original command line
+    *argv* in a comment."""
+    lines = [
+        "#!/bin/sh",
+        "# Runs the case this crash report comes from again.",
+        f"# Command line: {shlex.join(argv)}",
+        f"cd {shlex.quote(cwd)} || exit 1",
+    ]
+    for name, value in env.items():
+        lines.append(f"export {name}={shlex.quote(value)}")
+    lines.append(f'exec {shlex.join(command)} "$@"')
+    return ("\n".join(lines) + "\n").encode()

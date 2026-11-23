@@ -112,6 +112,7 @@ from autoware_carla_scenario.rerun import (
     RerunUnavailableError,
 )
 from autoware_carla_scenario.rerun import report as rerun_report
+from autoware_carla_scenario.rerun_report import rerun_errors as _rerun_errors
 from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.run_dirs import (
     _batch_output_dir_refusal as _batch_output_dir_refusal,
@@ -176,13 +177,17 @@ from autoware_carla_scenario.slurm.stems import sequential_stems
 from autoware_carla_scenario.value_text import shown
 
 from .argv import (
+    _RUN_DIR_KEY,
+    _SWEEP_DIR_KEY,
     BatchCase,
     _arena_max_set_by_user,
+    _batch_dir_text,
     _case_labels,
     _extract_resume_from,
     _extract_resume_into,
     _extract_scenario_override,
     _is_glob_pattern,
+    _split_batch_output_dir,
 )
 from .configs import (
     IntersectionPassingConfig,
@@ -2138,14 +2143,9 @@ def rerun_errors(
     the cases whose ``rerun_recording`` is among the failed *conversions*.
 
     A recording converted more than once (a retried case, which writes under
-    the stem of the attempt it replaces) goes by its last conversion."""
-    latest = {str(c.recording): c.error for c in conversions}
-    failed = {path: error for path, error in latest.items() if error is not None}
-    return {
-        i: failed[result.rerun_recording]
-        for i, result in enumerate(results)
-        if result.rerun_recording is not None and result.rerun_recording in failed
-    }
+    the stem of the attempt it replaces) goes by its last conversion: the
+    checked :func:`.rerun_report.rerun_errors`, over the cases' recordings."""
+    return _rerun_errors([result.rerun_recording for result in results], conversions)
 
 
 def _finish_rerun(rerun: RerunConverter | None) -> list[RerunConversion]:
@@ -4760,12 +4760,6 @@ def _main() -> None:
         _dispatch(resume_from, resume_into)
 
 
-#: The Hydra keys naming a run's and a sweep's output directory, which a
-#: batch reads as its own (:func:`_extract_batch_output_dir`).
-_RUN_DIR_KEY = "hydra.run.dir"
-_SWEEP_DIR_KEY = "hydra.sweep.dir"
-
-
 def _extract_batch_output_dir(
     argv: list[str], *, multirun: bool
 ) -> tuple[Path | None, list[str]]:
@@ -4781,27 +4775,17 @@ def _extract_batch_output_dir(
     Exits 2 when the value cannot be resolved or is empty.
     """
     wanted = _SWEEP_DIR_KEY if multirun else _RUN_DIR_KEY
-    value: str | None = None
-    kept: list[str] = []
-    for arg in argv:
-        name, _, given = arg.lstrip("+~").partition("=")
-        if name not in (_RUN_DIR_KEY, _SWEEP_DIR_KEY):
-            kept.append(arg)
-            continue
-        if arg.startswith("~"):
-            continue
-        if name == wanted:
-            value = given
-        else:
-            logger.warning(
-                "%s is ignored: a batch%s writes to %s",
-                arg,
-                " run with --multirun" if multirun else " without --multirun",
-                wanted,
-            )
+    value, kept, ignored = _split_batch_output_dir(argv, multirun=multirun)
+    for arg in ignored:
+        logger.warning(
+            "%s is ignored: a batch%s writes to %s",
+            arg,
+            " run with --multirun" if multirun else " without --multirun",
+            wanted,
+        )
     if value is None:
         return None, kept
-    text = value.strip().strip("'\"")
+    text = _batch_dir_text(value)
     if "${" in text:
         from hydra.core.utils import setup_globals  # noqa: PLC0415
 

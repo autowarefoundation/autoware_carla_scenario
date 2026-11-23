@@ -116,6 +116,7 @@ from .crash_report_settings import _parse_items as _parse_items
 from .crash_report_settings import _parse_size as _parse_size
 from .crash_report_settings import _safe_name as _safe_name
 from .crash_report_settings import _truncate as _truncate
+from .crash_report_settings import repro_command, repro_script
 from .slurm.settings import snapshot_environment
 
 __all__ = [
@@ -377,12 +378,7 @@ class _Reporter:
 
     def repro_command(self) -> list[str]:
         """The command that runs the same case again."""
-        overrides = self.context.overrides
-        if overrides is None:
-            return list(self.argv)
-        # Overrides are the `scenario` CLI's, whatever runs them here (a SLURM
-        # task's worker, a script calling main()).
-        return ["scenario", *overrides]
+        return repro_command(self.argv, self.context.overrides)
 
     def context_dict(self) -> dict[str, Any]:
         ctx = self.context
@@ -408,15 +404,7 @@ class _Reporter:
 
     def repro_script(self) -> bytes:
         env = _kept_environment() if "environment" in self.settings.items else {}
-        lines = [
-            "#!/bin/sh",
-            "# Runs the case this crash report comes from again.",
-            f"# Command line: {shlex.join(self.argv)}",
-            f"cd {shlex.quote(str(self.cwd))} || exit 1",
-        ]
-        lines += [f"export {name}={shlex.quote(value)}" for name, value in env.items()]
-        lines.append(f'exec {shlex.join(self.repro_command())} "$@"')
-        return ("\n".join(lines) + "\n").encode()
+        return repro_script(self.argv, str(self.cwd), env, self.repro_command())
 
     def context_files(self) -> dict[str, bytes]:
         """The files of a report that say how to run it again."""

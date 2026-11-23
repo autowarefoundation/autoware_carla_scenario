@@ -702,3 +702,99 @@ def test_crash_report_re_exports_the_checked_settings() -> None:
     assert crash_report_settings._parse_size("N", "1k") == 1000
     assert crash_report_settings._parse_count("N", "0", zero_is_none=True) is None
     assert crash_report_settings._parse_count("N", "3", zero_is_none=True) == 3
+
+
+# ---------------------------------------------------------------------------
+# The repro command and script, moved into the checked crash_report_settings
+# (#2364)
+# ---------------------------------------------------------------------------
+#
+# The ``_old_*`` functions are crash_report._Reporter.repro_command() and
+# repro_script() before #2364, verbatim but for what they read off the
+# reporter (argv, the context's overrides, cwd, the kept environment), which
+# they now take.
+
+
+def _old_repro_command(argv: list[str], overrides: list[str] | None) -> list[str]:
+    if overrides is None:
+        return list(argv)
+    return ["scenario", *overrides]
+
+
+def _old_repro_script(
+    argv: list[str], cwd: Path, env: dict[str, str], overrides: list[str] | None
+) -> bytes:
+    import shlex  # noqa: PLC0415
+
+    lines = [
+        "#!/bin/sh",
+        "# Runs the case this crash report comes from again.",
+        f"# Command line: {shlex.join(argv)}",
+        f"cd {shlex.quote(str(cwd))} || exit 1",
+    ]
+    lines += [f"export {name}={shlex.quote(value)}" for name, value in env.items()]
+    lines.append(f'exec {shlex.join(_old_repro_command(argv, overrides))} "$@"')
+    return ("\n".join(lines) + "\n").encode()
+
+
+_WORDS = (
+    "scenario",
+    "scenario=demo",
+    "seed=3",
+    "",
+    "it's",
+    'say "hi"',
+    "a b",
+    "$HOME",
+    "x;rm -rf y",
+    "été",
+    "tab\there",
+    "new\nline",
+    "~/dir",
+    "+key=1",
+)
+
+
+def test_the_repro_command_and_script_are_as_before(tmp_path: Path) -> None:
+    import random  # noqa: PLC0415
+
+    from autoware_carla_scenario import crash_report_settings  # noqa: PLC0415
+
+    rng = random.Random(2364)
+    for _ in range(3000):
+        argv = [rng.choice(_WORDS) for _ in range(rng.randrange(0, 5))]
+        overrides = (
+            [rng.choice(_WORDS) for _ in range(rng.randrange(0, 4))]
+            if rng.random() < 0.6
+            else None
+        )
+        cwd = tmp_path / rng.choice(("run", "a b", "it's", "é"))
+        env = {f"SCENARIO_{i}": rng.choice(_WORDS) for i in range(rng.randrange(0, 3))}
+        command = crash_report_settings.repro_command(argv, overrides)
+        assert command == _old_repro_command(argv, overrides)
+        assert crash_report_settings.repro_script(
+            argv, str(cwd), env, command
+        ) == _old_repro_script(argv, cwd, env, overrides)
+
+
+@pytest.mark.parametrize("items", [crash_report.ITEMS, ("repro",)])
+@pytest.mark.parametrize("overrides", [None, ["scenario=demo", "seed=it's"]])
+def test_the_reporter_s_repro_script_is_as_before(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    items: tuple[str, ...],
+    overrides: list[str] | None,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    env = {"SCENARIO_X": "a b", "CARLA_PORT": "2000"}
+    monkeypatch.setattr(crash_report, "_kept_environment", lambda: dict(env))
+    reporter = crash_report._Reporter(
+        ["python", "-m", "x y"],
+        crash_report.Settings(items=frozenset(items)),
+    )
+    reporter.context.overrides = overrides
+    kept = env if "environment" in items else {}
+    assert reporter.repro_command() == _old_repro_command(reporter.argv, overrides)
+    assert reporter.repro_script() == _old_repro_script(
+        reporter.argv, reporter.cwd, kept, overrides
+    )

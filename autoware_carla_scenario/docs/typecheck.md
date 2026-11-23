@@ -2548,9 +2548,10 @@ in turn (`hils.host_devices`, #2124; not the playbooks' variables, a dict of
 mixed value types, or running them with ansible-runner, `hils.host_setup`,
 which re-exports it), how `detect-no-3d-model` writes the map configuration
 it edits, through a temporary file or in place, and reports the error of
-either (`tools.file_writes`, #2135; not the edit of the YAML text, the CARLA
-ray casts or the command line, `tools.detect_no_3d_model_lanelets`, which
-re-exports it), how an error shows an integer too long for
+either (`tools.file_writes`, #2135), and the YAML text it writes, the key's
+list rendered and spliced in (`tools.yaml_text`, #2364; not finding the YAML
+nodes, the CARLA ray casts or the command line,
+`tools.detect_no_3d_model_lanelets`, which re-exports both), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts (and
 how one is written, #2124), where
