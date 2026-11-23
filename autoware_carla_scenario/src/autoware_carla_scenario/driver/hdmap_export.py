@@ -68,7 +68,7 @@ def export_map(
     With ``lanelet2_path``, that file is the set's Lanelet2 map, copied as it
     is rather than converted by roadgen (and ``lanelet2`` is written even if
     ``formats`` leaves it out), together with the ``map_projector_info.yaml``
-    beside it, if any. With ``t4_map``, a serialized ``MapResource`` of the
+    beside it, if any; both files' content is in the id. With ``t4_map``, a serialized ``MapResource`` of the
     run's Lanelet2 map, the set holds it as its ``t4`` format (and ``t4`` is
     written even if ``formats`` leaves it out); without, ``t4`` cannot be
     written. A complete set already holding every format is reused
@@ -96,14 +96,7 @@ def export_map(
     for name, path in provided.items():
         if not path.is_file():
             raise FileNotFoundError(f"the {name} map {path} is not a file")
-    map_id = map_id_for(
-        map_name,
-        opendrive,
-        {
-            **{name: _file_digest(p) for name, p in provided.items()},
-            **{name: hashlib.sha256(data).digest() for name, data in given.items()},
-        },
-    )
+    map_id = map_id_for(map_name, opendrive, _provided_digests(provided, given))
     root = Path(map_dir)
     target = root / map_id
     present = _formats_in(target)
@@ -327,6 +320,27 @@ def _file_digest(path: Path) -> bytes:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
             digest.update(chunk)
     return digest.digest()
+
+
+def _provided_digests(
+    provided: Mapping[str, Path], given: Mapping[str, bytes]
+) -> Dict[str, bytes]:
+    """The digests of what a set holds as given, for ``map_id_for``.
+
+    A given file's projector is copied in beside it (``_copy_provided``) and
+    changes how the map is read, so it is in the id too, under
+    ``<format>:projector`` (no format name holds a colon). A file without one
+    adds nothing, which keeps the ids of those sets as they were.
+    """
+    digests: Dict[str, bytes] = {}
+    for name, path in provided.items():
+        digests[name] = _file_digest(path)
+        projector = projector_info_path(path.parent)
+        if projector is not None:
+            digests[f"{name}:projector"] = _file_digest(projector)
+    for name, data in given.items():
+        digests[name] = hashlib.sha256(data).digest()
+    return digests
 
 
 def _copy_provided(source: Path, destination: Path) -> Dict[str, Any]:

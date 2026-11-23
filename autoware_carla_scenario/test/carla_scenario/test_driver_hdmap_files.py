@@ -6,6 +6,7 @@ Needs no roadgen, unlike ``test_driver_hdmap.py``: these are what
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Mapping, Optional
 
 import pytest
@@ -47,3 +48,45 @@ def test_hdmap_export_re_exports_the_same_objects() -> None:
         "export_map",
         "map_id_for",
     ]
+
+
+_OSM = (
+    "<?xml version='1.0'?>\n<osm version='0.6'><node id='1' lat='0' lon='0'/></osm>\n"
+)
+
+
+@pytest.fixture
+def given_osm(tmp_path: Path) -> Path:
+    path = tmp_path / "given" / "lanelet2_map.osm"
+    path.parent.mkdir()
+    path.write_text(_OSM, encoding="utf-8")
+    return path
+
+
+def test_a_given_map_without_projector_keeps_its_id(
+    given_osm: Path, tmp_path: Path
+) -> None:
+    """Sets already on disk: a given map without a projector keeps its id."""
+    map_id = hdmap_export.export_map(
+        "<OpenDRIVE/>", "Town", tmp_path / "maps", formats=(), lanelet2_path=given_osm
+    )
+    assert map_id == "Town-c1e43f649d0f"
+
+
+def test_the_projector_of_a_given_map_is_in_its_id(
+    given_osm: Path, tmp_path: Path
+) -> None:
+    """#2378: editing only the projector used to reuse the stale set."""
+    maps = tmp_path / "maps"
+    projector = given_osm.parent / "map_projector_info.yaml"
+    ids = []
+    for grid in ("54SUE", "53SQU"):
+        text = f"projector_type: MGRS\nvertical_datum: WGS84\nmgrs_grid: {grid}\n"
+        projector.write_text(text, encoding="utf-8")
+        map_id = hdmap_export.export_map(
+            "<OpenDRIVE/>", "Town", maps, formats=(), lanelet2_path=given_osm
+        )
+        assert (maps / map_id / "map_projector_info.yaml").read_text() == text
+        ids.append(map_id)
+    assert ids[0] != ids[1]
+    assert "Town-c1e43f649d0f" not in ids

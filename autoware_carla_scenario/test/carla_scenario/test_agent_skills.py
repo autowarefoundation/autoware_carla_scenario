@@ -9,6 +9,7 @@ must be exactly what an install writes: otherwise every run would leave a diff.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from importlib import resources
@@ -197,3 +198,88 @@ def test_install_only_does_not_start_the_agent(
     monkeypatch.setattr(cli.os, "execv", no_exec)
     assert cli.main(["claude", "--install-only"]) == 0
     assert calls == [(["claude"], tmp_path)]
+
+
+def _hand_written_skill(repository: Path, agent_dir: str, name: str) -> Path:
+    skill_dir = repository / agent_dir / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: mine\n---\n", encoding="utf-8"
+    )
+    return skill_dir
+
+
+def test_unowned_skill_directories_are_refused_before_installing_any(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#2378: one hand-written skill used to stop the install half way."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    mine = [
+        _hand_written_skill(tmp_path, ".claude", name)
+        for name in ("write-scenario", "review-scenario")
+    ]
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["claude", "--install-only"]) == 2
+    err = capsys.readouterr().err
+    assert "refusing to replace unowned skill directories" in err
+    for skill_dir in mine:
+        assert str(skill_dir) in err
+    skills = sorted(p.name for p in (tmp_path / ".claude" / "skills").iterdir())
+    assert skills == ["review-scenario", "write-scenario"], "nothing else installed"
+    assert not (tmp_path / "CLAUDE.md").exists()
+    for skill_dir in mine:
+        assert sorted(p.name for p in skill_dir.iterdir()) == ["SKILL.md"]
+
+
+def test_an_unowned_directory_of_one_agent_stops_every_agent(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    from agent_skill_installer import InstallerError
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    mine = _hand_written_skill(tmp_path, ".codex", "scenario-writing")
+    with pytest.raises(InstallerError, match="unowned") as error:
+        cli.install([cli.AGENTS["claude"], cli.AGENTS["codex"]], tmp_path)
+    assert str(mine) in str(error.value)
+    assert not (tmp_path / ".claude").exists()
+    assert not (tmp_path / "CLAUDE.md").exists()
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_a_skill_directory_of_another_package_is_refused_with_the_reason(
+    tmp_path: Path,
+) -> None:
+    """A manifest the installer cannot accept is unowned too, not only none."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    from agent_skill_installer import InstallerError
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    theirs = _hand_written_skill(tmp_path, ".claude", "write-scenario")
+    (theirs / ".write-scenario-install.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "package": "another-package",
+                "agent": "claude",
+                "scope": "dir",
+                "skill_dir": str(theirs),
+                "hook_path": str(tmp_path / "CLAUDE.md"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(InstallerError, match="unowned") as error:
+        cli.install([cli.AGENTS["claude"]], tmp_path)
+    assert f"{theirs} (install manifest is not for {cli.DISTRIBUTION}" in str(
+        error.value
+    )
+    assert sorted(p.name for p in (tmp_path / ".claude" / "skills").iterdir()) == [
+        "write-scenario"
+    ]
+    assert not (tmp_path / "CLAUDE.md").exists()
