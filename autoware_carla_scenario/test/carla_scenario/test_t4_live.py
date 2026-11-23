@@ -215,6 +215,27 @@ def test_without_extras_they_are_masked_not_zero() -> None:
         assert np.frombuffer(array.mask, dtype="?").all()
 
 
+def test_the_odometry_times_are_masked_where_the_ego_is_unavailable() -> None:
+    """A row the ego is not on has no odometry: its time is masked, as the
+    contract's masks mark unknown values, not left a valid-looking stamp
+    (#2352)."""
+    world, live, _ = _with_a_car()
+    for tick in range(9):  # frames 100..108; the ego gone on frame 106
+        world.frame = 100 + tick
+        world.snapshot = [_ActorSnapshot(2, 20.0 + 0.25 * tick, 5.0)]
+        if tick != 6:
+            world.snapshot.insert(0, _ActorSnapshot(1, 0.5 * tick, 10.0))
+        live.record(world, 0.05 * tick)
+    scene = live.scene("run")
+    assert scene is not None
+    assert list(_numeric(scene.frame_indices)) == [104, 106, 108]
+    assert list(_numeric(scene.ego.available)) == [True, False, True]
+    odometry = scene.ego.odometry_timestamps_ns
+    assert odometry.HasField("mask")
+    assert list(np.frombuffer(odometry.mask, dtype="?")) == [False, True, False]
+    assert list(_numeric(odometry)) == [200_000_000, 0, 400_000_000]
+
+
 def test_without_extras_the_angular_velocity_is_the_logs() -> None:
     scene = _run(ticks=5, extras=False, wz=-math.degrees(0.2)).scene("run")
     assert scene is not None

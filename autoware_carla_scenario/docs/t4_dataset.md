@@ -31,7 +31,17 @@ Where the data comes from:
   tick than the sweep (a camera faster than the LiDAR, or on the other ticks
   of its interval) still goes on the step's key frame, at most a policy step
   off: the dataset stamps a sample's data with the sample's time, and such a
-  camera's frames would otherwise never be written. A step whose every fed
+  camera's frames would otherwise never be written. A camera frame is
+  written once: a camera slower than the policy hands it the same frame on
+  its next step, which is dropped even when it is after the key frame written
+  last (a sweep older than the step, or another camera, put that key frame
+  before it), so it neither shows twice nor pulls the step's key frame back
+  onto its tick (#2352). Without a LiDAR the samples can still be uneven
+  when a slow camera's new frames are older than the other cameras': each
+  such frame puts its step's key frame back onto its own tick (a camera
+  rendering on each step beside one rendering every other step, a tick
+  before it, gives samples 150 and 50 ms apart), since the writer stamps
+  every camera's data with the sample's time. A step whose every fed
   item is dropped -- a camera slower than the policy hands it the frame
   written already -- is no key frame: every sample has sensor data. The entity attaches its
   LiDARs only for the policy's `renderer_data`, so `driver.lidars` with

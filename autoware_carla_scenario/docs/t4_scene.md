@@ -163,7 +163,9 @@ What the log does not hold is left out, never made up:
   drove, without the lanelets beside it that a planned route also holds.
 - **No goal.**
 - **An entity spawned hidden** is on the scene from its `spawn` record to its
-  `despawn` record, not while it is parked out of sight.
+  `despawn` record, both ticks included where they show it (a pre-tick spawn
+  moved it before its tick, a post-tick despawn destroyed it after), not
+  while it is parked out of sight.
 
 ## Frames
 

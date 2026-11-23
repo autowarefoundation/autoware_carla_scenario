@@ -329,6 +329,10 @@ class T4Recording:
         #: it is read on.
         self._snapshots: dict[int, Any] = {}
         self._last_frame = -1
+        #: The frame each fed camera's frame written last was rendered on, by
+        #: logical id: a camera slower than the policy hands it that frame
+        #: again, which is not written twice (#2352).
+        self._camera_written: dict[str, int] = {}
         self._active = True
         self._lidars: list[tuple[CarlaLidarSensor, Any]] = []
         self._cameras: list[tuple[str, _FrameCamera]] = []
@@ -656,7 +660,9 @@ class T4Recording:
         (#951).  It is at most a policy step off.  A sweep whose frame has no
         snapshot, or a sweep or camera frame from before the recording started
         or not after the key frame written last, is dropped, and the frame
-        written without it.
+        written without it; so is a camera frame not after that camera's
+        frame written last, which a camera slower than the policy hands it
+        again (#2352).
         """
         fed, self._fed = self._fed, None
         if fed is None or fed[0] != frame or frame < self.start_frame:
@@ -670,6 +676,7 @@ class T4Recording:
             (taken_on, logical_id, jpeg)
             for taken_on, logical_id, jpeg in fed[2]
             if self._is_new(taken_on, frame, f"a {logical_id} frame")
+            and self._is_unwritten(taken_on, logical_id, frame)
         ]
         if not sweeps and not images:
             # Everything fed was dropped (a camera slower than the policy
@@ -710,6 +717,8 @@ class T4Recording:
                 )
         jpegs_on_key = [(logical_id, jpeg) for _, logical_id, jpeg in images]
         self._last_frame = key_frame
+        for taken_on, logical_id, _ in images:
+            self._camera_written[logical_id] = taken_on
         self._write_frame(
             world,
             key_frame,
@@ -748,6 +757,28 @@ class T4Recording:
                 taken_on,
                 frame,
                 max(self.start_frame - 1, self._last_frame),
+            )
+            return False
+        return True
+
+    def _is_unwritten(self, taken_on: int, logical_id: str, frame: int) -> bool:
+        """Whether camera *logical_id*'s frame, rendered on *taken_on* and fed
+        on *frame*, is after the one of it written last.
+
+        The key frame written last is no measure of that: with a sweep older
+        than the step, or with cameras at other rates, it can be before the
+        frame of a camera slower than the policy, which then hands the policy
+        the same frame on its next step too (#2352).
+        """
+        written = self._camera_written.get(logical_id)
+        if written is not None and taken_on <= written:
+            logger.debug(
+                "T4 dataset: a %s frame taken on frame %d, fed on frame %d, is "
+                "not after its frame written last (frame %d); dropped",
+                logical_id,
+                taken_on,
+                frame,
+                written,
             )
             return False
         return True

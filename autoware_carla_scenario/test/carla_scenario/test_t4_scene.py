@@ -642,8 +642,56 @@ def test_an_entity_is_on_the_scene_from_its_spawn_to_its_despawn(
         },
     )
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
-    # Parked out of sight up to its spawn frame (102), gone from its despawn's.
-    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == [0, 0, 1, 0]
+    # Off the scene before its spawn frame (102) and after its despawn's (106);
+    # on it on both, whose ticks show it on its place (#2352).
+    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == [0, 1, 1, 1]
+
+
+@pytest.mark.parametrize("spawn_phase", ["pre_tick", "post_tick"])
+def test_the_ticks_of_a_spawn_and_a_despawn_hold_the_rows_they_show(
+    tmp_path: Path, spawn_phase: str
+) -> None:
+    """A spawn and a despawn are logged on the tick logged last when they ran
+    (#2352).  A pre-tick spawn moved the entity before its tick, which shows
+    it on its place: a box.  A post-tick one moved it after: its tick shows it
+    still parked under the map, no box.  A post-tick despawn destroyed it
+    after its tick, which shows it there: a box; it is in no tick after."""
+    placed_from = 102 if spawn_phase == "pre_tick" else 103
+
+    def npc(frame: int) -> list[float]:
+        state = _state(2, 5.0, 0.0)
+        if frame < placed_from:
+            state[3] = -499.5
+        return state
+
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        *[_tick(frame, _state(1, 0.0, 0.0), npc(frame)) for frame in range(100, 107)],
+        {
+            "type": "spawn",
+            "frame": 102,
+            "t": 0.1,
+            "label": "s",
+            "entity": "npc",
+            "id": 2,
+        },
+        {
+            "type": "despawn",
+            "frame": 106,
+            "t": 0.3,
+            "label": "d",
+            "entity": "npc",
+            "id": 2,
+            "reason": "action",
+        },
+        *[_tick(frame, _state(1, 0.0, 0.0)) for frame in range(107, 109)],
+    )
+    scene = trajectory_log_to_t4_scene(log, with_map=False).scene
+    # Rows 100, 102, 104, 106, 108.
+    expected = [0, 1, 1, 1, 0] if spawn_phase == "pre_tick" else [0, 0, 1, 1, 0]
+    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == expected
 
 
 def test_an_entity_parked_under_the_map_is_off_the_scene(tmp_path: Path) -> None:

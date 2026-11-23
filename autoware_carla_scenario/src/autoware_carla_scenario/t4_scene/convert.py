@@ -256,8 +256,8 @@ class _Log:
 
     def on_scene(self, actor_id: int, frame: int) -> bool:
         """Whether a road user is on the scene at *frame*, not parked out of
-        sight up to its ``SpawnAction``'s frame (whose tick may have been
-        logged before the action moved it) or from its ``DespawnAction``'s."""
+        sight before its ``SpawnAction``'s frame or gone after its
+        ``DespawnAction``'s (:func:`~.grid.on_scene`)."""
         return on_scene(self.spawned.get(actor_id), self.despawned.get(actor_id), frame)
 
     def present(
