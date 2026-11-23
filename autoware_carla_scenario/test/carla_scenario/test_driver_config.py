@@ -621,7 +621,11 @@ def test_a_whole_random_seed_is_kept(seed: Any, expected: Any) -> None:
     from autoware_carla_scenario.seed import resolve_seed
 
     config = DriverClientConfig.from_mapping({"random_seed": seed})
-    if expected is not None:
+    if expected is None:
+        # No seed stays no seed, so the session draws the run's seed.
+        assert config.random_seed is None
+    else:
+        assert config.random_seed is not None
         assert resolve_seed(config.random_seed) == expected
 
 

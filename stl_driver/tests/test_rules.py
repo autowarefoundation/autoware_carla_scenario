@@ -442,6 +442,16 @@ def test_an_infinite_margin_is_accepted_as_unsaturated():
 
     validate_rules((_rule(1.0, math.inf),), T)
 
+    # The probe rule's robustness is the speed; unsaturated, the objective is
+    # that robustness itself -- not `inf * tanh(rho / inf)`, which is NaN, nor
+    # anything a finite margin would have levelled off.
+    unsaturated = RuleSet((_rule(1.0, math.inf),))
+    for speed in (0.5, 50.0, 5000.0):
+        signal = signal_from_columns(speed=constant(speed))
+        assert float(unsaturated.objective(signal)) == pytest.approx(speed)
+        merit, _ = unsaturated.merit_and_robustness(signal)
+        assert float(merit) == pytest.approx(speed)
+
 
 @pytest.mark.parametrize("temperature", [float("nan"), float("inf"), 0.0])
 def test_a_smoothing_temperature_that_is_not_finite_and_positive_is_rejected(temperature):

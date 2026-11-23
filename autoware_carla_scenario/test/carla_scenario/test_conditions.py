@@ -971,6 +971,12 @@ class TestStandstillCondition:
         with pytest.raises(ValueError, match="duration must be positive"):
             StandstillCondition("ego", duration=-1.0, label="test_standstill")
 
+    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
+    def test_refuses_a_duration_that_is_not_finite(self, duration: float) -> None:
+        """A NaN duration fails every comparison, so it would never fire (#1109)."""
+        with pytest.raises(ValueError, match="positive and finite"):
+            StandstillCondition("ego", duration=duration, label="test_standstill")
+
     def test_invalid_speed_threshold_raises(self) -> None:
         with pytest.raises(ValueError, match="speed_threshold must be non-negative"):
             StandstillCondition(

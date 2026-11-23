@@ -107,10 +107,26 @@ def _driver_interface_major() -> int:
     return int(upper.group(1)) - 1
 
 
-@pytest.mark.parametrize("doc", sorted(p.name for p in _DOCS.glob("*.md")))
+_QUOTED_REQUIREMENT = re.compile(r"carla-driver-interface>=[^`\s]+")
+
+
+def _docs_quoting_the_driver_interface_requirement() -> list[str]:
+    return sorted(
+        p.name
+        for p in _DOCS.glob("*.md")
+        if _QUOTED_REQUIREMENT.search(p.read_text(encoding="utf-8"))
+    )
+
+
+def test_some_docs_quote_the_driver_interface_requirement() -> None:
+    """Without this, the test below would quietly have no cases."""
+    assert _docs_quoting_the_driver_interface_requirement()
+
+
+@pytest.mark.parametrize("doc", _docs_quoting_the_driver_interface_requirement())
 def test_the_docs_quote_the_driver_interface_requirement(doc: str) -> None:
     text = (_DOCS / doc).read_text(encoding="utf-8")
-    for quoted in re.findall(r"carla-driver-interface>=[^`\s]+", text):
+    for quoted in _QUOTED_REQUIREMENT.findall(text):
         assert quoted == _driver_interface_requirement(), f"docs/{doc}"
 
 

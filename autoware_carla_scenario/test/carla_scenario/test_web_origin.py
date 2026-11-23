@@ -20,7 +20,9 @@ from autoware_carla_scenario import serve_bind, web_guard, web_origin
 from autoware_carla_scenario.serve_bind import DEFAULT_HOST, is_loopback
 
 # ---------------------------------------------------------------------------
-# The code web_guard ran before #2364, verbatim but for the names.
+# The code web_guard ran before #2364, verbatim but for the names.  Only
+# ``is_loopback`` is the live one: the old web_guard imported it from
+# serve_bind too, and #2364 did not change it.
 # ---------------------------------------------------------------------------
 
 _OLD_DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
@@ -99,8 +101,16 @@ def _old_foreign_site(
     return None
 
 
+def _old_headers(scope: dict[str, Any]) -> dict[str, str]:
+    """*scope*'s headers by lower-cased name, the first of each name kept."""
+    headers: dict[str, str] = {}
+    for key, value in scope.get("headers", ()):
+        headers.setdefault(key.decode("latin-1").lower(), value.decode("latin-1"))
+    return headers
+
+
 def _old_refusal(scope: dict[str, Any], bound_host: str) -> tuple[int, str] | None:
-    headers = web_guard._headers(scope)
+    headers = _old_headers(scope)
     host = _old_split_host(headers.get("host", ""))
     if host is None or not _old_allows(bound_host, host[0]):
         return 400, "Invalid Host header"
@@ -164,6 +174,10 @@ def _random_scope(rng: random.Random) -> dict[str, Any]:
     headers: list[tuple[bytes, bytes]] = []
     if rng.random() < 0.9:
         headers.append((b"host", _random_host_header(rng).encode("utf-8")))
+    if rng.random() < 0.2:
+        # A second Host, in another case: the first one is the one read.
+        name = rng.choice([b"host", b"Host", b"HOST"])
+        headers.append((name, _random_host_header(rng).encode("utf-8")))
     if rng.random() < 0.5:
         headers.append((b"Origin", _random_origin(rng).encode("utf-8")))
     if rng.random() < 0.4:
@@ -252,7 +266,7 @@ def test_a_request_is_refused_as_before(seed: int) -> None:
         guard = web_guard.RequestGuard(None, hosts=web_guard.HostAllowlist(bound))  # type: ignore[arg-type]
         expected = _old_refusal(scope, bound)
         assert guard.refusal(scope) == expected, scope
-        headers = web_guard._headers(scope)
+        headers = _old_headers(scope)
         host = _old_split_host(headers.get("host", ""))
         assert web_guard.cross_site_refusal(scope) == _old_foreign_site(
             scope, headers, host
