@@ -5101,9 +5101,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-356 of the package's 487
-modules (73%; about 113,000 of
-188,400 lines) are <code>CHECKED</code>: the kinematics, the
+358 of the package's 489
+modules (73%; about 113,300 of
+188,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5161,7 +5161,11 @@ and its calls of SLURM's command-line tools (<code>sbatch</code>, <code>squeue</
 <code>scenario-new</code> (<code>scaffold.names</code>, #1654) and those of the Scenario Editor's
 export, which ids it refuses and the framework pin's lines in
 the package's README (<code>authoring.package_names</code>, #1695; the rule against the
-framework's own name is <code>scaffold.names</code>', which both apply), the whole
+framework's own name is <code>scaffold.names</code>', which both apply), the checks
+of its validator that read no pydantic model: a route-progress target off the
+route (<code>authoring.route_progress_checks</code>) and an action's spans and a
+trajectory's vertex times (<code>authoring.span_checks</code>, #2386; not
+<code>authoring.validator</code>, which reads the document for them), the whole
 numbers the Scenario Editor's forms post, a list field's ids and a record
 list's row count (<code>editor.form_values</code>, #2135; not the parsing of a form
 against a field's spec, <code>editor.forms</code>, which re-exports them), where the viewer keeps its
@@ -5211,7 +5215,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 356 CHECKED modules</summary>
+<summary>The 358 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5425,8 +5429,16 @@ with the first paragraph of its docstring:</p>
 <td>Pin a wheelhouse's direct-reference requirements to the wheels built for them.</td>
 </tr>
 <tr>
+<td><code>authoring.route_progress_checks</code></td>
+<td>The check of a route-progress target that lies off the scenario's route.</td>
+</tr>
+<tr>
 <td><code>authoring.signal_checks</code></td>
 <td>The checks of a scenario's signal table: its groups, phases and offsets.</td>
+</tr>
+<tr>
+<td><code>authoring.span_checks</code></td>
+<td>The checks of an action's spans: along its lane, in time and over its path.</td>
 </tr>
 <tr>
 <td><code>authoring.uv_tool</code></td>
@@ -6912,7 +6924,7 @@ the first:</p>
 <li><code>authoring.persistence</code>: imports yaml, and authoring.models (pydantic), which is not checked and has no model</li>
 <li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes; the spec table is built when the module is imported (243 FieldSpec calls), so no UNCALLED entry can leave the Any-typed defaults out, and typing FieldSpec.default would change what the editor, validator and codegen read</li>
 <li><code>authoring.starter</code>: reaches pydantic models through authoring.models</li>
-<li><code>authoring.validator</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model; the id rules it reports are the checked authoring.package_names'; the checks of the signal table (a signal group's name, members and conflicts, a controller's name, phases, states and start delay, the references between controllers and <code>PERMISSIVE_SIGNAL_STATES</code>) are the checked authoring.signal_checks' (<code>check_signal_table()</code>, #2364), over plain copies of the document's models, and a field's numeric bounds, their message and the means of a Traffic/Vehicle Parameters card (<code>within_bounds()</code>, <code>bounds_text()</code>, <code>traffic_mean_bounds()</code>) the checked authoring.field_bounds' (#2364); what stays reads the pydantic document: it builds those copies and turns the findings back into issues (_check_signal_controllers()), checks the actions and conditions naming a controller and a phase (_check_signal_uses(), _signal_controller_nodes()) and reads a field's bounds off its spec (_check_bounds())</li>
+<li><code>authoring.validator</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model; the id rules it reports are the checked authoring.package_names'; the checks of the signal table (a signal group's name, members and conflicts, a controller's name, phases, states and start delay, the references between controllers and <code>PERMISSIVE_SIGNAL_STATES</code>) are the checked authoring.signal_checks' (<code>check_signal_table()</code>, #2364), over plain copies of the document's models, and a field's numeric bounds, their message and the means of a Traffic/Vehicle Parameters card (<code>within_bounds()</code>, <code>bounds_text()</code>, <code>traffic_mean_bounds()</code>) the checked authoring.field_bounds' (#2364); which bound of the route an anchor is pinned to and the warning of a route-progress target off the route (<code>route_bound()</code>, <code>route_progress_warning()</code>) are the checked authoring.route_progress_checks', and a construction zone's and a stalled object's spans, a highway zone's length against its tapers and buffer and a trajectory's vertex times (<code>check_spans()</code>, <code>check_highway_zone_length()</code>, <code>check_vertex_times()</code>) the checked authoring.span_checks' (#2386); what stays reads the pydantic document: it builds those copies and turns the findings back into issues (_check_signal_controllers(), _check_spans(), _check_vertex_times(), _check_route_progress_bounds()), reads a card's numbers, a route's segment kinds and <code>FOREVER_S</code> for them (_node_number(), _route_bound(), _stalled_forever_s()), checks the actions and conditions naming a controller and a phase (_check_signal_uses(), _signal_controller_nodes()) and reads a field's bounds off its spec (_check_bounds())</li>
 <li><code>authoring.wheelhouse</code>: imports jinja2, packaging.specifiers (which the packaging model does not declare), tomllib, tomli and, at module level, <code>ThreadPoolExecutor</code> from concurrent.futures; its requirements pinning is checked as authoring.requirements_pin</li>
 <li><code>autoware_bridge._proto.autoware_bridge_pb2</code>: imports google.protobuf</li>
 <li><code>autoware_bridge._proto.autoware_bridge_pb2_grpc</code>: imports grpc</li>
@@ -9189,7 +9201,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 09:12:02 UTC"><span class="timeago" datetime="2026-11-23T09:12:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 09:12:02 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 13:58:33 UTC"><span class="timeago" datetime="2026-11-23T13:58:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 13:58:33 UTC">2026-11-23</span>
   </span>
 
     
