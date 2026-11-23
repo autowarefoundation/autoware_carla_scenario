@@ -354,7 +354,8 @@ class MetricSeries:
     values: list[Optional[float]] = field(default_factory=list)
 
 
-def _finite(value: Optional[float]) -> Optional[float]:
+def _not_nan(value: Optional[float]) -> Optional[float]:
+    """*value*, NaN as ``None``; infinities are kept on purpose, for conditions."""
     if value is None or math.isnan(value):
         return None
     return float(value)

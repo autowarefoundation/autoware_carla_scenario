@@ -128,7 +128,8 @@ def _sdk() -> Any:
 
 
 def _finite(value: Any) -> Optional[float]:
-    if value is None:
+    # A string names a state ("Green", "1"): never a scalar to plot.
+    if value is None or isinstance(value, str):
         return None
     try:
         number = float(value)

@@ -415,7 +415,8 @@ class NpcCollisionMonitor:
             walker.destroy()
         except RuntimeError:
             logger.info("fallen walker: '%s' was already gone from the world", name)
-        logger.info("fallen walker: '%s' despawned", name)
+        else:
+            logger.info("fallen walker: '%s' despawned", name)
         return True
 
     def _scan(self, world: "carla.World") -> None:

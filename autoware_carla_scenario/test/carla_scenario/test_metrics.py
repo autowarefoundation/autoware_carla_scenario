@@ -1909,7 +1909,7 @@ def test_a_world_metric_that_raises_in_some_frames_reads_nothing_there() -> None
 def _old_replay(frames: list[Any], road: Any, keys: list[str]) -> dict[str, list[Any]]:
     """The replay as it was before #2224: on the module's shared motion."""
     from autoware_carla_scenario.metric_batch import ReplayWorld
-    from autoware_carla_scenario.metric_frames import _finite
+    from autoware_carla_scenario.metric_frames import _not_nan
     from autoware_carla_scenario.metrics import set_importance_sampling_weight
 
     world = ReplayWorld(road)
@@ -1921,7 +1921,7 @@ def _old_replay(frames: list[Any], road: Any, keys: list[str]) -> dict[str, list
             set_importance_sampling_weight(frame.weight)
             track_ego_motion(world, frame.t)  # type: ignore[arg-type]
             for key in keys:
-                values[key].append(_finite(read_metric(key, world)))  # type: ignore[arg-type]
+                values[key].append(_not_nan(read_metric(key, world)))  # type: ignore[arg-type]
     finally:
         reset_ego_motion()
         set_importance_sampling_weight(None)

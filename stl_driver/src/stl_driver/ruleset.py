@@ -203,7 +203,7 @@ class RuleSet:
         same per-rule robustness values -- a weighted saturated sum and a
         minimum -- and every caller that wants one wants the other, since
         selection is lexicographic in the pair. Evaluating the formulas twice
-        for that was the single largest cost in a policy step: at ten rules
+        for that was the single largest cost in a policy step: at nine rules
         over a forty-step horizon each pass costs about as much as the rollout
         it is judging, twice over.
 

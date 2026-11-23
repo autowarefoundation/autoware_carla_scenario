@@ -137,13 +137,10 @@ def rerun_errors(
 
     A recording converted more than once (a retried case, which writes under
     the stem of the attempt it replaces) goes by its last conversion."""
-    last_error: dict[str, Optional[str]] = {}
-    for conversion in conversions:
-        last_error[str(conversion.recording)] = conversion.error
     failed: dict[str, str] = {}
-    for path, error in last_error.items():
-        if error is not None:
-            failed[path] = error
+    for conversion in latest(conversions):
+        if conversion.error is not None:
+            failed[str(conversion.recording)] = conversion.error
     errors: dict[int, str] = {}
     for i, recording in enumerate(recordings):
         if recording is not None and recording in failed:
