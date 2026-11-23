@@ -2463,7 +2463,7 @@ directory:</p>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── traceback.txt   # the traceback, chained exceptions included
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── log.txt         # the last log records of the process (5000 by default)
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── context.json    # command line, overrides, output directory, versions, environment
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── config.yaml     # the run's composed config (a run through Hydra)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── config.yaml     # the case's composed config (none outside a case)
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>└── repro.sh        # the command that runs the same case again
 </code></pre></div>
 <table>
@@ -2588,7 +2588,7 @@ for a project you trust with them.</p>
 </tr>
 <tr>
 <td><code>SCENARIO_CRASH_REPORT_MAX_FILE_SIZE</code></td>
-<td>The largest file of a report (<code>1MiB</code>, <code>512KB</code>, <code>1048576</code>; <code>0</code> for no limit); default <code>1MiB</code></td>
+<td>The largest <code>log.txt</code>, <code>traceback.txt</code> and <code>config.yaml</code> of a report (<code>1MiB</code>, <code>512KB</code>, <code>1048576</code>; <code>0</code> for no limit); default <code>1MiB</code></td>
 </tr>
 <tr>
 <td><code>SCENARIO_CRASH_REPORT_MAX_REPORTS</code></td>
@@ -2649,25 +2649,28 @@ some items removed by a leading <code>-</code>:</p>
 sent. Only what a report holds can be sent. The files on disk are written
 whole either way, so you can keep everything locally and send a narrower
 report. For example, leaving out <code>environment</code> from the sent items drops it
-from the sent <code>context.json</code> and drops the <code>export</code> lines from the sent
-<code>repro.sh</code>.</p>
+from the sent <code>context.json</code> and sends a <code>repro.sh</code> written without the
+<code>export</code> lines.</p>
 <h2 id="size-limits">Size limits<a class="headerlink" href="#size-limits" title="Permanent link">&para;</a></h2>
 <p>The defaults keep a report useful while bounding what a failing batch can
 write:</p>
 <ul>
-<li><strong><code>MAX_FILE_SIZE</code> (1 MiB):</strong> applies to each file of a report except
-  <code>event.json</code>. A longer file is cut, with a line saying how many bytes were
-  dropped. <code>log.txt</code> and <code>traceback.txt</code> keep their end, where the error is.
-  Other files keep their start. At the default length, <code>log.txt</code> fits in this
-  limit, and a config is a few kilobytes. The Sentry SDK bounds <code>event.json</code>
-  itself: it shortens long values and caps how much of each frame it keeps.</li>
+<li><strong><code>MAX_FILE_SIZE</code> (1 MiB):</strong> applies to <code>log.txt</code>, <code>traceback.txt</code> and
+  <code>config.yaml</code>. A longer file is cut, with a line saying how many bytes were
+  dropped. <code>log.txt</code> and <code>traceback.txt</code> keep their end, where the error is;
+  <code>config.yaml</code> keeps its start. At the default length, <code>log.txt</code> fits in this
+  limit, and a config is a few kilobytes. <code>context.json</code> and <code>repro.sh</code> are
+  small and never cut: cut, they would be neither JSON nor a script. The
+  Sentry SDK bounds <code>event.json</code> itself: it shortens long values and caps how
+  much of each frame it keeps.</li>
 <li><strong><code>MAX_REPORTS</code> (20):</strong> applies to each process. A batch whose every case
   fails on every attempt would otherwise write a report per attempt. After the
   limit, one warning says so, and nothing more is written or sent. The limit
   counts every report the process writes, so in a batch the first failures use
   it up. Native-crash reports are not counted.</li>
-<li><strong><code>LOG_LINES</code> (5000):</strong> applies to <code>log.txt</code>. 5000 records is a few minutes
-  of a run's log, including the start of the case.</li>
+<li><strong><code>LOG_LINES</code> (5000):</strong> applies to <code>log.txt</code>, which keeps the records at
+  <code>INFO</code> and above. 5000 records is a few minutes of a run's log, including
+  the start of the case.</li>
 </ul>
 
 
@@ -2691,7 +2694,7 @@ write:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 08:42:11 UTC"><span class="timeago" datetime="2026-11-22T08:42:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 08:42:11 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 11:03:08 UTC"><span class="timeago" datetime="2026-11-23T11:03:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 11:03:08 UTC">2026-11-23</span>
   </span>
 
     
