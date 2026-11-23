@@ -58,3 +58,32 @@ def test_check_run_timeout_shows_the_value_as_written() -> None:
     assert str(refused.value) == _REFUSED + "0"
     assert check_run_timeout(15.0, "15") == 15.0
     assert check_run_timeout(0.5) == 0.5
+
+
+@pytest.mark.parametrize(
+    ("seconds", "message"),
+    [
+        (True, "timeout_seconds must be a number, got True"),
+        (False, "timeout_seconds must be a number, got False"),
+        ("5", "timeout_seconds must be a number, got '5'"),
+        ([5], "timeout_seconds must be a number, got [5]"),
+        (10**400, "timeout_seconds must be positive and finite, got "),
+        (-(10**400), "timeout_seconds must be positive and finite, got "),
+    ],
+    ids=["true", "false", "str", "list", "huge", "-huge"],
+)
+def test_check_run_timeout_refuses_what_is_no_float(
+    seconds: object, message: str
+) -> None:
+    """#2403: the parameter path (``ScenarioRunner``, ``run_scenario()``,
+    ``ScenarioQueue``) refuses what the config path does, with a keyed
+    ValueError: ``True`` is no 1 s timeout, and neither a ``TypeError`` nor an
+    ``OverflowError`` escapes."""
+    with pytest.raises(ValueError) as refused:
+        check_run_timeout(seconds, key="timeout_seconds")  # type: ignore[arg-type]
+    assert str(refused.value).startswith(message)
+
+
+def test_check_run_timeout_takes_an_int() -> None:
+    assert check_run_timeout(5, key="timeout_seconds") == 5.0
+    assert isinstance(check_run_timeout(5), float)

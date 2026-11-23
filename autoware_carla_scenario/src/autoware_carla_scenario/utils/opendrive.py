@@ -1,8 +1,9 @@
 """CARLA's OpenDRIVE, made acceptable to roadgen.
 
-Shared by the two places that convert a world's map with roadgen: the SUMO
-backend (:mod:`..traffic.sumo.network`) and the map files written for a driver
-policy (:mod:`..driver.hdmap_export`).  This module imports nothing but the
+Shared by the three places that convert a world's map with roadgen: the SUMO
+backend (:mod:`..traffic.sumo.network`), the map files written for a driver
+policy (:mod:`..driver.hdmap_export`) and the CommonRoad metrics' map
+(:mod:`..commonroad.map`).  This module imports nothing but the
 standard library.
 """
 
@@ -20,7 +21,9 @@ def sanitize_opendrive(text: str) -> str:
     parser refuses the whole document for, none of which carries road geometry:
     ``<userData>`` without a ``code``, ``<roadMark>`` without a ``color``,
     objects of type ``-1`` and outline corners (``<cornerLocal>``,
-    ``<cornerRoad>``) without a ``height``.
+    ``<cornerRoad>``) without a ``height``.  Every ``<userData>`` is
+    removed, with a ``code`` or without; the rest are given the attribute
+    they lack, or ``type="none"``.
     """
     text = re.sub(r"<userData\b[^>]*/>|<userData\b.*?</userData>", "", text, flags=re.S)
     # Tag and attribute names are anchored: ``<object\b`` is not
