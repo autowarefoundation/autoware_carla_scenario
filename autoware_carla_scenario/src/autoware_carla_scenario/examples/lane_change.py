@@ -3,7 +3,8 @@
 This scenario spawns the ego vehicle on a configurable lanelet, sets all
 traffic lights to green, and registers a
 :class:`~autoware_carla_scenario.LaneChangeAction` to force a lane change
-via TrafficManager when the trigger condition is met.
+via TrafficManager.  It has no trigger condition: it fires at once, on the
+first tick.
 
 The target lane is tested in the Lanelet2 frame
 (:func:`lane_change_target`): the lanelet beside the spawn lanelet on the

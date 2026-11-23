@@ -14,7 +14,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 | | |
 |---|---|
-| **Ego** | Constraint search: a lane with a lane on the cut-in side, not in a junction, at least 60 m long, excluding the map's lanelets with no 3D model. 5 m along it, 30 km/h. |
+| **Ego** | Constraint search: a lane with a lane on the cut-in side, not in a junction, at least 60 m long, excluding the map's lanelets with no 3D model. 5 m along it, 30 km/h. Goal *from the search*: down its own lane -- the middle of the last of the lanelets that follow the matched one before the first junction, or of what is left of the matched lanelet past the ego when a junction or the end of the road follows it (`goal_ahead`); an `ego.goal_lanelet_id` given instead wins. |
 | **NPC1** | *Beside the matched lanelet*, on the cut-in side: the lane next to the ego's. 15 m along it, 30 km/h. |
 | **Initialization** | Every traffic light green. |
 | **NPC1, after 2 s** | Change lane towards the ego. |

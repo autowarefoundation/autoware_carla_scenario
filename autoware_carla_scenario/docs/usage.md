@@ -1314,7 +1314,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 
 | Parameter | Type | Default | Shipped | Description |
 |-----------|------|---------|---------|-------------|
-| `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
+| `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs whose OpenDRIVE roads the ego must have been on, each road read halfway along its lanelet, any lane of it counting. A junction's lanelets are left out (their roads overlap), so a shipped route -- the junction lanelet, then the one out of it -- checks the exit lanelet's road alone |
 | `scenario.pass_on_last_lanelet` | bool | `false` | `false` | Pass only once the ego is on the route's last lanelet itself (its lane, and so its direction), not anywhere on that lanelet's road; `false` lets a turn onto the oncoming lane of the right road pass |
 | `scenario.timeout_seconds` | float | `5.0` | per config (above) | Maximum scenario duration |
 | `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below; positive). `null` disables check |
@@ -1346,7 +1346,7 @@ finite and at least 0, got nan`).
 **Behavior:**
 - Sets all traffic lights to GREEN
 - Registers a TurnAction when `turn_direction` is set -- `left`, `right` or `straight` (sets the ego's path through the junction via the TrafficManager); none when it is `null`
-- Pass condition: ego traverses all expected OpenDRIVE road IDs (checked via StickyCondition + AndCondition)
+- Pass condition: the ego has been on every OpenDRIVE road of the route's lanelets that are not in a junction, any lane of each (a StickyCondition per road, under an AndCondition when there are several)
 - Fail conditions: timeout, ego destroyed, speed below threshold
 
 #### Lane Change
@@ -1357,8 +1357,15 @@ Tests ego vehicle lane change maneuvers. Can test both successful lane changes a
 |--------|-----------|-----------------|-------------------|
 | `lane_change/left` | left | success | `10.0` |
 | `lane_change/right` | right | success | `10.0` |
-| `lane_change_fail/left` | left | fail (no adjacent lane) | `1.5` |
-| `lane_change_fail/right` | right | fail (no adjacent lane) | `1.5` |
+| `lane_change_fail/left` | left | fail (no lane a change is allowed into) | `1.5` |
+| `lane_change_fail/right` | right | fail (no lane a change is allowed into) | `1.5` |
+
+A refused change's lanelet has no lane on that side a change is allowed into
+(the routing graph's `left` / `right`, which `has_adjacent` asks about), but
+it may have one behind a line a change may not cross: the shipped lanelets
+do (6's `adjacentLeft` is 5, and 5's `adjacentRight` is 6), and the ego
+crossing into it fails the run
+([Lane change](scenarios/lane_change.md)).
 
 **Scenario-specific parameters:**
 
@@ -1372,7 +1379,7 @@ Tests ego vehicle lane change maneuvers. Can test both successful lane changes a
 - Sets all traffic lights to GREEN
 - Immediately registers a LaneChangeAction
 - Derives the target lane from the current spawn position and direction
-- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there
+- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`, failing that its `adjacentLeft` / `adjacentRight`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there
 - Checks via an EntityLanePositionCondition per target lanelet, any of them, latched (not by OpenDRIVE road and lane IDs)
 
 #### Traffic Light Compliance
@@ -1465,6 +1472,7 @@ ahead and placing NPC1 by the measured gap).
 | `scenario.fail_on_any_collision` | bool | `true` | `true` | Fail on any collision of the ego; `false` fails only on a collision with NPC1 |
 
 **Behavior:**
+- Unless `ego.goal_lanelet_id` is set, sends an ego that plans its own route down its lane: to the middle of the last lanelet ahead of the spawn lanelet before the next junction (on Nishi-Shinjuku, 22 from 20 and 21 from 19)
 - Sets all traffic lights to GREEN
 - Registers a lane change of NPC1 towards the ego after `cut_in_after_seconds`
 - Pass condition: NPC1 has been on the ego's lane for `hold_seconds`, with no collision

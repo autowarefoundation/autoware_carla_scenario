@@ -37,7 +37,9 @@ class {{ config_class }}:
     #: ``scenario.name`` key in the YAML config.
     name: str = "{{ scenario_name }}"
 
-    #: Lanelet IDs whose OpenDRIVE roads the ego is expected to reach, in order.
+    #: Lanelet IDs the ego is expected to reach: each lanelet itself (its lane,
+    #: not just its road), latched once the ego has been on it, in any order.
+    #: The last is also the goal, unless ``ego.goal_lanelet_id`` names one.
     goal_lanelet_ids: list[int] = field(default_factory=lambda: [460, 265])
 
     #: Fail-safe timeout in seconds.
