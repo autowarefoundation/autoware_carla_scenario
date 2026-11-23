@@ -13,9 +13,9 @@ The user specifies a scenario (its name or the path to its YAML config) in the r
 
 ### Step 1: Read the Scenario
 
-1. Find and read the scenario's YAML config file in `examples/conf/scenario/`
-2. Read the corresponding Python scenario class in `examples/`
-3. Read the dataclass config in `examples/configs.py`
+1. Find and read the scenario's YAML config: `conf/scenario/<name>/` in its scenario package (`src/<package>/conf/`), or for a built-in in `autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/scenario/`
+2. Read the corresponding Python scenario class (the module registered under that name: the package's `register()`, or `examples/run.py`'s `_register_builtin_scenario` calls)
+3. Read its dataclass config (`configs.py` beside it)
 
 If no specific scenario is given, ask the user which scenario to review.
 
@@ -36,16 +36,16 @@ Apply the orthogonality analysis from the `scenario-review` skill:
 ### Step 4: Discover Available Constraint/Binding Types
 
 Before recommending sweep configuration, dynamically discover existing types:
-1. Search for all `BaseConstraint` subclasses in `sweeper/constraints.py`
-2. Search for all `BaseBinding` subclasses in `sweeper/bindings.py`
-3. Read `build_constraint()` and `build_binding()` factory functions for type mappings
-4. Verify that recommended constraint/binding types actually exist
+1. Constraints: `_LEAF_REGISTRY` and the combinators in `parse_constraint()` (`autoware_carla_scenario/src/autoware_carla_scenario/sweeper/constraints.py`)
+2. Bindings: `_BINDING_REGISTRY` (`sweeper/bindings.py`)
+3. Verify that recommended constraint/binding types actually exist, with the keys their dataclass fields name
+4. Check what the current sweep expands to: `uv run scenario-expand scenario=<name>/<variant>`
 
 ### Step 5: Review Existing Sweep Config (if present)
 
 If the scenario already has a `sweep:` section:
-1. Verify constraints are correct and use existing constraint types
-2. Verify bindings are appropriate
+1. Verify constraints are correct and use existing constraint types, under a single swept key
+2. Verify bindings are appropriate: every key a case depends on moves with the pick (a fixed `spawn_s`, NPC lanelet or route that only fits the original case is a bug), and `exclude` covers where walk-backs land
 3. Check for missing constraints or bindings
 4. Identify any anti-patterns in the current configuration
 
@@ -63,5 +63,5 @@ Confirm the recommendations with the user before suggesting changes.
 
 If the user agrees with the recommendations:
 1. Update the YAML config with revised parameter/binding/constraint structure
-2. Update the Python scenario class if NPC computation needs to move from config to `setup()`
+2. Update the Python scenario class if an NPC position must be derived from the ego's (prefer a binding into a config field; compute in `setup()` only when no binding expresses it)
 3. Update the dataclass config if parameters are added or removed

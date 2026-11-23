@@ -9,6 +9,8 @@ description: This skill should be used when reviewing CARLA scenario parameters 
 
 Review and validate the parameter design of CARLA test scenarios before converting concrete scenarios to logical scenarios. Ensure parameters are orthogonal, minimal, and compatible with the lanelet constraint sweeper.
 
+**How the sweeper works** (`scenario-writing`'s `references/constraints-reference.md`): `sweep.constraints` sweeps exactly **one** key -- a lanelet ID, usually `ego.spawn_lanelet_id` -- picking every lanelet that matches its constraints; `sweep.bindings` derives every other value a case needs from that pick; `sweep.exclude` drops cases by the values they end with. Scalar knobs (speeds, weather, ...) are not swept by constraints: `sweep.odd_sample` draws them from the ODD (`autoware_carla_scenario/docs/odd.md`, "Sampling scenarios from the ODD").
+
 ## Parameter Review Process
 
 ### Step 1: Identify Candidate Parameters
@@ -18,8 +20,8 @@ Examine the concrete scenario's YAML config and Python code to list all hardcode
 **Common candidates:**
 - `ego.spawn_lanelet_id` — Ego vehicle spawn lanelet
 - `ego.spawn_s` — Ego arc-length position along the lanelet
-- `npc.spawn_lanelet_id` — NPC vehicle spawn lanelet
-- `npc.spawn_s` — NPC arc-length position
+- NPC spawn lanelet and `s` (scenario config fields, e.g. `scenario.npc_lanelet_id`)
+- The route or goal the scenario asserts (`scenario.expected_route_lanelet_ids`, `ego.goal_lanelet_id`)
 - `scenario.timeout_seconds` — Scenario timeout
 - Speed parameters (initial speed, target speed)
 - Distance/timing thresholds
@@ -38,67 +40,90 @@ Examine the concrete scenario's YAML config and Python code to list all hardcode
 
 | Pattern | Problem | Solution |
 |---------|---------|----------|
-| Ego lanelet + NPC lanelet (NPC relative to ego) | NPC position depends on ego position | Make only ego lanelet a parameter, compute NPC lanelet in Python |
+| Ego lanelet + NPC lanelet (NPC relative to ego) | NPC position depends on ego position | Sweep only the ego lanelet; derive the NPC lanelet with a binding (`adjacent`, `matched`, `stop_line_approach`, `route_through`), or in Python when no binding expresses it |
 | Spawn lanelet + spawn s (s depends on lanelet geometry) | s valid range varies per lanelet | Use a binding to compute s from the lanelet (e.g., `stop_line_offset`) |
-| Two parameters that must satisfy a topological relationship | Sweeper cannot efficiently search coupled parameter spaces | Make one a parameter, derive the other via routing graph |
+| Two parameters that must satisfy a topological relationship | The sweeper sweeps one key only | Make one the swept parameter, derive the other with a binding or via the routing graph |
+| A route / goal the scenario asserts + the spawn lanelet | A fixed route only fits the original spawn | Bind it with `route_through` (`last_only: true` for a goal lanelet) |
 
 ### Step 3: Classify Each Candidate
 
 For each candidate parameter, classify it as:
 
-1. **Parameter** — Independently variable, meaningful for the sweeper to enumerate
-   - Typically: ego spawn lanelet ID, scenario-level config values
+1. **Swept parameter** — The one lanelet ID the sweeper enumerates
+   - Typically: `ego.spawn_lanelet_id`
 
-2. **Binding** — Derived from a parameter using a deterministic rule
-   - Typically: spawn s-values (computed from stop line position), NPC positions relative to ego
+2. **Binding** — Derived from the pick using a deterministic rule (`sweep.bindings`)
+   - Typically: spawn `s` (from the stop line), NPC lanelets relative to the ego, the asserted route or goal
 
-3. **Constant** — Fixed value that should not vary
+3. **Python-computed** — Derived in `setup()` from the pick when no binding expresses the relation
+
+4. **ODD-sampled** — A scalar knob worth varying (speed, weather, ...), drawn by `sweep.odd_sample` rather than swept
+
+5. **Constant** — Fixed value that should not vary
    - Typically: timeout values, speed thresholds, grace periods
 
 **Decision tree:**
 ```
 Is the value independently meaningful across different test runs?
-+- YES -> Is the sweeper capable of enumerating it efficiently?
-|         +- YES -> PARAMETER (add to sweep.constraints)
-|         +- NO  -> Reduce to a simpler parameter + binding
-+- NO  -> Does it depend on another parameter?
-          +- YES -> BINDING (add to sweep.bindings) or compute in Python
-          +- NO  -> CONSTANT (keep hardcoded in dataclass default)
++- YES -> Is it the lanelet the case is about?
+|         +- YES -> SWEPT PARAMETER (the one key of sweep.constraints)
+|         +- NO  -> A scalar knob? -> ODD-SAMPLED (sweep.odd_sample)
+|                   Otherwise     -> derive it from the pick (below)
++- NO  -> Does it depend on the pick?
+          +- YES -> BINDING (sweep.bindings), or compute in Python
+          +- NO  -> CONSTANT (keep it as the dataclass default)
 ```
 
 ### Step 4: Validate NPC Dependency Design
 
-**Critical rule:** When an NPC's spawn depends on the ego's position, **never** make the NPC's lanelet ID an independent parameter.
+**Critical rule:** When an NPC's spawn depends on the ego's position, **never** sweep the NPC's lanelet ID: derive it from the pick.
 
-**Correct pattern:**
-```python
-# In setup(), compute NPC position from ego's spawn lanelet
-map_mgr = MapManager.get_instance()
-routing_graph = map_mgr.get_routing_graph()
-ego_lanelet = map_mgr.get_lanelet(self._spawn_pose.lanelet_id)
-previous = routing_graph.previous(ego_lanelet)
-npc_lanelet_id = previous[0].id
-npc_pose = Lanelet2Pose(lanelet_id=npc_lanelet_id, s=0.0)
+**Preferred: a binding into a scenario config field** (the built-in `cut_in/left.yaml`):
+```yaml
+sweep:
+  constraints:
+    ego.spawn_lanelet_id:
+      - type: has_adjacent      # only picks that have the lane the NPC needs
+        value: left
+  bindings:
+    scenario.npc_lanelet_id:
+      type: adjacent
+      side: left
 ```
 
-**Why:** If both ego and NPC lanelet IDs are parameters, the sweeper must search the Cartesian product of all lanelet pairs. Most combinations are invalid (NPC must be near ego), making the search extremely inefficient. Computing NPC position from ego position eliminates this combinatorial explosion.
+**Fallback: compute it in `setup()`** when no binding expresses the relation:
+```python
+mm = MapManager.get_instance()
+spawn = self._spawn_pose  # the ego's Lanelet2Pose
+if spawn is None:
+    raise ValueError("my_scenario needs an ego spawn pose")
+ego_lanelet = mm.lanelet_map.laneletLayer[spawn.lanelet_id]
+previous = mm.routing_graph.previous(ego_lanelet)
+if not previous:
+    raise ValueError(f"lanelet {ego_lanelet.id} has no lanelet before it")
+npc_pose = Lanelet2Pose(lanelet_id=previous[0].id, s=0.0)
+```
+
+Either way, constrain the pick so the relation exists for every case (`has_adjacent` for an adjacent lane, `following_of` for a predecessor).
+
+**Why:** The sweeper sweeps one key; a second key in `sweep.constraints` is refused. Deriving the NPC from the pick keeps every case valid by construction and visible in `scenario-expand`'s output.
 
 ### Step 5: Verify Sweeper Compatibility
 
 For each parameter that will be swept:
 
 1. **Can a constraint express the valid set?**
-   - Dynamically discover existing constraint types from `build_constraint()` factory
+   - Discover the constraint types: `_LEAF_REGISTRY` and the combinators in `parse_constraint()` (`sweeper/constraints.py`)
    - If no existing constraint fits, propose a new one to the user
 
 2. **Can a binding compute derived values?**
-   - Dynamically discover existing binding types from `build_binding()` factory
+   - Discover the binding types: `_BINDING_REGISTRY` (`sweeper/bindings.py`)
    - If no existing binding fits, propose a new one to the user
 
-3. **Is the parameter space finite and reasonable?**
-   - Lanelet IDs: finite per map (good)
-   - Continuous values (speed, distance): use discrete bins or bindings
-   - Avoid parameters that create excessively large search spaces
+3. **Is the case set finite and reasonable?**
+   - Lanelet IDs: finite per map (good); check the count with `uv run scenario-expand scenario=<name>/<variant>`
+   - Continuous values (speed, distance): constants, bindings, or `sweep.odd_sample`
+   - Does every case still make sense once its bindings are applied (walk-backs, lanes that split)? Use `sweep.exclude` for cases a constraint on the pick cannot see
 
 ### Step 6: Present Review Summary
 
@@ -107,23 +132,26 @@ Present the review results to the user in this format:
 ```
 ## Parameter Review Summary
 
-### Parameters (swept by sweeper)
+### Swept parameter (the one key of sweep.constraints)
 - `ego.spawn_lanelet_id` — [rationale]
 
 ### Bindings (derived from parameters)
 - `ego.spawn_s` -> `stop_line_offset(offset=10.0)` — [rationale]
 
 ### Computed in Python (derived in setup())
-- NPC lanelet ID -> computed from ego lanelet via routing graph — [rationale]
+- [only what no binding expresses] — [rationale]
+
+### ODD-sampled (sweep.odd_sample)
+- [scalar knobs, if any] — [rationale]
 
 ### Constants (fixed values)
 - `timeout_seconds: 10.0` — [rationale]
 
 ### Orthogonality Check
-- [pass/fail] All parameters are independently variable
+- [pass/fail] One swept key; all other parameters are independent of it or derived from it
 - [pass/fail] No NPC positions depend on ego without being derived
-- [pass/fail] All derived values use bindings or Python computation
-- [pass/fail] Constraint types exist for all parameter constraints
+- [pass/fail] All derived values use bindings or Python computation, and move with the pick
+- [pass/fail] Constraint and binding types exist, with the keys they take
 ```
 
 ## Anti-Patterns to Flag
@@ -131,33 +159,33 @@ Present the review results to the user in this format:
 ### Anti-Pattern 1: Coupled Lanelet Parameters
 
 ```yaml
-# BAD: ego and NPC lanelets as independent parameters
+# BAD: a second swept key (refused: sweep.constraints holds one key)
 sweep:
   constraints:
     ego.spawn_lanelet_id:
-      - type: has_traffic_light_stop_line
-    npc.spawn_lanelet_id:
-      - type: previous_of
-        constraints:
-          - type: equals
-            value: ${ego.spawn_lanelet_id}  # This doesn't work!
+      - type: has_adjacent
+        value: left
+    scenario.npc_lanelet_id:
+      - type: equals
+        value: ${ego.spawn_lanelet_id}
 ```
 
-**Fix:** Remove `npc.spawn_lanelet_id` from parameters. Compute it in Python from `ego.spawn_lanelet_id`.
+**Fix:** Sweep only `ego.spawn_lanelet_id` and bind the NPC's lanelet from the pick (`scenario.npc_lanelet_id: {type: adjacent, side: left}`), or compute it in Python.
 
 ### Anti-Pattern 2: Hardcoded s-values as Parameters
 
 ```yaml
-# BAD: s-value as independent parameter when it depends on stop line
+# BAD: an s-value that only fits the original lanelet, kept for every pick
+ego:
+  spawn_lanelet_id: 242
+  spawn_s: 25.0        # beyond the end of a shorter picked lanelet
 sweep:
   constraints:
-    ego.spawn_s:
-      - type: range
-        min: 0.0
-        max: 50.0
+    ego.spawn_lanelet_id:
+      - type: has_traffic_light_stop_line
 ```
 
-**Fix:** Use a binding instead:
+**Fix:** Derive it from the pick with a binding (or constrain the picks with `lanelet_length` so the fixed value fits every one):
 ```yaml
 sweep:
   bindings:
@@ -166,25 +194,24 @@ sweep:
       offset: 10.0
 ```
 
-### Anti-Pattern 3: Too Many Parameters
+### Anti-Pattern 3: A Fixed Route or Goal
 
-If the scenario has more than 2-3 swept parameters, the search space may be too large.
+A route the scenario asserts (`scenario.expected_route_lanelet_ids`) or a goal (`ego.goal_lanelet_id`) written for the original spawn is kept for every pick, so almost every case fails.
 
-**Fix:** Prioritize the most impactful parameters and derive the rest.
+**Fix:** Bind it with `route_through` (`depth`, `through_junction`, `last_only: true` for a goal).
 
 ### Anti-Pattern 4: Non-Topological Parameter as Sweep Target
 
 ```yaml
-# BAD: sweeping over timeout values
+# BAD: constraining a non-lanelet value (constraints pick lanelet IDs)
 sweep:
   constraints:
     scenario.timeout_seconds:
-      - type: range
-        min: 5.0
-        max: 30.0
+      - type: equals
+        value: 30
 ```
 
-**Fix:** Timeout is a constant, not a topological parameter. Keep it as a fixed dataclass default.
+**Fix:** A timeout is a constant: keep it as the dataclass default (long enough for every case). A scalar worth varying (a speed, the weather) is drawn with `sweep.odd_sample`, not swept by constraints.
 
 ## Integration with Write Workflow
 

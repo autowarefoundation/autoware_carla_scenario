@@ -13,14 +13,21 @@ If no scenario is given, ask the user which scenario to run.
 
 ## Workflow
 
-### Step 1: Execute
+### Step 1: Static Check, then Execute
 
-Run the concrete scenario and capture full output:
+First compile the scenario with Codon, which needs no CARLA and reports type errors, misspelled config keys and bad values at their line:
+```bash
+uv run scenario-check scenario=<name>/<variant>
+```
+
+Fix what it reports, then run the concrete scenario and capture full output:
 ```bash
 uv run scenario scenario=<name>/<variant>
 ```
 
-If the user provided additional options (e.g., `map=nishishinjuku`), append them to the command.
+If the user provided additional options (e.g., `map=town10hd_opt`, `scenario.timeout_seconds=20`), append them to the command. A run needs a CARLA server (`server.host` / `server.port`); if none is reachable, say so and ask the user rather than debugging the scenario.
+
+The run writes `outputs/YYYY-MM-DD/HH-MM-SS/`: `{ScenarioName}_result.json` (pass/fail, message, condition statuses) and `{ScenarioName}.trajectory.jsonl` (the run tick by tick, with the conditions and the verdict) are the files to read.
 
 ### Step 2: Analyze Results
 
@@ -29,7 +36,7 @@ Examine the output for:
 - **Error messages**: Spawn failures, import errors, runtime exceptions, missing modules
 - **Timing**: Did it timeout? Did conditions trigger too early or too late?
 - **Warnings**: Messages that indicate potential issues (e.g., ground projection failures, coordinate conversion warnings)
-- **Condition logs**: Which conditions were checked, in what order, and what values they observed
+- **Condition logs**: Which conditions were checked, in what order, and what values they observed (the condition tree in `_result.json`)
 
 ### Step 3: Diagnose and Fix
 
@@ -38,7 +45,7 @@ If the scenario fails or behaves unexpectedly:
 2. Read the relevant source files (scenario class, config, YAML) to understand the issue
 3. Apply the appropriate fix:
    - **Parameter issues**: Adjust timeouts, speeds, spawn positions in YAML or config
-   - **Code errors**: Fix imports, logic errors, incorrect condition/action usage in the scenario class
+   - **Code errors**: Fix imports, logic errors, incorrect condition/action usage in the scenario class; re-run `scenario-check` after each code change
    - **Spawn failures**: Adjust Lanelet2 coordinates or ground projection settings
    - **Condition timing**: Adjust grace periods, thresholds, or condition ordering
 
@@ -54,4 +61,5 @@ Once the scenario passes (or if you hit an unresolvable issue), present to the u
 1. **Result**: Pass/fail and which condition triggered
 2. **Adjustments made**: What was changed and why (list each change)
 3. **Concerns**: Any remaining trade-offs or fragile parameters
-4. Ask the user to confirm the behavior matches their intent
+4. Where to look: the run's output directory, and `uv run viewer` (http://localhost:9000) for the condition tree; the trajectory log can be turned into a Rerun recording to watch the run (`autoware_carla_scenario/docs/usage.md`, "Seeing a run")
+5. Ask the user to confirm the behavior matches their intent

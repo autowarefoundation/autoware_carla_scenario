@@ -3,7 +3,7 @@ name: write-scenario
 description: Interactively create a CARLA test scenario for autoware_carla_scenario step by step, from a natural-language description to a concrete scenario, its review, and a logical scenario with sweep constraints. Use when the user asks to write or create a new scenario end to end.
 ---
 
-Guide the user through creating a CARLA test scenario for the `autoware_carla_scenario` package. Use the `scenario-writing` skill for domain knowledge.
+Guide the user through creating a CARLA test scenario for `autoware_carla_scenario`. Use the `scenario-writing` skill for domain knowledge (and its `references/`).
 
 ## Input
 
@@ -20,15 +20,17 @@ Parse the user's natural language description and clarify:
 2. What is the expected outcome? (pass condition)
 3. What constitutes failure? (fail conditions)
 4. Are NPC vehicles needed? Where relative to ego?
+5. Where should the scenario live: a scenario package of its own (the default for the user's scenarios), or a built-in shipped with the framework? For a package, its name.
 
 Ask the user focused clarifying questions. Do not assume — confirm the scenario concept before writing code.
 
 ### Stage 2: Discover Available Building Blocks
 
 Before writing code, dynamically discover existing Conditions and Actions:
-1. Search for all `BaseCondition` subclasses in `autoware_carla_scenario/src/autoware_carla_scenario/conditions/`
-2. Search for all `BaseAction` subclasses in `autoware_carla_scenario/src/autoware_carla_scenario/actions/`
+1. Search for the conditions (`BaseCondition` / `CompositionCondition` subclasses) in `autoware_carla_scenario/src/autoware_carla_scenario/conditions/`
+2. Search for the actions (`BaseAction` subclasses) in `autoware_carla_scenario/src/autoware_carla_scenario/actions/`
 3. Read constructor signatures of relevant classes
+4. Read the built-in scenario closest to the user's (`examples/*.py`)
 
 Present the user with a list of applicable existing Conditions/Actions for their scenario.
 
@@ -39,15 +41,32 @@ If existing building blocks are insufficient:
 
 ### Stage 3: Write Concrete Scenario
 
-Generate the following files:
-1. **Python scenario class** (`examples/<name>.py`) — inheriting BaseScenario, following `scenario-writing`'s `references/code-generation.md`
+Follow `scenario-writing`'s `references/code-generation.md`.
+
+**Scenario package** — generate it, install it, then fill it in:
+```bash
+uv run scenario-new <package> --scenario <name>
+uv pip install -e <package>
+```
+1. **Python scenario class** (`<package>/src/<package>/<name>.py`) — inheriting `BaseScenario`
+2. **Dataclass config** (`<package>/src/<package>/configs.py`)
+3. **YAML config** (`<package>/src/<package>/conf/scenario/<name>/<variant>.yaml`) — with Lanelet2 spawn coordinates
+4. **Registration** — already wired by `scenario-new` (`register()` in `__init__.py`, the `autoware_carla_scenario.scenarios` entry point)
+
+**Built-in scenario** — under `autoware_carla_scenario/src/autoware_carla_scenario/`:
+1. **Python scenario class** (`examples/<name>.py`)
 2. **Dataclass config** (add to `examples/configs.py`)
-3. **YAML config** (`examples/conf/scenario/<name>/<variant>.yaml`) — with Lanelet2 spawn coordinates
-4. **Registration** (update `examples/run.py`) — import, config, build_scenario branch
+3. **YAML config** (`examples/conf/scenario/<name>/<variant>.yaml`)
+4. **Registration** — `_register_builtin_scenario(...)` in `examples/run.py`, the name in `scaffold.names.BUILTIN_SCENARIO_NAMES`, the module in `typecheck/library.py`'s `CHECKED`
 
 **Critical: spawn positions must use Lanelet2 coordinates (lanelet_id + s), never OpenDRIVE coordinates.**
 
 Show the user each file before writing. Confirm the overall design, then write all files.
+
+Then run the static check, and fix what it reports before going on:
+```bash
+uv run scenario-check scenario='<name>/*'
+```
 
 ### Stage 4: Debug Concrete Scenario
 
@@ -71,10 +90,10 @@ Update the YAML config to include concrete parameter values (these serve as the 
 ### Stage 6: Discover Available Constraints/Bindings and Add Sweep Config
 
 Before writing sweep constraints, dynamically discover existing Constraint and Binding types:
-1. Search for all `BaseConstraint` subclasses in `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/constraints.py`
-2. Search for all `BaseBinding` subclasses in `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/bindings.py`
-3. Read the `build_constraint()` and `build_binding()` factory functions to understand the `type:` string → class mapping
-4. Read constructor signatures of relevant classes to understand YAML parameters
+1. Constraints: `_LEAF_REGISTRY` in `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/constraints.py` (`type:` string → class), and the combinators (`and`, `or`, `not`, `previous_of`, `following_of`) in `parse_constraint()`
+2. Bindings: `_BINDING_REGISTRY` in `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/bindings.py`
+3. Read the classes' docstrings and dataclass fields: the fields are the YAML keys
+4. `scenario-writing`'s `references/constraints-reference.md` summarizes them and the rules (one swept key, bindings, `exclude`)
 
 Present the user with applicable existing Constraints/Bindings for their scenario.
 
@@ -82,23 +101,26 @@ If existing Constraints/Bindings are insufficient:
 1. Explain what is missing and why existing types cannot express the desired filter
 2. Propose the new Constraint/Binding with its interface and `type:` string
 3. Wait for user approval before implementing
-4. Implement following `BaseConstraint`/`BaseBinding` patterns, register in the factory function, and export properly
+4. Implement it as `scenario-writing`'s `references/code-generation.md` describes (a `Constraint` subclass in `_LEAF_REGISTRY`, or a binding in `_BINDING_REGISTRY`), and export it
 
 Then edit the `sweep:` section of the YAML:
 1. Help the user compose constraints that work across maps
 2. Add bindings for derived parameters
 3. Avoid hardcoding specific Lanelet IDs in constraints
+4. Keep a single swept key: derive every other parameter (NPC lanelets, spawn `s`, the route) with bindings
+5. Preview the expansion without CARLA: `uv run scenario-expand scenario=<name>/<variant>`
 
 Suggest committing after this stage.
 
 ### Stage 7: Guide Multirun Execution
 
 Provide the exact command for logical scenario execution:
-```
-uv run scenario scenario=<name>/<variant> hydra/sweeper=lanelet_constraint --multirun
+```bash
+uv run scenario --multirun scenario=<name>/<variant> hydra/sweeper=lanelet_constraint
 ```
 
 Remind the user:
 - Both `hydra/sweeper=lanelet_constraint` AND `--multirun` are required
-- Without the sweeper name, `--multirun` runs only the concrete scenario
-- Use `map=<name>` to switch maps (currently only `nishishinjuku` available)
+- Without the sweeper name, `--multirun` runs Hydra's basic sweeper, which ignores `sweep:` and runs the concrete scenario (it warns)
+- Use `map=<name>` to switch maps (the maps are `conf/map/*.yaml`: `nishishinjuku`, `town10hd_opt`)
+- Results land under `multirun/`; browse them with `uv run viewer`
