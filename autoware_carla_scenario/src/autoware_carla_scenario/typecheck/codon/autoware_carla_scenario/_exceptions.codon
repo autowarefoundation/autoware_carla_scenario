@@ -12,9 +12,9 @@
 # (CPython's OSError takes none, ImportError only `name` and `path`), other
 # values (`OSError(errno, strerror)`, but for two strs where a subclass is
 # derived from, below, and OSError's own `(errno, strerror, filename)`, at the
-# end, which its subclasses take too, _os_message()), and the attributes they fill (ImportError's `name`): OSError's
-# `errno`, `strerror` and `filename` are declared (below), None as for an
-# OSError of one message.
+# end, which its subclasses take too, _os_message()), and the attributes they
+# fill (ImportError's `name`): OSError's `errno`, `strerror` and `filename`
+# are declared (below), None as for an OSError of one message.
 
 import internal.static as static
 

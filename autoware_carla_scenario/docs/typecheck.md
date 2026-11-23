@@ -3618,8 +3618,11 @@ What Codon 0.19 needs that Python does not, beyond
   `Optional[int]`, an `Optional[str]` and a `str` (CPython takes any value
   for each), with which `tools.file_writes` raises another's error as its
   own, and so is it for a class a checked module derives from `OSError`;
-  the subclasses above still take one message (`FileNotFoundError(errno,
-  strerror, filename)` is refused). `OSError`'s (and `IOError`'s, and
+  the `OSError` subclasses above take the same three values too, as CPython
+  does (`FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+  str(path))`), each keeping its own type name, but a `None` written in the
+  call is refused (pass an errno or a strerror of `Optional` type instead),
+  and so are a fourth value and a filename that is not a `str`. `OSError`'s (and `IOError`'s, and
   each subclass's) `errno` is declared, an `Optional[int]`, as CPython's is
   `None` for an `OSError` of one message and the code for one the system
   raised; CPython's is whatever the first of two to five values was
