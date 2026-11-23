@@ -140,8 +140,9 @@ class _LaneWalk:
             self.length = self.features.length(following)
         along = distance - self.start
         if along > self.length:
-            (x0, y0), (x1, y1) = self.points[-2], self.points[-1]
-            heading = math.atan2(y1 - y0, x1 - x0)
+            x1, y1 = self.points[-1]
+            # The last segment with a direction: a repeated end point has none.
+            heading = _heading_at(self.points, math.inf)
             beyond = along - self.length
             return (
                 x1 + beyond * math.cos(heading),
