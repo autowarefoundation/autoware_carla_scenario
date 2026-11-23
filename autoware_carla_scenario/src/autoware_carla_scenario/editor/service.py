@@ -166,7 +166,8 @@ class StaleDraftError(Exception):
 
 
 #: How many of a draft's latest saves, and of drafts, the editor remembers the
-#: writers of: the checked editor.revisions's (#2355), read at each save.
+#: writers of: the checked editor.revisions's (#2355).  _WRITER_DRAFTS is read
+#: at each save, _WRITER_HISTORY when the service is built.
 _WRITER_HISTORY = WRITER_HISTORY
 _WRITER_DRAFTS = WRITER_DRAFTS
 

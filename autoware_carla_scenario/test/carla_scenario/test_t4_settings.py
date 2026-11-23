@@ -496,7 +496,19 @@ def test_the_fed_selection_is_the_one_t4_made(seed: int) -> None:
             frame, sweeps, images, snapshots, start_frame, last_frame, written
         )
         assert key_frame == old_key
+        # t4 logs that nothing can be written exactly when the old code kept
+        # nothing.
+        kept = t4_settings.FED_KEPT in sweep_fates + image_fates
+        assert kept == bool(old_sweeps or old_images)
         if old_key >= 0:
+            # And the count of later sweeps it logs is the old one.
+            kept_sweeps = sum(
+                not (t < start_frame or t <= last_frame or t not in snapshots)
+                for t in sweeps
+            )
+            assert sweep_fates.count(t4_settings.FED_LATER) == kept_sweeps - len(
+                old_sweeps
+            )
             assert old_sweeps == [
                 i for i, f in enumerate(sweep_fates) if f == t4_settings.FED_KEPT
             ]
