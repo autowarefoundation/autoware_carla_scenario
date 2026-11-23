@@ -26,7 +26,7 @@ module, and Codon cannot hold a JSON document's values of mixed types beyond
 the function that parses it: the version a manifest names is checked as the
 JSON text of its value, and what creates a submission record exclusively is
 given the record's JSON text.  The readers the check leaves out
-(:mod:`.submit`, :mod:`.worker`, the gate, the viewer) read the manifest as
+(:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the viewer) read the manifest as
 they read the ``dict`` it was (:meth:`Manifest.get`, ``manifest[key]``);
 a :class:`Manifest` holds as JSON text only the members the checked readers
 read of it, so that a manifest of many cases costs little more than that
@@ -813,7 +813,7 @@ class Manifest:
 
     :meth:`get`, ``manifest[key]`` and ``key in manifest`` read it as the
     ``dict`` it was read as before, for the readers the library check leaves
-    out (:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the gate, the viewer):
+    out (:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the viewer):
     the very values ``json.loads()`` read.  The typed accessors read what the
     checked readers (:mod:`.collect`, :func:`resubmit_target`) ask of it,
     which the manifest holds as JSON text: ``_MANIFEST_MEMBERS``, and

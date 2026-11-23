@@ -488,7 +488,7 @@ _LAUNCHER_VALUE = (
 _MANIFEST_VALUE = (
     "returns a value of a SLURM batch's manifest as `json.loads()` read it, "
     "for the readers the check leaves out (slurm.submit, slurm.worker, "
-    "slurm.cli, the gate, the viewer), of any type (`Any`), which Codon "
+    "slurm.cli, the viewer), of any type (`Any`), which Codon "
     "cannot express; what the checked readers ask of the manifest is the "
     "checked Manifest's and ManifestCase's"
 )
