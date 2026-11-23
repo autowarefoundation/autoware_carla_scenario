@@ -9,10 +9,12 @@ walked through its ``constraints`` / ``constraint``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
+from autoware_carla_scenario.sweeper import constraints as constraints_module
 from autoware_carla_scenario.sweeper.constraints import (
     AndConstraint,
     Constraint,
@@ -25,9 +27,13 @@ from autoware_carla_scenario.sweeper.constraints import (
     OnRouteConstraint,
     OrConstraint,
     PreviousOfConstraint,
+    create_routing_graph,
     find_matching_lanelets,
     parse_constraint,
 )
+from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+_DATA = Path(__file__).resolve().parents[3] / "data"
 
 
 class _Layer:
@@ -161,6 +167,66 @@ def test_an_unbound_set_level_constraint_has_no_cached_ids() -> None:
     assert previous == PreviousOfConstraint((EqualsConstraint(3),))
     assert hash(previous) == hash(PreviousOfConstraint((EqualsConstraint(3),)))
     assert "_cached_ids" not in repr(previous)
+
+
+@pytest.fixture(scope="module")
+def nishishinjuku() -> tuple[Any, Any]:
+    lanelet_map = load_lanelet2_map(
+        _DATA / "nishishinjuku.osm", _DATA / "nishishinjuku_carla.xodr"
+    )
+    return lanelet_map, create_routing_graph(lanelet_map)
+
+
+def _neighbours(
+    lanelet_map: Any, graph: Any, ids: set[int], previous: bool
+) -> set[int]:
+    """The lanelets one step before (or after) *ids*, read off the graph."""
+    found: set[int] = set()
+    for lanelet_id in ids:
+        lanelet = lanelet_map.laneletLayer[lanelet_id]
+        steps = graph.previous(lanelet) if previous else graph.following(lanelet)
+        found.update(step.id for step in steps)
+    return found
+
+
+@pytest.mark.parametrize("cls", [PreviousOfConstraint, FollowingOfConstraint])
+@pytest.mark.parametrize("prebuilt", [True, False])
+def test_a_nested_set_level_tree_builds_one_graph_and_binds_once(
+    nishishinjuku: tuple[Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    cls: Any,
+    prebuilt: bool,
+) -> None:
+    """#2372: no graph per nesting level, no child computed twice."""
+    lanelet_map, graph = nishishinjuku
+    adjacent_ids = HasAdjacentConstraint("left").find_matching_ids(lanelet_map, graph)
+    once = _neighbours(lanelet_map, graph, adjacent_ids, cls is PreviousOfConstraint)
+    expected = sorted(
+        _neighbours(lanelet_map, graph, once, cls is PreviousOfConstraint)
+    )
+
+    builds: list[Any] = []
+    adjacency_computations: list[Any] = []
+    real_find = HasAdjacentConstraint.find_matching_ids
+
+    def counted_build(lanelet_map: Any) -> Any:
+        builds.append(lanelet_map)
+        return graph
+
+    def counted_find(self: Any, *args: Any, **kwargs: Any) -> set[int]:
+        adjacency_computations.append(self)
+        return real_find(self, *args, **kwargs)
+
+    monkeypatch.setattr(constraints_module, "create_routing_graph", counted_build)
+    monkeypatch.setattr(HasAdjacentConstraint, "find_matching_ids", counted_find)
+
+    tree = cls((cls((HasAdjacentConstraint("left"),)),))
+    matched = find_matching_lanelets([tree], lanelet_map, graph if prebuilt else None)
+    assert matched == expected
+    if cls is PreviousOfConstraint:
+        assert len(matched) == 205
+    assert len(builds) == (0 if prebuilt else 1)
+    assert len(adjacency_computations) == 1
 
 
 def test_the_base_class_is_not_a_constraint_itself() -> None:
