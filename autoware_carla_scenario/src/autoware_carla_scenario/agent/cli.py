@@ -100,17 +100,55 @@ def skill_projects() -> list[SkillProject]:
     ]
 
 
+def unowned_skill_directories(
+    agents: Sequence[Agent],
+    repository: Path,
+    projects: Sequence[SkillProject] | None = None,
+) -> list[Path]:
+    """Return the skill directories the installer would refuse to replace.
+
+    One per skill and agent whose directory in ``repository`` exists without
+    this package's install manifest, as the installer itself reports it
+    (``Installer.inspect_installations``: status ``unowned``).
+    """
+    from agent_skill_installer import Installer
+
+    names = {agent.name for agent in agents}
+    unowned = []
+    for project in skill_projects() if projects is None else projects:
+        for status in Installer(project).inspect_installations(repo=repository):
+            if (
+                status.agent in names
+                and status.scope == "dir"
+                and status.repo_target
+                and status.status == "unowned"
+                and status.skill_dir is not None
+            ):
+                unowned.append(status.skill_dir)
+    return unowned
+
+
 def install(agents: Sequence[Agent], repository: Path) -> list[str]:
     """Install every bundled skill for ``agents`` into ``repository``.
 
     Returns one line per installed skill and agent. Raises
-    ``agent_skill_installer.InstallerError`` when the installer refuses.
+    ``agent_skill_installer.InstallerError`` when the installer refuses -- and,
+    before installing anything, when any target skill directory is one the
+    installer did not create, naming all of them, so a refusal never leaves
+    some skills installed and others not.
     """
-    from agent_skill_installer import Installer
+    from agent_skill_installer import Installer, InstallerError
 
     names = [agent.name for agent in agents]
+    projects = skill_projects()
+    unowned = unowned_skill_directories(agents, repository, projects)
+    if unowned:
+        raise InstallerError(
+            "refusing to replace unowned skill directories (no install manifest), "
+            "nothing was installed: " + ", ".join(str(path) for path in unowned)
+        )
     lines = []
-    for project in skill_projects():
+    for project in projects:
         for result in Installer(project).install(
             names, "dir", repo_target=True, repo=repository
         ):

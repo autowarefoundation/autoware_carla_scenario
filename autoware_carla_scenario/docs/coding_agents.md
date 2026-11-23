@@ -58,8 +58,10 @@ uv run scenario-agent codex "I want to test that the ego stops at a stop sign, w
 `scenario-agent` then:
 
 1. checks that the skill to invoke exists, that the working directory is in a
-   Git repository, and that the agent's command is on `PATH` (otherwise it
-   stops with exit code 2, before installing anything);
+   Git repository, that the agent's command is on `PATH`, and that none of the
+   skill directories it would write already holds a skill the installer did
+   not create (otherwise it stops with exit code 2, before installing
+   anything);
 2. installs every skill for that agent into the repository's
    `.claude/skills/` (Claude Code) or `.codex/skills/` (Codex), and writes each
    skill's discoverability block at the end of the repository's `CLAUDE.md` /
@@ -182,7 +184,8 @@ skills from a repository. In this repository, do not run the installer's own
 | `scenario-agent: run it inside a Git repository ...` (exit 2) | Run it from inside a Git checkout; `git init` a new scenario package first |
 | `scenario-agent: agent-skill-installer is not installed ...` (exit 2) | Install the `agent` extra (section 1) |
 | `scenario-agent: unknown skill ...` (exit 2) | The `--skill` name is not one of the shipped skills; the message lists them |
-| `scenario-agent: installing the skills failed: ...` (exit 2) | The installer's error follows. The usual one is a skill directory in `.claude/skills/` or `.codex/skills/` that the installer did not create (no manifest beside it): remove that directory and run `scenario-agent` again |
+| `scenario-agent: installing the skills failed: refusing to replace unowned skill directories ...` (exit 2) | The listed directories in `.claude/skills/` or `.codex/skills/` hold skills the installer did not create (no install manifest in them), e.g. written by hand. Nothing was installed and `CLAUDE.md` / `AGENTS.md` are untouched: move or remove every listed directory and run `scenario-agent` again |
+| `scenario-agent: installing the skills failed: ...` (exit 2), another message | The installer's error follows; fix what it names and run `scenario-agent` again |
 | The agent does not list the skills | Start it from the repository root (`scenario-agent` does), and start a new session after installing; check that `.claude/skills/<name>` or `.codex/skills/<name>` exists |
 | `git status` shows this repository's `CLAUDE.md` / `AGENTS.md` changed after a run | A skill's `description` changed without regenerating the blocks: commit the change (section 4) |
 | A debugging step cannot run the scenario | No CARLA server is reachable: start one (`scenario-setup`, `server.host` / `server.port`), then ask the agent to continue |

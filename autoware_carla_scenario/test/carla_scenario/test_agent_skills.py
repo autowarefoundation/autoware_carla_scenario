@@ -197,3 +197,54 @@ def test_install_only_does_not_start_the_agent(
     monkeypatch.setattr(cli.os, "execv", no_exec)
     assert cli.main(["claude", "--install-only"]) == 0
     assert calls == [(["claude"], tmp_path)]
+
+
+def _hand_written_skill(repository: Path, agent_dir: str, name: str) -> Path:
+    skill_dir = repository / agent_dir / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: mine\n---\n", encoding="utf-8"
+    )
+    return skill_dir
+
+
+def test_unowned_skill_directories_are_refused_before_installing_any(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#2378: one hand-written skill used to stop the install half way."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    mine = [
+        _hand_written_skill(tmp_path, ".claude", name)
+        for name in ("write-scenario", "review-scenario")
+    ]
+    monkeypatch.chdir(tmp_path)
+
+    assert cli.main(["claude", "--install-only"]) == 2
+    err = capsys.readouterr().err
+    assert "refusing to replace unowned skill directories" in err
+    for skill_dir in mine:
+        assert str(skill_dir) in err
+    skills = sorted(p.name for p in (tmp_path / ".claude" / "skills").iterdir())
+    assert skills == ["review-scenario", "write-scenario"], "nothing else installed"
+    assert not (tmp_path / "CLAUDE.md").exists()
+    for skill_dir in mine:
+        assert sorted(p.name for p in skill_dir.iterdir()) == ["SKILL.md"]
+
+
+def test_an_unowned_directory_of_one_agent_stops_every_agent(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    from agent_skill_installer import InstallerError
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    mine = _hand_written_skill(tmp_path, ".codex", "scenario-writing")
+    with pytest.raises(InstallerError, match="unowned") as error:
+        cli.install([cli.AGENTS["claude"], cli.AGENTS["codex"]], tmp_path)
+    assert str(mine) in str(error.value)
+    assert not (tmp_path / ".claude").exists()
+    assert not (tmp_path / "CLAUDE.md").exists()
+    assert not (tmp_path / "AGENTS.md").exists()

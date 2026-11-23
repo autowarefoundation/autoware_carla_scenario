@@ -616,7 +616,8 @@ OpenDRIVE is converted by [roadgen](https://pypi.org/project/roadgen/) at scenar
 and written to `<map_dir>/<map_id>/`, in the formats `driver.map_formats` names
 (Lanelet2 by default; `lanelet2`, `opendrive`, `osm`, `clipgt` and `commonroad`, a
 CommonRoad 2020a scenario), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
-is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>`, so a set is written
+is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>` (with the SHA-256 of
+each file given rather than converted in it too: see below), so a set is written
 once per map and a changed map gets a new id. The id does not depend on the formats:
 a run asking for a format the set lacks writes it again with the formats it already
 holds and the new ones, under the same id, so a set only grows -- except by a format
@@ -653,7 +654,9 @@ driver:
 
 The file is copied into the set as `lanelet2_map.osm`, as it is (with the
 `map_projector_info.yaml` beside it, if any), and its content is part
-of `map_id`, so another file gets another set. roadgen is not needed unless
+of `map_id`, as is the projector's, so another file -- or the same file with
+another projector, say another MGRS grid -- gets another set. A file with no
+projector beside it keeps the id it had before projectors were part of it. roadgen is not needed unless
 `driver.map_formats` names other formats too. The file carries no roadgen trace (the
 manifest marks the format `"provided": true`, its trace empty), so `ctx.stop_lines()`
 finds each light on the map instead (carla-driver-interface 2.3 and later):

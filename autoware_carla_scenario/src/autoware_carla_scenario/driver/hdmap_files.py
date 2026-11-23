@@ -56,7 +56,8 @@ def map_id_for(
     """``<map name>-<first 12 hex digits of a SHA-256 of the map's content>``.
 
     The content is the OpenDRIVE, and with ``provided`` -- format name to the
-    SHA-256 of a file given rather than converted -- those digests too; without
+    SHA-256 of a file given rather than converted, and ``<format>:projector``
+    to that of the projector copied in beside it -- those digests too; without
     it the id digests the OpenDRIVE alone. Either way the id names the map's
     content, so a driver holding an older copy of a map with the same name (or
     one given another Lanelet2 file) cannot mistake it for this one.
