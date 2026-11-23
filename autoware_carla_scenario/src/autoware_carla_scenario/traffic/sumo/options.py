@@ -28,6 +28,7 @@ __all__ = [
     "random_trips_argv",
     "ride_options",
     "run_output_dir",
+    "sumo_class_of",
     "trip_options",
     "walk_options",
 ]
@@ -97,6 +98,15 @@ _PASSENGER = ("passenger", "DEFAULT_VEHTYPE")
 #: a fire engine's truck).
 EMERGENCY_TYPE = "acs_emergency"
 _EMERGENCY = ("emergency", EMERGENCY_TYPE)
+
+
+def sumo_class_of(base_type: str, emergency: bool) -> tuple[str, str]:
+    """The SUMO vehicle class and type a scenario's vehicle joins SUMO as:
+    an *emergency* vehicle's whatever its body, else by its blueprint's
+    *base_type* (:data:`_SUMO_CLASSES`)."""
+    if emergency:
+        return _EMERGENCY
+    return _SUMO_CLASSES.get(base_type, _PASSENGER)
 
 
 def _net_offset(net_file: Path) -> tuple[float, float]:

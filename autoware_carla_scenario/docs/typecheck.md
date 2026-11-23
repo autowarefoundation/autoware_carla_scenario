@@ -2539,8 +2539,11 @@ results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
 the criteria and the cases compared from a baseline's runs to a candidate's,
 and the records grouped by scenario; not the evaluator itself, which reads the
-gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
-and its configuration's sensor spec and the check of a field's signal name
+gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included),
+what a scenario's cuts stop on a device's channel and why a cut is refused
+(`hils.cuts`, #2386; not the channels they are applied to, `hils.bridge`,
+which re-exports it),
+and the bridge's configuration's sensor spec and the check of a field's signal name
 (not the YAML reading around it, `hils.config`; the `hils` package's
 `__init__`, which re-exports them, is checked), the virtual devices
 `scenario-hils --setup` creates for a configuration's devices, each validated

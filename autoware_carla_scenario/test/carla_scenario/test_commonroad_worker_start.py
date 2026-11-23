@@ -18,7 +18,7 @@ import random
 import shlex
 import shutil
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import pytest
 
@@ -237,3 +237,94 @@ def test_an_error_is_built_as_before(args: tuple, kwargs: dict) -> None:
         )
 
     assert built(cr_worker.CommonRoadWorkerError) == built(_OldCommonRoadWorkerError)
+
+
+# ---------------------------------------------------------------------------
+# The checks of a worker's answers, moved from commonroad.session (#2386)
+# ---------------------------------------------------------------------------
+#
+# ``_old_check_measures`` and ``_old_check_answer`` are commonroad.session's
+# ``_check_measures()`` and ``_check_answer()`` before #2386, verbatim but for
+# the worker, of which they read only ``command`` and ``measures``.
+
+_OLD_UNKNOWN_MEASURE = "unknown measure"
+
+
+def _old_check_measures(worker: Any, keys: list[str]) -> None:
+    unknown = [key for key in keys if key not in worker.measures]
+    if unknown:
+        raise cr_worker.CommonRoadWorkerError(
+            f"the CommonRoad worker {worker.command} does not know the metrics "
+            f"{', '.join(unknown)} (it knows {', '.join(worker.measures) or 'none'}): "
+            "update the commonroad_metrics project it runs, or name another "
+            f"command in ${WORKER_ENV}"
+        )
+
+
+def _old_check_answer(
+    worker: Any,
+    keys: list[str],
+    got: dict[str, Optional[float]],
+    errors: dict[str, str],
+) -> None:
+    missing = [key for key in keys if key not in got and key not in errors]
+    unknown = [key for key in keys if errors.get(key) == _OLD_UNKNOWN_MEASURE]
+    if missing or unknown:
+        raise cr_worker.CommonRoadWorkerError(
+            f"the CommonRoad worker {worker.command} answered 'evaluate' out "
+            "of protocol: "
+            + "; ".join(
+                part
+                for part in (
+                    f"no value nor error for {', '.join(missing)}" if missing else "",
+                    f"{', '.join(unknown)} unknown" if unknown else "",
+                )
+                if part
+            )
+        )
+
+
+_KEYS = ("crime_ttc_s", "reach_drivable_area_m2", "a", "b", "", "x y")
+_ERRORS = ("unknown measure", "Unknown measure", "unknown measure ", "boom", "")
+_COMMANDS: tuple[list[str], ...] = (
+    [],
+    ["commonroad-metrics-worker"],
+    ["uv", "run", "--project", "/a dir/commonroad_metrics", "w"],
+    ["it's", 'say "x"'],
+)
+
+
+def _fake_worker(command: list[str], measures: list[str]) -> Any:
+    worker = cr_worker.CommonRoadWorker.__new__(cr_worker.CommonRoadWorker)
+    worker.command = list(command)
+    worker.measures = list(measures)
+    return worker
+
+
+def test_the_answer_checks_are_the_same() -> None:
+    from autoware_carla_scenario.commonroad import session, worker_start
+
+    assert session._UNKNOWN_MEASURE is worker_start._UNKNOWN_MEASURE
+    assert worker_start._UNKNOWN_MEASURE == _OLD_UNKNOWN_MEASURE
+    rng = random.Random(2386)
+    for _ in range(4000):
+        worker = _fake_worker(
+            rng.choice(_COMMANDS), rng.sample(_KEYS, rng.randint(0, len(_KEYS)))
+        )
+        keys = [rng.choice(_KEYS) for _ in range(rng.randint(0, 5))]
+        got: dict[str, Optional[float]] = {
+            k: rng.choice([None, 0.0, 1.5])
+            for k in rng.sample(_KEYS, rng.randint(0, 3))
+        }
+        errors = {k: rng.choice(_ERRORS) for k in rng.sample(_KEYS, rng.randint(0, 3))}
+        for old, new in (
+            (
+                lambda: _old_check_measures(worker, keys),
+                lambda: session._check_measures(worker, keys),
+            ),
+            (
+                lambda: _old_check_answer(worker, keys, got, errors),
+                lambda: session._check_answer(worker, keys, got, errors),
+            ),
+        ):
+            assert _outcome(new) == _outcome(old)

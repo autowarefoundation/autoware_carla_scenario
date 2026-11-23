@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .. import crash_report
+from ..crash_report_settings import repro_overrides as settings_repro_overrides
 from ..run_outputs import remove_run_outputs
 from ..run_timeout import run_timeout_seconds
 from ..seed import check_whole_number
@@ -619,15 +620,11 @@ def _batch_configs(
 def repro_overrides(case: dict[str, Any]) -> list[str]:
     """What ``repro.sh`` of a crash report of *case* runs ``scenario`` with:
     its scenario and overrides, without the batch's launcher (``launcher=``,
-    ``launcher.*``), so that it runs again here, as a single run."""
-    return [
-        f"scenario={case['scenario']}",
-        *(
-            str(o)
-            for o in case["overrides"]
-            if not str(o).lstrip("+~").startswith("launcher")
-        ),
-    ]
+    ``launcher.*``), so that it runs again here, as a single run (the
+    checked crash_report_settings.repro_overrides(), #2386)."""
+    return settings_repro_overrides(
+        f"{case['scenario']}", [str(o) for o in case["overrides"]]
+    )
 
 
 def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int:

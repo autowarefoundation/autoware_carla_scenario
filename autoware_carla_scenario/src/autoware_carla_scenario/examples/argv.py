@@ -8,7 +8,10 @@ case of a batch goes by in the summary (:func:`_case_labels`), and whether
 the environment already caps glibc's malloc arenas
 (:func:`_arena_max_set_by_user`), and the ``hydra.run.dir=`` or
 ``hydra.sweep.dir=`` a batch writes to (:func:`_split_batch_output_dir`,
-:func:`_batch_dir_text`, #2364).
+:func:`_batch_dir_text`, #2364), and the overrides a command line composes
+a scenario with (:func:`_plain_overrides`) and the lines a ``--multirun``
+names its failed cases in (:func:`_errored_case`,
+:func:`_sweep_failed_lines`, #2386).
 
 Split out of ``examples.run``, which re-exports every name here and keeps
 what needs Hydra and omegaconf, so that the library check compiles it
@@ -30,8 +33,11 @@ __all__ = [
     "_extract_resume_from",
     "_extract_resume_into",
     "_extract_scenario_override",
+    "_errored_case",
     "_is_glob_pattern",
+    "_plain_overrides",
     "_split_batch_output_dir",
+    "_sweep_failed_lines",
 ]
 
 
@@ -231,3 +237,31 @@ def _batch_dir_text(value: str) -> str:
     """*value* (a ``hydra.*.dir=`` override's) without the whitespace and
     quotes around it."""
     return value.strip().strip("'\"")
+
+
+def _errored_case(case: str, type_name: str, message: str) -> str:
+    """How a ``--multirun`` *case* that raised an exception of *type_name*
+    with *message* is listed among the failed ones: its first line (the
+    type alone when it says nothing)."""
+    lines = message.strip().splitlines()
+    reason = f"{type_name}: {lines[0]}" if lines else type_name
+    return f"{case} (errored: {reason})"
+
+
+def _sweep_failed_lines(failed: list[str], ran: int) -> list[str]:
+    """The lines a ``--multirun`` that ran *ran* cases, of which *failed*
+    failed, ends with: a summary, then each failed case."""
+    lines = [f"Sweep failed: {len(failed)} of {ran} case(s) failed:"]
+    for case in failed:
+        lines.append(f"  {case}")
+    return lines
+
+
+def _plain_overrides(overrides: list[str]) -> list[str]:
+    """*overrides* without what Hydra reads itself: flags (``-...``) and
+    ``hydra...`` overrides (``+``, ``++`` and ``~`` ones too)."""
+    return [
+        arg
+        for arg in overrides
+        if not arg.startswith("-") and not arg.lstrip("+~").startswith("hydra")
+    ]

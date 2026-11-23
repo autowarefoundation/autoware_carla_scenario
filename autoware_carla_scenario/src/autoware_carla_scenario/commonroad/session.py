@@ -53,7 +53,12 @@ from ..heavy_metrics import (  # noqa: F401
 from ..metrics import COMMONROAD_METRICS
 from .frame import read_frame
 from .map import commonroad_map
-from .worker import WORKER_ENV, CommonRoadWorker, CommonRoadWorkerError, worker_command
+from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
+
+# Re-exported: the checks of a worker's answers are the checked
+# .worker_start's (#2386).
+from .worker_start import _UNKNOWN_MEASURE as _UNKNOWN_MEASURE
+from .worker_start import answer_problem, unknown_measures_problem
 
 
 if TYPE_CHECKING:
@@ -593,14 +598,9 @@ def _check_measures(worker: CommonRoadWorker, keys: list[str]) -> None:
     """Raise when *worker* does not know one of *keys* (its ``init`` answer
     says which it knows): an older worker than the framework, found on the
     ``PATH``, would read nothing in every frame."""
-    unknown = [key for key in keys if key not in worker.measures]
-    if unknown:
-        raise CommonRoadWorkerError(
-            f"the CommonRoad worker {worker.command} does not know the metrics "
-            f"{', '.join(unknown)} (it knows {', '.join(worker.measures) or 'none'}): "
-            "update the commonroad_metrics project it runs, or name another "
-            f"command in ${WORKER_ENV}"
-        )
+    problem = unknown_measures_problem(str(worker.command), keys, worker.measures)
+    if problem is not None:
+        raise CommonRoadWorkerError(problem)
 
 
 def _check_answer(
@@ -611,25 +611,9 @@ def _check_answer(
 ) -> None:
     """Raise when *worker*'s answer to a frame asked *keys* leaves one out
     (neither a value nor an error) or calls it unknown: out of protocol."""
-    missing = [key for key in keys if key not in got and key not in errors]
-    unknown = [key for key in keys if errors.get(key) == _UNKNOWN_MEASURE]
-    if missing or unknown:
-        raise CommonRoadWorkerError(
-            f"the CommonRoad worker {worker.command} answered 'evaluate' out "
-            "of protocol: "
-            + "; ".join(
-                part
-                for part in (
-                    f"no value nor error for {', '.join(missing)}" if missing else "",
-                    f"{', '.join(unknown)} unknown" if unknown else "",
-                )
-                if part
-            )
-        )
-
-
-#: The error the worker gives a measure it does not know.
-_UNKNOWN_MEASURE = "unknown measure"
+    problem = answer_problem(str(worker.command), keys, got, errors)
+    if problem is not None:
+        raise CommonRoadWorkerError(problem)
 
 
 #: How long :func:`evaluate_commonroad`, given up, waits for its shares to
