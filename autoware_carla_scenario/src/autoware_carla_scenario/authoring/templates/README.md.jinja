@@ -106,11 +106,6 @@ build on the target, and it needs no C compiler.
 | Python | `{{ python_version }}` (`.python-version`) |
 | uv | {{ uv_pin_summary }} |
 | Everything else | `uv.lock` |
-
-Both workspace projects are declared and pinned the same way:
-`autoware-carla-scenario` imports `autoware-lanelet2-to-opendrive` at module
-scope, so naming only the framework would leave the package unable to import
-it.
 {% if warnings %}
 
 ### Caveats recorded at export time

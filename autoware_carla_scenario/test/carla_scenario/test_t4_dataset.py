@@ -1170,20 +1170,87 @@ def test_a_fed_sweep_of_the_step_itself_is_on_the_steps_pose(
         )
 
 
-def test_a_fed_sweep_older_than_the_snapshots_kept_is_dropped(
+def test_a_fed_sweep_from_before_the_recording_is_dropped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A sweep whose frame has no snapshot -- older than those kept, or from
-    before the recording started -- is dropped with a debug log; the step's
-    frame is written without it."""
+    """A sweep from before the recording started, or not after the key frame
+    written last, is dropped with a debug log saying so, not that its snapshot
+    is missing (#2362); the step's frame is written without it."""
     with caplog.at_level("DEBUG", logger=t4.logger.name):
         root, world = _fed_run(tmp_path, monkeypatch, age=50)
-    assert "no snapshot of frame 51 for a sweep fed on frame 101" in caplog.text
+    assert (
+        "a sweep taken on frame 51, fed on frame 101, is not after frame 99"
+        in caplog.text
+    )
+    assert "no snapshot" not in caplog.text
     poses = sorted(_table(root, "ego_pose"), key=lambda p: p["timestamp"])
     assert len(poses) == 5
     np.testing.assert_allclose(
         poses[0]["translation"][0], world.ego_x(101) - 1.25 + OFFSETS[0], atol=1e-9
     )
+    assert all(s["fileformat"] == "jpg" for s in _table(root, "sample_data"))
+
+
+def test_a_sweep_fed_again_after_its_key_frame_is_not_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A driver entity feeds the LiDAR's latest sweep on every tick: fed again
+    after its key frame is written, the sweep is dropped as not new, not as
+    missing its snapshot (#2362), and nothing more is written."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    sweep = np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32)
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        for frame in range(100, 106):
+            world.frame = frame
+            if frame % 2 == 1:
+                recording.feed_lidar(frame, sweep, taken_on=101)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert "no snapshot" not in caplog.text
+    for frame in (103, 105):
+        assert (
+            f"a sweep taken on frame 101, fed on frame {frame}, is not after "
+            "frame 101" in caplog.text
+        )
+    assert len(_table(root, "sample")) == 1
+    assert len(_table(root, "sample_data")) == 1
+
+
+def test_a_new_fed_sweep_whose_snapshot_is_gone_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A sweep after the key frame written last whose frame's snapshot the
+    recording no longer holds is dropped as missing it; the step's frame is
+    written without it."""
+    world = _World()
+    jpeg = _jpeg()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        for frame in range(100, 108):
+            world.frame = frame
+            if frame == 107:
+                recording.feed_lidar(
+                    frame,
+                    np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                    taken_on=101,
+                )
+                recording.feed_camera_jpeg(frame, "cam_front", jpeg)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert "no snapshot of frame 101 for a sweep fed on frame 107" in caplog.text
+    assert "is not after" not in caplog.text
+    assert len(_table(root, "sample")) == 1
     assert all(s["fileformat"] == "jpg" for s in _table(root, "sample_data"))
 
 
