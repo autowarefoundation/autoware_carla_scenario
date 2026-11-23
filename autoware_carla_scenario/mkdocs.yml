@@ -75,6 +75,7 @@ nav:
   - Quick Start: quickstart.md
   - Installation: installation.md
   - Tutorial: tutorial.md
+  - Writing Scenarios with a Coding Agent: coding_agents.md
   - Usage: usage.md
   - Scenario Editor: scenario_editor.md
   - Example Scenarios:
