@@ -6642,7 +6642,7 @@ def test_the_shims_take_what_tools_file_writes_calls(
         ),
         (
             "_Partial(exc.errno, exc.strerror, str(path))",
-            "FileNotFoundError(exc.errno, exc.strerror, str(path))",
+            "FileNotFoundError(exc.errno, exc.strerror)",
         ),
         ('OSError(code, "message", "file")', 'OSError(code, "message")'),
         ("view = memoryview(data)", "view = memoryview()"),
@@ -6662,7 +6662,7 @@ def test_the_shims_take_what_tools_file_writes_calls(
         "oserror-unknown-attribute",
         "oserror-filename-not-callable",
         "oserror-no-keyword",
-        "subclass-of-one-message",
+        "subclass-errno-and-strerror-undeclared",
         "oserror-errno-and-strerror-undeclared",
         "memoryview-no-object",
         "write-int-data",
@@ -6751,6 +6751,104 @@ def test_the_shims_tools_file_writes_calls_declare_cpythons_signatures() -> None
     assert (
         '"[Errno " + str(errno) + "] " + str(strerror) + ": " + repr(filename)' in shim
     )
+
+
+# ---------------------------------------------------------------------------
+# OSError's subclasses built of OSError's (errno, strerror, filename): what
+# rerun raises for a missing log (#2354)
+# ---------------------------------------------------------------------------
+
+
+_OSERROR_SUBCLASSES = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+
+def missing(path: Path) -> str:
+    error = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+    return str(error) + str(error.errno)
+
+
+def others(path: str, exc: OSError) -> list[str]:
+    return [
+        str(PermissionError(errno.EACCES, "Permission denied", path)),
+        str(FileExistsError(errno.EEXIST, exc.strerror, path)),
+        str(TimeoutError(exc.errno, exc.strerror, path)),
+        str(BrokenPipeError(exc.errno, "Broken pipe", path)),
+        str(FileNotFoundError(path)),
+    ]
+
+
+def raised(path: Path) -> None:
+    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_exceptions_model_takes_oserrors_three_values_for_its_subclasses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_OSERROR_SUBCLASSES, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Forms CPython takes that the model does not declare: a fourth value
+        # (CPython's winerror, ignored off Windows) and a filename that is not
+        # a str.
+        (
+            "raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))",
+            "raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "
+            "str(path), 0)",
+        ),
+        (
+            'PermissionError(errno.EACCES, "Permission denied", path)',
+            'PermissionError(errno.EACCES, "Permission denied", 1)',
+        ),
+    ],
+    ids=["subclass-fourth-value-undeclared", "subclass-filename-not-str"],
+)
+def test_the_exceptions_model_refuses_other_forms_of_oserrors_subclasses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _OSERROR_SUBCLASSES.replace(right, wrong, 1)
+    assert source != _OSERROR_SUBCLASSES
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_cpython_builds_oserrors_subclasses_of_its_three_values() -> None:
+    import errno
+    import os
+
+    for cls in (
+        FileNotFoundError,
+        PermissionError,
+        FileExistsError,
+        TimeoutError,
+        BrokenPipeError,
+    ):
+        built = cls(errno.ENOENT, os.strerror(errno.ENOENT), "/a/b")
+        assert str(built) == f"[Errno 2] {os.strerror(errno.ENOENT)}: '/a/b'"
+        assert (built.errno, built.filename) == (errno.ENOENT, "/a/b")
+        # What the model refuses, CPython takes.
+        assert cls(errno.ENOENT, "x", "f", 0).filename == "f"
+        assert cls(errno.ENOENT, "x", 1).filename == 1
+    # Every OSError subclass the model declares takes them in its constructor.
+    shim = (model_dir() / "autoware_carla_scenario" / "_exceptions.codon").read_text()
+    for name in re.findall(
+        r"^class (\w+)\(Static\[(?:OSError|ConnectionError)\]\):", shim, re.MULTILINE
+    ):
+        assert f'_os_message(args, kwargs, "{name}()")' in shim, name
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@
 # (CPython's OSError takes none, ImportError only `name` and `path`), other
 # values (`OSError(errno, strerror)`, but for two strs where a subclass is
 # derived from, below, and OSError's own `(errno, strerror, filename)`, at the
-# end), and the attributes they fill (ImportError's `name`): OSError's
+# end, which its subclasses take too, _os_message()), and the attributes they fill (ImportError's `name`): OSError's
 # `errno`, `strerror` and `filename` are declared (below), None as for an
 # OSError of one message.
 
@@ -41,6 +41,27 @@ def _message(args, kwargs, where: Literal[str]) -> str:
 
 def _str(value: str) -> str:
     return value
+
+
+def _errno_message(errno: Optional[int], strerror: Optional[str], filename: str) -> str:
+    # CPython's str() of it: "[Errno 28] No space left on device: 'path'".
+    return "[Errno " + str(errno) + "] " + str(strerror) + ": " + repr(filename)
+
+
+def _os_message(args, kwargs, where: Literal[str]) -> str:
+    # An OSError subclass's message: one value, as _message() takes it, or
+    # OSError's (errno, strerror, filename), which CPython takes for every
+    # subclass too (`FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+    # str(path))`), its str() the same "[Errno 2] ...: 'path'" (each None when
+    # it has none; the file's name a str, as OSError's own form declares it).
+    # A `None` written in the call is refused: it reaches `*args` as
+    # Optional[NoneType], which Codon does not pass to an Optional[int] or
+    # Optional[str] (an errno or a strerror of Optional type goes through).
+    if static.len(args) == 3:
+        _no_keywords(kwargs, where)
+        return _errno_message(args[0], args[1], args[2])
+    else:
+        return _message(args, kwargs, where)
 
 
 # `e.args`, which Codon's exceptions lack: the one-value tuple of the message,
@@ -283,7 +304,7 @@ class FileNotFoundError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("FileNotFoundError", _message(args, kwargs, "FileNotFoundError()"))
+        super().__init__("FileNotFoundError", _os_message(args, kwargs, "FileNotFoundError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -291,7 +312,7 @@ class BlockingIOError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("BlockingIOError", _message(args, kwargs, "BlockingIOError()"))
+        super().__init__("BlockingIOError", _os_message(args, kwargs, "BlockingIOError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -299,7 +320,7 @@ class FileExistsError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("FileExistsError", _message(args, kwargs, "FileExistsError()"))
+        super().__init__("FileExistsError", _os_message(args, kwargs, "FileExistsError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -307,7 +328,7 @@ class PermissionError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("PermissionError", _message(args, kwargs, "PermissionError()"))
+        super().__init__("PermissionError", _os_message(args, kwargs, "PermissionError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -315,7 +336,7 @@ class ProcessLookupError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("ProcessLookupError", _message(args, kwargs, "ProcessLookupError()"))
+        super().__init__("ProcessLookupError", _os_message(args, kwargs, "ProcessLookupError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -323,7 +344,7 @@ class ChildProcessError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("ChildProcessError", _message(args, kwargs, "ChildProcessError()"))
+        super().__init__("ChildProcessError", _os_message(args, kwargs, "ChildProcessError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -331,7 +352,7 @@ class TimeoutError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("TimeoutError", _message(args, kwargs, "TimeoutError()"))
+        super().__init__("TimeoutError", _os_message(args, kwargs, "TimeoutError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -345,7 +366,7 @@ class ConnectionError(Static[OSError]):
             _no_keywords(kwargs, "ConnectionError()")
             super().__init__(_str(args[0]), _str(args[1]))
         else:
-            super().__init__("ConnectionError", _message(args, kwargs, "ConnectionError()"))
+            super().__init__("ConnectionError", _os_message(args, kwargs, "ConnectionError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -353,7 +374,7 @@ class BrokenPipeError(Static[ConnectionError]):
     _pytype: ClassVar[cobj] = cobj()
 
     def __init__(self, *args, **kwargs):
-        super().__init__("BrokenPipeError", _message(args, kwargs, "BrokenPipeError()"))
+        super().__init__("BrokenPipeError", _os_message(args, kwargs, "BrokenPipeError()"))
         self.python_type = self.__class__._pytype
 
 
@@ -377,18 +398,15 @@ class KeyboardInterrupt(Static[BaseException]):
         self.python_type = self.__class__._pytype
 
 
-def _errno_message(errno: Optional[int], strerror: Optional[str], filename: str) -> str:
-    # CPython's str() of it: "[Errno 28] No space left on device: 'path'".
-    return "[Errno " + str(errno) + "] " + str(strerror) + ": " + repr(filename)
-
-
 # OSError(errno, strerror, filename): an error about a file, as the system
 # raises one, built from another's errno and strerror (each None when that
 # one had none) and the file's name, a str (CPython takes any object, which
 # is not declared). Declared after the subclasses above, which do not
-# inherit it (each takes one message, as before); a class a checked module
-# derives from OSError does (tools.file_writes' _PartialWriteError). Two
-# values stay refused, but for two strs, which a subclass passes on (above).
+# inherit it: each takes the same three values in its own constructor
+# (_os_message()), so that its type name stays its own; a class a checked
+# module derives from OSError inherits it (tools.file_writes'
+# _PartialWriteError). Two values stay refused, but for two strs, which a
+# subclass passes on (above).
 @extend
 class OSError:
     # Exception's constructor gives the instance its class's Python type,

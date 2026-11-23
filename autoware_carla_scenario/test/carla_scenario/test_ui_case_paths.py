@@ -302,3 +302,24 @@ def test_session_order_numbers_sessions_of_the_same_second() -> None:
     # The time's own fields are no number: 12-00-01 is not 12-00 numbered 1.
     assert case_paths.session_order("12-00-01") == ("12-00-01", 0)
     assert case_paths.session_order("custom") == ("custom", 0)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "label", "expected"),
+    [
+        ([], "cut_in", ["scenario=cut_in"]),
+        (["a=1"], "cut_in#2", ["scenario=cut_in", "a=1"]),
+        (["scenario=x", "a=1"], "cut_in", ["scenario=x", "a=1"]),
+        (["a=1"], "", ["a=1"]),
+        ([], "cut_in#", ["scenario=cut_in#"]),
+        ([], "#3", ["scenario=#3"]),
+        ([], "cut_in#x", ["scenario=cut_in#x"]),
+        # A non-ASCII digit is no case number.
+        ([], "cut_in#٣", ["scenario=cut_in#٣"]),
+    ],
+)
+def test_scenario_overrides_adds_the_scenario_a_batch_label_names(
+    overrides: list[str], label: str, expected: list[str]
+) -> None:
+    # #2354: the core of ui.scanner._entry_overrides(), checked here.
+    assert case_paths.scenario_overrides(overrides, label) == expected

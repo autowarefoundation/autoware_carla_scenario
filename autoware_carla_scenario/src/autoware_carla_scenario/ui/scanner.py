@@ -17,6 +17,7 @@ from .case_paths import (
     job_index,
     own_file,
     result_path,
+    scenario_overrides,
     session_order,
 )
 from .cases import _hydra_overrides as _read_overrides
@@ -194,9 +195,7 @@ def _entry_overrides(entry: dict[str, Any]) -> list[str]:
     batch's label for the case, less the ``#k`` it is numbered with when its
     sweep gave the scenario more than one case
     (``examples.argv._case_labels``).  None is added for an entry that names
-    no scenario.  The label is ``name`` or ``name#k`` alone (a local batch,
-    a SLURM one, a glob's resolved names); a scenario's name has no ``#`` of
-    its own, which Hydra's override grammar refuses unquoted.
+    no scenario (the checked :func:`.case_paths.scenario_overrides`, #2354).
 
     They are not all the case ran with: a batch records no command line, so
     the overrides it gave every case are not among them, and the scenario
@@ -204,15 +203,10 @@ def _entry_overrides(entry: dict[str, Any]) -> list[str]:
     """
     value = entry.get("overrides")
     overrides = [str(o) for o in value] if isinstance(value, list) else []
-    if any(o.startswith("scenario=") for o in overrides):
-        return overrides
     label = entry.get("scenario")
-    if not isinstance(label, str) or not label:
+    if not isinstance(label, str):
         return overrides
-    name, sep, number = label.rpartition("#")
-    if not (sep and name and number.isascii() and number.isdigit()):
-        name = label
-    return [f"scenario={name}", *overrides]
+    return scenario_overrides(overrides, label)
 
 
 def _listing(directory: Path) -> list[Path] | None:

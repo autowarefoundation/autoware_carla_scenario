@@ -11,7 +11,8 @@ of the cases in a directory, in the order a runner hands them out
 of a session (a job directory's name read by :func:`job_index`, the one rule
 every reader of a multirun session uses), whether a case's file is its own
 (:func:`own_file`: not a symbolic link, which could name a file outside the
-viewer's base) and the ``scenario=`` override among a case's overrides.
+viewer's base) and the ``scenario=`` override among a case's overrides, or
+the one a batch case's label gives (:func:`scenario_overrides`).
 
 Split out of ``ui.cases`` and ``ui.results``, which re-export every name
 moved here and keep what reads the JSON documents of any type (``Any``) a
@@ -50,6 +51,7 @@ __all__ = [
     "job_dir",
     "job_index",
     "own_file",
+    "scenario_overrides",
     "last_result_path",
     "result_path",
     "session_dir",
@@ -365,3 +367,25 @@ def _override_label(overrides: list[str]) -> str | None:
         if o.startswith("scenario="):
             return o.split("=", 1)[1]
     return None
+
+
+def scenario_overrides(overrides: list[str], label: str) -> list[str]:
+    """*overrides*, a batch case's, with a ``scenario=`` override for its
+    batch *label* when they name none (``ui.scanner``, #2344).
+
+    The scenario page's Re-run needs a ``scenario=`` override, which a batch
+    case's overrides do not name, so one is added from its label: the batch's
+    name for the case, less the ``#k`` it is numbered with when its sweep gave
+    the scenario more than one case (``examples.argv._case_labels``).  None is
+    added for an empty label.  The label is ``name`` or ``name#k`` alone (a
+    local batch, a SLURM one, a glob's resolved names); a scenario's name has
+    no ``#`` of its own, which Hydra's override grammar refuses unquoted.
+    """
+    if any(o.startswith("scenario=") for o in overrides):
+        return overrides
+    if not label:
+        return overrides
+    name, sep, number = label.rpartition("#")
+    if not (sep and name and number.isascii() and number.isdigit()):
+        name = label
+    return [f"scenario={name}", *overrides]
