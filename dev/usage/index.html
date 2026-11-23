@@ -5666,7 +5666,7 @@ defines; a key it does not define is left to the build, which refuses it.</p>
 <td>list[int]</td>
 <td><code>[460, 265]</code></td>
 <td>per config</td>
-<td>Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it</td>
+<td>Lanelet IDs whose OpenDRIVE roads the ego must have been on, each road read halfway along its lanelet, any lane of it counting. A junction's lanelets are left out (their roads overlap), so a shipped route -- the junction lanelet, then the one out of it -- checks the exit lanelet's road alone</td>
 </tr>
 <tr>
 <td><code>scenario.pass_on_last_lanelet</code></td>
@@ -5756,7 +5756,7 @@ finite and at least 0, got nan</code>).</p>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to GREEN
 - Registers a TurnAction when <code>turn_direction</code> is set -- <code>left</code>, <code>right</code> or <code>straight</code> (sets the ego's path through the junction via the TrafficManager); none when it is <code>null</code>
-- Pass condition: ego traverses all expected OpenDRIVE road IDs (checked via StickyCondition + AndCondition)
+- Pass condition: the ego has been on every OpenDRIVE road of the route's lanelets that are not in a junction, any lane of each (a StickyCondition per road, under an AndCondition when there are several)
 - Fail conditions: timeout, ego destroyed, speed below threshold</p>
 <h4 id="lane-change">Lane Change<a class="headerlink" href="#lane-change" title="Permanent link">&para;</a></h4>
 <p>Tests ego vehicle lane change maneuvers. Can test both successful lane changes and expected failures.</p>
@@ -5785,17 +5785,23 @@ finite and at least 0, got nan</code>).</p>
 <tr>
 <td><code>lane_change_fail/left</code></td>
 <td>left</td>
-<td>fail (no adjacent lane)</td>
+<td>fail (no lane a change is allowed into)</td>
 <td><code>1.5</code></td>
 </tr>
 <tr>
 <td><code>lane_change_fail/right</code></td>
 <td>right</td>
-<td>fail (no adjacent lane)</td>
+<td>fail (no lane a change is allowed into)</td>
 <td><code>1.5</code></td>
 </tr>
 </tbody>
 </table>
+<p>A refused change's lanelet has no lane on that side a change is allowed into
+(the routing graph's <code>left</code> / <code>right</code>, which <code>has_adjacent</code> asks about), but
+it may have one behind a line a change may not cross: the shipped lanelets
+do (6's <code>adjacentLeft</code> is 5, and 5's <code>adjacentRight</code> is 6), and the ego
+crossing into it fails the run
+(<a href="../scenarios/lane_change/">Lane change</a>).</p>
 <p><strong>Scenario-specific parameters:</strong></p>
 <table>
 <thead>
@@ -5835,7 +5841,7 @@ finite and at least 0, got nan</code>).</p>
 - Sets all traffic lights to GREEN
 - Immediately registers a LaneChangeAction
 - Derives the target lane from the current spawn position and direction
-- Pass condition: <code>expect=success</code> passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's <code>left</code> / <code>right</code>), or one of the lanelets ahead of it before the next junction; <code>expect=fail</code> passes when the timeout is reached without the ego getting there
+- Pass condition: <code>expect=success</code> passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's <code>left</code> / <code>right</code>, failing that its <code>adjacentLeft</code> / <code>adjacentRight</code>), or one of the lanelets ahead of it before the next junction; <code>expect=fail</code> passes when the timeout is reached without the ego getting there
 - Checks via an EntityLanePositionCondition per target lanelet, any of them, latched (not by OpenDRIVE road and lane IDs)</p>
 <h4 id="traffic-light-compliance">Traffic Light Compliance<a class="headerlink" href="#traffic-light-compliance" title="Permanent link">&para;</a></h4>
 <p>Tests that the ego vehicle correctly stops at a red light and proceeds after green.</p>
@@ -6161,6 +6167,7 @@ ahead and placing NPC1 by the measured gap).</p>
 </tbody>
 </table>
 <p><strong>Behavior:</strong>
+- Unless <code>ego.goal_lanelet_id</code> is set, sends the ego down its lane (the goal an ego that plans its own route needs; a TrafficManager ego follows the route there): to the middle of the last lanelet ahead of the spawn lanelet before the next junction (on Nishi-Shinjuku, 22 from 20 and 21 from 19)
 - Sets all traffic lights to GREEN
 - Registers a lane change of NPC1 towards the ego after <code>cut_in_after_seconds</code>
 - Pass condition: NPC1 has been on the ego's lane for <code>hold_seconds</code>, with no collision
@@ -7628,7 +7635,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 05:43:13 UTC"><span class="timeago" datetime="2026-11-23T05:43:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 05:43:13 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 15:27:49 UTC"><span class="timeago" datetime="2026-11-23T15:27:49+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 15:27:49 UTC">2026-11-23</span>
   </span>
 
     
