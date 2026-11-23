@@ -234,7 +234,8 @@ where it is fixed. A numeric one is a spread whose mean must lie in the range
 given, which is also what each road user's draw is cut to; a mean outside it,
 or a negative std, is refused when the config is read, before the backend is
 built. Each vehicle draws once, when it is first put on autopilot
-(TrafficManager) or departs (SUMO), and keeps its draws.
+(TrafficManager; those there at the start in the order they were spawned) or
+departs (SUMO), and keeps its draws.
 
 #### `traffic.vehicles`
 
@@ -946,7 +947,10 @@ CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
 know where every actor is whatever the fog. With
 `traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
 the speed its driver keeps in what it sees: the weather rules' `sight_speed`
-([Weather rules](odd.md#weather-rules)) at the driver's own quantile, for
+([Weather rules](odd.md#weather-rules)) at the driver's own quantile
+(`visibility.driver_quantile` of the run's seed and how many vehicles were put
+on autopilot before it, not of its CARLA actor id, so a run repeats on a
+server that ran others before it), for
 SUMO's default car's reaction (1 s) and braking (4.5 m/s²) -- about 46-62
 km/h in 50 m of fog, never more than the 62 km/h it stops from within it.
 A vehicle is never held faster than it drives anyway. One given a speed of
