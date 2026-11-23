@@ -550,16 +550,28 @@ class TestAFailedReset:
     not run on the world the last one left."""
 
     def test_the_default_reset_logs_and_swallows_the_failure(
-        self, server: _Server
+        self, server: _Server, caplog: pytest.LogCaptureFixture
     ) -> None:
         runner = _runner(server, world_reset="soft")
         runner.load_map_by_name("Town10HD_Opt")
         server.foreign_load("Town01")
         server.load_world = MagicMock(side_effect=RuntimeError("std::exception"))  # type: ignore[method-assign]
 
-        runner.reset_world("Case0")
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario"):
+            runner.reset_world("Case0")
 
         assert runner._baseline is None
+        failures = [
+            r for r in caplog.records if "Reloading the map failed" in r.getMessage()
+        ]
+        assert len(failures) == 1
+        (record,) = failures
+        assert record.levelname == "WARNING"
+        assert "[Case0]" in record.getMessage()
+        # The swallowed error is in the log, with its traceback.
+        assert record.exc_info is not None
+        assert isinstance(record.exc_info[1], RuntimeError)
+        assert "std::exception" in str(record.exc_info[1])
 
     @pytest.mark.parametrize("world_reset", ["reload", "soft"])
     def test_a_strict_reset_raises_once_it_has_dropped_the_baseline(

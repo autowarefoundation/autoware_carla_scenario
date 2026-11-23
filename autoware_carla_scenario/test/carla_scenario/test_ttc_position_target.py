@@ -146,7 +146,14 @@ class TestFreespace:
         assert math.isclose(_ttc(condition, world), 9.5, abs_tol=0.01)
 
     def test_edge_to_edge_is_off_by_default(self) -> None:
-        world = _world(_actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0)))
+        """A subject with a 4 m half-length: the default is the centre-to-centre
+        100 m / 10 m/s, not the 96 m from its bumper."""
+        world = _world(
+            _actor("Ego", (0, 0, 0), velocity=(10.0, 0.0, 0.0), extent=(4.0, 1.0, 0.75))
+        )
+        assert math.isclose(
+            _ttc(_to_stop_line(edge_to_edge=True), world), 9.6, abs_tol=0.01
+        )
         assert math.isclose(_ttc(_to_stop_line(), world), 10.0, abs_tol=0.01)
 
 

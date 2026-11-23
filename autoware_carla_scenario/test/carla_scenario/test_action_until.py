@@ -183,8 +183,11 @@ class TestTheTwoAxesAreIndependent:
         assert action.executed == 2
 
     def test_neither_is_the_instantaneous_action_unchanged(self) -> None:
-        action = _CountingAction()
+        """Saying "no end condition, no repeat" out loud is the same as not
+        saying it: the explicit ``reissue=False`` must not make a run."""
+        action = _CountingAction(until=None, reissue=False)
 
+        assert action.reissues_while_running is False
         assert _tick(action, 0.0) is ActionState.START_TRANSITION
         assert _tick(action, 0.1) is ActionState.COMPLETE
         assert action.executed == 1

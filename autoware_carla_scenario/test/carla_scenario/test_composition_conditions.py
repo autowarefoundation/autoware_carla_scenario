@@ -1,4 +1,7 @@
-"""Unit tests for composition conditions (PersistentCondition, StandstillCondition, TemporaryStopCondition)."""
+"""Unit tests for composition conditions (PersistentCondition, TemporaryStopCondition).
+
+StandstillCondition is tested in test_conditions.py.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +20,6 @@ from autoware_carla_scenario import (
     OrCondition,
     PersistentCondition,
     ScenarioResult,
-    StandstillCondition,
     TemporaryStopCondition,
 )
 from autoware_carla_scenario.conditions.comparison import (
@@ -259,102 +261,6 @@ class TestPersistentCondition:
         result = cond.check(world, elapsed=1.0)
         assert result is not None
         assert result.passed is True
-
-
-# ---------------------------------------------------------------------------
-# StandstillCondition (composition version) – unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestStandstillConditionComposition:
-    """Tests for the composition-based StandstillCondition.
-
-    These match the original StandstillCondition test cases to ensure
-    API compatibility.
-    """
-
-    def test_returns_none_before_duration(self) -> None:
-        condition = StandstillCondition("ego", duration=3.0, label="test_standstill")
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        assert condition.check(world, elapsed=0.0) is None
-        assert condition.check(world, elapsed=2.9) is None
-
-    def test_returns_pass_after_duration(self) -> None:
-        condition = StandstillCondition("ego", duration=3.0, label="test_standstill")
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        condition.check(world, elapsed=0.0)
-        result = condition.check(world, elapsed=3.0)
-        assert result is not None
-        assert result.passed is True
-
-    def test_timer_resets_when_moving(self) -> None:
-        condition = StandstillCondition("ego", duration=2.0, label="test_standstill")
-        world_stop = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        world_move = _make_world_with_actor("ego", 0.0, 0.0, vx=5.0, vy=0.0)
-
-        # Stand still from t=0 to t=1
-        condition.check(world_stop, elapsed=0.0)
-        assert condition.check(world_stop, elapsed=1.0) is None
-
-        # Start moving at t=1.5 → timer resets
-        assert condition.check(world_move, elapsed=1.5) is None
-
-        # Stand still again from t=2
-        condition.check(world_stop, elapsed=2.0)
-        assert condition.check(world_stop, elapsed=3.0) is None  # only 1s
-        result = condition.check(world_stop, elapsed=4.0)  # 2s standstill
-        assert result is not None
-        assert result.passed is True
-
-    def test_speed_below_threshold_counts(self) -> None:
-        condition = StandstillCondition(
-            "ego", duration=1.0, speed_threshold=0.5, label="test_standstill"
-        )
-        # Speed = sqrt(0.3^2 + 0.3^2) ~ 0.42 < 0.5
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.3, vy=0.3)
-        condition.check(world, elapsed=0.0)
-        result = condition.check(world, elapsed=1.0)
-        assert result is not None
-        assert result.passed is True
-
-    def test_speed_above_threshold_no_trigger(self) -> None:
-        condition = StandstillCondition(
-            "ego", duration=1.0, speed_threshold=0.1, label="test_standstill"
-        )
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=1.0, vy=0.0)
-        condition.check(world, elapsed=0.0)
-        assert condition.check(world, elapsed=5.0) is None
-
-    def test_entity_not_found_returns_none(self) -> None:
-        condition = StandstillCondition("ego", duration=1.0, label="test_standstill")
-        world = _make_world_with_actor("other", 0.0, 0.0, vx=0.0, vy=0.0)
-        assert condition.check(world, elapsed=0.0) is None
-
-    def test_invalid_duration_raises(self) -> None:
-        with pytest.raises(ValueError, match="duration must be positive"):
-            StandstillCondition("ego", duration=0.0, label="test_standstill")
-        with pytest.raises(ValueError, match="duration must be positive"):
-            StandstillCondition("ego", duration=-1.0, label="test_standstill")
-
-    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
-    def test_refuses_a_duration_that_is_not_finite(self, duration: float) -> None:
-        """A NaN duration fails every comparison, so it would never fire (#1109)."""
-        with pytest.raises(ValueError, match="positive and finite"):
-            StandstillCondition("ego", duration=duration, label="test_standstill")
-
-    def test_invalid_speed_threshold_raises(self) -> None:
-        with pytest.raises(ValueError, match="speed_threshold must be non-negative"):
-            StandstillCondition(
-                "ego", duration=1.0, speed_threshold=-0.1, label="test_standstill"
-            )
-
-    def test_elapsed_seconds_in_result(self) -> None:
-        condition = StandstillCondition("ego", duration=1.0, label="test_standstill")
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        condition.check(world, elapsed=10.0)
-        result = condition.check(world, elapsed=11.0)
-        assert result is not None
-        assert result.elapsed_seconds == pytest.approx(11.0)
 
 
 # ---------------------------------------------------------------------------
