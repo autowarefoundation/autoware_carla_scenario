@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import itertools
+import random
 import re
 
 import numpy as np
@@ -427,3 +428,101 @@ def test_importing_the_settings_loads_no_t4scene_converter(module: str) -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "False"
+
+
+def _old_fed_selection(
+    frame: int,
+    sweeps: list[int],
+    images: list[tuple[int, str]],
+    snapshots: set[int],
+    start_frame: int,
+    last_frame: int,
+    camera_written: dict[str, int],
+) -> tuple[list[int], list[int], int]:
+    """T4Recording._record_fed's choice before #2355, as the kept sweeps' and
+    camera frames' indices and the key frame (-1: nothing written)."""
+
+    def has_snapshot(taken_on: int) -> bool:
+        return not (
+            taken_on < start_frame
+            or taken_on <= last_frame
+            or taken_on not in snapshots
+        )
+
+    def is_new(taken_on: int) -> bool:
+        return not (taken_on < start_frame or taken_on <= last_frame)
+
+    def is_unwritten(taken_on: int, logical_id: str) -> bool:
+        written = camera_written.get(logical_id)
+        return not (written is not None and taken_on <= written)
+
+    kept_sweeps = [i for i, t in enumerate(sweeps) if has_snapshot(t)]
+    kept_images = [
+        i for i, (t, cam) in enumerate(images) if is_new(t) and is_unwritten(t, cam)
+    ]
+    if not kept_sweeps and not kept_images:
+        return [], [], -1
+    if kept_sweeps:
+        key_frame = min(sweeps[i] for i in kept_sweeps)
+    else:
+        key_frame = min(
+            (images[i][0] for i in kept_images if images[i][0] in snapshots),
+            default=frame,
+        )
+    if key_frame <= last_frame:
+        return kept_sweeps, kept_images, -1
+    on_key = [i for i in kept_sweeps if sweeps[i] == key_frame]
+    return on_key, kept_images, key_frame
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_fed_selection_is_the_one_t4_made(seed: int) -> None:
+    rng = random.Random(seed)
+    for _ in range(200):
+        frame = rng.randint(5, 30)
+        start_frame = rng.randint(0, 10)
+        last_frame = rng.choice([-1, rng.randint(0, frame - 1)])
+        snapshots = {f for f in range(frame + 1) if rng.random() < 0.6} | {frame}
+        sweeps = [rng.randint(0, frame) for _ in range(rng.randint(0, 3))]
+        cams = ["front", "rear"]
+        images = [
+            (rng.randint(0, frame), rng.choice(cams)) for _ in range(rng.randint(0, 3))
+        ]
+        written = {c: rng.randint(0, frame) for c in cams if rng.random() < 0.5}
+        sweep_fates, image_fates, key_frame = t4_settings.fed_key_frame(
+            frame, sweeps, images, snapshots, start_frame, last_frame, written
+        )
+        old_sweeps, old_images, old_key = _old_fed_selection(
+            frame, sweeps, images, snapshots, start_frame, last_frame, written
+        )
+        assert key_frame == old_key
+        # t4 logs that nothing can be written exactly when the old code kept
+        # nothing.
+        kept = t4_settings.FED_KEPT in sweep_fates + image_fates
+        assert kept == bool(old_sweeps or old_images)
+        if old_key >= 0:
+            # And the count of later sweeps it logs is the old one.
+            kept_sweeps = sum(
+                not (t < start_frame or t <= last_frame or t not in snapshots)
+                for t in sweeps
+            )
+            assert sweep_fates.count(t4_settings.FED_LATER) == kept_sweeps - len(
+                old_sweeps
+            )
+            assert old_sweeps == [
+                i for i, f in enumerate(sweep_fates) if f == t4_settings.FED_KEPT
+            ]
+            assert old_images == [
+                i for i, f in enumerate(image_fates) if f == t4_settings.FED_KEPT
+            ]
+        # Why each dropped one was dropped, as the old filters' logs said.
+        for t, fate in zip(sweeps, sweep_fates):
+            dropped = t < start_frame or t <= last_frame or t not in snapshots
+            assert (fate == t4_settings.FED_NO_SNAPSHOT) == dropped
+        for (t, cam), fate in zip(images, image_fates):
+            if t < start_frame or t <= last_frame:
+                assert fate == t4_settings.FED_NOT_NEW
+            elif cam in written and t <= written[cam]:
+                assert fate == t4_settings.FED_REPEATED
+            else:
+                assert fate == t4_settings.FED_KEPT

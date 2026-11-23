@@ -12,7 +12,6 @@ registered primitive is editable with no change to this module.
 
 from __future__ import annotations
 
-import collections
 import logging
 import math
 import os
@@ -92,6 +91,13 @@ from .gate_fields import (
     GateField,
 )
 from .naming import unused_name as _unused_name
+from .revisions import (
+    WRITER_DRAFTS,
+    WRITER_HISTORY,
+    WriterHistory,
+    form_revision,
+    is_current,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -159,17 +165,11 @@ class StaleDraftError(Exception):
         self.draft_id = draft_id
 
 
-#: How many of a draft's latest saves the editor remembers the writer of: the
-#: window in which a form one revision behind is still known to be behind only
-#: its own tab's edits.  A tab has at most a request or two in flight, so this
-#: is generous; a form older than the window is refused.
-_WRITER_HISTORY = 64
-
-#: How many drafts' writer histories the editor keeps: the drafts most
-#: recently saved.  A draft that drops out is checked as after a restart -- a
-#: form one save behind is refused -- which only a tab left idle while this
-#: many other drafts were edited can meet.
-_WRITER_DRAFTS = 256
+#: How many of a draft's latest saves, and of drafts, the editor remembers the
+#: writers of: the checked editor.revisions's (#2355).  _WRITER_DRAFTS is read
+#: at each save, _WRITER_HISTORY when the service is built.
+_WRITER_HISTORY = WRITER_HISTORY
+_WRITER_DRAFTS = WRITER_DRAFTS
 
 
 class EditorStorageError(Exception):
@@ -322,9 +322,7 @@ class EditorService:
         # In memory only, so after a restart a form one save behind is refused
         # rather than trusted.  Most recently saved last, and bounded by
         # _WRITER_DRAFTS, so it does not grow with every draft ever touched.
-        self._writers: collections.OrderedDict[
-            str, collections.deque[tuple[int, str]]
-        ] = collections.OrderedDict()
+        self._writers = WriterHistory(_WRITER_HISTORY)
 
     def _lock(self, key: str) -> threading.Lock:
         """Return the lock for *key*, creating it on first use.
@@ -577,14 +575,7 @@ class EditorService:
         with _storage_errors(self.store):
             saved = self.store.save(draft)
         with self._locks_guard:
-            writers = self._writers.get(draft.id)
-            if writers is None:
-                writers = collections.deque(maxlen=_WRITER_HISTORY)
-                self._writers[draft.id] = writers
-            self._writers.move_to_end(draft.id)
-            while len(self._writers) > _WRITER_DRAFTS:
-                self._writers.popitem(last=False)
-            writers.append((saved.revision, client))
+            self._writers.record(draft.id, saved.revision, client, _WRITER_DRAFTS)
         return saved
 
     def check_revision(
@@ -613,11 +604,12 @@ class EditorService:
         Raises:
             StaleDraftError: If the form is out of date.
         """
-        try:
-            base = int(str(revision).strip())
-        except ValueError:
-            base = -1
-        if base == draft.revision:
+        base = form_revision(str(revision))
+        writers: list[tuple[int, str]] = []
+        if not strict and 0 <= base < draft.revision and client:
+            with self._locks_guard:
+                writers = self._writers.writers(draft.id)
+        if is_current(base, draft.revision, writers, client, strict):
             return
         if strict:
             raise StaleDraftError(
@@ -627,12 +619,6 @@ class EditorService:
                 "the page to see the draft as it is now, then try again.",
                 draft.id,
             )
-        if 0 <= base < draft.revision and client:
-            with self._locks_guard:
-                known = dict(self._writers.get(draft.id, ()))
-            between = range(base + 1, draft.revision + 1)
-            if all(known.get(r) == client for r in between):
-                return
         raise StaleDraftError(
             "This draft was changed elsewhere -- in another tab or window -- "
             "since this page was shown, so this edit was not applied: it would "
@@ -664,7 +650,7 @@ class EditorService:
                     if deleted:
                         shutil.rmtree(self._archive_dir(draft_id), ignore_errors=True)
                         with self._locks_guard:
-                            self._writers.pop(draft_id, None)
+                            self._writers.forget(draft_id)
                     return deleted
             except ValueError as exc:
                 raise EditorError(str(exc)) from exc
