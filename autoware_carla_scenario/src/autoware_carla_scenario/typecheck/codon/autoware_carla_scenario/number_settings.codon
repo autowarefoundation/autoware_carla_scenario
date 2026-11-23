@@ -1,0 +1,29 @@
+# Model of autoware_carla_scenario.number_settings (docs/typecheck.md): the
+# one check of a number setting and of a TCP port (#2398), which the example
+# scenarios' configs (examples.configs) call from their validators. The
+# Python module is checked; this declares its __all__ with Python's
+# signatures, for a scenario and its configs to import. Nothing here runs.
+
+from ._tc import _keyword_only as _acs_keyword_only
+
+
+# Python takes `value: Union[float, str]`. A Union parameter crashes Codon
+# 0.19, so it is generic: Python refuses a value of another type (a bool, a
+# string without text=True, ...) with a ValueError when the setting is read,
+# not by its type, so any value compiles, as it runs.
+def number_setting(key: str, value, *_kw, text: bool = False) -> float:
+    _acs_keyword_only(_kw, "number_setting(): text")
+    raise NotImplementedError()
+
+
+def finite_number_setting(key: str, value, *_kw, text: bool = False) -> float:
+    _acs_keyword_only(_kw, "finite_number_setting(): text")
+    raise NotImplementedError()
+
+
+def is_port(port: int) -> bool:
+    raise NotImplementedError()
+
+
+def check_port(key: str, port: int) -> None:
+    raise NotImplementedError()
