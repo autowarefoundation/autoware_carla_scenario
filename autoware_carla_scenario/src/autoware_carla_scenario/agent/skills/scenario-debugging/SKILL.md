@@ -5,6 +5,8 @@ description: This skill should be used when the user asks to "debug a scenario",
 
 # CARLA Scenario Debugging Guide
 
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in the `scenario-writing` skill's "Where Things Are".
+
 ## Purpose
 
 Guide the autonomous debugging of CARLA concrete scenarios: execute, analyze logs, diagnose failures, fix issues, and iterate until the scenario passes.
@@ -27,7 +29,7 @@ uv run scenario-expand scenario=<name>/<variant>
 
 ## Where the Results Are
 
-Each run writes `outputs/YYYY-MM-DD/HH-MM-SS/` (sweeps: `multirun/`). The full list is `autoware_carla_scenario/docs/usage.md`, "Output Files"; the ones to read first:
+Each run writes `outputs/YYYY-MM-DD/HH-MM-SS/` (sweeps: `multirun/`). The full list is `docs/usage.md`, "Output Files"; the ones to read first:
 
 - `{ScenarioName}_result.json` — `passed`, `message`, and the status of every condition (the condition tree)
 - `{ScenarioName}.trajectory.jsonl` — the run tick by tick, with the map, plan, conditions and verdict (`docs/trajectory_log.md`); convertible to a Rerun recording to watch the run (`docs/usage.md`, "Seeing a run")
@@ -90,7 +92,7 @@ When analyzing scenario output, look for these sections in order:
 - An attribute assigned on `self` that is not declared at class level → declare it (`_config: MyScenarioConfig`)
 - A misspelled config key or a value of the wrong type in the YAML → fix the YAML or the dataclass field
 - A value that may be `None` used where it may not be → check for `None` first
-- Code Codon cannot compile → see `autoware_carla_scenario/docs/typecheck.md`; do not switch the check off to get past it
+- Code Codon cannot compile → see `docs/typecheck.md`; do not switch the check off to get past it
 
 ### Import / Runtime Errors
 
@@ -131,8 +133,8 @@ When a scenario fails due to timing/threshold issues, adjust in this order:
 
 ## Key Source Locations
 
-- The scenario under debug: its scenario package (`src/<package>/`), or a built-in in `autoware_carla_scenario/src/autoware_carla_scenario/examples/`
-- Hydra configs: the package's `conf/`, and the framework's `autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/` (`map/`, `ego/`, `server/`, ...)
-- Conditions: `autoware_carla_scenario/src/autoware_carla_scenario/conditions/`
-- Actions: `autoware_carla_scenario/src/autoware_carla_scenario/actions/`
-- Coordinate transforms: `autoware_carla_scenario/src/autoware_carla_scenario/coordinate/`
+- The scenario under debug: its scenario package (`src/<package>/`), or a built-in in `<framework>/examples/`
+- Hydra configs: the package's `conf/`, and the framework's `<framework>/examples/conf/` (`map/`, `ego/`, `server/`, ...)
+- Conditions: `<framework>/conditions/`
+- Actions: `<framework>/actions/`
+- Coordinate transforms: `<framework>/coordinate/`

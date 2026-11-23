@@ -3,6 +3,8 @@ name: review-scenario
 description: Review a CARLA scenario's parameter design for orthogonality and sweeper compatibility. Use when the user names an existing scenario (or its YAML config) and asks for its parameters to be reviewed.
 ---
 
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in the `scenario-writing` skill's "Where Things Are".
+
 Review the parameter design of an existing CARLA test scenario. Use the `scenario-review` skill for domain knowledge.
 
 ## Input
@@ -13,7 +15,7 @@ The user specifies a scenario (its name or the path to its YAML config) in the r
 
 ### Step 1: Read the Scenario
 
-1. Find and read the scenario's YAML config: `conf/scenario/<name>/` in its scenario package (`src/<package>/conf/`), or for a built-in in `autoware_carla_scenario/src/autoware_carla_scenario/examples/conf/scenario/`
+1. Find and read the scenario's YAML config: `conf/scenario/<name>/` in its scenario package (`src/<package>/conf/`), or for a built-in in `<framework>/examples/conf/scenario/`
 2. Read the corresponding Python scenario class (the module registered under that name: the package's `register()`, or `examples/run.py`'s `_register_builtin_scenario` calls)
 3. Read its dataclass config (`configs.py` beside it)
 

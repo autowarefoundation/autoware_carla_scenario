@@ -11,71 +11,22 @@ This tutorial shows two paths to creating a scenario:
 
 ## Quick Start with a Coding Agent
 
-This repository ships its scenario-writing **agent skills** in `skills/` at
-the repository root, one directory per skill. `scripts/scenario_agent.py`
-installs them into a coding agent with
-[agent-skill-installer](https://github.com/omry/agent-skill-installer) and
-starts the agent in the repository root, on a first prompt that invokes
-`write-scenario`:
+The framework ships scenario-writing **agent skills** that a coding agent —
+Claude Code or Codex — loads to walk you through a scenario:
+it asks clarifying questions, writes the scenario class, config and YAML, runs
+the static check, debugs the run in CARLA, reviews the parameters and adds the
+sweep. In a Git repository — this checkout, or your scenario package's — one
+command (the `agent` extra) installs the skills and starts the agent on your
+description:
 
 ```bash
-# Claude Code (the `claude` command must be on PATH)
-uv run --group agent scripts/scenario_agent.py claude "I want to test that the ego stops at a stop sign"
-
-# Codex (the `codex` command must be on PATH)
-uv run --group agent scripts/scenario_agent.py codex "I want to test that the ego stops at a stop sign"
+uv run scenario-agent claude "I want to test that the ego stops at a stop sign"
+# or: uv run scenario-agent codex "..."
 ```
 
-Pick another skill with `--skill` (e.g. `--skill review-scenario lane_change`),
-start the agent with no prompt by leaving the request out, or only install the
-skills with `--install-only`. The skills are installed as symlinks into
-`.claude/skills/` or `.codex/skills/` (ignored by git), so edits under
-`skills/` take effect without reinstalling; re-run the script after adding or
-renaming a skill.
-
-### How It Works
-
-In the session, a skill is invoked by name — `/write-scenario` in Claude Code,
-`$write-scenario` in Codex — followed by a natural-language description of the
-test you want. The agent walks you through a 7-stage workflow automatically:
-
-| Stage | What the agent does |
-|---|---|
-| 1. Understand | Parses your description, asks clarifying questions |
-| 2. Discover | Scans the codebase for available Conditions, Actions, Constraints, and Bindings |
-| 3. Write | Generates all four files: Python class, config dataclass, YAML, and `run.py` registration |
-| 4. Debug | Runs the scenario in CARLA, reads logs, fixes failures iteratively |
-| 5. Review | Analyzes parameter orthogonality and sweeper compatibility |
-| 6. Sweep | Adds `sweep.constraints` / `bindings` to the YAML for parametric testing |
-| 7. Multirun | Provides the exact command to execute the logical scenario across the map |
-
-### Example
-
-```
-> /write-scenario I want to test that the ego stops at a stop sign,
-  waits 3 seconds, then proceeds through the intersection.
-```
-
-The agent will:
-
-1. Identify `StandstillCondition` and `TimeoutCondition` from the codebase
-2. Generate `my_scenario.py`, update `configs.py`, create YAML, register in `run.py`
-3. Run the scenario, analyze the result, and iterate until it passes
-4. Propose sweep constraints so the test generalizes to every stop sign on the map
-
-You do not need to memorize the framework API — the skills discover
-everything dynamically.
-
-### Other Skills
-
-| Skill | When to use |
-|---|---|
-| `/write-scenario` | Create a new scenario from scratch |
-| `/debug-concrete-scenario` | An existing scenario fails — analyze logs and fix |
-| `/review-scenario` | Before adding sweep — check parameter design |
-| `/scenario-writing`, `/scenario-debugging`, `/scenario-review` | Domain knowledge the three above build on; the agent loads them when a task needs them |
-
-(In Codex, write `$` instead of `/`.)
+[Writing Scenarios with a Coding Agent](coding_agents.md) has the whole
+procedure: prerequisites, the options, the stages the agent goes through,
+editing the skills, and troubleshooting.
 
 ---
 

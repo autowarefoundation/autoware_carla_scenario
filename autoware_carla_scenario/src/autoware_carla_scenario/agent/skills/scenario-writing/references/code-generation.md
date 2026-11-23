@@ -1,5 +1,7 @@
 # Scenario Code Generation
 
+> Paths: `<framework>/` (the installed framework's source) and `docs/<page>.md` (its documentation) as in `../SKILL.md`'s "Where Things Are".
+
 How to generate CARLA test scenario code for `autoware_carla_scenario` once the scenario design is confirmed with the user.
 
 **What it covers:**
@@ -20,7 +22,7 @@ How to generate CARLA test scenario code for `autoware_carla_scenario` once the 
    - For a built-in: `examples/run.py`'s `_register_builtin_scenario` calls; for a package: its generated `__init__.py`
    - The top-level `autoware_carla_scenario/__init__.py` `__all__` to know the public API
 
-3. **Discover available Conditions/Actions/Constraints/Bindings.** Search the source (under `autoware_carla_scenario/src/autoware_carla_scenario/`):
+3. **Discover available Conditions/Actions/Constraints/Bindings.** Search the source (under `<framework>/`):
    - `grep -rn "(BaseCondition)\|(CompositionCondition)" conditions/`
    - `grep -rn "(BaseAction)" actions/`
    - The sweeper's constraint and binding types: `constraints-reference.md`, "Discovery"

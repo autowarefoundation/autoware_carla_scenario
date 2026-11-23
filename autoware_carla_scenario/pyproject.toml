@@ -208,6 +208,14 @@ hils-setup = [
 pack = [
     "carla-pack-registry>=0.3.2,<0.4",
 ]
+# `scenario-agent` (docs/coding_agents.md): agent-skill-installer
+# (omry/agent-skill-installer), which installs the scenario-writing skills
+# shipped in `agent/skills/` into Claude Code or Codex, each skill and its
+# discoverability block in the agent's own layout. 0.x, so the range stops at
+# the next minor.
+agent = [
+    "agent-skill-installer>=0.5.0,<0.6",
+]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.
@@ -253,6 +261,9 @@ viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not
 # start the other.
 scenario-editor = "autoware_carla_scenario.editor:main"
+# Install the scenario-writing skills into Claude Code or Codex and start it
+# (the `agent` extra; docs/coding_agents.md).
+scenario-agent = "autoware_carla_scenario.agent.cli:main"
 # Stream the run's ego to ECUs under test (the `hils` extra; docs/hils.md).
 scenario-hils = "autoware_carla_scenario.hils.cli:main"
 # Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit (docs/t4_scene.md).

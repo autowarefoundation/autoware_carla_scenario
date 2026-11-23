@@ -1,24 +1,26 @@
-"""The agent skills in ``skills/`` and ``scripts/scenario_agent.py``.
+"""The agent skills shipped in ``autoware_carla_scenario/agent/skills/`` and
+``scenario-agent`` (:mod:`autoware_carla_scenario.agent.cli`).
 
 The skills are installed into Claude Code and Codex by agent-skill-installer,
-which also writes a discoverability block per skill into ``CLAUDE.md`` and
-``AGENTS.md``. Those blocks are committed, so they must be exactly what an
-install writes: otherwise every run of the script would leave a diff.
+which also writes a discoverability block per skill into the repository's
+``CLAUDE.md`` and ``AGENTS.md``. This repository commits those blocks, so they
+must be exactly what an install writes: otherwise every run would leave a diff.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
 import subprocess
-import sys
+from importlib import resources
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 import yaml
 
-_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "scenario_agent.py"
+from autoware_carla_scenario.agent import cli
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SKILLS_DIR = cli.SKILLS_DIR
 
 # Names only Claude Code understands; a skill shared with Codex must not need
 # them (a Claude Code command's argument placeholder and tool permissions, and
@@ -26,23 +28,8 @@ _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "scenario_agent.py"
 _CLAUDE_ONLY = ("$ARGUMENTS", "allowed-tools", "argument-hint", "AskUserQuestion")
 
 
-def _load_script() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("scenario_agent", _SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # dataclasses resolves the module of the classes it decorates.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-scenario_agent = _load_script()
-_REPO_ROOT: Path = scenario_agent.REPO_ROOT
-_SKILLS_DIR: Path = scenario_agent.SKILLS_DIR
-
-
 def _skill_dirs() -> list[Path]:
-    return [_SKILLS_DIR / name for name in scenario_agent.available_skills()]
+    return [_SKILLS_DIR / name for name in cli.available_skills()]
 
 
 def _frontmatter(skill_md: Path) -> dict[str, object]:
@@ -79,31 +66,28 @@ def test_skill_is_agent_neutral(skill_dir: Path) -> None:
     for path in sorted(skill_dir.rglob("*.md")):
         text = path.read_text(encoding="utf-8")
         found = [name for name in _CLAUDE_ONLY if name in text]
-        assert not found, f"{path.relative_to(_REPO_ROOT)} uses {found}"
+        assert not found, f"{path.relative_to(_SKILLS_DIR)} uses {found}"
 
 
 def test_committed_discoverability_blocks_match_an_install(tmp_path: Path) -> None:
     if shutil.which("git") is None:
         pytest.skip("git is not installed")
     repo = tmp_path / "repo"
-    shutil.copytree(_SKILLS_DIR, repo / "skills")
+    repo.mkdir()
     for name in ("CLAUDE.md", "AGENTS.md"):
         shutil.copy2(_REPO_ROOT / name, repo / name)
     # The installer's `--repo` asserts a Git repository root.
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
 
-    command = scenario_agent.install_command(
-        list(scenario_agent.AGENTS.values()), repo / "skills"
-    )
-    subprocess.run(command, check=True, capture_output=True)
+    cli.install(list(cli.AGENTS.values()), repo)
 
     for name in ("CLAUDE.md", "AGENTS.md"):
         assert (repo / name).read_text(encoding="utf-8") == (
             _REPO_ROOT / name
         ).read_text(encoding="utf-8"), (
-            f"{name}'s discoverability blocks are stale: re-run "
-            "`uv run --group agent scripts/scenario_agent.py <agent> "
-            "--install-only` for claude and codex and commit the result"
+            f"{name}'s discoverability blocks are stale: run "
+            "`uv run scenario-agent <agent> --install-only` for claude and codex "
+            "and commit the result"
         )
     assert (repo / ".claude" / "skills" / "write-scenario" / "SKILL.md").is_file()
     assert (repo / ".codex" / "skills" / "write-scenario" / "SKILL.md").is_file()
@@ -117,67 +101,99 @@ def test_committed_discoverability_blocks_match_an_install(tmp_path: Path) -> No
     ],
 )
 def test_first_prompt_invokes_the_skill(agent: str, expected: str) -> None:
-    prompt = scenario_agent.first_prompt(
-        scenario_agent.AGENTS[agent], "write-scenario", ["stop at", "a stop sign"]
+    prompt = cli.first_prompt(
+        cli.AGENTS[agent], "write-scenario", ["stop at", "a stop sign"]
     )
     assert prompt == expected
-    assert scenario_agent.launch_command(scenario_agent.AGENTS[agent], prompt) == [
-        agent,
-        expected,
-    ]
+    assert cli.launch_command(cli.AGENTS[agent], prompt) == [agent, expected]
 
 
 def test_no_request_starts_the_agent_without_a_prompt() -> None:
-    agent = scenario_agent.AGENTS["claude"]
-    assert scenario_agent.first_prompt(agent, "write-scenario", []) is None
-    assert scenario_agent.launch_command(agent, None) == ["claude"]
+    agent = cli.AGENTS["claude"]
+    assert cli.first_prompt(agent, "write-scenario", []) is None
+    assert cli.launch_command(agent, None) == ["claude"]
 
 
-def test_install_command_installs_every_skill_into_the_repository() -> None:
-    command = scenario_agent.install_command(
-        list(scenario_agent.AGENTS.values()), Path("/repo/skills")
+def test_each_skill_is_a_bundled_skill_project_of_the_package() -> None:
+    projects = cli.skill_projects()
+    assert [project.skill_name for project in projects] == cli.available_skills()
+    for project in projects:
+        assert project.package_name == "autoware-carla-scenario"
+        assert (
+            project.description
+            == _frontmatter(_SKILLS_DIR / project.skill_name / "SKILL.md")[
+                "description"
+            ]
+        )
+        # The installer reads the skill from the installed package.
+        bundled = resources.files(project.import_name).joinpath(
+            project.required_bundled_skill_path()
+        )
+        assert bundled.joinpath("SKILL.md").is_file()
+
+
+def test_installs_are_copies_owned_by_the_package(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    lines = cli.install([cli.AGENTS["claude"]], tmp_path)
+    assert len(lines) == len(cli.available_skills())
+    installed = tmp_path / ".claude" / "skills" / "scenario-writing"
+    assert not installed.is_symlink()
+    assert (installed / "references" / "code-generation.md").is_file()
+    manifest = yaml.safe_load(
+        (installed / ".scenario-writing-install.json").read_text(encoding="utf-8")
     )
-    assert command[:3] == [sys.executable, "-m", "agent_skill_installer"]
-    assert "--all-src-skills" in command
-    assert command[command.index("--skill-path") + 1] == str(Path("/repo/skills"))
-    assert command[command.index("--target-dir") + 1] == str(Path("/repo"))
-    assert command[command.index("--agent") + 1] == "claude,codex"
-    assert command[command.index("--scope") + 1] == "dir"
+    assert manifest["package"] == "autoware-carla-scenario"
+
+
+def test_find_repository_root_walks_up(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    nested = tmp_path / "a" / "b"
+    nested.mkdir(parents=True)
+    assert cli.find_repository_root(nested) == tmp_path
 
 
 def test_unknown_skill_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
-    assert scenario_agent.main(["claude", "--skill", "no-such-skill", "x"]) == 2
+    assert cli.main(["claude", "--skill", "no-such-skill", "x"]) == 2
     assert "unknown skill" in capsys.readouterr().err
+
+
+def test_outside_a_repository_is_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "find_repository_root", lambda _: None)
+    assert cli.main(["claude", "--install-only"]) == 2
+    assert "inside a Git repository" in capsys.readouterr().err
 
 
 def test_missing_agent_command_is_reported_before_installing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(scenario_agent.shutil, "which", lambda _: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda _: None)
 
     def no_install(*args: object, **kwargs: object) -> None:
         raise AssertionError("installed although the agent is missing")
 
-    monkeypatch.setattr(scenario_agent.subprocess, "run", no_install)
-    assert scenario_agent.main(["codex", "something"]) == 2
+    monkeypatch.setattr(cli, "install", no_install)
+    assert cli.main(["codex", "something"]) == 2
     assert "`codex` is not on PATH" in capsys.readouterr().err
 
 
 def test_install_only_does_not_start_the_agent(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    commands: list[list[str]] = []
+    calls: list[tuple[list[str], Path]] = []
 
-    def fake_run(command: list[str], check: bool) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        return subprocess.CompletedProcess(command, 0)
+    def fake_install(agents: list[cli.Agent], repository: Path) -> list[str]:
+        calls.append(([agent.name for agent in agents], repository))
+        return []
 
     def no_exec(*args: object) -> None:
         raise AssertionError("started the agent with --install-only")
 
-    monkeypatch.setattr(scenario_agent.subprocess, "run", fake_run)
-    monkeypatch.setattr(scenario_agent.os, "execv", no_exec)
-    assert scenario_agent.main(["claude", "--install-only"]) == 0
-    assert commands == [
-        scenario_agent.install_command([scenario_agent.AGENTS["claude"]])
-    ]
+    monkeypatch.setattr(cli, "find_repository_root", lambda _: tmp_path)
+    monkeypatch.setattr(cli, "install", fake_install)
+    monkeypatch.setattr(cli.os, "execv", no_exec)
+    assert cli.main(["claude", "--install-only"]) == 0
+    assert calls == [(["claude"], tmp_path)]
