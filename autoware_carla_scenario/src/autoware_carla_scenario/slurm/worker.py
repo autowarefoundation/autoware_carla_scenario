@@ -885,7 +885,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
         sampler.stop()
         if rerun is not None:
-            from ..rerun import report  # noqa: PLC0415
+            from ..rerun_report import report  # noqa: PLC0415
 
             logger.info("%s", report(rerun.close()))
         if slot is not None:
