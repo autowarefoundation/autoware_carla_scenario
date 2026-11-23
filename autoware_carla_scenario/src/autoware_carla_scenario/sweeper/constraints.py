@@ -809,9 +809,14 @@ class PreviousOfConstraint(Constraint):
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets previous to the inner-constraint matches."""
-        inner_matched = find_matching_lanelets(list(self.constraints), lanelet_map)
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
+        # One graph for the whole tree: the set-level children (has_adjacent,
+        # a nested previous_of / following_of) would each build their own
+        # otherwise.  find_matching_lanelets binds the children too (#2372).
+        inner_matched = find_matching_lanelets(
+            list(self.constraints), lanelet_map, routing_graph
+        )
         result: set[int] = set()
         for lid in inner_matched:
             lanelet = lanelet_map.laneletLayer[lid]
@@ -822,8 +827,8 @@ class PreviousOfConstraint(Constraint):
     def _bind_set_level(
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
     ) -> None:
+        # find_matching_ids binds the children already (find_matching_lanelets).
         _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
-        _bind_children(self, lanelet_map, routing_graph)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed previous set."""
@@ -849,9 +854,14 @@ class FollowingOfConstraint(Constraint):
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets following the inner-constraint matches."""
-        inner_matched = find_matching_lanelets(list(self.constraints), lanelet_map)
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
+        # One graph for the whole tree: the set-level children (has_adjacent,
+        # a nested previous_of / following_of) would each build their own
+        # otherwise.  find_matching_lanelets binds the children too (#2372).
+        inner_matched = find_matching_lanelets(
+            list(self.constraints), lanelet_map, routing_graph
+        )
         result: set[int] = set()
         for lid in inner_matched:
             lanelet = lanelet_map.laneletLayer[lid]
@@ -862,8 +872,8 @@ class FollowingOfConstraint(Constraint):
     def _bind_set_level(
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
     ) -> None:
+        # find_matching_ids binds the children already (find_matching_lanelets).
         _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
-        _bind_children(self, lanelet_map, routing_graph)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed following set."""
