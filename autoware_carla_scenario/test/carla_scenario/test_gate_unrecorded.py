@@ -549,3 +549,30 @@ def test_evaluate_re_exports_the_checked_scans() -> None:
     ):
         assert getattr(evaluate, name) is getattr(unrecorded, name), name
     assert evaluate._summary_cases is unrecorded._summary_cases
+
+
+def _old_batch_line(directory: Path, names: list[str], total: int) -> str:
+    """_scan_batches()'s line for a batch, as it was before #2386."""
+    shown = ", ".join(names[:_NAMED])
+    more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
+    return (
+        f"{directory}: {len(names)} of {total} case(s) raised or have no "
+        f"outcome, and left no gate record ({shown}{more}); the gate would "
+        "be judged over the runs that survived"
+    )
+
+
+def test_a_batch_s_line_is_written_as_before() -> None:
+    # The line _scan_batches() writes per batch is the checked
+    # gate.unrecorded's _batch_line() (#2386).
+    from autoware_carla_scenario.gate import unrecorded
+
+    rng = random.Random(2386)
+    pool = ["a#0", "", "ü", "x, y", "7", "pkg/cut_in#12"]
+    for _ in range(1000):
+        names = [rng.choice(pool) for _ in range(rng.randrange(0, 14))]
+        total = rng.choice([0, len(names), len(names) + rng.randrange(0, 50), -1])
+        directory = Path(rng.choice(["/runs/b", "rel", ".", "/ü dir/x"]))
+        assert unrecorded._batch_line(directory, names, total) == _old_batch_line(
+            directory, names, total
+        )

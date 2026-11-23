@@ -387,7 +387,7 @@ def session_scenarios(base: Path, session_type: str, date: str, time: str) -> se
         if label is None:
             files = case_files(base, session_type, date, time, index)
             label = files.stem if files else "unknown"
-        out.add(label.split("#", 1)[0])
+        out.add(scenario_of(label))
     return out
 
 

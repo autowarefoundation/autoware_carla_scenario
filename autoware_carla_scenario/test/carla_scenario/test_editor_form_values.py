@@ -414,3 +414,144 @@ class TestReferences:
         spec = FieldSpec("ids", "Ids", kind, (), required=False)
         with pytest.raises(ValueError, match="must be whole numbers"):
             forms.parse_value(spec, MAP_EXCLUSION_REF, present=True)
+
+
+# -- the service's number fields (#2386) ---------------------------------------
+#
+# editor/service.py's _as_float(), as_int() and as_port() as they were before
+# their parsing and messages moved into the checked editor.form_values
+# (float_field(), int_field()), copied verbatim but for their names.
+
+
+def _old_as_float(raw: Any, label: str, fallback: float) -> float:
+    import math  # noqa: PLC0415
+
+    from autoware_carla_scenario.editor.service import EditorError  # noqa: PLC0415
+
+    text = str(raw).strip()
+    if not text:
+        return fallback
+    try:
+        number = float(text)
+    except ValueError as exc:
+        raise EditorError(f"{label} must be a number, got {raw!r}.") from exc
+    if not math.isfinite(number):
+        raise EditorError(f"{label} must be a finite number, got {raw!r}.")
+    return number
+
+
+def _old_as_int(raw: Any, label: str, fallback: int) -> int:
+    from autoware_carla_scenario.editor.service import EditorError  # noqa: PLC0415
+
+    text = str(raw).strip()
+    if not text:
+        return fallback
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise EditorError(f"{label} must be a whole number, got {raw!r}.") from exc
+
+
+def _old_as_port(raw: Any, label: str, fallback: int) -> int:
+    from autoware_carla_scenario.editor.service import EditorError  # noqa: PLC0415
+    from autoware_carla_scenario.serve_bind import check_port  # noqa: PLC0415
+
+    number = _old_as_int(raw, label, fallback)
+    try:
+        return check_port(number)
+    except ValueError as exc:
+        raise EditorError(f"{label} {exc}.") from exc
+
+
+#: Numbers as a form posts them, and what else reaches the fields.
+_NUMBERS = (
+    *_ITEMS,
+    "",
+    " ",
+    "　",
+    "1.5",
+    " -2.25 ",
+    "+.5",
+    "5.",
+    ".",
+    "1e308",
+    "1e309",
+    "-1e309",
+    "9" * 400,
+    "-inf",
+    "Infinity",
+    "NaN",
+    "1_0.5",
+    "1__0.5",
+    "١.٥",
+    "0",
+    "65535",
+    "65536",
+    "-1",
+    "80",
+    " 8080 ",
+    "1" + "0" * 40,
+)
+_RAW: tuple[Any, ...] = (
+    *_NUMBERS,
+    None,
+    0,
+    5,
+    -3,
+    0.0,
+    2.5,
+    float("inf"),
+    float("nan"),
+    10**400,
+    False,
+    True,
+    b"12",
+    [],
+    [1],
+    {"a": 1},
+)
+
+
+def _random_numbers(seed: int, count: int) -> list[str]:
+    rng = random.Random(seed)
+    pieces = ("1", "0", "9", "_", ".", "e", "-", "+", " ", "\t", "١", "１", "x", "inf")
+    out = []
+    for _ in range(count):
+        out.append("".join(rng.choice(pieces) for _ in range(rng.randint(0, 7))))
+        out.append(f"{rng.uniform(-1e6, 1e6)!r}")
+        out.append(str(rng.randrange(-70000, 70000)))
+    return out
+
+
+@pytest.mark.parametrize(
+    ("new_name", "old"),
+    [("_as_float", _old_as_float), ("as_int", _old_as_int), ("as_port", _old_as_port)],
+)
+def test_the_service_s_number_fields_read_as_before(
+    new_name: str, old: Callable[..., Any]
+) -> None:
+    from autoware_carla_scenario.editor import service
+
+    new = getattr(service, new_name)
+    labels = ("Timeout", "", "CARLA port", "ü {x}")
+    fallbacks: tuple[Any, ...] = (60.0, 2000, 0, -1, None, "x", 70000)
+    rng = random.Random(2386)
+    for raw in (*_RAW, *_random_numbers(2386, 400)):
+        label = rng.choice(labels)
+        fallback = rng.choice(fallbacks)
+        assert _outcome(new, raw, label, fallback) == _outcome(
+            old, raw, label, fallback
+        ), (raw, label, fallback)
+
+
+def test_the_checked_number_fields_take_the_stripped_text() -> None:
+    from autoware_carla_scenario.editor import form_values
+
+    assert form_values.float_field("", "''", "A", 1.5) == 1.5
+    assert form_values.int_field("", "''", "A", 7) == 7
+    with pytest.raises(ValueError, match=r"^A must be a number, got 'x '\.$"):
+        form_values.float_field("x", "'x '", "A", 0.0)
+    with pytest.raises(ValueError, match=r"^A must be a finite number, got 'inf'\.$"):
+        form_values.float_field("inf", "'inf'", "A", 0.0)
+    with pytest.raises(ValueError, match=r"^A must be a whole number, got '1\.5'\.$"):
+        form_values.int_field("1.5", "'1.5'", "A", 0)

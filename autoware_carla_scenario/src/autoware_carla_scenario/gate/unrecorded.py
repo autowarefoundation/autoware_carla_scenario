@@ -114,6 +114,19 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     return unrecorded, len(entries), unreadable
 
 
+def _batch_line(directory: Path, names: list[str], total: int) -> str:
+    """The refusal's line for a batch whose cases *names* (of *total*)
+    raised or have no outcome and left no gate record, naming the first
+    :data:`_NAMED` of them."""
+    shown = ", ".join(names[:_NAMED])
+    more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
+    return (
+        f"{directory}: {len(names)} of {total} case(s) raised or have no "
+        f"outcome, and left no gate record ({shown}{more}); the gate would "
+        "be judged over the runs that survived"
+    )
+
+
 def _has_gate_record(directory: Path) -> bool:
     """Whether *directory* holds a gate record."""
     try:

@@ -84,6 +84,7 @@ from ..maps import (
 from ..authoring.validator import ValidationReport, validate_document
 from ..serve_bind import check_port
 from .forms import field_present, parse_int_list, parse_params
+from .form_values import float_field, int_field
 from .gate_fields import (
     GATE_CONSISTENCY_FIELDS,
     GATE_FIELDS,
@@ -2060,30 +2061,25 @@ def _signal_controller_uses(document: ScenarioDocument) -> "list[tuple[str, Any]
 
 
 def _as_float(raw: Any, label: str, fallback: float) -> float:
-    """Return *raw* as a float, or raise a user-facing error."""
-    text = str(raw).strip()
-    if not text:
-        return fallback
+    """Return *raw* as a float, or raise a user-facing error.
+
+    The parsing and its messages are the checked editor.form_values' (#2386).
+    """
     try:
-        number = float(text)
+        return float_field(str(raw).strip(), repr(raw), label, fallback)
     except ValueError as exc:
-        raise EditorError(f"{label} must be a number, got {raw!r}.") from exc
-    # "nan" and "inf" parse, but no field of the editor means them: a NaN
-    # timeout never fires, a NaN offset places nothing.
-    if not math.isfinite(number):
-        raise EditorError(f"{label} must be a finite number, got {raw!r}.")
-    return number
+        raise EditorError(str(exc)) from exc
 
 
 def as_int(raw: Any, label: str, fallback: int) -> int:
-    """Return *raw* as an int, or raise a user-facing error."""
-    text = str(raw).strip()
-    if not text:
-        return fallback
+    """Return *raw* as an int, or raise a user-facing error.
+
+    The parsing and its message are the checked editor.form_values' (#2386).
+    """
     try:
-        return int(text)
+        return int_field(str(raw).strip(), repr(raw), label, fallback)
     except ValueError as exc:
-        raise EditorError(f"{label} must be a whole number, got {raw!r}.") from exc
+        raise EditorError(str(exc)) from exc
 
 
 def as_port(raw: Any, label: str, fallback: int) -> int:

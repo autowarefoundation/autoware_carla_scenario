@@ -12,7 +12,8 @@ of a session (a job directory's name read by :func:`job_index`, the one rule
 every reader of a multirun session uses), whether a case's file is its own
 (:func:`own_file`: not a symbolic link, which could name a file outside the
 viewer's base) and the ``scenario=`` override among a case's overrides, or
-the one a batch case's label gives (:func:`scenario_overrides`).
+the one a batch case's label gives (:func:`scenario_overrides`); and the
+session page of a batch directory (:func:`batch_session_url`).
 
 Split out of ``ui.cases`` and ``ui.results``, which re-export every name
 moved here and keep what reads the JSON documents of any type (``Any``) a
@@ -46,6 +47,7 @@ __all__ = [
     "SESSION_TYPES",
     "CaseFiles",
     "is_index",
+    "batch_session_url",
     "batch_stamp",
     "contained",
     "job_dir",
@@ -389,3 +391,16 @@ def scenario_overrides(overrides: list[str], label: str) -> list[str]:
     if not (sep and name and number.isascii() and number.isdigit()):
         name = label
     return [f"scenario={name}", *overrides]
+
+
+def batch_session_url(batch_dir: str, base: Path) -> Optional[str]:
+    """``/session/batch/<date>/<time>`` of a batch directory under *base*'s
+    ``outputs/``; None for one anywhere else (``ui.app._session_of``)."""
+    try:
+        rel = Path(batch_dir).resolve().relative_to(base.resolve() / "outputs")
+    except ValueError:
+        return None
+    parts = rel.parts
+    if len(parts) == 2:
+        return f"/session/batch/{parts[0]}/{parts[1]}"
+    return None

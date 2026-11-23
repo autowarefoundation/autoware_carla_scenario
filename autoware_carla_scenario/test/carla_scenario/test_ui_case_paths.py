@@ -323,3 +323,46 @@ def test_scenario_overrides_adds_the_scenario_a_batch_label_names(
 ) -> None:
     # #2354: the core of ui.scanner._entry_overrides(), checked here.
     assert case_paths.scenario_overrides(overrides, label) == expected
+
+
+def _old_session_of(batch_dir: str | None, base: Path) -> str | None:
+    """ui.app._session_of() as it was before #2386, with *base* for its
+    ``_base_path()``."""
+    if not batch_dir:
+        return None
+    try:
+        rel = Path(batch_dir).resolve().relative_to(base.resolve() / "outputs")
+    except ValueError:
+        return None
+    parts = rel.parts
+    return f"/session/batch/{parts[0]}/{parts[1]}" if len(parts) == 2 else None
+
+
+def test_a_batch_s_session_page_is_as_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import random  # noqa: PLC0415
+
+    from autoware_carla_scenario.ui import app as app_module  # noqa: PLC0415
+
+    base = tmp_path / "base"
+    (base / "outputs" / "2026-01-01" / "10-00-00").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    (base / "outputs" / "link").symlink_to(tmp_path / "elsewhere")
+    monkeypatch.setattr(app_module, "BASE_PATH", base)
+    rng = random.Random(2386)
+    pieces = ("outputs", "2026-01-01", "10-00-00", "..", ".", "x", "", "link", "ü")
+    dirs: list[str | None] = [None, "", str(base), str(base / "outputs")]
+    for _ in range(500):
+        tail = "/".join(rng.choice(pieces) for _ in range(rng.randrange(0, 5)))
+        root = rng.choice([str(base), str(base / "outputs"), str(tmp_path), "rel"])
+        dirs.append(f"{root}/{tail}" if tail else root)
+    for batch_dir in dirs:
+        expected = _old_session_of(batch_dir, base)
+        assert app_module._session_of(batch_dir) == expected, batch_dir
+        if batch_dir:
+            assert case_paths.batch_session_url(batch_dir, base) == expected
+    assert (
+        app_module._session_of(str(base / "outputs" / "2026-01-01" / "10-00-00"))
+        == "/session/batch/2026-01-01/10-00-00"
+    )
