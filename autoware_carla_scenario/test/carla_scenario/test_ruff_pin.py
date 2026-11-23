@@ -34,7 +34,9 @@ def _dev_group_ruff() -> str:
     pins = [
         match.group(1)
         for requirement in pyproject["dependency-groups"]["dev"]
-        if (match := re.fullmatch(r"ruff==([^;\s]+)", requirement.strip()))
+        # A group also holds `{include-group = ...}` tables (PEP 735).
+        if isinstance(requirement, str)
+        and (match := re.fullmatch(r"ruff==([^;\s]+)", requirement.strip()))
     ]
     assert len(pins) == 1, f"the dev group must pin ruff exactly once: {pins}"
     return pins[0]

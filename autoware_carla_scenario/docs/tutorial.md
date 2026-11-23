@@ -2,25 +2,44 @@
 
 This tutorial shows two paths to creating a scenario:
 
-1. **Quick Start (recommended)** — Use the bundled Claude Code plugin.
-   Describe what you want in plain text and let Claude generate all files.
+1. **Quick Start (recommended)** — Use the bundled agent skills with a
+   coding agent (Claude Code or Codex). Describe what you want in plain text
+   and let the agent generate all files.
 2. **Manual walkthrough** — Understand every file by building one yourself.
 
 ---
 
-## Quick Start with Claude Code Plugin
+## Quick Start with a Coding Agent
 
-This repository ships a **`write-scenario` plugin** inside
-`.claude/local-marketplace/`. It is pre-enabled in `.claude/settings.json`
-— **no extra setup is needed**. Just open Claude Code in the repository root
-and the plugin is ready to use.
+This repository ships its scenario-writing **agent skills** in `skills/` at
+the repository root, one directory per skill. `scripts/scenario_agent.py`
+installs them into a coding agent with
+[agent-skill-installer](https://github.com/omry/agent-skill-installer) and
+starts the agent in the repository root, on a first prompt that invokes
+`write-scenario`:
+
+```bash
+# Claude Code (the `claude` command must be on PATH)
+uv run --group agent scripts/scenario_agent.py claude "I want to test that the ego stops at a stop sign"
+
+# Codex (the `codex` command must be on PATH)
+uv run --group agent scripts/scenario_agent.py codex "I want to test that the ego stops at a stop sign"
+```
+
+Pick another skill with `--skill` (e.g. `--skill review-scenario lane_change`),
+start the agent with no prompt by leaving the request out, or only install the
+skills with `--install-only`. The skills are installed as symlinks into
+`.claude/skills/` or `.codex/skills/` (ignored by git), so edits under
+`skills/` take effect without reinstalling; re-run the script after adding or
+renaming a skill.
 
 ### How It Works
 
-Type `/write-scenario` followed by a natural-language description of the
-test you want. Claude walks you through a 7-stage workflow automatically:
+In the session, a skill is invoked by name — `/write-scenario` in Claude Code,
+`$write-scenario` in Codex — followed by a natural-language description of the
+test you want. The agent walks you through a 7-stage workflow automatically:
 
-| Stage | What Claude does |
+| Stage | What the agent does |
 |---|---|
 | 1. Understand | Parses your description, asks clarifying questions |
 | 2. Discover | Scans the codebase for available Conditions, Actions, Constraints, and Bindings |
@@ -37,28 +56,31 @@ test you want. Claude walks you through a 7-stage workflow automatically:
   waits 3 seconds, then proceeds through the intersection.
 ```
 
-Claude will:
+The agent will:
 
 1. Identify `StandstillCondition` and `TimeoutCondition` from the codebase
 2. Generate `my_scenario.py`, update `configs.py`, create YAML, register in `run.py`
 3. Run the scenario, analyze the result, and iterate until it passes
 4. Propose sweep constraints so the test generalizes to every stop sign on the map
 
-You do not need to memorize the framework API — the plugin discovers
+You do not need to memorize the framework API — the skills discover
 everything dynamically.
 
-### Other Plugin Commands
+### Other Skills
 
-| Command | When to use |
+| Skill | When to use |
 |---|---|
 | `/write-scenario` | Create a new scenario from scratch |
 | `/debug-concrete-scenario` | An existing scenario fails — analyze logs and fix |
 | `/review-scenario` | Before adding sweep — check parameter design |
+| `/scenario-writing`, `/scenario-debugging`, `/scenario-review` | Domain knowledge the three above build on; the agent loads them when a task needs them |
+
+(In Codex, write `$` instead of `/`.)
 
 ---
 
 The rest of this page explains the manual process. Read on if you want to
-understand what the plugin generates under the hood.
+understand what the skills generate under the hood.
 
 ---
 
