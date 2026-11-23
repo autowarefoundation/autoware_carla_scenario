@@ -104,9 +104,14 @@ _CONDITION_LOG_INTERVAL: int = 20
 
 
 def _bounds_the_run(condition: BaseCondition) -> bool:
-    """Whether *condition*, as a fail condition, ends the run by a timeout.
+    """Whether *condition*, as a pass or a fail condition, ends the run by a
+    timeout.
 
-    Exactly these count:
+    The runner ends the run on the first tick a pass or a fail condition
+    reports anything at all, so the same composites count on either side
+    (#2382): a pass-side timeout ends the run as a pass -- ``lane_change``
+    with ``expect=fail`` passes once its timeout runs out.  Exactly these
+    count:
 
     - a bare :class:`TimeoutCondition`;
     - an :class:`OrCondition` with a child that counts -- an OR fires as soon
@@ -139,12 +144,15 @@ def _register_default_timeout(
 ) -> bool:
     """Give *scenario* the runner's default timeout, unless it has its own.
 
-    A scenario that registers a timeout fail condition has said how long it
-    runs -- a red light that turns green after a drawn delay needs that delay
-    and then some, however short the run's default is -- so the default would
-    only cut it short.  A scenario that registers none is given the default,
-    so that no run goes on forever.  What counts as a timeout of its own is
-    :func:`_bounds_the_run`.
+    A scenario that registers a timeout condition has said how long it runs
+    -- a red light that turns green after a drawn delay needs that delay and
+    then some, however short the run's default is -- so the default would
+    only cut it short.  That holds for a pass condition as much as for a fail
+    one (#2382): a scenario that passes when its timeout runs out (the
+    ``lane_change`` example expecting no lane change) ends there, and a
+    default fail timeout could only fail it first.  A scenario that registers
+    none is given the default, so that no run goes on forever.  What counts
+    as a timeout of its own, on either side, is :func:`_bounds_the_run`.
 
     So the runner's ``timeout_seconds``, ``run_scenario(timeout_seconds=...)``
     and ``ScenarioQueue.add(timeout_seconds=...)`` -- the run's
@@ -162,7 +170,9 @@ def _register_default_timeout(
     Returns:
         Whether the default was registered.
     """
-    if any(_bounds_the_run(c) for c in scenario._fail_conditions):
+    if any(_bounds_the_run(c) for c in scenario._pass_conditions) or any(
+        _bounds_the_run(c) for c in scenario._fail_conditions
+    ):
         logger.info(
             "[%s] Scenario registers its own timeout; the default of %.1fs "
             "is not added",
@@ -1057,14 +1067,18 @@ class ScenarioRunner:
             port: CARLA server RPC port.
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default ``TimeoutCondition`` registered on every
-                scenario that registers no timeout fail condition of its own,
-                in **simulated** seconds -- the same clock every other
+                scenario that registers no timeout condition (pass or fail) of
+                its own, in **simulated** seconds -- the same clock every other
                 duration is on, so a scenario given sixty seconds is given
                 sixty of its own however fast the host runs.  A scenario with
                 its own timeout keeps it, longer or shorter than this one, and
                 this one does not apply to it (see
                 ``_register_default_timeout`` for what counts).
-            output_dir: Directory where CARLA recording logs are saved.
+            output_dir: Directory where each run's outputs are saved, CARLA's
+                recorder log among them.  A relative one is taken from this
+                process's working directory; the recorder is handed it
+                made absolute (symlinks kept), since the CARLA server would
+                take a relative path from its own.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
                 that down to the rate of the slowest client reading the
@@ -2031,7 +2045,12 @@ class ScenarioRunner:
             output_path = self.output_dir / f"{file_stem}.log"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self._client.start_recorder(str(output_path))
+                # Absolute: the CARLA server resolves a relative path against
+                # its own directory, not this process's (#2382).  Not
+                # resolved: a symlinked output_dir keeps the spelling it was
+                # given, which a server in another mount namespace may share
+                # where it does not share the link's target.
+                self._client.start_recorder(str(output_path.absolute()))
             except RuntimeError as error:
                 # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
                 # log must not fail an otherwise healthy scenario run.

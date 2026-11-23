@@ -583,13 +583,17 @@ def _stand_in_run(
     runner_out: list[ScenarioRunner] | None = None,
     scenario_out: list[Any] | None = None,
     timeout_seconds: float | None = None,
+    output_dir: Path | None = None,
 ) -> tuple[ScenarioRunner, MagicMock, MagicMock, Any]:
     """Run a scenario of one tick through run_scenario on stand-ins, with
     ``reset_world`` replaced by a mock: the runner, its world, the scenario's
     result writer, and the result.  An error of the run propagates: the runner
-    is then in *runner_out*."""
+    is then in *runner_out*.  The runner writes to *output_dir*, *tmp_path* by
+    default."""
     with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
-        runner = ScenarioRunner(MagicMock(), output_dir=tmp_path)
+        runner = ScenarioRunner(
+            MagicMock(), output_dir=tmp_path if output_dir is None else output_dir
+        )
     world = MagicMock()
     frame = {"n": 0}
     world.tick.side_effect = lambda: frame.__setitem__("n", frame["n"] + 1)
@@ -644,6 +648,48 @@ def _stand_in_run(
             scenario, timeout_seconds=timeout_seconds, reset_world=reset_world
         )
     return runner, world, write_result, result
+
+
+def test_the_recorder_is_handed_an_absolute_path_for_a_relative_output_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CARLA server takes a relative path from its own directory, so the
+    recorder log would land outside a relative ``output_dir`` (#2382)."""
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    monkeypatch.chdir(tmp_path)
+    runner, _world, _write, result = _stand_in_run(
+        tmp_path,
+        pass_conditions=[AlwaysTrueCondition(label="done")],
+        output_dir=Path("outputs"),
+    )
+    assert result is not None and result.passed
+    client = runner._client
+    client.start_recorder.assert_called_once()  # type: ignore[attr-defined]
+    (handed,) = client.start_recorder.call_args.args  # type: ignore[attr-defined]
+    assert Path(handed).is_absolute()
+    assert Path(handed).parent == tmp_path.resolve() / "outputs"
+    assert Path(handed).suffix == ".log"
+
+
+def test_the_recorder_keeps_a_symlinked_output_dir_as_given(tmp_path: Path) -> None:
+    """An absolute ``output_dir`` reaches the recorder as it was spelled, its
+    symlinks not resolved: a CARLA server in another mount namespace may see
+    the link's path but not its target."""
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    (tmp_path / "real").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    runner, _world, _write, result = _stand_in_run(
+        tmp_path,
+        pass_conditions=[AlwaysTrueCondition(label="done")],
+        output_dir=link,
+    )
+    assert result is not None and result.passed
+    client = runner._client
+    (handed,) = client.start_recorder.call_args.args  # type: ignore[attr-defined]
+    assert Path(handed).parent == link
 
 
 @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])

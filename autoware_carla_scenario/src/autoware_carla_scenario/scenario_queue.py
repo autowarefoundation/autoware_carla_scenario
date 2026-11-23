@@ -183,7 +183,13 @@ class ScenarioQueue:
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default per-scenario timeout, for a scenario
                 that registers no timeout of its own.
-            output_dir: Directory for MP4 recordings.
+            output_dir: Where each run writes its outputs, all named after
+                the run's file stem (``run_outputs``): its result
+                (``_result.json``), trajectory log, CARLA recorder log
+                (``.log``), coverage file and so on, as the runner's
+                ``output_dir``; and the logs of the traffic backends and the
+                Autoware stack the queue prepares.  A relative path is
+                taken from this process's working directory.
             server_extra_args: Extra CLI arguments for CarlaUnreal.sh (only used
                 when the queue creates its own server).
             cooldown_seconds: Wait time (seconds) between consecutive scenario
