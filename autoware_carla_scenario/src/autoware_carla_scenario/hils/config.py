@@ -62,6 +62,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import canonical_role_name
+from ..number_settings import is_port
 from ..value_text import huge_integer
 from .measurements import CAMERA_ENCODINGS
 from .protocol import (
@@ -456,10 +457,12 @@ def _seconds(value: Any, where: str, *, zero: bool = False) -> float:
 
 
 def _port(value: Any, where: str) -> int:
-    """A TCP port: an integer (not a bool) in 1..65535."""
+    """A TCP port: an integer (not a bool) in 1..65535, the rule of every
+    port setting (:func:`~autoware_carla_scenario.number_settings.is_port`,
+    #2398), worded as the rest of the configuration's errors are."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise HilsConfigError(f"{where}: expected an integer port, got {_shown(value)}")
-    if not 1 <= value <= 65535:
+    if not is_port(value):
         raise HilsConfigError(f"{where}: must be within 1-65535, got {_shown(value)}")
     return value
 

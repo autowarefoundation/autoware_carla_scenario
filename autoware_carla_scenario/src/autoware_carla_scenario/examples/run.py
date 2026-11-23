@@ -96,6 +96,7 @@ from autoware_carla_scenario.gate.errored import (
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.maps.pack import MapPack, packs_dir
 from autoware_carla_scenario.maps.config import map_setting
+from autoware_carla_scenario.number_settings import check_port, number_setting
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
     ODD_CASE_KEY,
@@ -309,28 +310,20 @@ def _cap_malloc_arenas() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _config_float(key: str, value: Any) -> float:
-    """``float(value)`` of the config's *key*; for a value ``float()`` cannot
-    read -- not a number, or an int too big for a float (``10**400``) -- a
-    ``ValueError`` naming the key (#1660).  What ``float()`` reads, a boolean
-    or a numeric string included, is read as before.
-    """
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} must be a number, got {shown(value)}") from None
-    except OverflowError:
-        raise ValueError(f"{key} must be finite, got {shown(value)}") from None
-
-
 def _config_finite(key: str, value: Any, *, minimum: float | None = None) -> float:
-    """:func:`_config_float` of the config's *key*, refused unless finite and,
-    with *minimum*, at least *minimum* -- a ``ValueError`` naming the key
-    (#1809).  A NaN, an infinity or a negative speed would otherwise reach the
-    run: an ego that starts still with no error, an actor whose physics an
-    infinite velocity breaks, a pose that fails far from the key behind it.
+    """The config's *key* as a finite float, and, with *minimum*, at least
+    *minimum* -- a ``ValueError`` naming the key (#1809).  A NaN, an infinity
+    or a negative speed would otherwise reach the run: an ego that starts
+    still with no error, an actor whose physics an infinite velocity breaks,
+    a pose that fails far from the key behind it.
+
+    Read by :func:`~autoware_carla_scenario.number_settings.number_setting`,
+    the one check of a number setting (#2398): a boolean is refused, not
+    read as 1 or 0; an int too big for a float (``10**400``) is refused as
+    not finite (#1660); and a quoted number (``ego.spawn_t='1.5'``) is read
+    as the number it spells, as these settings always were.
     """
-    number = _config_float(key, value)
+    number = number_setting(key, value, text=True)
     if minimum is None:
         if not math.isfinite(number):
             raise ValueError(f"{key} must be finite, got {shown(value)}")
@@ -2603,7 +2596,9 @@ def _check_port_setting(
     :func:`_traffic_manager_port`).  ``server.port`` has no default to fall
     back on, so null is refused there (``null_is_default=False``, #2089).
     Without this a port of 0, 70000, ``true`` or null reaches the CARLA
-    client and is refused only once a server is up.
+    client and is refused only once a server is up.  The check is
+    :func:`~autoware_carla_scenario.number_settings.check_port`, the one
+    every port setting takes (#2398).
 
     Raises:
         ValueError: naming the key.
@@ -2611,15 +2606,10 @@ def _check_port_setting(
     node = cfg.get(section)
     if not isinstance(node, (DictConfig, Mapping)) or "port" not in node:
         return
-    port = node.get("port")
-    if port is None:
-        if null_is_default:
-            return
-        raise ValueError(f"{section}.port must be an integer within 1-65535 (got None)")
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        raise ValueError(
-            f"{section}.port must be an integer within 1-65535 (got {port!r})"
-        )
+    port: Any = node.get("port")
+    if port is None and null_is_default:
+        return
+    check_port(f"{section}.port", port)
 
 
 def _traffic_manager_port(cfg: DictConfig) -> int:

@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ..constants import DEFAULT_TM_PORT
+from ..number_settings import check_port as check_port  # re-exported (#2398)
 from .parameters import BicycleParameters, PedestrianParameters, VehicleParameters
 
 __all__ = [
@@ -63,26 +64,6 @@ def traffic_backend_name(value: Any) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"traffic.backend must be a backend's name, got {value!r}")
     return value
-
-
-def check_port(key: str, port: int) -> None:
-    """Refuse a TCP port that is not an integer within 1-65535.
-
-    Refused where a run's config is checked, rather than by
-    ``client.get_trafficmanager()`` once CARLA is up: a bool is an int to
-    Python, and 0 or 70000 is no TCP port.  The one check of the
-    TrafficManager's port, ``traffic_manager``'s ``port`` and the ``sumo``
-    backend's ``tm_port`` alike (``hils.port`` has the same rule).
-
-    Args:
-        key: The setting's name, for the error.
-        port: The value to check.
-
-    Raises:
-        ValueError: naming *key* and *port*.
-    """
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        raise ValueError(f"{key} must be an integer within 1-65535 (got {port!r})")
 
 
 @dataclass

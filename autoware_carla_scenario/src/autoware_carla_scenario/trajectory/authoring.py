@@ -39,6 +39,7 @@ import math
 import operator
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
+from ..number_settings import number_setting
 from ..value_text import shown
 from .authored import (
     LANELET_PATH_STEP_M,
@@ -143,16 +144,13 @@ def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]
 
 
 def _field_float(name: str, value: Any) -> float:
-    """``float(value)`` of the card's field *name*; for a value ``float()``
-    cannot read -- not a number, or an int too big for a float
-    (``10**400``) -- a ``ValueError`` naming the field (#1660).  What
-    ``float()`` reads is read as before."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be a number, got {shown(value)}") from None
-    except OverflowError:
-        raise ValueError(f"{name} must be finite, got {shown(value)}") from None
+    """The card's field *name* as a float, read by
+    :func:`~autoware_carla_scenario.number_settings.number_setting` (#2398):
+    a ``ValueError`` naming the field for a value that is no number -- a
+    boolean among them, which is not read as 1 or 0 -- or an int too big for
+    a float (``10**400``, #1660).  A numeric string is read as the number it
+    spells, as it always was."""
+    return number_setting(name, value, text=True)
 
 
 def _field_int(name: str, value: Any) -> int:

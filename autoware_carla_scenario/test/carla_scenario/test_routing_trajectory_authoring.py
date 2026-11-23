@@ -251,9 +251,12 @@ class TestFactories:
 
     def test_a_place_reads_what_float_and_int_read_as_before(self) -> None:
         # The editor's fields may arrive as text: read as int() and float() do.
-        fields: dict[str, Any] = {"lanelet_id": "7", "s": "2.5", "t": True}
+        fields: dict[str, Any] = {"lanelet_id": "7", "s": "2.5", "t": 1}
         place = authored_place(heading=None, **fields)
         assert place == Lanelet2Pose(7, 2.5, 1.0, 0.0)
+        # A boolean is no number, though float() read true as 1.0 (#2398).
+        with pytest.raises(ValueError, match=r"^t must be a number, got True$"):
+            authored_place(t=True)
 
     def test_timing(self) -> None:
         assert authored_timing("none") is None

@@ -188,8 +188,25 @@ def test_the_turn_is_the_same() -> None:
     pairs += [(rng.uniform(-1000, 1000), rng.uniform(-1000, 1000)) for _ in range(5000)]
     pairs += [(rng.choice(_ANGLES), rng.uniform(-400, 400)) for _ in range(2000)]
     for rotation, heading in pairs:
-        assert _same(backend._wrap(rotation - heading), _old_turn(rotation, heading))
+        turn, old = backend._wrap(rotation - heading), _old_turn(rotation, heading)
+        if old == 180.0:
+            # The edge: the old wrap rounded a turn just below -180 onto +180,
+            # outside its [-180, 180); normalize_angle_deg's guard keeps it
+            # at -180 (#2398).
+            assert turn == -180.0
+        else:
+            assert _same(turn, old)
     assert backend._wrap is geometry._wrap
+
+
+@pytest.mark.parametrize(
+    ("rotation", "heading"),
+    [(-180.00000000000003, 0.0), (0.0, 180.00000000000003), (-90.0, 90.00000000000003)],
+)
+def test_the_turn_stays_below_180_at_the_edge(rotation: float, heading: float) -> None:
+    """#2398: ``(deg + 180) % 360 - 180`` is 180.0 for -180.00000000000003."""
+    assert _old_turn(rotation, heading) == 180.0
+    assert backend._wrap(rotation - heading) == -180.0
 
 
 _RUNS = [

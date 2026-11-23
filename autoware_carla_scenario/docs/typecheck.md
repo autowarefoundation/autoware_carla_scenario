@@ -870,7 +870,9 @@ What `test_typecheck_model.py` compares, model by model:
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
-  `ui/models`, `_ros2`, `metrics`, `measures`, `scaffold/generator`,
+  `ui/models`, `_ros2`, `metrics`, `measures`, `number_settings` (what
+  the example scenarios' configs check their numbers with, #2398),
+  `scaffold/generator`,
   `commonroad/session`, `commonroad/worker`, `hils/config` and
   `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.

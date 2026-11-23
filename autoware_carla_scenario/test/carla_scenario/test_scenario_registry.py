@@ -2129,7 +2129,8 @@ class TestEgoNumbersAreRefusedByTheirKey:
             build_ego_and_spawn(cfg)
 
     def test_what_float_and_int_read_is_read_as_before(self) -> None:
-        """A numeric string, a bool and an int read as ``float()``/``int()`` do."""
+        """A numeric string and an int read as ``float()``/``int()`` do; a
+        boolean, which ``float()`` read as 1.0, is refused (#2398)."""
         from autoware_carla_scenario.examples.run import (
             build_ego_and_spawn,
             build_planned_route,
@@ -2138,7 +2139,7 @@ class TestEgoNumbersAreRefusedByTheirKey:
         cfg = _ego_and_spawn_cfg(
             goal_lanelet_id=265,
             initial_speed_kmh="12.5",
-            spawn_s=True,
+            spawn_s=1,
             spawn_t="-1",
             spawn_heading=0,
             goal_s="3",
@@ -2153,6 +2154,11 @@ class TestEgoNumbersAreRefusedByTheirKey:
         assert ego.goal_pose is not None and ego.goal_pose.s == 3.0
         route = build_planned_route(cfg)
         assert (route.start.s, route.start.t) == (1.0, -1.0)
+        cfg.ego.spawn_s = True
+        with pytest.raises(
+            ValueError, match=r"^ego\.spawn_s must be a number, got True$"
+        ):
+            build_ego_and_spawn(cfg)
 
     @pytest.mark.parametrize("key", ["spawn_s", "spawn_t", "spawn_heading", "goal_s"])
     def test_a_null_pose_number_is_zero(self, key: str) -> None:

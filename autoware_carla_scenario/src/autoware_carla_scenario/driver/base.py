@@ -22,6 +22,7 @@ import numpy as np
 
 from ..config_flags import check_flag
 from ..constants import tick_multiple
+from ..number_settings import finite_number_setting, number_setting
 from ..seed import check_seed, check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
@@ -60,30 +61,25 @@ def _number(key: str, value: float) -> float:
     ``float()`` would take as 1.0, and a quoted ``="0.3"`` as a string, which
     ``math.isfinite()`` would refuse with a ``TypeError`` naming no key
     (#1506).  An int or a float is a number; a bool, a string or anything
-    ``float()`` refuses (``None``, a list) is not.
+    ``float()`` refuses (``None``, a list) is not, and an int too big for a
+    float (``10**400``) is refused as not finite: the one check of a number
+    setting, :func:`~autoware_carla_scenario.number_settings.number_setting`
+    (#2398).
 
     Raises:
         ValueError: naming *key*.
     """
-    if isinstance(value, bool) or isinstance(value, str):
-        raise ValueError(f"{key} must be a number, got {value!r}")
-    try:
-        number = float(value)
-    except TypeError:
-        raise ValueError(f"{key} must be a number, got {value!r}")
-    return number
+    return number_setting(key, value)
 
 
 def _finite_number(key: str, value: float) -> float:
-    """*value*, checked as :func:`_number` does, and finite.
+    """*value*, checked as :func:`_number` does, and finite
+    (:func:`~autoware_carla_scenario.number_settings.finite_number_setting`).
 
     Raises:
         ValueError: naming *key*.
     """
-    number = _number(key, value)
-    if not math.isfinite(number):
-        raise ValueError(f"{key} must be finite, got {value!r}")
-    return number
+    return finite_number_setting(key, value)
 
 
 def _check_logical_id(kind: str, value: str) -> None:
