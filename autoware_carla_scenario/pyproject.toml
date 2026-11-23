@@ -36,8 +36,10 @@ dependencies = [
     # Linux x86_64 and aarch64 (aarch64 from typesafe-carla 0.4.0 on).
     "typesafe-carla>=0.8.1,<0.9; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
     "pyxodr>=0.1.0",
-    # maps/road_network_cache.py parses OpenDRIVE with lxml directly; pyxodr
-    # depends on it too, but that is pyxodr's choice, not a promise to us.
+    # maps/road_network_cache.py imports lxml at module level: it pickles
+    # pyxodr's roads with each lxml element they hold stored by position.
+    # pyxodr depends on lxml too, but that is pyxodr's choice, not a promise
+    # to us.
     "lxml>=5.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
@@ -58,6 +60,10 @@ dependencies = [
     "hydra-core>=1.3.2",
     "omegaconf>=2.3.0",
     "fastapi>=0.115.0",
+    # Imported directly where fastapi has no re-export (`starlette.types`,
+    # `starlette.convertors`, `starlette.exceptions`), so declared rather than
+    # left to fastapi's own requirement; the floor is fastapi 0.115.0's.
+    "starlette>=0.37.2",
     "uvicorn[standard]>=0.34.0",
     "jinja2>=3.1.0",
     # The Scenario Editor is driven entirely by HTML form posts, and Starlette

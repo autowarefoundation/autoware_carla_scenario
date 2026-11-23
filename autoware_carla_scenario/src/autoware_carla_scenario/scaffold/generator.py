@@ -293,6 +293,7 @@ _DEPENDENCY_IMPORT_NAMES: frozenset[str] = frozenset(
         "hydra",  # hydra-core
         "jinja2",
         "lanelet2",  # simple-lanelet2
+        "lxml",
         "multipart",  # python-multipart
         "mypy",
         "numpy",
@@ -303,6 +304,7 @@ _DEPENDENCY_IMPORT_NAMES: frozenset[str] = frozenset(
         "pydantic",
         "pytest",
         "pyxodr",
+        "starlette",
         "tomli",
         "tqdm",
         "typesafe_carla",

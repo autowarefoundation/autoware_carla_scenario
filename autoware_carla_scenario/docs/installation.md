@@ -202,6 +202,8 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `typesafe-carla>=0.8.1,<0.9` (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
+- `lxml>=5.0` — the XML elements pyxodr's roads hold, which the road
+  network cache (`maps/road_network_cache.py`) stores by position
 - `opencv-python-headless>=4.8` — JPEG (and PNG) encoding of the camera frames sent to a driver policy and to HILS devices (headless: the package makes no GUI calls)
 - `numpy>=1.21`
 - `pytest>=9.0.1`
@@ -211,8 +213,8 @@ The package's runtime dependencies (declared in `pyproject.toml`):
   regulatory-element extensions, as a single wheel
 - `tqdm>=4.67.1`
 - `hydra-core>=1.3.2`, `omegaconf>=2.3.0`
-- `fastapi>=0.115.0`, `uvicorn[standard]>=0.34.0`, `jinja2>=3.1.0` —
-  result viewer
+- `fastapi>=0.115.0`, `starlette>=0.37.2`, `uvicorn[standard]>=0.34.0`,
+  `jinja2>=3.1.0` — result viewer and Scenario Editor
 - `python-multipart>=0.0.9` — reads the Scenario Editor's form posts
 - `pyyaml>=6.0`, `pydantic>=2.0.0`
 - `openodd-py>=0.47.1` — ASAM OpenODD: the ODD model, the sampler and
