@@ -212,7 +212,8 @@ class FinalApproach:
     def step(self, dt: float, elapsed: float) -> None:
         """One tick: drive on along the path, or stop on its end."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
-        from carla_driver_interface.geometry import Pose  # noqa: PLC0415
+
+        from ..driver.observation import to_local_pose  # noqa: PLC0415
 
         actor = self._actor
         vehicle = as_vehicle(actor)
@@ -272,12 +273,7 @@ class FinalApproach:
         command = self._follower.step(
             self._plan(elapsed),
             # The plan's frame is CARLA's with y flipped: right-handed.
-            Pose.from_xyz_yaw(
-                transform.location.x,
-                -transform.location.y,
-                transform.location.z,
-                -math.radians(transform.rotation.yaw),
-            ),
+            to_local_pose(transform),
             math.hypot(velocity.x, velocity.y),
             dt,
             yaw_rate_rps=-math.radians(angular.z),

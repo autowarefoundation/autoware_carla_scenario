@@ -28,7 +28,6 @@ import importlib.metadata
 import logging
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -37,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...utils.opendrive import sanitize_opendrive
+from ...utils.process_group import kill_group
 from ..base import TrafficBackendError, TrafficBackendUnavailable
 from .options import random_trips_argv, ride_options, trip_options, walk_options
 
@@ -358,7 +358,7 @@ def _random_trips(
         try:
             _stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            _kill_group(process)
+            kill_group(process)
             process.wait()
             raise TrafficBackendError(
                 f"randomTrips.py{what} did not finish within {timeout:g} s"
@@ -366,7 +366,7 @@ def _random_trips(
         except BaseException:
             # An interrupt: the group, in a session of its own, did not get
             # the terminal's SIGINT.
-            _kill_group(process)
+            kill_group(process)
             process.wait()
             raise
     if process.returncode != 0 or not out.is_file():
@@ -375,14 +375,6 @@ def _random_trips(
             f"randomTrips.py{what} failed ({process.returncode}): {tail}"
         )
     return out
-
-
-def _kill_group(process: subprocess.Popen[str]) -> None:
-    """SIGKILL *process*'s group (its own session's, ``start_new_session``)."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass  # Every process of the group has ended already.
 
 
 def generate_trips(

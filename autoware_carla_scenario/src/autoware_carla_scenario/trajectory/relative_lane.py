@@ -372,13 +372,14 @@ def relative_lane_pose(
 def reference_lane_pose_of(pose: CarlaWorldPose) -> Lanelet2Pose:
     """:func:`reference_lane_pose` of a CARLA world pose, on the loaded map."""
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.transform import carla_xy_to_map  # noqa: PLC0415
 
     manager = MapManager.get_instance()
-    offset_x, offset_y = manager.mgrs_offset
+    x, y = carla_xy_to_map(pose.x, pose.y, manager.mgrs_offset)
     return reference_lane_pose(
         manager.lanelet_map,
-        pose.x + offset_x,
-        -pose.y + offset_y,
+        x,
+        y,
         -math.radians(pose.yaw),
         pose.z + manager.z_offset,
     )

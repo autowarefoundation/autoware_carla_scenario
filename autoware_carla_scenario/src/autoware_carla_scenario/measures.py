@@ -106,7 +106,9 @@ from .coordinate.map_manager import MapManager
 from .coordinate.transform import (
     _STACKED_HEIGHT_TOLERANCE,
     _project_with_height,
+    carla_xy_to_map,
     lanelets_beside,
+    map_xy_to_carla,
 )
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
@@ -728,12 +730,13 @@ def _line(lanelet_id: int) -> _Line:
     _forget_other_maps(lanelet_map)
     if lanelet_id in _LINES.by_id:
         return _LINES.by_id[lanelet_id]
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     xs: list[float] = []
     ys: list[float] = []
     for point in lanelet_map.laneletLayer[lanelet_id].centerline:
-        xs.append(float(point.x) - offset_x)
-        ys.append(-(float(point.y) - offset_y))
+        x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+        xs.append(x)
+        ys.append(y)
     line = _Line(xs, ys)
     _LINES.by_id[lanelet_id] = line
     return line
@@ -746,18 +749,20 @@ def _area(lanelet_id: int) -> _Area:
     _forget_other_maps(lanelet_map)
     if lanelet_id in _LINES.areas:
         return _LINES.areas[lanelet_id]
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     lanelet = lanelet_map.laneletLayer[lanelet_id]
     xs: list[float] = []
     ys: list[float] = []
     for point in lanelet.leftBound:
-        xs.append(float(point.x) - offset_x)
-        ys.append(-(float(point.y) - offset_y))
+        x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+        xs.append(x)
+        ys.append(y)
     right_xs: list[float] = []
     right_ys: list[float] = []
     for point in lanelet.rightBound:
-        right_xs.append(float(point.x) - offset_x)
-        right_ys.append(-(float(point.y) - offset_y))
+        x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+        right_xs.append(x)
+        right_ys.append(y)
     for i in range(len(right_xs) - 1, -1, -1):
         xs.append(right_xs[i])
         ys.append(right_ys[i])
@@ -771,8 +776,8 @@ def _lanelets_at(x: float, y: float) -> list[int]:
     ``(x, y)``: asked of the nearest :data:`_CANDIDATES`, then of twice as
     many while every one asked holds it (a junction where many overlap)."""
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    point = lanelet2.core.BasicPoint2d(x + offset_x, -y + offset_y)
+    map_x, map_y = carla_xy_to_map(x, y, mm.mgrs_offset)
+    point = lanelet2.core.BasicPoint2d(map_x, map_y)
     asked = _CANDIDATES
     while True:
         nearest = lanelet2.geometry.findNearest(
@@ -817,9 +822,9 @@ def _at_the_egos_level(
         z_offset = mm.z_offset
     except RuntimeError:
         return running
-    offset_x, offset_y = mm.mgrs_offset
     layer = mm.lanelet_map.laneletLayer
-    x, y, z = ego.x + offset_x, -ego.y + offset_y, ego.z + z_offset
+    x, y = carla_xy_to_map(ego.x, ego.y, mm.mgrs_offset)
+    z = ego.z + z_offset
     heights: list[float] = []
     for lanelet_id, _angle, _d2 in running:
         heights.append(_project_with_height(layer[lanelet_id], x, y, z)[0])
@@ -895,15 +900,14 @@ def _lanelet_boxes() -> list[tuple[int, float, float, float, float]]:
     _forget_other_maps(lanelet_map)
     if _LINES.boxes:
         return _LINES.boxes
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     boxes: list[tuple[int, float, float, float, float]] = []
     for lanelet in lanelet_map.laneletLayer:
         min_x, min_y = math.inf, math.inf
         max_x, max_y = -math.inf, -math.inf
         for bound in (lanelet.leftBound, lanelet.rightBound):
             for point in bound:
-                x = float(point.x) - offset_x
-                y = -(float(point.y) - offset_y)
+                x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
                 min_x, max_x = min(min_x, x), max(max_x, x)
                 min_y, max_y = min(min_y, y), max(max_y, y)
         boxes.append((int(lanelet.id), min_x, min_y, max_x, max_y))
@@ -919,7 +923,7 @@ def _overlapping(lanelet_id: int) -> list[int]:
     box meets a block of its outline (:func:`_lanelet_boxes`)."""
     mm = MapManager.get_instance()
     layer = mm.lanelet_map.laneletLayer
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     area = _area(lanelet_id)
     line = _line(lanelet_id)
     grow = 2 * ON_LANELET_M
@@ -960,8 +964,9 @@ def _overlapping(lanelet_id: int) -> list[int]:
             xs: list[float] = []
             ys: list[float] = []
             for point in bound:
-                xs.append(float(point.x) - offset_x)
-                ys.append(-(float(point.y) - offset_y))
+                x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+                xs.append(x)
+                ys.append(y)
             if _runs_inside(area, line, xs, ys, limit):
                 rivals.append(candidate)
                 break
@@ -1479,7 +1484,7 @@ def _stop_lines_on(frame: _LaneFrame) -> list[tuple[float, int]]:
         return _STOP_LINES.at
     mm = MapManager.get_instance()
     layer = mm.lanelet_map.laneletLayer
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     seen: set[int] = set()
     found: list[tuple[float, int]] = []
     for lanelet_id in frame.start:
@@ -1488,8 +1493,11 @@ def _stop_lines_on(frame: _LaneFrame) -> list[tuple[float, int]]:
                 points = list(line)
                 if not points:
                     continue
-                x = sum(float(p.x) for p in points) / len(points) - offset_x
-                y = -(sum(float(p.y) for p in points) / len(points) - offset_y)
+                x, y = map_xy_to_carla(
+                    sum(float(p.x) for p in points) / len(points),
+                    sum(float(p.y) for p in points) / len(points),
+                    offset,
+                )
                 s, _yaw = frame.project(lanelet_id, x, y)
                 found.append((s, lanelet_id))
     found.sort()

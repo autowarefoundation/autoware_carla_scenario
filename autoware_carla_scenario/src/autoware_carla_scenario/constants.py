@@ -1,8 +1,14 @@
 """Package-wide constants for autoware_carla_scenario."""
 
 import math
+import typing
 
 from .entity_role import EntityRole
+
+# typing.TYPE_CHECKING, not an imported TYPE_CHECKING: every upper-case name
+# of this module is a constant the model holds (test_typecheck_model.py).
+if typing.TYPE_CHECKING:
+    import typesafe_carla.carla as carla
 
 # CARLA role_name attribute value assigned to the ego vehicle actor.
 EGO_ROLE_NAME: EntityRole = EntityRole.ego()
@@ -72,6 +78,26 @@ def tick_multiple(seconds: float, key: str) -> int:
     if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - seconds) > 1e-9:
         raise error
     return ticks
+
+
+def tick_seconds(world: "carla.World") -> float:
+    """How much simulated time *world*'s last tick covered.
+
+    Read from the world's snapshot rather than from
+    :data:`FIXED_DELTA_SECONDS`, so a rate follows what the server actually
+    did.  What the snapshot read raises propagates;
+    :func:`tick_seconds_or_fixed` falls back on the fixed step instead.
+    """
+    return float(world.get_snapshot().timestamp.delta_seconds)
+
+
+def tick_seconds_or_fixed(world: "carla.World") -> float:
+    """:func:`tick_seconds`, or :data:`FIXED_DELTA_SECONDS` where *world*
+    cannot say (an ``AttributeError`` or a ``RuntimeError`` reading it)."""
+    try:
+        return tick_seconds(world)
+    except (AttributeError, RuntimeError):
+        return FIXED_DELTA_SECONDS
 
 
 # Microseconds per second: simulation time as an integer, the clock the

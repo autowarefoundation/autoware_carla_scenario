@@ -81,7 +81,11 @@ from ..maps import (
     resolve_directory,
     resolve_map,
 )
-from ..authoring.validator import ValidationReport, validate_document
+from ..authoring.validator import (
+    ValidationReport,
+    signal_controller_nodes,
+    validate_document,
+)
 from ..serve_bind import check_port
 from .forms import field_present, parse_int_list, parse_params
 from .form_values import float_field, int_field
@@ -997,7 +1001,7 @@ class EditorService:
                     for other in document.map.traffic_signal_controllers:
                         if other.reference == old:
                             other.reference = new_name
-                    for path, node in _signal_controller_uses(document):
+                    for path, node in signal_controller_nodes(document):
                         if str(node.params.get("controller") or "") == old:
                             node.params["controller"] = new_name
                 controller.name = new_name
@@ -1037,7 +1041,7 @@ class EditorService:
             if other.reference == name:
                 other.reference = None
                 other.delay_seconds = 0.0
-        for path, node in _signal_controller_uses(document):
+        for path, node in signal_controller_nodes(document):
             if str(node.params.get("controller") or "") == name:
                 node.params["controller"] = ""
                 node.params["signal_phase"] = ""
@@ -1093,7 +1097,7 @@ class EditorService:
                     if cycle.name == controller.name
                     for other in cycle.phases
                 ):
-                    for path, node in _signal_controller_uses(document):
+                    for path, node in signal_controller_nodes(document):
                         if (
                             str(node.params.get("controller") or "") == controller.name
                             and str(node.params.get("signal_phase") or "") == old
@@ -1140,7 +1144,7 @@ class EditorService:
             for other in cycle.phases
         ):
             return
-        for path, node in _signal_controller_uses(document):
+        for path, node in signal_controller_nodes(document):
             if (
                 str(node.params.get("controller") or "") == controller.name
                 and str(node.params.get("signal_phase") or "") == name
@@ -2028,36 +2032,6 @@ def _fill_phase_states(document: ScenarioDocument, phase: Any) -> None:
         SignalStateRef(group=name, state="red")
         for name in _signal_group_names(document)
     ]
-
-
-def _signal_controller_uses(document: ScenarioDocument) -> "list[tuple[str, Any]]":
-    """Every action and condition of the junction type, wherever it is written.
-
-    The same walk the validator does, for the same reason: a rename has to
-    reach a card whether it sits in a trigger, a nested composition or an
-    assertion.
-    """
-    found: "list[tuple[str, Any]]" = []
-
-    def walk(path: str, node: Any) -> None:
-        if node.type == "traffic_signal_controller":
-            found.append((path, node))
-        for index, child in enumerate(node.children):
-            walk(f"{path}.children[{index}]", child)
-
-    for index, action in enumerate(document.actions):
-        path = f"actions[{index}]"
-        if action.type == "traffic_signal_controller":
-            found.append((path, action))
-        if action.trigger is not None:
-            walk(f"{path}.trigger", action.trigger)
-        for gate_index, gate in enumerate(action.advance_conditions):
-            walk(f"{path}.advance_conditions[{gate_index}].condition", gate.condition)
-    for index, condition in enumerate(document.assertions.pass_conditions):
-        walk(f"assertions.pass[{index}]", condition)
-    for index, condition in enumerate(document.assertions.fail_conditions):
-        walk(f"assertions.fail[{index}]", condition)
-    return found
 
 
 def _as_float(raw: Any, label: str, fallback: float) -> float:

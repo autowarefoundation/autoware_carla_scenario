@@ -206,7 +206,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "policy's step, a LiDAR's sweep, the T4 and T4Scene steps) when the "
             "runner builds it, not a scenario; the library check compiles it "
             "from its source"
-        )
+        ),
+        **_each(
+            "tick_seconds tick_seconds_or_fixed",
+            "reads how long the world's last tick was for the framework's own "
+            "actions, entities and traffic backend, not a scenario; the library "
+            "check compiles it from its source",
+        ),
     },
     f"{_PACKAGE}.entity": {
         **_each("AutowareEgoEntity BridgedEgoEntity ExternallyDrivenEgo", _EGO_STACK),

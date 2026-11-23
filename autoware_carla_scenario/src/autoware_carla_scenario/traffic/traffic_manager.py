@@ -20,9 +20,9 @@ import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
-    FIXED_DELTA_SECONDS,
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
+    tick_seconds_or_fixed,
 )
 from ..coordinate.map_manager import run_carla_map
 from ..kinematics.angle import normalize_angle_deg
@@ -1932,7 +1932,7 @@ class TrafficManagerBackend(TrafficBackend):
             if approach is not None:
                 driving: FinalApproach = approach
                 try:
-                    driving.step(_tick_seconds(world), elapsed)
+                    driving.step(tick_seconds_or_fixed(world), elapsed)
                 except RuntimeError as error:
                     if not kept.actor.is_alive:
                         del self._kept[actor_id]  # Destroyed under us.
@@ -2428,15 +2428,6 @@ def _clear_of_junctions(
         if not any(inside[max(0, i - 1) : i + 2]):
             clear.append(location)
     return clear
-
-
-def _tick_seconds(world: "carla.World") -> float:
-    """How much simulated time the last tick covered (the run's fixed step
-    when the world cannot say)."""
-    try:
-        return float(world.get_snapshot().timestamp.delta_seconds)
-    except (AttributeError, RuntimeError):
-        return FIXED_DELTA_SECONDS
 
 
 def _frame_of(world: "carla.World") -> int:

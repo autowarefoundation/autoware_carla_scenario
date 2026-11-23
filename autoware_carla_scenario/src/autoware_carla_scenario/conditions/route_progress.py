@@ -43,9 +43,9 @@ def route_below(s: float, z: float) -> float:
 def route_map_point(x: float, y: float) -> tuple[float, float]:
     """The Lanelet2 map point a route is laid on of CARLA world point ``(x, y)``."""
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.transform import carla_xy_to_map  # noqa: PLC0415
 
-    offset_x, offset_y = MapManager.get_instance().mgrs_offset
-    return x + offset_x, -y + offset_y
+    return carla_xy_to_map(x, y, MapManager.get_instance().mgrs_offset)
 
 
 def route_s_of_carla_point(

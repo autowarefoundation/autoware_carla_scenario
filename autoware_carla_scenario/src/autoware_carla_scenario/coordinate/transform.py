@@ -452,11 +452,37 @@ def lane_change_target_lanelets(
     return targets
 
 
+def carla_xy_to_map(
+    x: float, y: float, mgrs_offset: tuple[float, float]
+) -> tuple[float, float]:
+    """CARLA world point ``(x, y)`` in the Lanelet2 map's frame.
+
+    Add the projector offset (*mgrs_offset*, :attr:`.MapManager.mgrs_offset`)
+    and flip y: CARLA's frame is the OpenDRIVE origin's and left-handed, the
+    map's MGRS and right-handed.  The inverse of :func:`map_xy_to_carla`.
+    """
+    offset_x, offset_y = mgrs_offset
+    return x + offset_x, -y + offset_y
+
+
+def map_xy_to_carla(
+    x: float, y: float, mgrs_offset: tuple[float, float]
+) -> tuple[float, float]:
+    """Lanelet2 map point ``(x, y)`` in CARLA world coordinates.
+
+    Subtract the projector offset (*mgrs_offset*,
+    :attr:`.MapManager.mgrs_offset`) and flip y.  The inverse of
+    :func:`carla_xy_to_map`.
+    """
+    offset_x, offset_y = mgrs_offset
+    return x - offset_x, -(y - offset_y)
+
+
 def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> tuple[float, float, float]:
     """A CARLA pose's ``(x, y, heading)`` in the Lanelet2 map's frame."""
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    return pose.x + offset_x, -pose.y + offset_y, -math.radians(pose.yaw)
+    x, y = carla_xy_to_map(pose.x, pose.y, mm.mgrs_offset)
+    return x, y, -math.radians(pose.yaw)
 
 
 def to_carla_location(
@@ -585,10 +611,10 @@ def to_map_frame(
         carla_pose = pose
 
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
+    map_x, map_y = carla_xy_to_map(carla_pose.x, carla_pose.y, mm.mgrs_offset)
     return BridgePose.from_rpy(
-        x=carla_pose.x + offset_x,
-        y=-carla_pose.y + offset_y,
+        x=map_x,
+        y=map_y,
         z=carla_pose.z + mm.z_offset,
         roll=math.radians(carla_pose.roll),
         pitch=-math.radians(carla_pose.pitch),
@@ -618,11 +644,11 @@ def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
     # Lanelet2 centerline uses MGRS absolute coords; CARLA world uses
     # XODR-relative coords.  Subtract the MGRS offset for x/y, and the
     # vertical offset for z (Lanelet2 stores absolute elevation).
-    offset_x, offset_y = mm.mgrs_offset
+    carla_x, carla_y = map_xy_to_carla(x, y, mm.mgrs_offset)
     carla_yaw_deg = -math.degrees(total_heading)
     return CarlaWorldPose(
-        x=x - offset_x,
-        y=-(y - offset_y),
+        x=carla_x,
+        y=carla_y,
         z=z_cl - mm.z_offset,
         yaw=carla_yaw_deg,
     )
@@ -945,9 +971,7 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
 
     # CARLA world uses XODR-relative coords; Lanelet2 uses MGRS absolute.
     # Add the MGRS offset for x/y, and the vertical offset for z.
-    offset_x, offset_y = mm.mgrs_offset
-    ll2_x = pose.x + offset_x
-    ll2_y = -pose.y + offset_y
+    ll2_x, ll2_y = carla_xy_to_map(pose.x, pose.y, mm.mgrs_offset)
     ll2_heading = -math.radians(pose.yaw)
 
     query = lanelet2.core.BasicPoint2d(ll2_x, ll2_y)

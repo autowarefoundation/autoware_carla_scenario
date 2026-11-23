@@ -136,12 +136,13 @@ class EntityAreaDistanceCondition(CompositionCondition):
     def _resolve(self) -> None:
         """Read the area's outlines off the run's map, into CARLA's frame."""
         from ...coordinate.map_manager import MapManager  # noqa: PLC0415
+        from ...coordinate.transform import map_xy_to_carla  # noqa: PLC0415
 
         manager = MapManager.get_instance()
         if self._area.ground.on_surface:
             self._resolve_surface(manager.xodr_path)
             return
-        offset_x, offset_y = manager.mgrs_offset
+        offset = manager.mgrs_offset
         try:
             shapes = area_shapes(manager.lanelet_map, self._area)
         except ValueError as exc:
@@ -152,7 +153,7 @@ class EntityAreaDistanceCondition(CompositionCondition):
             # OpenDRIVE origin's and left-handed (coordinate.transform).
             points: list[Point] = []
             for x, y in shape.points:
-                points.append((x - offset_x, -(y - offset_y)))
+                points.append(map_xy_to_carla(x, y, offset))
             if points:
                 self._outlines.append(_Outline(points, shape.layer, shape.element_id))
         if not self._outlines:
