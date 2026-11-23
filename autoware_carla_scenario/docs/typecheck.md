@@ -2531,9 +2531,10 @@ the sweeps (`gate.errored` and `gate.sweep_plan`, #1967; a plan written a
 member at a time, as a marker is, #2265; not reading either, JSON objects
 of mixed value types), what a set of runs
 left unrecorded (`gate.unrecorded`, #2124: the batches under a directory, a
-local batch's summary read for its errored and pending cases, and the
-`--multirun` jobs given up or never started; not a SLURM batch's manifest,
-which `gate.evaluate` reads; it re-exports them),
+local batch's summary read for its errored and pending cases, a SLURM
+batch's manifest and outcomes read for its cases without one, #2394, and the
+`--multirun` jobs given up or never started; `gate.evaluate` re-exports
+them),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,

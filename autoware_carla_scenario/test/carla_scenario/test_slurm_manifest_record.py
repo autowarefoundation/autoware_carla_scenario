@@ -42,6 +42,7 @@ from typing import Any
 
 import pytest
 
+import autoware_carla_scenario.gate.unrecorded as unrecorded_mod
 import autoware_carla_scenario.slurm.manifest as manifest_mod
 from autoware_carla_scenario.batch_report import print_summary
 from autoware_carla_scenario.slurm import cli, collect as collect_mod, submit, worker
@@ -55,6 +56,7 @@ from autoware_carla_scenario.slurm.manifest import (
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
 from . import test_slurm_follow
+from .test_gate_unrecorded import old_slurm_cases
 from .test_slurm_batch_readers import old_reading
 from .test_slurm_records import _written_back
 
@@ -467,6 +469,9 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         # resubmit's --cases picking, as it read the manifest then (with
         # the old unfinished_cases, collect and busy check set on cli).
         patch.setattr(cli, "_resubmit", test_slurm_follow._old_resubmit)
+        # The gate's SLURM scan, as gate.evaluate read the manifest as a
+        # dict then (#2394).
+        patch.setattr(unrecorded_mod, "_slurm_cases", old_slurm_cases)
         # status, cancel, the busy check and the viewer's case states, as
         # they read the records then.
         with old_reading(patch):
@@ -918,6 +923,24 @@ def test_the_typed_accessors_of_each_manifest(
                 case.case_overrides,
                 partial(lambda raw: list(raw["case_overrides"]), raw),
             ),
+            # What the gate reads of it (#2394).
+            (
+                case.string_stem,
+                partial(
+                    lambda raw: (
+                        raw.get("stem") if isinstance(raw.get("stem"), str) else None
+                    ),
+                    raw,
+                ),
+            ),
+            (
+                partial(case.name, 7),
+                partial(
+                    lambda raw: str(raw.get("label") or raw.get("scenario") or 7),
+                    raw,
+                ),
+            ),
+            (case.case_repr, partial(repr, raw)),
         ]
         if isinstance(raw, dict):
             assert case.members.keys() == [k for k in raw if k in _CASE_HELD]
@@ -980,6 +1003,8 @@ def test_a_case_that_is_no_object_raises_as_its_type_does(
         (case.label, lambda: str(raw["label"])),
         (case.stem, lambda: str(raw.get("stem") or "")),
         (case.case_overrides, lambda: list(raw["case_overrides"])),
+        (case.string_stem, lambda: raw.get("stem")),
+        (lambda: case.name(0), lambda: raw.get("label")),
     ]:
         with pytest.raises(Exception) as typed_error:
             typed()
@@ -988,6 +1013,7 @@ def test_a_case_that_is_no_object_raises_as_its_type_does(
         assert type(typed_error.value) is type(read_error.value)
         assert str(typed_error.value) == str(read_error.value)
     assert case.members.keys() == []
+    assert case.case_repr() == repr(raw)
 
 
 @pytest.mark.parametrize(
@@ -1075,7 +1101,18 @@ def _digits_out(text: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "where", ["extra", "env", "case-config", "case-extra", "case-label", "cases"]
+    "where",
+    [
+        "extra",
+        "env",
+        "case-config",
+        "case-extra",
+        "case-label",
+        "case-scenario",
+        "case-stem",
+        "case-index",
+        "cases",
+    ],
 )
 @pytest.mark.parametrize("depth", [500, 5000, 100_000])
 def test_a_manifest_nested_deep_is_read_as_json_loads_reads_it(
@@ -1102,6 +1139,13 @@ def test_a_manifest_nested_deep_is_read_as_json_loads_reads_it(
         text = _manifest(_V1, cases=_cases(z=nest))
     elif where == "case-label":
         text = _manifest(_V1, cases=_cases(label=nest))
+    elif where == "case-scenario":
+        # A false label, so that the gate names the case by its scenario.
+        text = _manifest(_V1, cases=_cases(label='""', scenario=nest))
+    elif where == "case-stem":
+        text = _manifest(_V1, cases=_cases(stem=nest))
+    elif where == "case-index":
+        text = _manifest(_V1, cases=_cases(index=nest))
     else:
         text = _manifest(_V1, cases="[" + _object(_case(0)) + ", " + nest + "]")
     pristine = _batch(tmp_path, text.encode())
@@ -1112,6 +1156,7 @@ def test_a_manifest_nested_deep_is_read_as_json_loads_reads_it(
         "unfinished-failed",
         "resubmit-target",
         "resubmit-dry",
+        "gate",
     )
     actual = _run_readers(pristine, tmp_path, capsys, caplog, names)
     try:
