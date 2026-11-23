@@ -18,9 +18,7 @@ from types import ModuleType
 import pytest
 import yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_SKILLS_DIR = _REPO_ROOT / "skills"
-_SCRIPT = _REPO_ROOT / "scripts" / "scenario_agent.py"
+_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "scenario_agent.py"
 
 # Names only Claude Code understands; a skill shared with Codex must not need
 # them (a Claude Code command's argument placeholder and tool permissions, and
@@ -39,10 +37,12 @@ def _load_script() -> ModuleType:
 
 
 scenario_agent = _load_script()
+_REPO_ROOT: Path = scenario_agent.REPO_ROOT
+_SKILLS_DIR: Path = scenario_agent.SKILLS_DIR
 
 
 def _skill_dirs() -> list[Path]:
-    return sorted(p.parent for p in _SKILLS_DIR.glob("*/SKILL.md"))
+    return [_SKILLS_DIR / name for name in scenario_agent.available_skills()]
 
 
 def _frontmatter(skill_md: Path) -> dict[str, object]:
@@ -92,9 +92,10 @@ def test_committed_discoverability_blocks_match_an_install(tmp_path: Path) -> No
     # The installer's `--repo` asserts a Git repository root.
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
 
-    for agent in scenario_agent.AGENTS.values():
-        command = scenario_agent.install_command(agent, repo)
-        subprocess.run(command, check=True, capture_output=True)
+    command = scenario_agent.install_command(
+        list(scenario_agent.AGENTS.values()), repo / "skills"
+    )
+    subprocess.run(command, check=True, capture_output=True)
 
     for name in ("CLAUDE.md", "AGENTS.md"):
         assert (repo / name).read_text(encoding="utf-8") == (
@@ -106,10 +107,6 @@ def test_committed_discoverability_blocks_match_an_install(tmp_path: Path) -> No
         )
     assert (repo / ".claude" / "skills" / "write-scenario" / "SKILL.md").is_file()
     assert (repo / ".codex" / "skills" / "write-scenario" / "SKILL.md").is_file()
-
-
-def test_available_skills_lists_the_skill_directories() -> None:
-    assert scenario_agent.available_skills() == [p.name for p in _skill_dirs()]
 
 
 @pytest.mark.parametrize(
@@ -138,12 +135,13 @@ def test_no_request_starts_the_agent_without_a_prompt() -> None:
 
 def test_install_command_installs_every_skill_into_the_repository() -> None:
     command = scenario_agent.install_command(
-        scenario_agent.AGENTS["codex"], Path("/repo")
+        list(scenario_agent.AGENTS.values()), Path("/repo/skills")
     )
     assert command[:3] == [sys.executable, "-m", "agent_skill_installer"]
     assert "--all-src-skills" in command
     assert command[command.index("--skill-path") + 1] == str(Path("/repo/skills"))
-    assert command[command.index("--agent") + 1] == "codex"
+    assert command[command.index("--target-dir") + 1] == str(Path("/repo"))
+    assert command[command.index("--agent") + 1] == "claude,codex"
     assert command[command.index("--scope") + 1] == "dir"
 
 
@@ -180,4 +178,6 @@ def test_install_only_does_not_start_the_agent(
     monkeypatch.setattr(scenario_agent.subprocess, "run", fake_run)
     monkeypatch.setattr(scenario_agent.os, "execv", no_exec)
     assert scenario_agent.main(["claude", "--install-only"]) == 0
-    assert commands == [scenario_agent.install_command(scenario_agent.AGENTS["claude"])]
+    assert commands == [
+        scenario_agent.install_command([scenario_agent.AGENTS["claude"]])
+    ]

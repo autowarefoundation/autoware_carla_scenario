@@ -27,7 +27,7 @@ uv run scenario scenario=<name>/<variant>
 
 If the user provided additional options (e.g., `map=town10hd_opt`, `scenario.timeout_seconds=20`), append them to the command. A run needs a CARLA server (`server.host` / `server.port`); if none is reachable, say so and ask the user rather than debugging the scenario.
 
-The run writes `outputs/YYYY-MM-DD/HH-MM-SS/`: `{ScenarioName}_result.json` (pass/fail, message, condition statuses) and `{ScenarioName}.trajectory.jsonl` (the run tick by tick, with the conditions and the verdict) are the files to read.
+Read the run's output as the `scenario-debugging` skill describes ("Where the Results Are").
 
 ### Step 2: Analyze Results
 
@@ -61,5 +61,5 @@ Once the scenario passes (or if you hit an unresolvable issue), present to the u
 1. **Result**: Pass/fail and which condition triggered
 2. **Adjustments made**: What was changed and why (list each change)
 3. **Concerns**: Any remaining trade-offs or fragile parameters
-4. Where to look: the run's output directory, and `uv run viewer` (http://localhost:9000) for the condition tree; the trajectory log can be turned into a Rerun recording to watch the run (`autoware_carla_scenario/docs/usage.md`, "Seeing a run")
+4. Where to look: the run's output directory and the viewer (`scenario-debugging`, "Where the Results Are")
 5. Ask the user to confirm the behavior matches their intent

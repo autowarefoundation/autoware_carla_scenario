@@ -113,11 +113,11 @@ Either way, constrain the pick so the relation exists for every case (`has_adjac
 For each parameter that will be swept:
 
 1. **Can a constraint express the valid set?**
-   - Discover the constraint types: `_LEAF_REGISTRY` and the combinators in `parse_constraint()` (`sweeper/constraints.py`)
+   - Discover the constraint types (`scenario-writing`'s `references/constraints-reference.md`)
    - If no existing constraint fits, propose a new one to the user
 
 2. **Can a binding compute derived values?**
-   - Discover the binding types: `_BINDING_REGISTRY` (`sweeper/bindings.py`)
+   - Discover the binding types the same way
    - If no existing binding fits, propose a new one to the user
 
 3. **Is the case set finite and reasonable?**

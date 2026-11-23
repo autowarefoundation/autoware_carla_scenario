@@ -36,10 +36,9 @@ Apply the orthogonality analysis from the `scenario-review` skill:
 ### Step 4: Discover Available Constraint/Binding Types
 
 Before recommending sweep configuration, dynamically discover existing types:
-1. Constraints: `_LEAF_REGISTRY` and the combinators in `parse_constraint()` (`autoware_carla_scenario/src/autoware_carla_scenario/sweeper/constraints.py`)
-2. Bindings: `_BINDING_REGISTRY` (`sweeper/bindings.py`)
-3. Verify that recommended constraint/binding types actually exist, with the keys their dataclass fields name
-4. Check what the current sweep expands to: `uv run scenario-expand scenario=<name>/<variant>`
+1. Find them as `scenario-writing`'s `references/constraints-reference.md` describes
+2. Verify that recommended constraint/binding types actually exist, with the keys they take
+3. Check what the current sweep expands to: `uv run scenario-expand scenario=<name>/<variant>`
 
 ### Step 5: Review Existing Sweep Config (if present)
 

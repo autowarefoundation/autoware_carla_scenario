@@ -57,7 +57,7 @@ uv pip install -e <package>
 1. **Python scenario class** (`examples/<name>.py`)
 2. **Dataclass config** (add to `examples/configs.py`)
 3. **YAML config** (`examples/conf/scenario/<name>/<variant>.yaml`)
-4. **Registration** — `_register_builtin_scenario(...)` in `examples/run.py`, the name in `scaffold.names.BUILTIN_SCENARIO_NAMES`, the module in `typecheck/library.py`'s `CHECKED`
+4. **Registration** — as `references/code-generation.md` lists under "Registering a built-in scenario"
 
 **Critical: spawn positions must use Lanelet2 coordinates (lanelet_id + s), never OpenDRIVE coordinates.**
 
@@ -90,10 +90,7 @@ Update the YAML config to include concrete parameter values (these serve as the 
 ### Stage 6: Discover Available Constraints/Bindings and Add Sweep Config
 
 Before writing sweep constraints, dynamically discover existing Constraint and Binding types:
-1. Constraints: `_LEAF_REGISTRY` in `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/constraints.py` (`type:` string → class), and the combinators (`and`, `or`, `not`, `previous_of`, `following_of`) in `parse_constraint()`
-2. Bindings: `_BINDING_REGISTRY` in `autoware_carla_scenario/src/autoware_carla_scenario/sweeper/bindings.py`
-3. Read the classes' docstrings and dataclass fields: the fields are the YAML keys
-4. `scenario-writing`'s `references/constraints-reference.md` summarizes them and the rules (one swept key, bindings, `exclude`)
+Follow `scenario-writing`'s `references/constraints-reference.md`: where the types are registered in the source, how to read their keys, and the rules (one swept key, bindings, `exclude`).
 
 Present the user with applicable existing Constraints/Bindings for their scenario.
 
@@ -101,7 +98,7 @@ If existing Constraints/Bindings are insufficient:
 1. Explain what is missing and why existing types cannot express the desired filter
 2. Propose the new Constraint/Binding with its interface and `type:` string
 3. Wait for user approval before implementing
-4. Implement it as `scenario-writing`'s `references/code-generation.md` describes (a `Constraint` subclass in `_LEAF_REGISTRY`, or a binding in `_BINDING_REGISTRY`), and export it
+4. Implement it as `scenario-writing`'s `references/code-generation.md` describes
 
 Then edit the `sweep:` section of the YAML:
 1. Help the user compose constraints that work across maps

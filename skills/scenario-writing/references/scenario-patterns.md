@@ -274,15 +274,7 @@ with the entry point in its `pyproject.toml`:
 my_scenario_package = "my_scenario_package:register"
 ```
 
-For a built-in scenario, in `examples/run.py` beside the others (add the config to the existing `from .configs import (...)`):
-
-```python
-from .my_scenario import MyScenario
-
-_register_builtin_scenario("my_scenario", MyScenario, MyScenarioConfig)
-```
-
-and add the name to `autoware_carla_scenario.scaffold.names.BUILTIN_SCENARIO_NAMES` (sorted; `test_scaffold.py` checks it) and the module to `typecheck/library.py`'s `CHECKED`.
+For a built-in scenario, see `code-generation.md`, "Registering a built-in scenario".
 
 ## NPC Position from the Ego's
 

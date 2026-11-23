@@ -23,8 +23,7 @@ How to generate CARLA test scenario code for `autoware_carla_scenario` once the 
 3. **Discover available Conditions/Actions/Constraints/Bindings.** Search the source (under `autoware_carla_scenario/src/autoware_carla_scenario/`):
    - `grep -rn "(BaseCondition)\|(CompositionCondition)" conditions/`
    - `grep -rn "(BaseAction)" actions/`
-   - `sweeper/constraints.py`: `_LEAF_REGISTRY` and the combinators in `parse_constraint()`
-   - `sweeper/bindings.py`: `_BINDING_REGISTRY`
+   - The sweeper's constraint and binding types: `constraints-reference.md`, "Discovery"
    - Read constructor signatures of relevant classes
 
 4. **Generate code following established patterns exactly:**
@@ -40,12 +39,8 @@ How to generate CARLA test scenario code for `autoware_carla_scenario` once the 
    - Check that dataclass field types match the YAML value types
    - For a package, its generated `tests/test_typecheck.py` runs the same check under pytest
 
-**Critical Rules:**
-- Positions MUST be `Lanelet2Pose(lanelet_id=..., s=...)` (`ego.spawn_lanelet_id` / `ego.spawn_s` in YAML), never OpenDRIVE coordinates
-- `_setup_ego_spawn()` for the ego, `snap_to_carla_road(pose, world, ground_projection=self._ground_projection)` for NPCs
+**Critical Rules:** the `scenario-writing` skill's Stage 1 rules (Lanelet2 positions, `_setup_ego_spawn()` / `snap_to_carla_road`, class-level attribute declarations, a `TimeoutCondition`, `is_done()` returning `False`), and:
 - Accept a `GroundProjectionConfig` and pass it to `BaseScenario.__init__`
-- Always register a `TimeoutCondition` as a fail condition
-- `is_done()` returns `False` — termination is condition-driven
 - Initial world state (traffic lights, ...) through `register_init`, not by executing actions inside `setup()`
 - YAML starts with `# @package _global_`
 - The dataclass `name` field matches the registered scenario name

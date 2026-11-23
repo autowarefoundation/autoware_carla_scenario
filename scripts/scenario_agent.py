@@ -36,10 +36,9 @@ DEFAULT_SKILL = "write-scenario"
 class Agent:
     """A coding agent the skills can be installed into and started."""
 
-    # The name agent-skill-installer's ``--agent`` takes.
-    installer_name: str
-    # The command that starts the agent's interactive session.
-    command: str
+    # Both agent-skill-installer's ``--agent`` value and the command that
+    # starts the agent's interactive session.
+    name: str
     # How a prompt invokes a skill: ``/name`` in Claude Code, ``$name`` in Codex.
     skill_sigil: str
     # Where to get the agent when its command is missing.
@@ -47,28 +46,27 @@ class Agent:
 
 
 AGENTS: dict[str, Agent] = {
-    "claude": Agent(
-        installer_name="claude",
-        command="claude",
-        skill_sigil="/",
-        install_hint="https://code.claude.com/docs/en/setup",
-    ),
-    "codex": Agent(
-        installer_name="codex",
-        command="codex",
-        skill_sigil="$",
-        install_hint="https://github.com/openai/codex",
-    ),
+    agent.name: agent
+    for agent in (
+        Agent("claude", "/", "https://code.claude.com/docs/en/setup"),
+        Agent("codex", "$", "https://github.com/openai/codex"),
+    )
 }
 
 
-def available_skills(skills_dir: Path = SKILLS_DIR) -> list[str]:
-    """Return the names of the skills in ``skills_dir``, sorted."""
-    return sorted(p.parent.name for p in skills_dir.glob("*/SKILL.md"))
+def available_skills() -> list[str]:
+    """Return the names of the skills in ``SKILLS_DIR``, sorted."""
+    return sorted(p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md"))
 
 
-def install_command(agent: Agent, repo_root: Path = REPO_ROOT) -> list[str]:
-    """Return the agent-skill-installer command installing every skill."""
+def install_command(
+    agents: Sequence[Agent], skills_dir: Path = SKILLS_DIR
+) -> list[str]:
+    """Return the agent-skill-installer command installing every skill.
+
+    The skills go into the repository holding ``skills_dir``, for every agent
+    in ``agents`` at once.
+    """
     return [
         sys.executable,
         "-m",
@@ -76,15 +74,15 @@ def install_command(agent: Agent, repo_root: Path = REPO_ROOT) -> list[str]:
         "--no-ui",
         "install",
         "--skill-path",
-        str(repo_root / "skills"),
+        str(skills_dir),
         "--all-src-skills",
         "--editable",
         "--agent",
-        agent.installer_name,
+        ",".join(agent.name for agent in agents),
         "--scope",
         "dir",
         "--target-dir",
-        str(repo_root),
+        str(skills_dir.parent),
         "--repo",
     ]
 
@@ -103,7 +101,7 @@ def first_prompt(agent: Agent, skill: str, request: Sequence[str]) -> str | None
 
 def launch_command(agent: Agent, prompt: str | None) -> list[str]:
     """Return the command that starts ``agent``'s interactive session."""
-    return [agent.command] if prompt is None else [agent.command, prompt]
+    return [agent.name] if prompt is None else [agent.name, prompt]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -149,28 +147,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
-    executable = None if args.install_only else shutil.which(agent.command)
-    if not args.install_only and executable is None:
+    # Looked up before installing, so a missing agent fails fast.
+    executable = shutil.which(agent.name)
+    if executable is None and not args.install_only:
         print(
-            f"scenario_agent: `{agent.command}` is not on PATH; "
+            f"scenario_agent: `{agent.name}` is not on PATH; "
             f"install it first ({agent.install_hint}).",
             file=sys.stderr,
         )
         return 2
 
-    installed = subprocess.run(install_command(agent), check=False)
+    installed = subprocess.run(install_command([agent]), check=False)
     if installed.returncode != 0:
         print("scenario_agent: installing the skills failed.", file=sys.stderr)
         return installed.returncode
-    if args.install_only:
+    if executable is None or args.install_only:
         return 0
 
-    assert executable is not None
     command = launch_command(agent, first_prompt(agent, args.skill, args.request))
     os.chdir(REPO_ROOT)
     # Hand the terminal over to the agent: its session replaces this process.
     os.execv(executable, command)
-    return 0  # pragma: no cover - execv does not return
 
 
 if __name__ == "__main__":

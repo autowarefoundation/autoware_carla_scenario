@@ -21,8 +21,7 @@ Decide this first, with the user:
 | Scenario class | `src/<package>/<name>.py` | `examples/<name>.py` |
 | Config dataclass | `src/<package>/configs.py` | `examples/configs.py` |
 | Concrete YAML | `src/<package>/conf/scenario/<name>/<variant>.yaml` | `examples/conf/scenario/<name>/<variant>.yaml` |
-| Registration | `register()` in `src/<package>/__init__.py` (`register_scenario`, `register_conf_dir`), found through the `autoware_carla_scenario.scenarios` entry point | `_register_builtin_scenario("<name>", MyScenario, MyScenarioConfig)` in `examples/run.py`, plus the name in `scaffold.names.BUILTIN_SCENARIO_NAMES` (sorted) |
-| Static check of the module | The package's `tests/test_typecheck.py` (generated) | List the module in `typecheck/library.py`'s `CHECKED` (sorted), or `EXCLUDED` as `NOT_YET_CHECKED` |
+| Registration | `register()` in `src/<package>/__init__.py`, generated with its entry point | `_register_builtin_scenario` in `examples/run.py`, and the lists in `references/code-generation.md` ("Registering a built-in scenario") |
 | Install | `uv pip install -e <package>` | — |
 
 `scenario-new` refuses names that would clash (a built-in scenario or config group, a module the package imports, `configs`, `conf`, ...); the name must match `^[a-z][a-z0-9_]*$`. Import everything from the top-level `autoware_carla_scenario` package, not from `examples`.
@@ -96,28 +95,11 @@ After the review is confirmed, write parameters as dataclass fields in `configs.
 
 ### Stage 4: Discover Constraints/Bindings and Add Sweep Config
 
-**Do not rely on a hardcoded list.** Read the sweeper source (`autoware_carla_scenario/src/autoware_carla_scenario/sweeper/`):
+**Do not rely on a hardcoded list.** `references/constraints-reference.md` says where the sweeper's constraint and binding types are registered in the source, and the rules a `sweep:` follows (one swept key, bindings, `exclude`), with examples.
 
-1. **Constraints** (`constraints.py`): leaf types are the `_LEAF_REGISTRY` mapping (`type:` string → class); the combinators `and`, `or`, `not`, `previous_of`, `following_of` are handled in `parse_constraint()`. Each class's docstring shows its YAML and its dataclass fields are its keys.
-2. **Bindings** (`bindings.py`): the `_BINDING_REGISTRY` mapping; `parse_binding()` takes the dataclass fields (except `target_key`) as keys.
+**When existing Constraints/Bindings are insufficient:** propose the new type to the user with rationale and wait for approval, then implement it as `references/code-generation.md` describes.
 
-See `references/constraints-reference.md` for the YAML structure, the rules (one swept key, `exclude`, walk-backs) and examples.
-
-**When existing Constraints/Bindings are insufficient:**
-1. Propose the new type to the user with rationale, and wait for approval
-2. A constraint subclasses `Constraint` and implements `evaluate(self, lanelet) -> bool` (a frozen dataclass, as the others are); add it to `_LEAF_REGISTRY` (a combinator to `parse_constraint()`)
-3. A binding is a dataclass with `target_key` and `resolve(self, lanelet_id, lanelet_map, routing_graph=None) -> BindingResult`; add it to `_BINDING_REGISTRY`
-4. Export it from `sweeper/__init__.py`, and follow `autoware_carla_scenario/docs/typecheck.md` for the static check (a public API change needs the same change in `typecheck/codon/`)
-
-Then edit the `sweep:` section in the scenario YAML. Avoid hardcoding Lanelet IDs in logical scenario constraints — this breaks cross-map portability. Map-specific exclusions (like `no_3d_model_lanelet_ids`) are in `conf/map/<map_name>.yaml` and referenced as `${map.no_3d_model_lanelet_ids}`.
-
-**Tip:** Insert `type: equals, value: any` as a placeholder. After a multirun, replace it with concrete lanelet IDs from failing runs to narrow down issues.
-
-Preview the expansion without CARLA before running it:
-
-```bash
-uv run scenario-expand scenario=<name>/<variant>
-```
+Then edit the `sweep:` section in the scenario YAML. Avoid hardcoding Lanelet IDs in logical scenario constraints — this breaks cross-map portability. Preview the expansion without CARLA (`uv run scenario-expand scenario=<name>/<variant>`) before running it.
 
 ### Stage 5: Run Logical Scenario
 
@@ -148,11 +130,7 @@ Results go to `outputs/` (single runs, batches) and `multirun/` (sweeps); browse
 3. Read constructor signatures (most take a keyword-only `label`)
 4. Check the top-level `autoware_carla_scenario/__init__.py` `__all__` for the public API
 
-**When existing Conditions/Actions are insufficient:**
-1. Propose the new Condition/Action to the user with rationale, and wait for approval
-2. A condition inherits `BaseCondition` and implements `check(self, world, elapsed) -> Optional[ScenarioResult]` (and `get_details()` for its log)
-3. An action inherits `BaseAction` and implements `execute(self, world) -> None`; `timing` (`TickTiming.PRE_TICK` / `POST_TICK`), `condition` and `once` come from the base constructor
-4. Export it from the subpackage's and the top-level `__init__.py`, and update the typed model (`typecheck/codon/`) and `typecheck/library.py` as `autoware_carla_scenario/docs/typecheck.md` describes
+**When existing Conditions/Actions are insufficient:** propose the new Condition/Action to the user with rationale and wait for approval, then implement it as `references/code-generation.md` describes.
 
 ## Additional Resources
 
