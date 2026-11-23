@@ -11,10 +11,12 @@ change, a turn onto a lanelet that does not follow it, or leaving the road
 (``fail_on_leaving_lane``).
 
 An ego that plans its own route (Autoware, or a driver given a bridge) needs a
-goal. Unless one is configured (``ego.goal_lanelet_id``), it is sent down its
-own lane (:func:`goal_ahead`): to the middle of the last lanelet of
+goal. Unless one is configured (``ego.goal_lanelet_id``), the ego is sent down
+its own lane (:func:`goal_ahead`): to the middle of the last lanelet of
 :func:`lanes_ahead_before_junction` -- the lanelet before the next junction,
-on the lanes where the cut-in is judged.
+on the lanes where the cut-in is judged.  Every ego is given that goal: a
+TrafficManager ego follows the route there, its own lane changes off until it
+has used the route up, and a driver policy is shown the road ahead along it.
 
 ``side`` is the side of the ego the NPC comes from, so it changes lanes the
 other way. Its lanelet is the one beside the ego's, which a sweep binds with
@@ -290,9 +292,9 @@ class CutInScenario(BaseScenario):
                 f"not {cfg.side!r}"
             )
 
-        # An ego that plans its own route is sent down its lane, before
-        # _setup_ego_spawn hands the goal over.  A goal given in the config
-        # wins.
+        # The ego is sent down its lane -- the goal an ego that plans its own
+        # route cannot start without -- before _setup_ego_spawn hands the goal
+        # over.  A goal given in the config wins.
         if self.goal_pose is None:
             self.goal_pose = goal_ahead(spawn.lanelet_id, spawn.s, cfg.lanes_ahead_m)
         self._setup_ego_spawn()

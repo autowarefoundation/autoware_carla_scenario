@@ -66,7 +66,7 @@ class ReachGoalScenario(BaseScenario):
         # anything starts.
 
         # 1. Every scenario says where its ego is going, and this one already
-        #    has: the last road it asserts the ego reaches is the destination.
+        #    has: the last lanelet it asserts the ego reaches is the destination.
         #    A goal given in the config wins.
         self.derive_goal_from_route(cfg.goal_lanelet_ids)
 

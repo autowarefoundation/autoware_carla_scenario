@@ -1472,7 +1472,7 @@ ahead and placing NPC1 by the measured gap).
 | `scenario.fail_on_any_collision` | bool | `true` | `true` | Fail on any collision of the ego; `false` fails only on a collision with NPC1 |
 
 **Behavior:**
-- Unless `ego.goal_lanelet_id` is set, sends an ego that plans its own route down its lane: to the middle of the last lanelet ahead of the spawn lanelet before the next junction (on Nishi-Shinjuku, 22 from 20 and 21 from 19)
+- Unless `ego.goal_lanelet_id` is set, sends the ego down its lane (the goal an ego that plans its own route needs; a TrafficManager ego follows the route there): to the middle of the last lanelet ahead of the spawn lanelet before the next junction (on Nishi-Shinjuku, 22 from 20 and 21 from 19)
 - Sets all traffic lights to GREEN
 - Registers a lane change of NPC1 towards the ego after `cut_in_after_seconds`
 - Pass condition: NPC1 has been on the ego's lane for `hold_seconds`, with no collision
