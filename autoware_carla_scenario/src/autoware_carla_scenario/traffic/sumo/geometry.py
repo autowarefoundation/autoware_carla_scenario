@@ -43,6 +43,7 @@ from typing import Optional, Sequence
 
 from ...coordinate.map_manager import run_carla_map
 from ...kinematics.angle import normalize_angle_deg
+from ...kinematics.angle import normalize_angle_deg as _wrap  # [-180, 180) (#2398)
 from ...visibility import driver_quantile, sight_speed_at
 from ..base import LaneChangeDirection, TrafficBackendUnavailable, TrafficContext
 
@@ -144,11 +145,6 @@ def sumo_xy_to_carla(
 ) -> tuple[float, float]:
     """The CARLA point of SUMO's ``(x, y)`` (:func:`carla_xy_to_sumo` undone)."""
     return x - net_offset[0], -(y - net_offset[1])
-
-
-def _wrap(deg: float) -> float:
-    """*deg* in [-180, 180)."""
-    return (deg + 180.0) % 360.0 - 180.0
 
 
 def _sight_cap(sumo_id: str, seen: float, held: tuple[float, float, float]) -> float:

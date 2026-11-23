@@ -981,7 +981,12 @@ speed would leave the ego still with no error, an infinite one break its
 physics, and a NaN pose fail far from the key behind it. A run or batch
 refuses such a value before anything starts, naming the key (`Error:
 ego.initial_speed_kmh must be finite and at least 0, got -20`). A pose
-left null (`ego.spawn_s=null`) is 0, as one that is absent is.
+left null (`ego.spawn_s=null`) is 0, as one that is absent is. A boolean is
+no number (`ego.initial_speed_kmh=true` is refused, not read as 1 km/h), an
+integer too big for a float (`10**400`) is refused as not finite, and a quoted
+number (`ego.spawn_t='1.5'`) is read as the number it spells. The run checks
+these settings, a declarative scenario's spawn `s`, a camera lens's numbers
+and an example scenario's numbers with the same check (#2398).
 
 The same check refuses a lanelet id that is not a whole number --
 `ego.spawn_lanelet_id`, `ego.goal_lanelet_id` or an item of

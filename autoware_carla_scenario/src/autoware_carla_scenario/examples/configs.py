@@ -21,6 +21,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from ..number_settings import finite_number_setting, number_setting
+
 # The shared configs are imported because the composite configs in this module
 # (``ScenarioRunConfig`` and ``IntersectionPassingConfig``) reference them.
 from ..scenario_config import (
@@ -79,25 +81,21 @@ def _require_number(key: str, value: Union[float, bool, str]) -> float:
     would pass as 1, ``=null`` as None and a quoted ``='10'`` as a string,
     which ``math.isfinite()`` refuses with a ``TypeError`` naming no key.  An
     int (Hydra reads ``=10`` as one) or a float is a number; a bool, a string
-    or anything ``float()`` refuses is not.
+    or anything ``float()`` refuses is not, and an int too big for a float
+    (``10**400``) is refused as not finite: the one check of a number
+    setting, :func:`~autoware_carla_scenario.number_settings.number_setting`
+    (#2398).
 
     Raises:
         ValueError: naming ``scenario.<key>``.
     """
-    if isinstance(value, bool) or isinstance(value, str):
-        raise ValueError(f"scenario.{key} must be a number, got {value!r}")
-    try:
-        number = float(value)
-    except TypeError:
-        raise ValueError(f"scenario.{key} must be a number, got {value!r}") from None
-    return number
+    return number_setting(f"scenario.{key}", value)
 
 
 def _require_finite(key: str, value: float) -> None:
-    """Refuse *value* of ``scenario.<key>`` unless it is a finite number."""
-    number = _require_number(key, value)
-    if not math.isfinite(number):
-        raise ValueError(f"scenario.{key} must be finite, not {value}")
+    """Refuse *value* of ``scenario.<key>`` unless it is a finite number
+    (:func:`~autoware_carla_scenario.number_settings.finite_number_setting`)."""
+    finite_number_setting(f"scenario.{key}", value)
 
 
 def _require_positive(key: str, value: float) -> None:

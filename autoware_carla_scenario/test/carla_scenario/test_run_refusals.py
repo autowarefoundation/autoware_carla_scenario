@@ -341,8 +341,8 @@ def test_a_missing_rerun_sdk_exits_2(
         ("1.5", 1.5),
         ("'1.5'", 1.5),
         ("-2", -2.0),
-        ("false", 0.0),
-        ("true", 1.0),
+        ("false", None),
+        ("true", None),
         ("''", None),
         ("abc", None),
         ("nan", None),
@@ -355,7 +355,8 @@ def test_the_preflight_and_the_build_read_the_spawn_offset_alike(
     """``ego.spawn_t`` and ``ego.spawn_heading``: what the batch preflight
     refuses, building the ego and planning its route refuse, naming the key;
     what it lets through they read as the same number.  ``''`` was refused by
-    the one and read as 0.0 by the others (#2143)."""
+    the one and read as 0.0 by the others (#2143); a boolean was read as 1.0
+    or 0.0 by all three (#2398)."""
     from autoware_carla_scenario.examples import run
 
     cfg = _shipped([f"ego.{key}={value}"])
