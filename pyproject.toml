@@ -74,6 +74,16 @@ dev = [
     # `uv run ruff` must be the ruff CI runs, the pre-commit hook's: pinned to
     # its rev, which test_ruff_pin.py keeps in step.
     "ruff==0.7.4",
+    # ...and the `agent` group (scripts/scenario_agent.py) and its tests.
+    {include-group = "agent"},
+]
+# Installs the scenario-writing skills (skills/) into a coding agent -- Claude
+# Code or Codex -- and starts it: `uv run --group agent
+# scripts/scenario_agent.py claude "..."`. agent-skill-installer
+# (omry/agent-skill-installer) writes each skill and its discoverability block
+# in the agent's own layout; 0.x, so the range stops at the next minor.
+agent = [
+    "agent-skill-installer>=0.5.0,<0.6",
 ]
 
 [tool.ruff]
