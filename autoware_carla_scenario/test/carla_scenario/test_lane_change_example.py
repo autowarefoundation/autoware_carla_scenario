@@ -144,6 +144,12 @@ def _first_result(condition: BaseCondition, lanelet_id: int) -> Any:
 
 def _setup(direction: str, expect: str) -> tuple[list[Any], list[Any]]:
     """``LaneChangeScenario.setup()``'s pass and fail conditions, CARLA stubbed."""
+    scenario = _set_up(direction, expect)
+    return scenario._pass_conditions, scenario._fail_conditions
+
+
+def _set_up(direction: str, expect: str) -> Any:
+    """A ``LaneChangeScenario`` after ``setup()``, CARLA stubbed."""
     import typesafe_carla.carla as carla
 
     from autoware_carla_scenario import EgoConfig, SpawnTransform
@@ -163,7 +169,7 @@ def _setup(direction: str, expect: str) -> tuple[list[Any], list[Any]]:
     spawn = to_opendrive(to_carla_world(Lanelet2Pose(lanelet_id=SPAWN, s=5.0)))
     with unittest.mock.patch.object(scenario, "_setup_ego_spawn", return_value=spawn):
         scenario.setup()
-    return scenario._pass_conditions, scenario._fail_conditions
+    return scenario
 
 
 class TestLaneChangeTarget:
@@ -233,3 +239,17 @@ class TestLaneChangeConditions:
         assert [c.label for c in passes] == ["scenario_timeout"]
         assert [c.label for c in fails] == ["ego_target_lane_sticky"]
         assert _first_result(fails[0], SPAWN) is None
+
+    @pytest.mark.parametrize("expect", ["success", "fail"])
+    def test_its_own_timeout_keeps_the_default_off(
+        self, nishishinjuku: None, expect: str
+    ) -> None:
+        """``expect=fail`` registers its timeout as a pass condition, and that
+        bounds the run as much as ``expect=success``'s fail one: a default
+        fail timeout would fail the run before it could pass (#2382)."""
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = _set_up("right", expect)
+        fails = list(scenario._fail_conditions)
+        assert not _register_default_timeout(scenario, 1.0, "lane_change")
+        assert scenario._fail_conditions == fails
