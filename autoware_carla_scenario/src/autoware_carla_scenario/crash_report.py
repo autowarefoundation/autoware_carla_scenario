@@ -73,7 +73,6 @@ import json
 import logging
 import os
 import platform
-import re
 import shlex
 import shutil
 import socket
@@ -96,6 +95,27 @@ from sentry_sdk.integrations.modules import ModulesIntegration
 from sentry_sdk.transport import HttpTransport, Transport
 
 from .config_flags import FALSE_TEXT
+
+# The settings, their environment variables and parsers, the size cut and a
+# file's safe name are the checked crash_report_settings's (#2354), which
+# this module re-exports.
+from .crash_report_settings import _ENV_PATTERNS as _ENV_PATTERNS
+from .crash_report_settings import _SIZE_UNITS as _SIZE_UNITS
+from .crash_report_settings import CRASH_REPORT_DIR_ENV as CRASH_REPORT_DIR_ENV
+from .crash_report_settings import CRASH_REPORT_ENV as CRASH_REPORT_ENV
+from .crash_report_settings import DSN_ENV as DSN_ENV
+from .crash_report_settings import ITEMS as ITEMS
+from .crash_report_settings import ITEMS_ENV as ITEMS_ENV
+from .crash_report_settings import LOG_LINES_ENV as LOG_LINES_ENV
+from .crash_report_settings import MAX_FILE_SIZE_ENV as MAX_FILE_SIZE_ENV
+from .crash_report_settings import MAX_REPORTS_ENV as MAX_REPORTS_ENV
+from .crash_report_settings import SEND_ITEMS_ENV as SEND_ITEMS_ENV
+from .crash_report_settings import Settings as Settings
+from .crash_report_settings import _parse_count as _parse_count
+from .crash_report_settings import _parse_items as _parse_items
+from .crash_report_settings import _parse_size as _parse_size
+from .crash_report_settings import _safe_name as _safe_name
+from .crash_report_settings import _truncate as _truncate
 from .slurm.settings import snapshot_environment
 
 __all__ = [
@@ -120,14 +140,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: Set to ``0``, ``false``, ``no`` or ``off`` to turn crash reports off.
-CRASH_REPORT_ENV = "SCENARIO_CRASH_REPORT"
-#: Where reports go before a run's output directory is known.
-CRASH_REPORT_DIR_ENV = "SCENARIO_CRASH_REPORT_DIR"
-#: The project reports are also sent to (a Sentry DSN).  Nothing is sent
-#: without it: not the SDK's own ``SENTRY_DSN``, which a shell may set for
-#: another project.
-DSN_ENV = "SCENARIO_CRASH_REPORT_DSN"
 #: The directory, in a run's output directory, its reports go to.
 CRASH_REPORTS_DIRNAME = "crash_reports"
 #: Loggers whose records with an exception attached at ``WARNING`` or above
@@ -135,110 +147,12 @@ CRASH_REPORTS_DIRNAME = "crash_reports"
 #: batch) turns into a failed result.
 CAPTURED_LOGGERS: tuple[str, ...] = ("autoware_carla_scenario.scenario_queue",)
 
-#: What a report holds besides the exception, ``traceback.txt`` and
-#: ``context.json`` (always): the frames' local variables (``locals``),
-#: ``log.txt`` and the log breadcrumbs (``log``), ``config.yaml``
-#: (``config``), the environment variables in ``context.json`` and
-#: ``repro.sh`` (``environment``), the installed packages (``packages``) and
-#: ``repro.sh`` itself (``repro``).
-ITEMS: tuple[str, ...] = ("locals", "log", "config", "environment", "packages", "repro")
-#: What reports hold (:data:`ITEMS`): a comma-separated list, ``all``,
-#: ``none``, or ``all,-locals`` (all but those named with ``-``).
-ITEMS_ENV = "SCENARIO_CRASH_REPORT_ITEMS"
-#: What of a report is sent, with a DSN: the same form; only what reports
-#: hold can be sent.  What :data:`ITEMS_ENV` says when unset.
-SEND_ITEMS_ENV = "SCENARIO_CRASH_REPORT_SEND_ITEMS"
-#: The largest file of a report other than ``event.json`` (``1MiB``,
-#: ``512KB``, a number of bytes; ``0``: no limit): a longer one is cut,
-#: ``log.txt`` keeping its end.
-MAX_FILE_SIZE_ENV = "SCENARIO_CRASH_REPORT_MAX_FILE_SIZE"
-#: How many reports a process writes at most (``0``: no limit).
-MAX_REPORTS_ENV = "SCENARIO_CRASH_REPORT_MAX_REPORTS"
-#: How many log records ``log.txt`` keeps.
-LOG_LINES_ENV = "SCENARIO_CRASH_REPORT_LOG_LINES"
-
 #: The attribute marking an exception reported (:func:`capture`).
 _REPORTED = "_autoware_carla_scenario_crash_reported"
 #: Where reports go when nothing else says.
 _DEFAULT_REPORT_DIR = Path("outputs") / CRASH_REPORTS_DIRNAME
 #: Each item's file of a report.
 _ITEM_FILES = {"config.yaml": "config", "log.txt": "log", "repro.sh": "repro"}
-_SIZE_UNITS = {
-    "": 1,
-    "b": 1,
-    "k": 1000,
-    "kb": 1000,
-    "kib": 1024,
-    "m": 1000**2,
-    "mb": 1000**2,
-    "mib": 1024**2,
-    "g": 1000**3,
-    "gb": 1000**3,
-    "gib": 1024**3,
-}
-
-
-@dataclass(frozen=True)
-class Settings:
-    """What a crash report holds, what of it is sent, and how large it gets.
-
-    Attributes:
-        items: What reports hold (:data:`ITEMS`).
-        send_items: What of them is sent, with a DSN (within :attr:`items`).
-        max_file_size: The largest file of a report other than
-            ``event.json``, in bytes; ``None``: no limit.  1 MiB: ``log.txt``
-            at its default length fits, a config is a few kilobytes.
-        max_reports: How many reports a process writes at most; ``None``: no
-            limit.  20: a batch whose every case fails on every attempt does
-            not fill the disk, nor a Sentry project's quota.
-        log_lines: How many log records ``log.txt`` keeps.  5000: a few
-            minutes of a run's log, the start of the case included.
-    """
-
-    items: frozenset[str] = frozenset(ITEMS)
-    send_items: frozenset[str] = frozenset(ITEMS)
-    max_file_size: int | None = 1024**2
-    max_reports: int | None = 20
-    log_lines: int = 5000
-
-
-def _parse_items(name: str, text: str) -> frozenset[str]:
-    chosen: set[str] = set()
-    for word in (w.strip().lower() for w in text.split(",")):
-        if not word:
-            continue
-        if word == "all":
-            chosen.update(ITEMS)
-        elif word == "none":
-            chosen.clear()
-        elif word.startswith("-") and word[1:] in ITEMS:
-            chosen.discard(word[1:])
-        elif word in ITEMS:
-            chosen.add(word)
-        else:
-            raise ValueError(
-                f"{name}: unknown item {word!r} (one of {', '.join(ITEMS)}, "
-                "all, none, or -<item>)"
-            )
-    return frozenset(chosen)
-
-
-def _parse_size(name: str, text: str) -> int | None:
-    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([a-z]*)\s*", text.lower())
-    if match is None or match.group(2) not in _SIZE_UNITS:
-        raise ValueError(f"{name}: {text!r} is not a size (1MiB, 512KB, 1048576)")
-    size = int(float(match.group(1)) * _SIZE_UNITS[match.group(2)])
-    return size or None
-
-
-def _parse_count(name: str, text: str, *, zero_is_none: bool) -> int | None:
-    try:
-        count = int(text.strip())
-    except ValueError:
-        count = -1
-    if count < 0 or (count == 0 and not zero_is_none):
-        raise ValueError(f"{name}: {text!r} is not a whole number of at least 1")
-    return count or None
 
 
 def read_settings(environ: Mapping[str, str] | None = None) -> Settings:
@@ -279,39 +193,6 @@ def read_settings(environ: Mapping[str, str] | None = None) -> Settings:
     return dataclasses.replace(settings, send_items=send & settings.items)
 
 
-def _truncate(data: bytes, limit: int | None, *, keep_end: bool = False) -> bytes:
-    """*data*, cut to at most *limit* bytes with a line saying so."""
-    if limit is None or len(data) <= limit:
-        return data
-    note = f"[... {len(data) - limit} bytes cut (crash report size limit) ...]\n"
-    marker = note.encode()
-    if keep_end:
-        room = max(limit - len(marker), 0)
-        return marker + data[len(data) - room :]
-    room = max(limit - len(marker) - 1, 0)
-    return data[:room] + b"\n" + marker
-
-
-#: The environment variables ``context.json`` and ``repro.sh`` keep: those
-#: that change what a run does.  One whose name looks like a secret is left
-#: out (``slurm.settings.SENSITIVE_NAME_PATTERNS``).
-_ENV_PATTERNS = (
-    "CARLA*",
-    "SCENARIO*",
-    "SWEEP_*",
-    "HYDRA_*",
-    "TYPESAFE_CARLA*",
-    "AUTOWARE*",
-    "ROS_*",
-    "RMW_*",
-    "CYCLONEDDS*",
-    "SUMO_HOME",
-    "SLURM_*",
-    "CUDA_VISIBLE_DEVICES",
-    "DISPLAY",
-)
-
-
 def enabled() -> bool:
     """Whether crash reports are on (:data:`CRASH_REPORT_ENV`)."""
     return os.environ.get(CRASH_REPORT_ENV, "").strip().lower() not in FALSE_TEXT
@@ -338,10 +219,6 @@ def _kept_environment() -> dict[str, str]:
 
 def _timestamp() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-
-
-def _safe_name(text: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("._") or "file"
 
 
 @dataclass

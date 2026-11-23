@@ -38,6 +38,7 @@ from .models import RunProgress, SessionSummary
 from .request_values import _attribute as _attribute
 from .request_values import _is_json_type as _is_json_type
 from .request_values import _session_ref as _session_ref
+from .request_values import wants_page
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +108,10 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 def _wants_page(request: Request) -> bool:
     """Whether an error is answered with a page: a request that accepts HTML
     (a browser's navigation) and is not one of the API's, whose clients read
-    its JSON error (``{"detail": ...}``)."""
-    path = request.url.path
-    if path == "/api" or path.startswith("/api/"):
-        return False
-    return "text/html" in request.headers.get("accept", "").lower()
+    its JSON error (``{"detail": ...}``): the checked
+    :func:`.request_values.wants_page` (#2354), of the request's path and
+    ``Accept`` header."""
+    return wants_page(request.url.path, request.headers.get("accept", ""))
 
 
 @app.exception_handler(StarletteHTTPException)

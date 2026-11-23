@@ -145,3 +145,26 @@ def test_ui_app_re_exports_the_checked_request_values() -> None:
         assert getattr(app, name) is getattr(request_values, name), name
         assert getattr(app, name).__module__ == request_values.__name__
     assert app._parse_ref.__module__ == app.__name__
+
+
+def _old_wants_page(path: str, accept: str) -> bool:
+    # ui.app._wants_page() as it was, of the request's path and Accept header.
+    if path == "/api" or path.startswith("/api/"):
+        return False
+    return "text/html" in accept.lower()
+
+
+def test_wants_page_is_what_ui_app_answered_errors_with() -> None:
+    # #2354: the checked ui.request_values.wants_page(), which
+    # ui.app._wants_page() now reads off the request.
+    from autoware_carla_scenario.ui import request_values
+
+    rng = random.Random(2354)
+    paths = ["/", "/api", "/api/", "/api/sessions", "/apix", "/sessions/a", ""]
+    accepts = ["", "text/html", "TEXT/HTML,*/*", "application/json", "*/*"]
+    for _ in range(500):
+        path = rng.choice(paths) + rng.choice(["", "/x", "?q=1"])
+        accept = rng.choice(accepts) + rng.choice(["", ";q=0.9", ", text/html"])
+        assert request_values.wants_page(path, accept) == _old_wants_page(
+            path, accept
+        ), (path, accept)

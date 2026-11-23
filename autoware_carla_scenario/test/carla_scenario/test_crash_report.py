@@ -668,3 +668,37 @@ def test_reports_are_sent_with_the_crash_report_dsn(
         assert isinstance(upstream, HttpTransport)
     finally:
         crash_report.uninstall()
+
+
+def test_crash_report_re_exports_the_checked_settings() -> None:
+    # #2354: the settings, their parsers and the size cut are the checked
+    # crash_report_settings's; crash_report's names are the same objects, and
+    # no test patches them there.
+    from autoware_carla_scenario import crash_report_settings
+
+    for name in (
+        "CRASH_REPORT_ENV",
+        "CRASH_REPORT_DIR_ENV",
+        "DSN_ENV",
+        "ITEMS",
+        "ITEMS_ENV",
+        "SEND_ITEMS_ENV",
+        "MAX_FILE_SIZE_ENV",
+        "MAX_REPORTS_ENV",
+        "LOG_LINES_ENV",
+        "Settings",
+        "_ENV_PATTERNS",
+        "_SIZE_UNITS",
+        "_parse_items",
+        "_parse_size",
+        "_parse_count",
+        "_truncate",
+        "_safe_name",
+    ):
+        assert getattr(crash_report, name) is getattr(crash_report_settings, name), name
+    # Zero is no limit, as `or None` read it.
+    assert crash_report_settings._parse_size("N", "0") is None
+    assert crash_report_settings._parse_size("N", "0.0001k") is None
+    assert crash_report_settings._parse_size("N", "1k") == 1000
+    assert crash_report_settings._parse_count("N", "0", zero_is_none=True) is None
+    assert crash_report_settings._parse_count("N", "3", zero_is_none=True) == 3
