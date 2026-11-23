@@ -3878,7 +3878,8 @@ What Codon 0.19 needs that Python does not, beyond
   with the installed package's signatures, which `test_typecheck_model.py`
   compares: `codon/packaging/version.codon` declares `Version(version)`,
   whose `local` is a `str` or `None`, and `InvalidVersion`, a `ValueError`
-  built from nothing or one message. Nothing else of a `Version` (its
+  built from nothing or one message, by position only (`message=` is a
+  `TypeError` in CPython too). Nothing else of a `Version` (its
   comparisons, `release`, `public`, ...) or of the package (`parse()`,
   `packaging.specifiers`) is declared.
 - **eclipse-sumo is modelled** as far as `traffic.sumo.network` uses it to
@@ -4494,7 +4495,8 @@ What Codon 0.19 needs that Python does not, beyond
 - **`queue.Queue[T]`** is the `queue` shim's, with CPython's signatures
   (`Queue(maxsize=0)`, `put(item, block=True, timeout=None)`, `get(block=True,
   timeout=None)`, `put_nowait`, `get_nowait`, `empty`, `full`, `qsize`, and
-  the `Empty` and `Full` exceptions). Declare the queue's item type at class
+  the `Empty` and `Full` exceptions, built from nothing or one message by
+  position only, as CPython's take no keyword). Declare the queue's item type at class
   level (`_frame_queue: queue.Queue[carla.Image]`); `queue.Queue()` in
   `__init__` takes it from there.
 - **`threading.Thread`** is the `threading` shim's, with CPython 3.10's

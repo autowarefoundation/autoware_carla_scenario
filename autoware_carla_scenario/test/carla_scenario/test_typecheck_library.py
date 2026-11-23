@@ -3021,7 +3021,8 @@ def test_overridden_methods_protocols_and_type_checking_compile(
 
 
 # ---------------------------------------------------------------------------
-# The queue shim (the sensors' frame queues)
+# The queue shim (the sensors' frame queues) and the packaging model's
+# InvalidVersion (authoring.framework_pin), exceptions built by position (#2376)
 # ---------------------------------------------------------------------------
 
 
@@ -3030,6 +3031,8 @@ from __future__ import annotations
 
 import queue
 from typing import Optional
+
+from packaging.version import InvalidVersion, Version
 
 
 class Frames:
@@ -3071,6 +3074,19 @@ class Frames:
         if self._frames.empty() or self._frames.full():
             return 0
         return self._frames.qsize() + queue.Queue[int](0).qsize()
+
+    def overflow(self) -> None:
+        if self._frames.full():
+            raise queue.Full("frames")
+        raise queue.Empty()
+
+
+def checked_version(text: str) -> str:
+    if not text:
+        raise InvalidVersion()
+    if Version(text).local is not None:
+        raise InvalidVersion(text + " has a local label")
+    return text
 """
 
 
@@ -3094,6 +3110,13 @@ def test_the_queue_shim_takes_what_cpython_takes(
         ("self._frames.get(True, timeout)", "self._frames.get(True, timeout, 1)"),
         ("self._frames.qsize() + ", "self._frames.peek() + "),
         ("self._frames.get(timeout=1)", 'self._frames.get(timeout="1")'),
+        # CPython's exceptions take no keyword (#2376).
+        ('queue.Full("frames")', 'queue.Full(message="frames")'),
+        ("queue.Empty()", 'queue.Empty(message="")'),
+        (
+            'InvalidVersion(text + " has a local label")',
+            'InvalidVersion(message=text + " has a local label")',
+        ),
     ],
     ids=[
         "unknown-keyword",
@@ -3101,6 +3124,9 @@ def test_the_queue_shim_takes_what_cpython_takes(
         "get-arguments",
         "no-method",
         "timeout-type",
+        "full-keyword",
+        "empty-keyword",
+        "invalid-version-keyword",
     ],
 )
 def test_the_queue_shim_refuses_what_cpython_refuses(
