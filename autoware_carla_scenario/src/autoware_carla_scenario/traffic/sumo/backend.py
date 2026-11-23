@@ -222,11 +222,16 @@ from .physics_control import (
 from .signal_states import (
     DARK_SIGNAL_STATES,
     carla_light_state,
+    crossing_links,
+    first_lanes,
     green_together,
+    lane_edge,
     link_states,
     permissive_links,
     program_state,
     sumo_step,
+    unfollowed_links,
+    vehicle_links,
 )
 
 logger = logging.getLogger(__name__)
@@ -2297,7 +2302,7 @@ class SumoTrafficBackend(TrafficBackend):
                 # the route goes on from that edge.
                 links = tc.lane.getLinks(lane)
                 if links:
-                    after = links[0][0].rsplit("_", 1)[0]
+                    after = lane_edge(links[0][0])
                     if after != here:
                         start.append(after)
             if (
@@ -5221,15 +5226,17 @@ class SumoTrafficBackend(TrafficBackend):
         out: dict[str, tuple[list[tuple[str, float]], int, float]] = {}
         running: list[str] = []
         for tls, indices in sorted(switched.items()):
-            followed = set(indices)
-            followed.update(index for index, _f, _l in self._bicycle_rides.get(tls, []))
-            followed.update(index for index, _l in self._crossing_links.get(tls, []))
             try:
                 width = len(tc.trafficlight.getRedYellowGreenState(tls))
             except Exception as exc:  # noqa: BLE001
                 logger.debug("SUMO: reading %s's state: %s", tls, exc)
                 continue
-            left = [index for index in range(width) if index not in followed]
+            left = unfollowed_links(
+                width,
+                indices,
+                self._bicycle_rides.get(tls, []),
+                self._crossing_links.get(tls, []),
+            )
             if not left:
                 continue
             shown = ", ".join(str(index) for index in left)
@@ -5303,24 +5310,7 @@ class SumoTrafficBackend(TrafficBackend):
         tc = self._traci
         out: dict[str, list[tuple[int, list[int]]]] = {}
         for tls in tc.trafficlight.getIDList():
-            vehicles: list[tuple[int, str, str]] = []
-            walks: list[tuple[int, frozenset[str]]] = []
-            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls)):
-                for in_lane, out_lane, _via in controlled:
-                    to_edge = out_lane.rsplit("_", 1)[0]
-                    if to_edge in crossings:
-                        walks.append((index, crossings[to_edge]))
-                    else:
-                        vehicles.append((index, in_lane.rsplit("_", 1)[0], to_edge))
-            links = [
-                (
-                    index,
-                    sorted(
-                        {i for i, src, dst in vehicles if src in roads or dst in roads}
-                    ),
-                )
-                for index, roads in walks
-            ]
+            links = crossing_links(self._controlled_links(tls), crossings)
             if links:
                 out[tls] = links
         if out:
@@ -5353,17 +5343,12 @@ class SumoTrafficBackend(TrafficBackend):
         out: dict[str, list[tuple[int, str, list[int]]]] = {}
         switched = set(self._signals)
         for tls in tc.trafficlight.getIDList():
-            lanes: dict[int, tuple[str, str]] = {}
-            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls)):
-                for in_lane, out_lane, _via in controlled:
-                    lanes.setdefault(index, (in_lane, out_lane))
+            lanes = first_lanes(self._controlled_links(tls))
             kinds = {
                 index: (self._lane_kind(i), self._lane_kind(o))
                 for index, (i, o) in lanes.items()
             }
-            vehicles = [
-                index for index, kind in kinds.items() if kind == ("road", "road")
-            ]
+            vehicles = vehicle_links(kinds)
             rides: list[tuple[int, str, list[int]]] = []
             phases: Optional[list[str]] = None
             for index, kind in kinds.items():
@@ -5397,6 +5382,14 @@ class SumoTrafficBackend(TrafficBackend):
             )
         return out
 
+    def _controlled_links(self, tls: str) -> list[list[tuple[str, str, str]]]:
+        """*tls*'s controlled links as TraCI lists them, by link index: each
+        index's (incoming lane, outgoing lane, via lane) connections."""
+        return [
+            [(in_lane, out_lane, via) for in_lane, out_lane, via in controlled]
+            for controlled in self._traci.trafficlight.getControlledLinks(tls)
+        ]
+
     def _lane_kind(self, lane_id: str) -> str:
         """``road`` for a lane a car may use, ``bicycle`` for one only a
         bicycle (and pedestrians) may, ``other`` for the rest -- a footway, a
@@ -5421,8 +5414,8 @@ class SumoTrafficBackend(TrafficBackend):
         """The vehicle links into *out_lane*'s edge from the approach whose
         lane ends nearest *in_lane*'s: the traffic a bicycle coming off that
         sidewalk joins."""
-        to_edge = out_lane.rsplit("_", 1)[0]
-        into = [i for i in vehicles if lanes[i][1].rsplit("_", 1)[0] == to_edge]
+        to_edge = lane_edge(out_lane)
+        into = [i for i in vehicles if lane_edge(lanes[i][1]) == to_edge]
         if not into:
             return []
 
@@ -5432,8 +5425,8 @@ class SumoTrafficBackend(TrafficBackend):
 
         start = end(in_lane)
         nearest = min(into, key=lambda i: math.dist(start, end(lanes[i][0])))
-        from_edge = lanes[nearest][0].rsplit("_", 1)[0]
-        return [i for i in into if lanes[i][0].rsplit("_", 1)[0] == from_edge]
+        from_edge = lane_edge(lanes[nearest][0])
+        return [i for i in into if lane_edge(lanes[i][0]) == from_edge]
 
     def _program_states(self, tls: str) -> list[str]:
         """The state of every phase of SUMO's own programs of *tls*."""

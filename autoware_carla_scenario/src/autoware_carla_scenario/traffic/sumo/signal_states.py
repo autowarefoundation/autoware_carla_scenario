@@ -6,7 +6,9 @@ a pedestrian crossing's -- follow the vehicle links they go with or cross; any
 other link of the junction runs on SUMO's own program (:func:`program_state`).
 :mod:`.backend` reads the states off TraCI and writes them back; what it
 writes is decided here, from strings and indices alone, as are SUMO's step
-per CARLA tick and the links a program lets go together.
+per CARLA tick and the links a program lets go together, and which links a
+crossing, a bicycle ride or SUMO's own program is matched to, from the
+junction's controlled links as TraCI lists them.
 
 Pure functions of plain values, so they are tested without either simulator.
 """
@@ -23,12 +25,17 @@ __all__ = [
     "SUMO_TO_CARLA_SIGNAL",
     "carla_light_state",
     "clear_state",
+    "crossing_links",
+    "first_lanes",
     "green_together",
+    "lane_edge",
     "link_states",
     "permissive_links",
     "program_state",
     "ride_state",
     "sumo_step",
+    "unfollowed_links",
+    "vehicle_links",
 ]
 
 #: CARLA's light state names -> the SUMO link state a CARLA light sets.
@@ -268,3 +275,84 @@ def link_states(
     for index, foes in crossings:
         state[index] = clear_state([state[foe] for foe in foes])
     return "".join(state)
+
+
+def lane_edge(lane_id: str) -> str:
+    """The edge of SUMO lane *lane_id*: its id up to the last ``_`` (SUMO
+    names a lane ``<edge>_<index>``); the whole id if it has none."""
+    return lane_id.rsplit("_", 1)[0]
+
+
+def crossing_links(
+    controlled: list[list[tuple[str, str, str]]],
+    crossings: dict[str, frozenset[str]],
+) -> list[tuple[int, list[int]]]:
+    """Each signalled pedestrian crossing's link of a junction, and the
+    vehicle links it waits for.
+
+    Args:
+        controlled: The junction's controlled links, by link index: each
+            index's (incoming lane, outgoing lane, via lane) connections
+            (``trafficlight.getControlledLinks()``).
+        crossings: Each crossing edge, and the roads it crosses
+            (:func:`.network.crossing_edges`).
+
+    Returns:
+        Each link into a crossing, in the order found, with the sorted
+        indices of the vehicle links into or out of a road it crosses.
+    """
+    vehicles: list[tuple[int, str, str]] = []
+    walks: list[tuple[int, frozenset[str]]] = []
+    for index, links in enumerate(controlled):
+        for in_lane, out_lane, _via in links:
+            to_edge = lane_edge(out_lane)
+            if to_edge in crossings:
+                walks.append((index, crossings[to_edge]))
+            else:
+                vehicles.append((index, lane_edge(in_lane), to_edge))
+    out: list[tuple[int, list[int]]] = []
+    for index, roads in walks:
+        waits: set[int] = set()
+        for i, src, dst in vehicles:
+            if src in roads or dst in roads:
+                waits.add(i)
+        out.append((index, sorted(waits)))
+    return out
+
+
+def unfollowed_links(
+    width: int,
+    switched: set[int],
+    rides: list[tuple[int, str, list[int]]],
+    crossings: list[tuple[int, list[int]]],
+) -> list[int]:
+    """The links of a junction of *width* links that neither a CARLA light
+    switches (*switched*) nor a bicycle ride's (*rides*) or a crossing's
+    (*crossings*) state follows: the ones left on SUMO's own program."""
+    followed = set(switched)
+    for index, _follows, _links in rides:
+        followed.add(index)
+    for index, _foes in crossings:
+        followed.add(index)
+    return [index for index in range(width) if index not in followed]
+
+
+def first_lanes(
+    controlled: list[list[tuple[str, str, str]]],
+) -> dict[int, tuple[str, str]]:
+    """The (incoming, outgoing) lane of the first connection of each link
+    index of *controlled* (``trafficlight.getControlledLinks()``) that has
+    one, in index order."""
+    lanes: dict[int, tuple[str, str]] = {}
+    for index, links in enumerate(controlled):
+        for in_lane, out_lane, _via in links:
+            if index not in lanes:
+                lanes[index] = (in_lane, out_lane)
+    return lanes
+
+
+def vehicle_links(kinds: dict[int, tuple[str, str]]) -> list[int]:
+    """The link indices of *kinds* (each link's incoming and outgoing lane
+    kind: ``road``, ``bicycle`` or ``other``) that go from road to road, in
+    the order of *kinds*."""
+    return [index for index, kind in kinds.items() if kind == ("road", "road")]
