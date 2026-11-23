@@ -76,6 +76,7 @@ from .unrecorded import _NAMED as _NAMED
 from .unrecorded import _RESULT_SUFFIX as _RESULT_SUFFIX
 from .unrecorded import BATCH_RESULTS as BATCH_RESULTS
 from .unrecorded import _batch_dirs as _batch_dirs
+from .unrecorded import _batch_line
 from .unrecorded import _errored_jobs as _errored_jobs
 from .unrecorded import _has_gate_record as _has_gate_record
 from .unrecorded import _has_result as _has_result
@@ -269,13 +270,7 @@ def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
         names, total = found
         if not names:
             continue
-        shown = ", ".join(names[:_NAMED])
-        more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
-        lines.append(
-            f"{directory}: {len(names)} of {total} case(s) raised or have no "
-            f"outcome, and left no gate record ({shown}{more}); the gate would "
-            "be judged over the runs that survived"
-        )
+        lines.append(_batch_line(directory, names, total))
     lines.extend(_errored_jobs(path))
     unstarted, unreadable_plans = _unstarted_jobs(path)
     lines.extend(unstarted)

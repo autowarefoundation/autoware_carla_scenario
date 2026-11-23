@@ -1,17 +1,22 @@
-"""The whole numbers the editor's forms post: a list field's ids and a record list's row count.
+"""The numbers the editor's forms post: a list field's ids, a record list's row count, and a number field.
 
 Kept apart from :mod:`.forms` (which reads :class:`FieldSpec` and values of
 any type through authoring.registry) so the library check compiles it
-(#2135); :mod:`.forms` re-exports what it uses.
+(#2135); :mod:`.forms` re-exports what it uses. The service's number fields
+(``_as_float``, ``as_int``) read their text and messages through
+:func:`float_field` and :func:`int_field` (#2386).
 """
 
 from __future__ import annotations
 
+import math
 import re
 
 __all__ = [
     "LIST_SEPARATORS",
     "MAX_RECORDS",
+    "float_field",
+    "int_field",
     "parse_int_text",
     "parse_list_int",
     "row_count",
@@ -57,3 +62,42 @@ def row_count(text: str) -> int:
     if not 0 <= count <= MAX_RECORDS:
         raise ValueError(f"{count} rows")
     return count
+
+
+def float_field(text: str, shown: str, label: str, fallback: float) -> float:
+    """Return a number field's stripped *text* as a float; *fallback* when empty.
+
+    *shown* is how the message quotes what was posted (its ``repr``).
+
+    Raises:
+        ValueError: If *text* is not a number, or is not finite, with the
+            user-facing message.
+    """
+    if not text:
+        return fallback
+    try:
+        number = float(text)
+    except ValueError:
+        raise ValueError(f"{label} must be a number, got {shown}.") from None
+    # "nan" and "inf" parse, but no field of the editor means them: a NaN
+    # timeout never fires, a NaN offset places nothing.
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be a finite number, got {shown}.")
+    return number
+
+
+def int_field(text: str, shown: str, label: str, fallback: int) -> int:
+    """Return a whole-number field's stripped *text* as an int; *fallback* when empty.
+
+    *shown* is how the message quotes what was posted (its ``repr``).
+
+    Raises:
+        ValueError: If *text* is not a whole number, with the user-facing
+            message.
+    """
+    if not text:
+        return fallback
+    try:
+        return int(text)
+    except ValueError:
+        raise ValueError(f"{label} must be a whole number, got {shown}.") from None

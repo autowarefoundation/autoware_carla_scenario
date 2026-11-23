@@ -43,6 +43,7 @@ from .registry import odd_builder, odd_names, resolve_odd
 # metres per bucket printed, are the checked odd.route_text's (#2135).
 from .route_text import _format_buckets as _format_buckets
 from .route_text import _split_items
+from .route_text import format_route_lines, own_package
 
 __all__ = ["main"]
 
@@ -118,10 +119,9 @@ def _is_library(tb: TracebackType, library: tuple[str, ...]) -> bool:
 
 def _own_package(spec: Optional[str]) -> Optional[str]:
     """The top-level package of the module a ``package.module:function`` spec names."""
-    if not isinstance(spec, str) or ":" not in spec:
+    if not isinstance(spec, str):
         return None
-    top = spec.split(":", 1)[0].split(".", 1)[0]
-    return top if top and top not in ("openodd", "autoware_carla_scenario") else None
+    return own_package(spec)
 
 
 def _user_location(
@@ -274,26 +274,21 @@ def _scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
 
 
 def _format_route(coverage: Any) -> list[str]:
-    ids = [str(i) for i in coverage.lanelet_ids]
-    if len(ids) > 12:
-        ids = [*ids[:6], "...", *ids[-5:]]
-    lines = [
-        f"{coverage.name}: lanelets {' -> '.join(ids)} ({coverage.length_m:.1f} m)",
-        f"  inside {coverage.inside_m:.1f} m, undecided {coverage.undecided_m:.1f} m, "
-        f"outside {coverage.outside_m:.1f} m",
-    ]
-    for lanelet in coverage.outside():
-        lines.append(
-            f"  OUTSIDE lanelet {lanelet.lanelet_id} ({lanelet.length_m:.1f} m): "
-            f"modules {', '.join(lanelet.failing_modules) or '-'}"
-        )
-    undecided = coverage.undecided()
-    if undecided:
-        lines.append(
-            "  inside only by assumption: lanelets "
-            + ", ".join(str(ll.lanelet_id) for ll in undecided)
-        )
-    return lines
+    # openodd's coverage, read into the plain values the checked
+    # odd.route_text formats (#2386).
+    return format_route_lines(
+        coverage.name,
+        [str(i) for i in coverage.lanelet_ids],
+        coverage.length_m,
+        coverage.inside_m,
+        coverage.undecided_m,
+        coverage.outside_m,
+        [
+            (f"{ll.lanelet_id}", ll.length_m, list(ll.failing_modules))
+            for ll in coverage.outside()
+        ],
+        [str(ll.lanelet_id) for ll in coverage.undecided()],
+    )
 
 
 def _route(spec: str, items: Sequence[str], as_json: bool) -> int:

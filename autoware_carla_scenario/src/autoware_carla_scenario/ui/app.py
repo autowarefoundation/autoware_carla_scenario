@@ -30,7 +30,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
 from . import cases, recordings, results, runner, scanner, slurm_launch
-from .case_paths import INDEX_DIGITS, is_index, own_file, session_order
+from .case_paths import (
+    INDEX_DIGITS,
+    batch_session_url,
+    is_index,
+    own_file,
+    session_order,
+)
+from .comparison import batch_scenarios
 from .models import RunProgress, SessionSummary
 
 # Whether a body is sent as JSON, a session's reference and the ODD attribute a
@@ -854,7 +861,7 @@ def _scenarios(summary: SessionSummary) -> set[str]:
     file's stem) does not give, so they are read from its overrides
     (:func:`results.session_scenarios`)."""
     if summary.session_type == "batch":
-        return {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
+        return batch_scenarios(summary.scenario_name)
     return results.session_scenarios(
         _base_path(), summary.session_type, summary.date, summary.time
     )
@@ -1107,12 +1114,7 @@ def _session_of(batch_dir: str | None) -> str | None:
     """``/session/batch/<date>/<time>`` of a batch directory under the base."""
     if not batch_dir:
         return None
-    try:
-        rel = Path(batch_dir).resolve().relative_to(_base_path().resolve() / "outputs")
-    except ValueError:
-        return None
-    parts = rel.parts
-    return f"/session/batch/{parts[0]}/{parts[1]}" if len(parts) == 2 else None
+    return batch_session_url(batch_dir, _base_path())
 
 
 @app.get("/api/slurm/submission")

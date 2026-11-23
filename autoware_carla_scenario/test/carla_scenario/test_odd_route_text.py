@@ -173,3 +173,104 @@ def test_odd_cli_re_exports_the_checked_format_buckets() -> None:
 
     assert odd_cli._format_buckets is route_text._format_buckets
     assert odd_cli._split_items is route_text._split_items
+
+
+def _old_format_route(coverage: Any) -> list[str]:
+    ids = [str(i) for i in coverage.lanelet_ids]
+    if len(ids) > 12:
+        ids = [*ids[:6], "...", *ids[-5:]]
+    lines = [
+        f"{coverage.name}: lanelets {' -> '.join(ids)} ({coverage.length_m:.1f} m)",
+        f"  inside {coverage.inside_m:.1f} m, undecided {coverage.undecided_m:.1f} m, "
+        f"outside {coverage.outside_m:.1f} m",
+    ]
+    for lanelet in coverage.outside():
+        lines.append(
+            f"  OUTSIDE lanelet {lanelet.lanelet_id} ({lanelet.length_m:.1f} m): "
+            f"modules {', '.join(lanelet.failing_modules) or '-'}"
+        )
+    undecided = coverage.undecided()
+    if undecided:
+        lines.append(
+            "  inside only by assumption: lanelets "
+            + ", ".join(str(ll.lanelet_id) for ll in undecided)
+        )
+    return lines
+
+
+def _old_own_package(spec: Any) -> Any:
+    if not isinstance(spec, str) or ":" not in spec:
+        return None
+    top = spec.split(":", 1)[0].split(".", 1)[0]
+    return top if top and top not in ("openodd", "autoware_carla_scenario") else None
+
+
+class _Lanelet:
+    def __init__(self, lanelet_id: Any, length_m: Any, failing_modules: Any) -> None:
+        self.lanelet_id = lanelet_id
+        self.length_m = length_m
+        self.failing_modules = failing_modules
+
+
+class _Coverage:
+    """What _format_route() reads of openodd's route coverage."""
+
+    def __init__(self, rng: random.Random) -> None:
+        def metres() -> Any:
+            return rng.choice(
+                [0.0, -0.0, 0.05, 0.15, 12.345, 1e20, math.inf, math.nan, 3]
+                + [rng.uniform(-1e4, 1e4)]
+            )
+
+        def an_id() -> Any:
+            return rng.choice([rng.randrange(0, 100000), -1, 0, "x", "ü", 10**30])
+
+        self.name = rng.choice(["route", "", "ü", "a: b", "r#1"])
+        self.lanelet_ids = [
+            an_id() for _ in range(rng.choice([0, 1, 5, 11, 12, 13, 30]))
+        ]
+        self.length_m = metres()
+        self.inside_m = metres()
+        self.undecided_m = metres()
+        self.outside_m = metres()
+        modules = ["planning", "", "ü", "a, b"]
+        self._outside = [
+            _Lanelet(
+                an_id(),
+                metres(),
+                [rng.choice(modules) for _ in range(rng.randrange(0, 4))],
+            )
+            for _ in range(rng.randrange(0, 4))
+        ]
+        self._undecided = [
+            _Lanelet(an_id(), metres(), []) for _ in range(rng.randrange(0, 15))
+        ]
+
+    def outside(self) -> list[_Lanelet]:
+        return self._outside
+
+    def undecided(self) -> list[_Lanelet]:
+        return self._undecided
+
+
+def test_format_route_is_as_before() -> None:
+    # odd.cli's _format_route() reads openodd's coverage into the plain
+    # values the checked odd.route_text.format_route_lines() formats (#2386).
+    rng = random.Random(2386)
+    for _ in range(1000):
+        coverage = _Coverage(rng)
+        assert _outcome(odd_cli._format_route, coverage) == _outcome(
+            _old_format_route, coverage
+        ), vars(coverage)
+
+
+def test_own_package_is_as_before() -> None:
+    rng = random.Random(2386)
+    pieces = ["openodd", "autoware_carla_scenario", "pkg", "", ".", ":", "a.b", "ü"]
+    specs: List[Any] = [None, 1, b"a:b", "", ":", "a:", ":a", "openodd.x:f"]
+    for _ in range(1000):
+        specs.append("".join(rng.choice(pieces) for _ in range(rng.randrange(0, 5))))
+    for spec in specs:
+        assert _outcome(odd_cli._own_package, spec) == _outcome(
+            _old_own_package, spec
+        ), spec

@@ -24,6 +24,7 @@ __all__ = [
     "ComparedCase",
     "Comparison",
     "MatchedCase",
+    "batch_scenarios",
     "compare",
     "default_axes",
     "outcome_of",
@@ -43,6 +44,11 @@ HYDRA_PREFIXES = ("hydra.", "hydra/")
 def scenario_of(label: str) -> str:
     """A case's label without its case number (``oneplanner/cut_in``)."""
     return label.split("#", 1)[0]
+
+
+def batch_scenarios(scenario_name: str) -> set[str]:
+    """The scenarios a batch's summary names (``a#0, b#1``), without case numbers."""
+    return {scenario_of(name.strip()) for name in scenario_name.split(",")}
 
 
 def outcome_of(errored: bool, passed: Optional[bool]) -> str:
