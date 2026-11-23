@@ -33,7 +33,9 @@ on:
       # Fills in typecheck.md's library-check counts and lists (#789).
       - "autoware_carla_scenario/mkdocs_hooks/**"
       - "autoware_carla_scenario/overrides/**"
-      # mkdocstrings renders the API reference from the sources.
+      # The typecheck_library.py hook fills typecheck.md from the sources:
+      # typecheck/library.py's entries, each module's line count and its
+      # docstring's first paragraph (typecheck/library_docs.py).
       - "autoware_carla_scenario/src/**"
       - ".github/actions/build-docs/**"
       - ".github/scripts/publish-docs.sh"

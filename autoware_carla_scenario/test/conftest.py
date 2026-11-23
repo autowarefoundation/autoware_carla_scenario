@@ -43,8 +43,6 @@ os.environ["SCENARIO_CRASH_REPORT"] = "0"
 
 #: The repository root, wherever pytest was started from.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-#: The shared fixture maps (the Nishishinjuku ``.osm`` and ``.xodr``).
-DATA_DIR = REPO_ROOT / "data"
 
 
 #: Runs only the K-th of N shards of the selected tests, given as ``K/N``

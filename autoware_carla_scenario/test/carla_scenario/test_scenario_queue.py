@@ -1231,6 +1231,20 @@ class TestScenarioQueueIntegration:
         for result in carla_queue._results:
             assert isinstance(result, ScenarioResult)
 
+    def test_result_fixtures_hold_each_scenarios_own_result(
+        self,
+        immediate_scenario_result: ScenarioResult,
+        another_immediate_result: ScenarioResult,
+    ) -> None:
+        """The fixtures conftest.py makes with CarlaScenarioFixture.as_fixture()
+        each hand their own scenario's result from the one session run: both
+        scenarios end on their first is_done(), so both passed."""
+        assert isinstance(immediate_scenario_result, ScenarioResult)
+        assert isinstance(another_immediate_result, ScenarioResult)
+        assert immediate_scenario_result is not another_immediate_result
+        assert immediate_scenario_result.passed, immediate_scenario_result.message
+        assert another_immediate_result.passed, another_immediate_result.message
+
 
 # ---------------------------------------------------------------------------
 # Retries and the files a failed attempt left (issue #1028)

@@ -52,7 +52,6 @@ from autoware_carla_scenario.coordinate.transform import (
 # easting/northing around Tokyo are ~81 km / ~33 km).
 _MAP_EXTENT_M = 5_000.0
 
-DATA_DIR = Path(__file__).parent / "data"
 _CONVERTER_TEST_DATA = Path(__file__).resolve().parents[3] / "data"
 XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
 OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
