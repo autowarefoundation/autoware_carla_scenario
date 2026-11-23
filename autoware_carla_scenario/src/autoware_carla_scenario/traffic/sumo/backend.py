@@ -161,6 +161,9 @@ from .geometry import (
     box_centre_to_origin,
     carla_to_sumo,
     carla_xy_to_sumo,
+    crossing_back_angle,
+    nearest_by_distance,
+    nearest_cut,
     origin_to_box_centre,
     sumo_to_carla,
     sumo_xy_to_carla,
@@ -173,6 +176,7 @@ from .geometry import (
     _safe_weights_prefix as _safe_weights_prefix,
     _sight_cap as _sight_cap,
     _sumo_velocity as _sumo_velocity,
+    _wrap,
     world_opendrive as world_opendrive,
 )
 from .network import (
@@ -211,6 +215,7 @@ from .options import (
     _write_scenario_types as _write_scenario_types,
     _write_type_distribution as _write_type_distribution,
     run_output_dir as run_output_dir,
+    sumo_class_of,
 )
 from .physics_control import (
     longitudinal,
@@ -414,9 +419,8 @@ def _sumo_class(actor: Any) -> tuple[str, str]:
     """The SUMO vehicle class and type the scenario's vehicle *actor* joins
     SUMO as: an emergency vehicle's whatever its body, else by its
     blueprint's ``base_type`` (:data:`_SUMO_CLASSES`)."""
-    if is_emergency(actor):
-        return _EMERGENCY
-    return _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
+    emergency = is_emergency(actor)
+    return sumo_class_of(_base_type(actor), emergency)
 
 
 def _parked(actor: Any) -> bool:
@@ -433,7 +437,7 @@ def _runs_along(shape: Any, offset: float, heading: float) -> bool:
     rotation = rotationAtShapeOffset(shape, min(offset, polyLength(shape)))
     if rotation is None:
         return False
-    turn = (math.degrees(rotation) - heading + 180.0) % 360.0 - 180.0
+    turn = _wrap(math.degrees(rotation) - heading)
     return abs(turn) <= _ROUTE_HEADING_DEG
 
 
@@ -3387,11 +3391,11 @@ class SumoTrafficBackend(TrafficBackend):
                 continue
             ahead = positionAtShapeOffset(shape, offset + 0.1)
             behind = positionAtShapeOffset(shape, max(offset - 0.1, 0.0))
-            dx, dy = ahead[0] - behind[0], ahead[1] - behind[1]
-            if dx == 0.0 and dy == 0.0:
-                continue
             # SUMO's angle: clockwise from north; backwards along the crossing.
-            return (90.0 - math.degrees(math.atan2(-dy, -dx))) % 360.0
+            angle = crossing_back_angle(ahead[0] - behind[0], ahead[1] - behind[1])
+            if angle is None:
+                continue
+            return angle
         return pose.heading_deg
 
     def _walker_pose(self, actor: Any, yaw_deg: Optional[float] = None) -> Pose2D:
@@ -4062,24 +4066,13 @@ class SumoTrafficBackend(TrafficBackend):
         none, and so does a radius of ``0`` (or below), as nothing is that
         close -- the config refuses both, but a limit is a limit.
         """
-        if limit is not None and limit <= 0:
-            return []
-        if radius is not None and radius <= 0.0:
-            return []
-        if ego is None:
-            # Nothing to measure from: the first ones SUMO lists, up to the
-            # limit (the radius cannot be measured yet).
-            return ids if limit is None else ids[:limit]
-        if not ids or (radius is None and limit is None):
-            return ids
+        cut = nearest_cut(ids, ego is not None, radius, limit)
+        if cut is not None:
+            return cut
+        assert ego is not None
         tc = self._traci
         dist = {i: math.dist((ego.x, ego.y), tc.vehicle.getPosition(i)) for i in ids}
-        ids = sorted(ids, key=dist.__getitem__)
-        if radius is not None:
-            ids = [i for i in ids if dist[i] <= radius]
-        if limit is not None:
-            ids = ids[:limit]
-        return ids
+        return nearest_by_distance(ids, dist, radius, limit)
 
     def _vclass(self, sumo_id: str) -> str:
         """The vehicle class of *sumo_id*, read once; ``passenger`` if SUMO

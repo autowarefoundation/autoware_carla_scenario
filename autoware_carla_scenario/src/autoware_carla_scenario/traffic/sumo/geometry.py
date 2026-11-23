@@ -27,7 +27,11 @@ speed in what it can see (:func:`_sight_cap`), a velocity in SUMO's frame
 (:func:`world_opendrive`), :mod:`.backend`'s, and how the mesoscopic model
 cuts a road (:func:`segment_count`), the height along a lane
 (:func:`_height_at`) and the angle between two headings
-(:func:`_angle_between`), :mod:`.mesosim`'s.  Both re-export them.
+(:func:`_angle_between`), :mod:`.mesosim`'s.  Both re-export them.  So
+do the backend's choice of the vehicles nearest the ego
+(:func:`nearest_cut`, :func:`nearest_by_distance`) and the angle a person on
+a pedestrian crossing faces back along it (:func:`crossing_back_angle`),
+#2386.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 from ...coordinate.map_manager import run_carla_map
 from ...kinematics.angle import normalize_angle_deg
@@ -47,6 +51,9 @@ __all__ = [
     "box_centre_to_origin",
     "carla_to_sumo",
     "carla_xy_to_sumo",
+    "crossing_back_angle",
+    "nearest_by_distance",
+    "nearest_cut",
     "origin_to_box_centre",
     "segment_count",
     "sumo_to_carla",
@@ -234,3 +241,52 @@ def _height_at(
 def _angle_between(a: float, b: float) -> float:
     """How far apart two headings are, degrees, 0 to 180."""
     return abs(normalize_angle_deg(a - b))
+
+
+def nearest_cut(
+    ids: list[str], has_ego: bool, radius: Optional[float], limit: Optional[int]
+) -> Optional[list[str]]:
+    """Those of *ids* within *radius* of the ego, at most *limit* of them,
+    when that needs no distance measured (an ego is had when *has_ego*);
+    ``None`` when it does (:func:`nearest_by_distance`).
+
+    ``None`` is no radius or no limit; a limit of ``0`` (or below) keeps
+    none, and so does a radius of ``0`` (or below), as nothing is that
+    close -- the config refuses both, but a limit is a limit.
+    """
+    if limit is not None and limit <= 0:
+        return []
+    if radius is not None and radius <= 0.0:
+        return []
+    if not has_ego:
+        # Nothing to measure from: the first ones SUMO lists, up to the
+        # limit (the radius cannot be measured yet).
+        return ids if limit is None else ids[:limit]
+    if not ids or (radius is None and limit is None):
+        return ids
+    return None
+
+
+def nearest_by_distance(
+    ids: list[str],
+    distance: dict[str, float],
+    radius: Optional[float],
+    limit: Optional[int],
+) -> list[str]:
+    """Those of *ids* within *radius* by their *distance* from the ego, at
+    most *limit* of them, nearest first (``None``: no radius, no limit)."""
+    ids = sorted(ids, key=lambda i: distance[i])
+    if radius is not None:
+        ids = [i for i in ids if distance[i] <= radius]
+    if limit is not None:
+        ids = ids[:limit]
+    return ids
+
+
+def crossing_back_angle(dx: float, dy: float) -> Optional[float]:
+    """SUMO's angle (degrees clockwise from north, in [0, 360)) backwards
+    along a pedestrian crossing running *dx*, *dy*; ``None`` when it runs
+    nowhere (both zero)."""
+    if dx == 0.0 and dy == 0.0:
+        return None
+    return (90.0 - math.degrees(math.atan2(-dy, -dx))) % 360.0

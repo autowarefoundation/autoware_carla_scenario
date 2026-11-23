@@ -301,6 +301,68 @@ def test_a_slurm_case_is_run_again_without_the_launcher() -> None:
     assert repro_overrides(case) == ["scenario=cut_in", "seed=4", "server.port=2000"]
 
 
+def _old_repro_overrides(case: dict[str, Any]) -> list[str]:
+    """slurm.worker.repro_overrides() before #2386, verbatim."""
+    return [
+        f"scenario={case['scenario']}",
+        *(
+            str(o)
+            for o in case["overrides"]
+            if not str(o).lstrip("+~").startswith("launcher")
+        ),
+    ]
+
+
+_REPRO_OVERRIDES = (
+    "seed=4",
+    "launcher=slurm",
+    "launcher.partition=gpu",
+    "+launcher.extra=1",
+    "++launcher.x=2",
+    "~launcher",
+    "~launcher.partition",
+    "+~launcher=odd",
+    "launchers=3",
+    "launcher",
+    "my_launcher=1",
+    " launcher=1",
+    "hydra/launcher=basic",
+    "scenario=other",
+    "server.port=2000",
+    "",
+    "+",
+    "~",
+    "x='a b'",
+)
+
+
+def test_the_repro_overrides_are_the_same() -> None:
+    import random
+
+    from autoware_carla_scenario.crash_report_settings import (
+        repro_overrides as settings_repro_overrides,
+    )
+    from autoware_carla_scenario.slurm.worker import repro_overrides
+
+    rng = random.Random(2386)
+    for _ in range(2000):
+        overrides: list[Any] = [
+            rng.choice(_REPRO_OVERRIDES) for _ in range(rng.randint(0, 6))
+        ]
+        if rng.random() < 0.2:
+            overrides.append(rng.choice([7, 2.5, None]))
+        scenario: Any = rng.choice(["cut_in", "", "a b", 3, "cut_in/*"])
+        case = {"scenario": scenario, "overrides": overrides}
+        want = _old_repro_overrides(case)
+        assert repro_overrides(case) == want
+        if all(isinstance(o, str) for o in overrides) and isinstance(scenario, str):
+            assert settings_repro_overrides(scenario, overrides) == want
+    assert settings_repro_overrides("s", ["launcher=x", "seed=1"]) == [
+        "scenario=s",
+        "seed=1",
+    ]
+
+
 def _slurm_batch(tmp_path: Path) -> Any:
     """A SLURM batch of one case (``cut_in``, seed 4) on disk, never run."""
     from autoware_carla_scenario.slurm.manifest import (

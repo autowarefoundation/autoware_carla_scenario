@@ -63,9 +63,7 @@ from typing import (
     Dict,
     FrozenSet,
     List,
-    Literal,
     Mapping,
-    NamedTuple,
     Optional,
     Sequence,
     Tuple,
@@ -78,7 +76,14 @@ from ..entity_role import find_actor_in_world
 from ..sensor.base import put_dropping_oldest
 from .config import DeviceSpec, HilsConfig, MessageSpec, SensorSpec, StepSpec
 from .link import Event, RunnerLink
-from .protocol import LINK_DIRECTIONS
+
+# Re-exported: the cuts' sides and what they stop together are the checked
+# .cuts' (#2386).
+from .cuts import _DIRECTION_SIDES as _DIRECTION_SIDES
+from .cuts import _SIDES as _SIDES
+from .cuts import Side as Side
+from .cuts import _Cut as _Cut
+from .cuts import cut_refusal, messages_refusal, stopped_messages
 from .measurements import (
     LidarRevolution,
     camera_frame,
@@ -140,20 +145,6 @@ _LOG_EVERY = 100
 #: followed exactly, however many messages come.
 _HISTORY = 256
 
-Side = Literal["send", "recv"]
-
-#: A channel's two sides, which cuts stop separately.
-_SIDES: Tuple[Side, ...] = ("send", "recv")
-
-#: The device channel's sides a ``disconnect``'s direction stops: the bridge
-#: sends the ECU its inputs and receives its output.
-_DIRECTION_SIDES: Dict[str, FrozenSet[Side]] = {
-    "to_ecu": frozenset({"send"}),
-    "from_ecu": frozenset({"recv"}),
-    "both": frozenset(_SIDES),
-}
-assert set(_DIRECTION_SIDES) == set(LINK_DIRECTIONS)
-
 OpenChannel = Callable[..., "hilspy.Channel"]
 
 
@@ -203,17 +194,6 @@ def _matches(fields: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
         elif got != want:
             return False
     return True
-
-
-class _Cut(NamedTuple):
-    """Data a scenario stops (:meth:`HilsBridge.disconnect`)."""
-
-    #: The device, or ``None`` for every device.
-    device: Optional[str]
-    #: The names of the messages, or ``None`` for everything.
-    messages: Optional[FrozenSet[str]]
-    #: The channel's sides it stops.
-    sides: FrozenSet[Side]
 
 
 class _Failures:
@@ -1124,23 +1104,17 @@ class HilsBridge:
         """
         if not self._active:
             raise ValueError("no scenario runs")
-        if direction not in LINK_DIRECTIONS:
-            raise ValueError(
-                f"direction must be one of {', '.join(LINK_DIRECTIONS)}, "
-                f"got {direction!r}"
-            )
-        if device is not None and device not in self._channels:
-            raise ValueError(
-                f"no device {device!r}; the devices are "
-                f"{', '.join(sorted(self._channels)) or 'none'}"
-            )
+        refusal = cut_refusal(direction, device, list(self._channels))
+        if refusal is not None:
+            raise ValueError(refusal)
         if messages is not None and (
             isinstance(messages, str) or not isinstance(messages, (list, tuple))
         ):
             raise ValueError("messages must be a list of names")
         names = None if messages is None else frozenset(str(m) for m in messages)
-        if names is not None and not names:
-            raise ValueError("messages names none; null stops everything")
+        refusal = messages_refusal(names)
+        if refusal is not None:
+            raise ValueError(refusal)
         saved = dict(self._cuts)
         self._cuts[cut_id] = _Cut(device, names, _DIRECTION_SIDES[direction])
         try:
@@ -1166,19 +1140,11 @@ class HilsBridge:
     def _apply_cuts(self) -> None:
         """Set every device's channel to stop what its cuts stop together,
         changing only the sides whose combined cut changed."""
+        cuts = list(self._cuts.values())
         for name, channel in self._channels.items():
             for side in _SIDES:
-                cuts = [
-                    c
-                    for c in self._cuts.values()
-                    if c.device in (None, name) and side in c.sides
-                ]
                 # Nothing (an empty set), everything (None), or these names.
-                stopped: Optional[FrozenSet[str]] = (
-                    None
-                    if any(c.messages is None for c in cuts)
-                    else frozenset().union(*(c.messages or () for c in cuts))
-                )
+                stopped = stopped_messages(cuts, name, side)
                 if self._applied.get((name, side), frozenset()) == stopped:
                     continue
                 if stopped is None:

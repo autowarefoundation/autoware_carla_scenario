@@ -197,6 +197,18 @@ def repro_command(argv: list[str], overrides: Optional[list[str]]) -> list[str]:
     return ["scenario"] + overrides
 
 
+def repro_overrides(scenario: str, overrides: list[str]) -> list[str]:
+    """What ``repro.sh`` of a crash report of a batch's case runs
+    ``scenario`` with: its *scenario* and *overrides*, without the batch's
+    launcher (``launcher=``, ``launcher.*``), so that it runs again here, as
+    a single run (``slurm.worker.repro_overrides()``, #2386)."""
+    kept = [f"scenario={scenario}"]
+    for o in overrides:
+        if not o.lstrip("+~").startswith("launcher"):
+            kept.append(o)
+    return kept
+
+
 def repro_script(
     argv: list[str], cwd: str, env: dict[str, str], command: list[str]
 ) -> bytes:

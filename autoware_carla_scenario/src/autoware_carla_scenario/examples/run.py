@@ -183,11 +183,14 @@ from .argv import (
     _arena_max_set_by_user,
     _batch_dir_text,
     _case_labels,
+    _errored_case,
     _extract_resume_from,
     _extract_resume_into,
     _extract_scenario_override,
     _is_glob_pattern,
+    _plain_overrides,
     _split_batch_output_dir,
+    _sweep_failed_lines,
 )
 from .configs import (
     IntersectionPassingConfig,
@@ -4529,9 +4532,7 @@ def _record_basic_sweeper_error(exc: BaseException) -> bool:
         exc_info=exc,
     )
     _multirun_ran.append(case)
-    lines = str(exc).strip().splitlines()
-    reason = f"{type(exc).__name__}: {lines[0]}" if lines else type(exc).__name__
-    _multirun_failed.append(f"{case} (errored: {reason})")
+    _multirun_failed.append(_errored_case(case, type(exc).__name__, str(exc)))
     return True
 
 
@@ -4627,13 +4628,8 @@ def _exit_if_multirun_failed() -> None:
     """
     if not _multirun_failed:
         return
-    print(  # noqa: T201
-        f"Sweep failed: {len(_multirun_failed)} of {len(_multirun_ran)} "
-        "case(s) failed:",
-        file=sys.stderr,
-    )
-    for case in _multirun_failed:
-        print(f"  {case}", file=sys.stderr)  # noqa: T201
+    for line in _sweep_failed_lines(_multirun_failed, len(_multirun_ran)):
+        print(line, file=sys.stderr)  # noqa: T201
     sys.exit(1)
 
 
@@ -4877,11 +4873,7 @@ def _warn_if_sweep_not_expanded(scenario: str | None, overrides: list[str]) -> N
         OverridesParser,
     )
 
-    plain = [
-        arg
-        for arg in overrides
-        if not arg.startswith("-") and not arg.lstrip("+~").startswith("hydra")
-    ]
+    plain = _plain_overrides(overrides)
     try:
         parsed = OverridesParser.create().parse_overrides(plain)
     except Exception:  # noqa: BLE001 -- the run reports it
