@@ -7,10 +7,11 @@ short never finished, is listed in its summary (``batch_results.json``); a
 (``case_errored.json``, :mod:`.errored`); a job the lanelet sweeper planned
 and never started is in its sweep's plan (``sweep_plan.json``,
 :mod:`.sweep_plan`).  This module finds the batches under a directory, reads
-a local batch's summary, and finds those jobs, each beside the gate records
-and the runs' results (``*_result.json``) that tell a run that left a record
-from one that did not.  A SLURM batch's cases are read from its manifest by
-:mod:`.evaluate`, which joins the lines of them all.
+a local batch's summary and a SLURM batch's manifest and outcomes
+(``slurm/``, :mod:`..slurm.manifest`), and finds those jobs, each beside the
+gate records and the runs' results (``*_result.json``) that tell a run that
+left a record from one that did not, and joins the lines of them all
+(:func:`_scan_batches`, which :mod:`.evaluate` re-exports).
 
 Free of heavy imports, so the library check compiles it (docs/typecheck.md).
 """
@@ -48,6 +49,15 @@ def _batch_dirs(path: Path) -> list[Path]:
     return sorted(found)
 
 
+def _recorded_at(directory: Path, name: str) -> bool:
+    """Whether a gate record is at the stem *name* in *directory*: a file
+    stem of its own (``batch_report.is_plain_stem()``), as a batch writes it
+    since #1957."""
+    if not is_plain_stem(name):
+        return False
+    return (directory / f"{name}{GATE_RECORD_SUFFIX}").is_file()
+
+
 def _recorded_at_stem(directory: Path, entry: dict[str, Any]) -> bool:
     """Whether a gate record is at the stem *entry* names in *directory*: a
     file stem of its own (``batch_report.is_plain_stem()``), as a batch
@@ -57,10 +67,7 @@ def _recorded_at_stem(directory: Path, entry: dict[str, Any]) -> bool:
     # Codon holds it as a JSONValue, which compares with no str.
     if not isinstance(stem, str):
         return False
-    name = str(stem)
-    if not is_plain_stem(name):
-        return False
-    return (directory / f"{name}{GATE_RECORD_SUFFIX}").is_file()
+    return _recorded_at(directory, str(stem))
 
 
 def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
@@ -69,8 +76,8 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     only once its run had ended, wrote no gate record, and of its pending
     ones (``"pending": true``: a batch cut short never finished them); how
     many cases it has; and ``None``.  Or no names, ``0`` and why the summary
-    cannot be read, instead.  (:func:`~.evaluate._scan_batches` turns it into
-    the one or the other, a value of either type, which Codon cannot hold.)
+    cannot be read, instead.  (:func:`_scan_batches` tells the one from the
+    other: a value of either type, which Codon cannot hold.)
 
     An errored case whose entry names its stem (``stem``, written since
     #1957) and has a gate record there is not counted: its run wrote one
@@ -114,6 +121,63 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     return unrecorded, len(entries), unreadable
 
 
+def _slurm_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
+    """The labels of a SLURM batch's cases that errored, have no outcome or
+    one holding no verdict, and left no gate record at their stem; how many
+    cases it has; and ``None``.  Or no labels, ``0`` and why the manifest
+    cannot be read, instead (:func:`_summary_cases`'s triple).
+
+    A case is named by its ``label``, or its ``scenario``, when true, else
+    by its index (:meth:`.ManifestCase.name`).  Only a stem of its own
+    counts (#2265), as a local batch's, and only a string:
+    ``case.get("stem")`` as :func:`_recorded_at_stem` reads an entry
+    (:meth:`.ManifestCase.string_stem`).  A manifest without ``cases``, or
+    whose ``cases`` cannot be iterated, cannot be read
+    (:meth:`.Manifest.cases`), nor can one with a case without an index
+    that ``int()`` reads, which the error shows
+    (:meth:`.ManifestCase.case_repr`)."""
+    from ..slurm.manifest import BatchLayout, recorded_verdict  # noqa: PLC0415
+
+    layout = BatchLayout(directory)
+    # Each part of the result held in a local of its type (_summary_cases()).
+    unrecorded: list[str] = []
+    unreadable: Optional[str] = None
+    try:
+        cases = layout.read_manifest().cases()
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        unreadable = f"{layout.manifest}: the SLURM manifest cannot be read ({exc})"
+        return unrecorded, 0, unreadable
+    for case in cases:
+        try:
+            index = case.index()
+        except (KeyError, TypeError, ValueError):
+            unreadable = (
+                f"{layout.manifest}: a case without an index ({case.case_repr()})"
+            )
+            none: list[str] = []
+            return none, 0, unreadable
+        record = layout.read_result(index)
+        if (
+            record is not None
+            and recorded_verdict(record) is not None
+            and not record.errored
+        ):
+            continue
+        # A stem of its own only, as a local batch's (#2265).
+        stem = case.string_stem()
+        if stem is not None and _recorded_at(directory, stem):
+            continue
+        unrecorded.append(case.name(index))
+    return unrecorded, len(cases), unreadable
+
+
+def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
+    """:func:`_slurm_cases` as one value: the labels and how many cases the
+    batch has, or why its manifest cannot be read."""
+    names, total, why = _slurm_cases(directory)
+    return (names, total) if why is None else why
+
+
 def _batch_line(directory: Path, names: list[str], total: int) -> str:
     """The refusal's line for a batch whose cases *names* (of *total*)
     raised or have no outcome and left no gate record, naming the first
@@ -125,6 +189,31 @@ def _batch_line(directory: Path, names: list[str], total: int) -> str:
         f"outcome, and left no gate record ({shown}{more}); the gate would "
         "be judged over the runs that survived"
     )
+
+
+def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
+    """What :func:`~.evaluate.unrecorded_cases` and
+    :func:`~.evaluate.batch_read_errors` return for *path*, read once."""
+    if not path.is_dir():
+        return [], []
+    lines: list[str] = []
+    unreadable: list[str] = []
+    for directory in _batch_dirs(path):
+        if (directory / "slurm" / "manifest.json").is_file():
+            names, total, why = _slurm_cases(directory)
+        else:
+            names, total, why = _summary_cases(directory)
+        if why is not None:
+            unreadable.append(why)
+            continue
+        if not names:
+            continue
+        lines.append(_batch_line(directory, names, total))
+    lines.extend(_errored_jobs(path))
+    unstarted, unreadable_plans = _unstarted_jobs(path)
+    lines.extend(unstarted)
+    unreadable.extend(unreadable_plans)
+    return lines, unreadable
 
 
 def _has_gate_record(directory: Path) -> bool:

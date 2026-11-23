@@ -76,12 +76,14 @@ from .unrecorded import _NAMED as _NAMED
 from .unrecorded import _RESULT_SUFFIX as _RESULT_SUFFIX
 from .unrecorded import BATCH_RESULTS as BATCH_RESULTS
 from .unrecorded import _batch_dirs as _batch_dirs
-from .unrecorded import _batch_line
 from .unrecorded import _errored_jobs as _errored_jobs
 from .unrecorded import _has_gate_record as _has_gate_record
 from .unrecorded import _has_result as _has_result
 from .unrecorded import _has_result_since as _has_result_since
 from .unrecorded import _recorded_at_stem as _recorded_at_stem
+from .unrecorded import _scan_batches as _scan_batches
+from .unrecorded import _slurm_cases as _slurm_cases
+from .unrecorded import _slurm_unrecorded as _slurm_unrecorded
 from .unrecorded import _summary_cases as _summary_cases
 from .unrecorded import _unstarted_jobs as _unstarted_jobs
 from .report import (
@@ -216,66 +218,6 @@ def load_gate_records(paths: Iterable[Path]) -> tuple[list[GateRecord], list[str
             continue
         records.append(record)
     return records, errors
-
-
-def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
-    """The labels of a SLURM batch's cases that errored, have no outcome or
-    one holding no verdict, and left no gate record at their stem; and how
-    many cases it has.  Why the manifest cannot be read, instead, if it
-    cannot."""
-    from ..slurm.manifest import BatchLayout, recorded_verdict  # noqa: PLC0415
-
-    layout = BatchLayout(directory)
-    try:
-        manifest = layout.read_manifest()
-        cases = list(manifest["cases"])
-    except (KeyError, OSError, TypeError, ValueError) as exc:
-        return f"{layout.manifest}: the SLURM manifest cannot be read ({exc})"
-    unrecorded: list[str] = []
-    for case in cases:
-        try:
-            index = int(case["index"])
-        except (KeyError, TypeError, ValueError):
-            return f"{layout.manifest}: a case without an index ({case!r})"
-        record = layout.read_result(index)
-        if (
-            record is not None
-            and recorded_verdict(record) is not None
-            and not record.errored
-        ):
-            continue
-        # A stem of its own only, as a local batch's (#2265).
-        if _recorded_at_stem(directory, case):
-            continue
-        unrecorded.append(str(case.get("label") or case.get("scenario") or index))
-    return unrecorded, len(cases)
-
-
-def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
-    """What :func:`unrecorded_cases` and :func:`batch_read_errors` return for
-    *path*, read once."""
-    if not path.is_dir():
-        return [], []
-    lines: list[str] = []
-    unreadable: list[str] = []
-    for directory in _batch_dirs(path):
-        if (directory / "slurm" / "manifest.json").is_file():
-            found = _slurm_unrecorded(directory)
-        else:
-            names, total, why = _summary_cases(directory)
-            found = (names, total) if why is None else why
-        if isinstance(found, str):
-            unreadable.append(found)
-            continue
-        names, total = found
-        if not names:
-            continue
-        lines.append(_batch_line(directory, names, total))
-    lines.extend(_errored_jobs(path))
-    unstarted, unreadable_plans = _unstarted_jobs(path)
-    lines.extend(unstarted)
-    unreadable.extend(unreadable_plans)
-    return lines, unreadable
 
 
 def unrecorded_cases(path: Path) -> list[str]:
