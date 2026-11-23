@@ -104,12 +104,14 @@ def unowned_skill_directories(
     agents: Sequence[Agent],
     repository: Path,
     projects: Sequence[SkillProject] | None = None,
-) -> list[Path]:
+) -> list[tuple[Path, str | None]]:
     """Return the skill directories the installer would refuse to replace.
 
     One per skill and agent whose directory in ``repository`` exists without
     this package's install manifest, as the installer itself reports it
-    (``Installer.inspect_installations``: status ``unowned``).
+    (``Installer.inspect_installations``: status ``unowned``), with the
+    installer's reason when the directory holds a manifest it cannot accept
+    (another package's, or an invalid one); ``None`` when it holds none.
     """
     from agent_skill_installer import Installer
 
@@ -124,7 +126,7 @@ def unowned_skill_directories(
                 and status.status == "unowned"
                 and status.skill_dir is not None
             ):
-                unowned.append(status.skill_dir)
+                unowned.append((status.skill_dir, status.error))
     return unowned
 
 
@@ -144,8 +146,12 @@ def install(agents: Sequence[Agent], repository: Path) -> list[str]:
     unowned = unowned_skill_directories(agents, repository, projects)
     if unowned:
         raise InstallerError(
-            "refusing to replace unowned skill directories (no install manifest), "
-            "nothing was installed: " + ", ".join(str(path) for path in unowned)
+            "refusing to replace unowned skill directories (without an install "
+            f"manifest of {DISTRIBUTION}), nothing was installed: "
+            + ", ".join(
+                str(path) if reason is None else f"{path} ({reason})"
+                for path, reason in unowned
+            )
         )
     lines = []
     for project in projects:

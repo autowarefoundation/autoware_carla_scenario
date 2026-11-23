@@ -9,6 +9,7 @@ must be exactly what an install writes: otherwise every run would leave a diff.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from importlib import resources
@@ -248,3 +249,37 @@ def test_an_unowned_directory_of_one_agent_stops_every_agent(tmp_path: Path) -> 
     assert not (tmp_path / ".claude").exists()
     assert not (tmp_path / "CLAUDE.md").exists()
     assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_a_skill_directory_of_another_package_is_refused_with_the_reason(
+    tmp_path: Path,
+) -> None:
+    """A manifest the installer cannot accept is unowned too, not only none."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    from agent_skill_installer import InstallerError
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    theirs = _hand_written_skill(tmp_path, ".claude", "write-scenario")
+    (theirs / ".write-scenario-install.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "package": "another-package",
+                "agent": "claude",
+                "scope": "dir",
+                "skill_dir": str(theirs),
+                "hook_path": str(tmp_path / "CLAUDE.md"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(InstallerError, match="unowned") as error:
+        cli.install([cli.AGENTS["claude"]], tmp_path)
+    assert f"{theirs} (install manifest is not for {cli.DISTRIBUTION}" in str(
+        error.value
+    )
+    assert sorted(p.name for p in (tmp_path / ".claude" / "skills").iterdir()) == [
+        "write-scenario"
+    ]
+    assert not (tmp_path / "CLAUDE.md").exists()
