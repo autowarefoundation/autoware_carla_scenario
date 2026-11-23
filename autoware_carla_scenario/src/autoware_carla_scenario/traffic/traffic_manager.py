@@ -391,6 +391,8 @@ class TrafficManagerBackend(TrafficBackend):
     _visibility: Optional[float]
     _draws: Optional[random.Random]
     _drawn: set[int]
+    _quantiles: dict[int, float]
+    _sighted: int
     _entity_overrides: dict[int, VehicleParameters]
     _emergencies: set[int]
     _own_ignores: dict[int, tuple[float, float]]
@@ -481,6 +483,11 @@ class TrafficManagerBackend(TrafficBackend):
         #: that have theirs.
         self._draws = None
         self._drawn = set()
+        #: Actor id -> its driver's quantile of the sight speed
+        #: (:meth:`_sight_limit_kmh`), given with its first draw; how many
+        #: vehicles were given one this run.
+        self._quantiles = {}
+        self._sighted = 0
         #: Actor id -> what the entity overrides of its vehicle
         #: (:meth:`override_entity_parameters`) set, layered in order: its
         #: draws take these over the run's parameters, whenever they are made.
@@ -566,7 +573,9 @@ class TrafficManagerBackend(TrafficBackend):
         self._skipped = skip
         enabled = 0
         background = {actor.id for actor in self._background.values()}
-        for actor in world.get_actors().filter("vehicle.*"):
+        # In the order they were spawned (CARLA hands ids out in that order),
+        # not LibCarla's list order: each draws what it drew the run before.
+        for actor in sorted(world.get_actors().filter("vehicle.*"), key=_actor_id):
             if actor.id in skip or actor.id in self._released:
                 continue
             self._autopilot(actor, keep=actor.id not in background)
@@ -645,12 +654,29 @@ class TrafficManagerBackend(TrafficBackend):
     def _sight_limit_kmh(self, actor_id: int) -> float:
         """The speed, km/h, vehicle *actor_id*'s driver keeps in the
         visibility it is held to: the weather rules' ``sight_speed`` at the
-        driver's own quantile (:func:`~autoware_carla_scenario.visibility.driver_quantile`),
-        for SUMO's default car; negative when nothing holds it."""
+        driver's own quantile (:meth:`_give_quantile`), for SUMO's default
+        car; negative when nothing holds it, or it is not on autopilot."""
         seen = self._visibility
         if self._sight_kmh < 0.0 or seen is None:
             return -1.0
-        return sight_speed_at(seen, driver_quantile(str(actor_id))) * 3.6
+        if actor_id not in self._quantiles:
+            return -1.0
+        return sight_speed_at(seen, self._quantiles[actor_id]) * 3.6
+
+    def _give_quantile(self, actor_id: int) -> None:
+        """Give vehicle *actor_id*'s driver its quantile of the sight speed,
+        with its first draw: :func:`~autoware_carla_scenario.visibility.driver_quantile`
+        of the run's seed and how many vehicles were given one before it.
+
+        Not of its actor id, which climbs for the life of the server and
+        shifts with every actor spawned before it, nor from the parameter
+        draws, which would then each shift: the same seed, the same drivers,
+        in the order the vehicles are put on autopilot, whatever ran on the
+        server before."""
+        self._quantiles[actor_id] = driver_quantile(
+            f"{self._random_seed}:sight:{self._sighted}"
+        )
+        self._sighted += 1
 
     def _hold_to_sight(
         self, tm: "carla.TrafficManager", actor: "carla.Actor", limit_kmh: float
@@ -745,6 +771,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._sight_kmh = -1.0
         self._sight_due = 0.0
         self._drawn = set()
+        self._quantiles = {}
+        self._sighted = 0
         # Actor ids are reused across runs: none keeps a finished run's.
         self._entity_overrides = {}
         self._emergencies = set()
@@ -1725,6 +1753,7 @@ class TrafficManagerBackend(TrafficBackend):
                 self._kept[actor.id] = kept
         if actor.id not in self._drawn:
             self._drawn.add(actor.id)
+            self._give_quantile(int(actor.id))
             self._draw_for(actor, self._parameters_of(actor), first=True)
         if self._sight_kmh >= 0.0:
             # Held to sight at once, not at the next update: one resumed after
@@ -1761,6 +1790,8 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._entity_overrides:
             del self._entity_overrides[actor_id]
         self._drawn.discard(actor_id)
+        if actor_id in self._quantiles:
+            del self._quantiles[actor_id]
         self._route_locked.discard(actor_id)
         self._crossing_locked.discard(actor_id)
         if actor_id in self._paused:
@@ -2170,7 +2201,8 @@ class TrafficManagerBackend(TrafficBackend):
                 self._entity_overrides[actor_id] = own.restricted_to(kept)
             else:
                 del self._entity_overrides[actor_id]
-        for driven in world.get_actors().filter("vehicle.*"):
+        for driven in sorted(world.get_actors().filter("vehicle.*"), key=_actor_id):
+            # In the order they were spawned, as start() draws them.
             # The ones that drew already: a vehicle not yet on autopilot draws
             # from the new parameters when it is put on it.
             if driven.id in self._drawn:
@@ -2308,6 +2340,11 @@ def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
+
+
+def _actor_id(actor: "carla.Actor") -> int:
+    """*actor*'s id: CARLA hands them out in the order actors are spawned."""
+    return int(actor.id)
 
 
 def _actor_name(actor: "carla.Actor") -> str:
