@@ -729,7 +729,9 @@ def _old_repro_script(
     lines = [
         "#!/bin/sh",
         "# Runs the case this crash report comes from again.",
-        f"# Command line: {shlex.join(argv)}",
+        # Each line of it a comment line since #2380: an argument holding a
+        # newline ended the comment.
+        "# Command line: " + shlex.join(argv).replace("\n", "\n# "),
         f"cd {shlex.quote(str(cwd))} || exit 1",
     ]
     lines += [f"export {name}={shlex.quote(value)}" for name, value in env.items()]
@@ -797,4 +799,301 @@ def test_the_reporter_s_repro_script_is_as_before(
     assert reporter.repro_command() == _old_repro_command(reporter.argv, overrides)
     assert reporter.repro_script() == _old_repro_script(
         reporter.argv, reporter.cwd, kept, overrides
+    )
+
+
+# ---------------------------------------------------------------------------
+# #2380: the CLI's logging, a local batch's case, truncation, newlines
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _fresh_root_logger() -> Iterator[logging.Logger]:
+    """The root logger as a new process has it: no handler, at ``WARNING``
+    (pytest's own handlers, which it adds once the test's fixtures are set
+    up, taken off for the block, and put back)."""
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    for handler in handlers:
+        root.removeHandler(handler)
+    root.setLevel(logging.WARNING)
+    try:
+        yield root
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        for handler in handlers:
+            root.addHandler(handler)
+        root.setLevel(level)
+
+
+def test_the_cli_logs_info_with_crash_reports_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    def fake_main() -> None:
+        # What a batch logs: its plan, its progress, its warnings.
+        logging.getLogger("autoware_carla_scenario.examples.run").info(
+            "Glob matched 2 scenario(s)"
+        )
+        logging.getLogger("autoware_carla_scenario.examples.run").warning(
+            "hydra.sweep.dir=x is ignored"
+        )
+        raise RuntimeError("the CARLA client went away")
+
+    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
+    for name in (crash_report.CRASH_REPORT_DIR_ENV, crash_report.DSN_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run, "_main", fake_main)
+    monkeypatch.setattr(sys, "argv", ["scenario", "scenario=cut_in/*"])
+    with _fresh_root_logger(), pytest.raises(RuntimeError):
+        run.main()
+    assert not crash_report.installed()
+    err = capfd.readouterr().err
+    # The console, as with crash reports off.
+    assert "INFO autoware_carla_scenario.examples.run: Glob matched 2" in err, err
+    assert "WARNING autoware_carla_scenario.examples.run: hydra.sweep.dir" in err
+    # log.txt holds the INFO records too.
+    (report,) = (tmp_path / "outputs" / crash_report.CRASH_REPORTS_DIRNAME).iterdir()
+    log = (report / "log.txt").read_text()
+    assert "INFO autoware_carla_scenario.examples.run: Glob matched 2" in log
+    assert "hydra.sweep.dir=x is ignored" in log
+
+
+def test_the_log_buffer_survives_a_dict_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import logging.config
+
+    def hydra_job_logging() -> None:
+        # What Hydra does at the start of each job: the root logger's
+        # handlers are replaced.
+        logging.config.dictConfig(
+            {
+                "version": 1,
+                "handlers": {"null": {"class": "logging.NullHandler"}},
+                "root": {"level": "INFO", "handlers": ["null"]},
+                "disable_existing_loggers": False,
+            }
+        )
+
+    def buffers() -> int:
+        return sum(
+            isinstance(h, crash_report._LogBuffer) for h in logging.getLogger().handlers
+        )
+
+    with _fresh_root_logger(), _installed(tmp_path, monkeypatch):
+        logging.getLogger().setLevel(logging.INFO)
+        assert buffers() == 1
+        crash_report.set_output_dir(tmp_path / "batch")
+        for case in range(2):
+            hydra_job_logging()
+            assert buffers() == 0
+            with crash_report.run_context(tmp_path / f"run{case}"):
+                assert buffers() == 1
+                # Entered again, never added twice.
+                with crash_report.run_context(tmp_path / f"run{case}"):
+                    assert buffers() == 1
+                logging.getLogger("demo").info("in case %d", case)
+                report = crash_report.capture(_caught())
+            assert report is not None
+            assert f"INFO demo: in case {case}" in (report / "log.txt").read_text()
+        # The batch's context, re-armed, takes it back after a job's.
+        hydra_job_logging()
+        with crash_report.run_context(tmp_path / "run2"):
+            hydra_job_logging()
+        assert buffers() == 1
+        crash_report.uninstall()
+        assert buffers() == 0
+
+
+def test_a_local_batch_s_report_runs_the_case_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.scenario_runner import ScenarioResult
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    queue_logger = logging.getLogger("autoware_carla_scenario.scenario_queue")
+
+    class FakeQueue:
+        def __init__(self) -> None:
+            self.scenarios: list[Any] = []
+
+        def __enter__(self) -> FakeQueue:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def add(self, scenario: Any, **_kw: object) -> None:
+            self.scenarios.append(scenario)
+
+        def run_all(self, *, on_result: Any, **_kw: object) -> list[Any]:
+            results = []
+            for i, _scenario in enumerate(self.scenarios):
+                if i == 1:
+                    try:
+                        _raise("the CARLA client went away")
+                    except ValueError:
+                        queue_logger.warning("Scenario attempt failed", exc_info=True)
+                results.append(
+                    ScenarioResult(passed=i != 1, message="", elapsed_seconds=0.0)
+                )
+                on_result(i, results[-1])
+            return results
+
+        def errored_indices(self) -> list[int]:
+            return []
+
+    monkeypatch.setattr(run, "build_scenario", lambda cfg, **_: (None, object()))
+    monkeypatch.setattr(run, "resolve_map_paths", lambda _m: None)
+    monkeypatch.setattr(run, "_batch_queue", lambda *_a, **_k: FakeQueue())
+    with (
+        _installed(tmp_path, monkeypatch, ["scenario", "scenario=*/left", "seed=5"]),
+        pytest.raises(SystemExit) as raised,
+    ):
+        run.run_batch(
+            ["lane_change/left", "cut_in/left"], ["seed=5"], output_dir=Path("b")
+        )
+    assert raised.value.code == 1
+    reports = [
+        r
+        for r in (tmp_path / "b" / crash_report.CRASH_REPORTS_DIRNAME).iterdir()
+        if not r.name.startswith("native-")
+    ]
+    assert len(reports) == 1
+    (report,) = reports
+    # The failed case alone, not the whole batch's command line.
+    assert (report / "repro.sh").read_text().splitlines()[-1] == (
+        'exec scenario scenario=cut_in/left seed=5 "$@"'
+    )
+    assert "seed: 5" in (report / "config.yaml").read_text()
+    context = json.loads((report / "context.json").read_text())
+    assert context["overrides"] == ["scenario=cut_in/left", "seed=5"]
+    assert context["output_dir"] == str((tmp_path / "b").resolve())
+
+
+def _sending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool = False
+) -> tuple[Path | None, list[Any]]:
+    """A report captured with a DSN's transport recording (or failing on)
+    what it sends, the environment not sent."""
+    import sentry_sdk
+    from sentry_sdk.transport import Transport
+
+    sent: list[Any] = []
+
+    class Recorder(Transport):
+        def capture_envelope(self, envelope: Any) -> None:
+            if fail:
+                raise OSError("the server went away")
+            sent.append(envelope)
+
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_SEND_ITEMS", "all,-environment")
+    with _installed(tmp_path, monkeypatch, ["scenario", "scenario.note=a\nb"]):
+        sentry_sdk.get_client().transport.upstream = Recorder()  # type: ignore[union-attr]
+        with crash_report.run_context(
+            tmp_path / "run", overrides=["scenario.note=a\nb"], config_yaml="x: 1\n"
+        ):
+            report = crash_report.capture(_caught())
+    return report, sent
+
+
+def test_a_report_whose_context_exceeds_the_size_limit_is_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "300")
+    monkeypatch.setenv("CARLA_ROOT", "/opt/carla/" + "x" * 400)
+    report, sent = _sending(tmp_path, monkeypatch)
+    assert report is not None
+    # Never cut: still JSON, and still a script that runs the case.
+    context = json.loads((report / "context.json").read_text())
+    assert context["environment"]["CARLA_ROOT"].endswith("x" * 400)
+    script = (report / "repro.sh").read_text()
+    assert len(script) > 300
+    assert "\nexec scenario " in script and script.endswith('"$@"\n')
+    (envelope,) = sent
+    files = {
+        item.headers["filename"]: item.get_bytes()
+        for item in envelope.items
+        if item.type == "attachment"
+    }
+    assert "environment" not in json.loads(files["context.json"])
+    assert b"CARLA_ROOT" not in files["repro.sh"]
+
+
+def test_a_send_that_fails_keeps_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report, sent = _sending(tmp_path, monkeypatch, fail=True)
+    assert report is not None and (report / "event.json").exists()
+    assert not sent
+
+
+def test_a_repro_script_with_a_newline_in_an_argument_is_a_script(
+    tmp_path: Path,
+) -> None:
+    import shutil
+
+    from autoware_carla_scenario import crash_report_settings
+
+    argv = ["scenario", "scenario.note=a\nb", "x=it's"]
+    command = crash_report_settings.repro_command(argv, None)
+    script = tmp_path / "repro.sh"
+    script.write_bytes(
+        crash_report_settings.repro_script(
+            argv, str(tmp_path), {"SCENARIO_NOTE": "one\ntwo"}, command
+        )
+    )
+    sh = shutil.which("sh")
+    assert sh is not None
+    check = subprocess.run(
+        [sh, "-n", str(script)], capture_output=True, text=True, check=False
+    )
+    assert check.returncode == 0, check.stderr
+    # Run with a `scenario` that prints what it was given.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "scenario"
+    fake.write_text('#!/bin/sh\nprintf "%s|" "$SCENARIO_NOTE" "$@"\n')
+    fake.chmod(0o755)
+    proc = subprocess.run(
+        [sh, str(script), "extra"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "one\ntwo|scenario.note=a\nb|x=it's|extra|"
+
+
+def test_a_sent_repro_script_without_the_environment_is_written_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario import crash_report_settings
+
+    monkeypatch.setenv("SCENARIO_NOTE", "first line\nsecond line")
+    report, sent = _sending(tmp_path, monkeypatch)
+    assert report is not None
+    assert "second line" in (report / "repro.sh").read_text()
+    (envelope,) = sent
+    files = {
+        item.headers["filename"]: item.get_bytes()
+        for item in envelope.items
+        if item.type == "attachment"
+    }
+    # Not a line left of the value that spans two.
+    assert b"second line" not in files["repro.sh"]
+    assert files["repro.sh"] == crash_report_settings.repro_script(
+        ["scenario", "scenario.note=a\nb"],
+        str(tmp_path),
+        {},
+        ["scenario", "scenario.note=a\nb"],
     )
