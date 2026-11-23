@@ -3260,7 +3260,9 @@ value, so the result is not checked:</p>
   <code>autoware_stack/launcher</code>, <code>autoware_stack/devcontainer</code> (and its values),
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
   <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>pedestrian/soma</code>,
-  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>scaffold/generator</code>,
+  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>number_settings</code> (what
+  the example scenarios' configs check their numbers with, #2398),
+  <code>scaffold/generator</code>,
   <code>commonroad/session</code>, <code>commonroad/worker</code>, <code>hils/config</code> and
   <code>utils/traffic_light</code>, each declaring exactly the names compared;
   <code>ros2/cyclone</code> where cyclonedds is installed.</li>
@@ -5101,7 +5103,7 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-360 of the package's 491
+361 of the package's 492
 modules (73%; about 114,000 of
 189,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
@@ -5219,7 +5221,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 360 CHECKED modules</summary>
+<summary>The 361 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6089,6 +6091,10 @@ with the first paragraph of its docstring:</p>
 <td>Log the collisions of the road users other than the ego, and walkers that fall.</td>
 </tr>
 <tr>
+<td><code>number_settings</code></td>
+<td>The checks of a config's number settings: a number, a finite number and a TCP port, each refused with a <code>ValueError</code> naming its key.</td>
+</tr>
+<tr>
 <td><code>odd.control_diagnostics</code></td>
 <td>A problem with the <code>controls</code> of a scenario config, and its one-line text.</td>
 </tr>
@@ -6889,7 +6895,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>ui.slurm_launch.Submission.to_dict</code>: returns the submission as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express</li>
 <li><code>ui.slurm_launch.batch_status</code>: returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types: the values of the batch's records as <code>json.loads()</code> read them (the manifest's through the checked slurm.manifest's uncalled Manifest.get(), the submissions' and the tasks' through get(), of any type), which Codon cannot express; each case's state, and the values it shows as their JSON text, are the checked _case_states()'s (CaseState)</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), traffic.sumo.config's option checks (the SUMO backend's), traffic.authoring._number and _spread (the traffic-parameter form's fields), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
+<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked number_settings' number_setting(), finite_number_setting() and check_port() (a number or a port setting, #2398), traffic.fidelity._number (the traffic options), traffic.sumo.config's option checks (the SUMO backend's), traffic.authoring._number and _spread (the traffic-parameter form's fields), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
 <p>The 131 <code>EXCLUDED</code> modules fall in three groups. Many fit
@@ -9215,7 +9221,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 18:09:31 UTC"><span class="timeago" datetime="2026-11-23T18:09:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 18:09:31 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 21:15:10 UTC"><span class="timeago" datetime="2026-11-23T21:15:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 21:15:10 UTC">2026-11-23</span>
   </span>
 
     

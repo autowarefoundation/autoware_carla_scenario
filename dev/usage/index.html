@@ -5184,7 +5184,12 @@ speed would leave the ego still with no error, an infinite one break its
 physics, and a NaN pose fail far from the key behind it. A run or batch
 refuses such a value before anything starts, naming the key (<code>Error:
 ego.initial_speed_kmh must be finite and at least 0, got -20</code>). A pose
-left null (<code>ego.spawn_s=null</code>) is 0, as one that is absent is.</p>
+left null (<code>ego.spawn_s=null</code>) is 0, as one that is absent is. A boolean is
+no number (<code>ego.initial_speed_kmh=true</code> is refused, not read as 1 km/h), an
+integer too big for a float (<code>10**400</code>) is refused as not finite, and a quoted
+number (<code>ego.spawn_t='1.5'</code>) is read as the number it spells. The run checks
+these settings, a declarative scenario's spawn <code>s</code>, a camera lens's numbers
+and an example scenario's numbers with the same check (#2398).</p>
 <p>The same check refuses a lanelet id that is not a whole number --
 <code>ego.spawn_lanelet_id</code>, <code>ego.goal_lanelet_id</code> or an item of
 <code>ego.waypoint_lanelet_ids</code> (a list) set to <code>abc</code>, <code>true</code> or <code>242.7</code>, which
@@ -7635,7 +7640,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 16:27:24 UTC"><span class="timeago" datetime="2026-11-23T16:27:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 16:27:24 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 21:15:10 UTC"><span class="timeago" datetime="2026-11-23T21:15:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 21:15:10 UTC">2026-11-23</span>
   </span>
 
     
