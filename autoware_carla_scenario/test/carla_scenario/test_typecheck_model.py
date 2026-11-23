@@ -2116,13 +2116,17 @@ def test_the_packaging_model_is_version_and_invalid_version_as_in_the_package() 
     python_local = inspect.getattr_static(packaging.version.Version, "local")
     assert isinstance(python_local, property) and python_local.fget is not None
     assert typing.get_type_hints(python_local.fget)["return"] == typing.Optional[str]
-    # InvalidVersion is a ValueError, built from nothing or one message.
+    # InvalidVersion is a ValueError, built from nothing or one message, by
+    # position only (#2376).
     invalid = _definitions("version", _PACKAGING_MODEL)["InvalidVersion"][0]
     assert isinstance(invalid, ast.ClassDef)
     assert [ast.unparse(b) for b in invalid.bases] == ["Static[ValueError]"]
+    assert ast.unparse(_methods(invalid)["__init__"].args) == "self, *args"
     assert packaging.version.InvalidVersion.__bases__ == (ValueError,)
     assert str(packaging.version.InvalidVersion()) == ""
     assert str(packaging.version.InvalidVersion("x")) == "x"
+    with pytest.raises(TypeError, match="keyword"):
+        packaging.version.InvalidVersion(message="x")  # type: ignore[call-arg]
 
 
 #: The model of the eclipse-sumo package's `sumo` module: what the checked

@@ -4,15 +4,22 @@
 #
 # Version(version: str), whose `local` is the local label (`1.2.3+abc` has
 # "abc") or None, and InvalidVersion, the ValueError the constructor raises
-# for what is not a PEP 440 version, built from nothing or one message. The
-# rest of a Version (its comparisons, release, pre, post, dev, public, ...)
-# and of the package (parse(), specifiers, requirements, ...) is not
-# declared. Nothing here runs: no version is parsed.
+# for what is not a PEP 440 version, built from nothing or one message, by
+# position only. The rest of a Version (its comparisons, release, pre, post,
+# dev, public, ...) and of the package (parse(), specifiers, requirements,
+# ...) is not declared. Nothing here runs: no version is parsed.
 
 
 class InvalidVersion(Static[ValueError]):
-    def __init__(self, message: str = ""):
-        super().__init__(message)
+    # The package's takes any values by position and no keyword, as
+    # ValueError does; declared are none and one message.
+    def __init__(self, *args):
+        if static.len(args) == 0:
+            super().__init__("")
+        elif static.len(args) == 1:
+            super().__init__(str(args[0]))
+        else:
+            compile_error("InvalidVersion() takes one message here")
 
 
 class Version:
