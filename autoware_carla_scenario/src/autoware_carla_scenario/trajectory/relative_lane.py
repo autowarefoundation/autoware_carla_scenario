@@ -117,9 +117,10 @@ def _start_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
 
 
 def _end_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
-    points = _centreline(lanelet)
-    (x0, y0), (x1, y1) = points[-2], points[-1]
-    return math.atan2(y1 - y0, x1 - x0)
+    """The centreline's direction (rad) at its end: that of its last segment
+    with non-zero length, as :func:`_heading_at` reads past the end -- a
+    centreline ending on a repeated point is not taken to face East (#2367)."""
+    return _heading_at(_centreline(lanelet), math.inf)
 
 
 def _turn(a: float, b: float) -> float:

@@ -47,7 +47,9 @@ from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s,
 )
 from autoware_carla_scenario.trajectory.relative_lane import (
+    _end_heading,
     _heading_at,
+    _straightest,
     advance_along_lane,
     reference_lane_pose,
     relative_lane_pose,
@@ -297,6 +299,56 @@ class TestTheHeadingAtAVertex:
         along = _interpolate_at_s(centre, pose.s)[3]
         assert along == pytest.approx(math.pi / 2)
         assert pose.heading == pytest.approx(0.0)
+
+
+def _lanelet_along(coords: list[tuple[float, float]]) -> Any:
+    """A lanelet whose centreline runs through *coords* (each bound 1 m to
+    either side in y, so the centreline keeps every point, repeats too)."""
+    from lanelet2.core import AttributeMap, Lanelet, LineString3d, Point3d, getId
+
+    def bound(dy: float) -> Any:
+        return LineString3d(
+            getId(), [Point3d(getId(), x - dy, y, 0.0) for x, y in coords]
+        )
+
+    return Lanelet(getId(), bound(1.0), bound(-1.0), AttributeMap(_LANE))
+
+
+class TestTheHeadingAtTheEnd:
+    """A centreline ending on a repeated point ends facing its last real
+    segment, not East (#2367)."""
+
+    def test_a_repeated_end_point_is_skipped(self) -> None:
+        lanelet = _lanelet_along([(0.0, 0.0), (0.0, 10.0), (0.0, 10.0)])
+        assert [(float(p.x), float(p.y)) for p in lanelet.centerline][-2:] == [
+            (0.0, 10.0),
+            (0.0, 10.0),
+        ]
+        assert _end_heading(lanelet) == pytest.approx(math.pi / 2)
+
+    def test_the_straight_predecessor_is_preferred(self) -> None:
+        straight = _lanelet_along([(0.0, 0.0), (0.0, 10.0), (0.0, 10.0)])
+        slanted = _lanelet_along([(-10.0, 0.0), (0.0, 10.0)])
+        assert _end_heading(slanted) == pytest.approx(math.pi / 4)
+        assert _straightest([slanted, straight], math.pi / 2, ahead=False) is straight
+
+    def test_a_lane_walk_runs_on_along_the_last_real_segment(self) -> None:
+        """adversity's lane walk carries on past the end along the end's
+        heading, which a repeated end point does not turn East."""
+        from autoware_carla_scenario.adversity.command import _LaneWalk
+        from autoware_carla_scenario.route.geometry import MapFeatures
+
+        lanelet = _lanelet_along([(0.0, 0.0), (0.0, 10.0), (0.0, 10.0)])
+        lanelet_map = lanelet2.core.LaneletMap()
+        lanelet_map.add(lanelet)
+        rules = lanelet2.traffic_rules.create(
+            lanelet2.traffic_rules.Locations.Germany,
+            lanelet2.traffic_rules.Participants.Vehicle,
+        )
+        graph = lanelet2.routing.RoutingGraph(lanelet_map, rules)
+        features = MapFeatures(lanelet_map, graph)
+        walk = _LaneWalk(features, lanelet_map.laneletLayer[lanelet.id], 0.0)
+        assert walk.at(15.0) == pytest.approx((0.0, 15.0, math.pi / 2))
 
 
 def _stacked_lanelet(z0: float, z1: float, dy_end: float) -> Any:

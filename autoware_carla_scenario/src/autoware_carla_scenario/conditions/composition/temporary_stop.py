@@ -168,8 +168,8 @@ class TemporaryStopCondition(CompositionCondition):
         ``s < 0`` (road start) or ``s > road_length`` (road end), additional
         conditions for the predecessor / successor roads, and the roads beyond
         them as far as the margin reaches, are appended
-        (:meth:`_spill_onto_roads`).  Each direction keeps its own visited set,
-        so a short ring of roads reached from both ends gets both stretches.
+        (:meth:`_spill_onto_roads`).  Each direction is walked on its own, so a
+        short ring of roads reached from both ends gets both stretches.
         """
         road_length = cls._get_road_length(od_pose.road_id)
         s_min = od_pose.s - s_margin
@@ -195,26 +195,14 @@ class TemporaryStopCondition(CompositionCondition):
 
         # --- Overflow before road start (s - margin < 0) ---
         if s_min < 0:
-            visited_before: set[str] = {od_pose.road_id}
             conditions += cls._spill_onto_roads(
-                entity_name,
-                od_pose.road_id,
-                -s_min,
-                False,
-                visited_before,
-                label=label,
+                entity_name, od_pose.road_id, -s_min, False, label=label
             )
 
         # --- Overflow beyond road end (s + margin > road_length) ---
         if s_max > road_length:
-            visited_after: set[str] = {od_pose.road_id}
             conditions += cls._spill_onto_roads(
-                entity_name,
-                od_pose.road_id,
-                s_max - road_length,
-                True,
-                visited_after,
-                label=label,
+                entity_name, od_pose.road_id, s_max - road_length, True, label=label
             )
 
         return conditions
@@ -226,11 +214,10 @@ class TemporaryStopCondition(CompositionCondition):
         road_id: str,
         overflow: float,
         past_end: bool,
-        visited: set[str],
         *,
         label: str,
     ) -> list[EntityLanePositionCondition]:
-        """The stretch of *overflow* metres beyond one end of *road_id*.
+        """The stretches of *overflow* metres beyond one end of *road_id*.
 
         *past_end* says which end the margin leaves *road_id* through: its end
         (into its successors) or its start (into its predecessors).  Each
@@ -239,22 +226,29 @@ class TemporaryStopCondition(CompositionCondition):
         ``[length - overflow, length]`` entered at its end -- and passes the
         rest on through its other end, along every branch, until nothing is
         left.  A map converted from Lanelet2 has roads as short as lanelets,
-        so a margin often reaches past the next road (#837).  *visited* keeps
-        a loop of roads from being walked round forever.
+        so a margin often reaches past the next road (#837).
+
+        A road reached along more than one branch gets the most any of them
+        brings, whatever order the links are listed in (#2367): one stretch
+        per road and contact point, in the order the walk first reaches them
+        (:meth:`_reach_roads`).  *road_id* itself is never re-entered.
         """
-        conditions: list[EntityLanePositionCondition] = []
+        reach: dict[tuple[str, str], float] = {
+            (road_id, "start"): math.inf,
+            (road_id, "end"): math.inf,
+        }
+        order: list[tuple[str, str]] = []
+        cls._reach_roads(road_id, overflow, past_end, reach, order)
         direction = "successor" if past_end else "predecessor"
-        for linked_id, contact in cls._find_linked_roads(road_id, direction):
-            if linked_id in visited:
-                continue
-            visited.add(linked_id)
+        conditions: list[EntityLanePositionCondition] = []
+        for linked_id, contact in order:
             linked_length = cls._get_road_length(linked_id)
-            entered_at_start = contact == "start"
-            if entered_at_start:
+            linked_overflow = reach[(linked_id, contact)]
+            if contact == "start":
                 lo = 0.0
-                hi = min(overflow, linked_length)
+                hi = min(linked_overflow, linked_length)
             else:
-                lo = max(0.0, linked_length - overflow)
+                lo = max(0.0, linked_length - linked_overflow)
                 hi = linked_length
             conditions.append(
                 cls._make_road_segment_condition(
@@ -270,17 +264,47 @@ class TemporaryStopCondition(CompositionCondition):
                 contact,
                 linked_length,
             )
+        return conditions
+
+    @classmethod
+    def _reach_roads(
+        cls,
+        road_id: str,
+        overflow: float,
+        past_end: bool,
+        reach: dict[tuple[str, str], float],
+        order: list[tuple[str, str]],
+    ) -> None:
+        """Walk *overflow* metres on from one end of *road_id*.
+
+        *reach* keeps the largest overflow any branch has brought to each
+        ``(road, contact)``; *order* lists them as first reached.  A road is
+        walked again only when a branch brings strictly more than before.
+        What a road passes on is less than what it was given (its length is
+        taken off), so going round a loop brings less, never more, and the
+        walk ends; a zero-length road passes on as much as it got, which is
+        not more, so it ends there too.
+        """
+        for linked_id, contact in cls._find_linked_roads(
+            road_id, "successor" if past_end else "predecessor"
+        ):
+            key = (linked_id, contact)
+            if key in reach:
+                if overflow <= reach[key]:
+                    continue
+            else:
+                order.append(key)
+            reach[key] = overflow
+            linked_length = cls._get_road_length(linked_id)
             if overflow > linked_length:
                 # Entered at its start, the margin leaves it through its end.
-                conditions += cls._spill_onto_roads(
-                    entity_name,
+                cls._reach_roads(
                     linked_id,
                     overflow - linked_length,
-                    entered_at_start,
-                    visited,
-                    label=label,
+                    contact == "start",
+                    reach,
+                    order,
                 )
-        return conditions
 
     @classmethod
     def _build_lanelet_conditions(
@@ -297,9 +321,9 @@ class TemporaryStopCondition(CompositionCondition):
         runs past its start is taken from the end of the lanelets before it,
         and what runs past its end from the start of the lanelets after it
         (the routing graph's previous and following lanelets, as far as the
-        margin reaches).  Each direction keeps its own visited set, as the
-        road path does, so a short ring of lanelets reached from both ends
-        gets both stretches.
+        margin reaches).  Each direction is walked on its own, as the road
+        path is, so a short ring of lanelets reached from both ends gets both
+        stretches.
         """
         length = cls._get_lanelet_length(pose.lanelet_id)
         s_min = pose.s - s_margin
@@ -322,24 +346,12 @@ class TemporaryStopCondition(CompositionCondition):
             length,
         )
         if s_min < 0:
-            visited_before: set[int] = {pose.lanelet_id}
             conditions += cls._spill_onto_lanelets(
-                entity_name,
-                pose.lanelet_id,
-                -s_min,
-                "previous",
-                visited_before,
-                label=label,
+                entity_name, pose.lanelet_id, -s_min, "previous", label=label
             )
         if s_max > length:
-            visited_after: set[int] = {pose.lanelet_id}
             conditions += cls._spill_onto_lanelets(
-                entity_name,
-                pose.lanelet_id,
-                s_max - length,
-                "following",
-                visited_after,
-                label=label,
+                entity_name, pose.lanelet_id, s_max - length, "following", label=label
             )
         return conditions
 
@@ -350,44 +362,69 @@ class TemporaryStopCondition(CompositionCondition):
         lanelet_id: int,
         overflow: float,
         direction: str,
-        visited: set[int],
         *,
         label: str,
     ) -> list[EntityLanePositionCondition]:
-        """The stretch of *overflow* metres beyond *lanelet_id* in *direction*.
+        """The stretches of *overflow* metres beyond *lanelet_id* in *direction*.
 
         A lanelet map cuts a road into lanelets, often short ones, so a margin
         can reach past the next lanelet into the one after it: each lanelet
         takes what it can hold and passes the rest on, along every branch, until
-        nothing is left.  *visited* keeps a loop in the graph from being walked
-        round forever.
+        nothing is left.  A lanelet reached along more than one branch gets the
+        most any of them brings, whatever order the routing graph lists them in
+        (#2367): one stretch per lanelet, in the order the walk first reaches
+        them (:meth:`_reach_lanelets`).  *lanelet_id* itself is never re-entered.
         """
+        reach: dict[int, float] = {lanelet_id: math.inf}
+        order: list[int] = []
+        cls._reach_lanelets(lanelet_id, overflow, direction, reach, order)
         conditions: list[EntityLanePositionCondition] = []
-        for linked in cls._find_linked_lanelets(lanelet_id, direction):
-            if linked in visited:
-                continue
-            visited.add(linked)
+        for linked in order:
             linked_length = cls._get_lanelet_length(linked)
+            linked_overflow = reach[linked]
             if direction == "previous":
-                lo, hi = max(0.0, linked_length - overflow), linked_length
+                lo, hi = max(0.0, linked_length - linked_overflow), linked_length
             else:
-                lo, hi = 0.0, min(overflow, linked_length)
+                lo, hi = 0.0, min(linked_overflow, linked_length)
             conditions.append(
                 cls._make_lanelet_segment_condition(
                     entity_name, linked, lo, hi, label=label
                 )
             )
             logger.info("  + %s lanelet=%d s=[%.1f, %.1f]", direction, linked, lo, hi)
-            if overflow > linked_length:
-                conditions += cls._spill_onto_lanelets(
-                    entity_name,
-                    linked,
-                    overflow - linked_length,
-                    direction,
-                    visited,
-                    label=label,
-                )
         return conditions
+
+    @classmethod
+    def _reach_lanelets(
+        cls,
+        lanelet_id: int,
+        overflow: float,
+        direction: str,
+        reach: dict[int, float],
+        order: list[int],
+    ) -> None:
+        """Walk *overflow* metres on from *lanelet_id* in *direction*.
+
+        *reach* keeps the largest overflow any branch has brought to each
+        lanelet; *order* lists them as first reached.  A lanelet is walked
+        again only when a branch brings strictly more than before.  What a
+        lanelet passes on is less than what it was given (its length is taken
+        off), so going round a loop brings less, never more, and the walk
+        ends; a zero-length lanelet passes on as much as it got, which is not
+        more, so it ends there too.
+        """
+        for linked in cls._find_linked_lanelets(lanelet_id, direction):
+            if linked in reach:
+                if overflow <= reach[linked]:
+                    continue
+            else:
+                order.append(linked)
+            reach[linked] = overflow
+            linked_length = cls._get_lanelet_length(linked)
+            if overflow > linked_length:
+                cls._reach_lanelets(
+                    linked, overflow - linked_length, direction, reach, order
+                )
 
     @staticmethod
     def _make_lanelet_segment_condition(
