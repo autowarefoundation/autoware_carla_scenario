@@ -4103,6 +4103,41 @@ def test_a_cut_that_fails_on_one_channel_is_still_made_on_the_others(
         bridge.close()
 
 
+def test_a_refused_cut_is_reported_though_its_undo_fails(
+    world: _World, dbc: Path
+) -> None:
+    # A channel an earlier change left cut fails every later change: the run
+    # still hears that its cut was refused, rather than nothing (#2444).
+    class _Stuck(_CutChannel):
+        def reconnect(self, direction: str) -> None:
+            self.calls.append(("reconnect", direction))
+            if self.fail:
+                raise hilspy.Error(f"cannot carry {direction} again")
+
+    document = _hils_config(_mem(), dbc, lifecycle={})
+    bridge = _bridge(document, world)
+    first, second = _Stuck(), _CutChannel()
+    channels, bridge._channels = bridge._channels, {"a": first, "b": second}
+    sent: List[dict[str, Any]] = []
+    bridge._link = types.SimpleNamespace(send=sent.append, close=lambda: None)
+    try:
+        bridge._handle(("start", {"ego_id": 1, "scenario": ""}))
+        bridge.disconnect("1", device="a", direction="from_ecu")
+        first.fail = True
+        with pytest.raises(hilspy.Error):
+            bridge.reconnect("1")
+        bridge._handle(("disconnect", {"id": "2", "device": "b"}))
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"].startswith("disconnect: ")
+        assert bridge._still_cut() == ["a (recv)"]
+        first.fail = False
+        bridge._handle(("end", {}))
+        assert bridge._still_cut() == []
+    finally:
+        bridge._channels = channels
+        bridge.close()
+
+
 def test_a_command_is_dated_by_the_read_that_takes_it() -> None:
     import select
 

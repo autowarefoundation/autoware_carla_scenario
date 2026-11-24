@@ -1140,7 +1140,12 @@ class HilsBridge:
         except self._hilspy.Error as exc:
             # Undone, so the cut does not fail every later change of the cuts.
             self._cuts = saved
-            self._apply_cuts()
+            try:
+                self._apply_cuts()
+            except Exception:  # noqa: BLE001 - the run must still hear of it
+                # A side that still fails (this one, or one an earlier change
+                # left unsettled) is set again by the next change (#2444).
+                logger.exception("failed to undo the refused cut")
             raise ValueError(str(exc)) from exc
         logger.warning(
             "%s: %s stopped (%s)",
