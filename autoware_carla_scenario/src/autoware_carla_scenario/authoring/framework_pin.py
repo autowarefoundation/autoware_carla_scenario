@@ -51,10 +51,10 @@ VERSION_ENV = "SCENARIO_EXPORT_FRAMEWORK_VERSION"
 #: checkout's ``origin`` is a fork or an SSH remote the consumer cannot reach).
 REPOSITORY_ENV = "SCENARIO_EXPORT_FRAMEWORK_REPOSITORY"
 
-_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 #: The scp-like form ``git@host:owner/repo.git``, which has no scheme.  A
 #: ``scheme://`` URL is split by :func:`_split_url` instead.
-_SCP_URL_PATTERN = re.compile(r"^git@([^:/]+)[:/](.+?)(?:\.git)?/?$")
+_SCP_URL_PATTERN = re.compile(r"git@([^:/]+)[:/](.+?)(?:\.git)?/?")
 
 #: Ports implied by an http(s) scheme, dropped when a URL spells them out.
 _DEFAULT_PORTS = {"http": "80", "https": "443"}
@@ -219,7 +219,7 @@ def normalize_repository_url(url: str) -> str:
     Anything else (a local path) is returned stripped.
     """
     stripped = url.strip()
-    match = _SCP_URL_PATTERN.match(stripped)
+    match = _SCP_URL_PATTERN.fullmatch(stripped)
     if match:
         host, path = match.groups()
         return f"https://{host}/{path}"
@@ -359,7 +359,7 @@ def _resolve_git_pin(source_root: Path) -> Optional[Pin]:
     if not toplevel:
         return None
     commit = _git(source_root, "rev-parse", "HEAD")
-    if not commit or not _SHA_PATTERN.match(commit):
+    if not commit or not _SHA_PATTERN.fullmatch(commit):
         return None
 
     repository = os.environ.get(REPOSITORY_ENV) or _git(

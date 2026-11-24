@@ -184,6 +184,14 @@ def test_a_malformed_sha256_is_refused() -> None:
         MapPack(REF, sha256="ABC")
 
 
+def test_a_trailing_newline_is_refused() -> None:
+    """``$`` matched before a final newline (#2414)."""
+    with pytest.raises(ValueError, match="map.pack must be"):
+        MapPack(REF + "\n")
+    with pytest.raises(ValueError, match="map.pack_sha256"):
+        MapPack(REF, sha256=SHA + "\n")
+
+
 def test_the_packs_dir_is_configured_then_the_environment_then_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

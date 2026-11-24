@@ -366,3 +366,9 @@ def test_a_batch_s_session_page_is_as_before(
         app_module._session_of(str(base / "outputs" / "2026-01-01" / "10-00-00"))
         == "/session/batch/2026-01-01/10-00-00"
     )
+
+
+def test_a_component_with_a_trailing_newline_is_unsafe() -> None:
+    """``$`` matched before a final newline (#2414)."""
+    assert case_paths._safe("10-00-00")
+    assert not case_paths._safe("10-00-00\n")

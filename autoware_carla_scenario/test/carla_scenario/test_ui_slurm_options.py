@@ -579,3 +579,12 @@ if __name__ == "__main__":
             + "\n",
             encoding="utf-8",
         )
+
+
+def test_check_node_path_refuses_a_trailing_newline() -> None:
+    """``$`` matched before a final newline (#2414)."""
+    from autoware_carla_scenario.ui.slurm_options import check_node_path
+
+    check_node_path("python", "~/venv/bin/python")
+    with pytest.raises(ValueError, match="not a path the launcher takes"):
+        check_node_path("python", "~/venv/bin/python\n")

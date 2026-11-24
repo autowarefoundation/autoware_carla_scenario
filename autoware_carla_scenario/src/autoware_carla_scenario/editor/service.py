@@ -1317,9 +1317,20 @@ class EditorService:
         """Read the map's OpenDRIVE from a CARLA server and cache it.
 
         Raises:
-            EditorError: If the map is not downloaded yet, or CARLA could not
-                be reached.
+            EditorError: If the map is not downloaded yet, its directory is
+                outside the editor's map roots, or CARLA could not be reached.
         """
+        from . import map_preview  # noqa: PLC0415 -- imports this module back
+
+        directory = document.map.directory
+        # The map directory is typed, and resolving it reads its files: held
+        # to the roots every map read is held to (#2414).
+        if directory and map_preview._inside_map_roots(Path(directory)) is None:
+            raise EditorError(
+                f"The map directory {directory} is outside the editor's map "
+                f"roots: add it to {map_preview.MAP_ROOTS_ENV} (the working "
+                "directory unless set) to fetch its OpenDRIVE."
+            )
         with _map_errors():
             # The map in use, which is the local directory when one is set:
             # resolving the source instead would file this map's OpenDRIVE in
@@ -1343,7 +1354,6 @@ class EditorService:
                 port=port,
                 refresh=True,
             )
-        from . import map_preview  # noqa: PLC0415 -- imports this module back
 
         # The preview keys its parsed maps on the file paths, and the map just
         # gained one it did not have; without this the next preview would be

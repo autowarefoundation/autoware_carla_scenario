@@ -112,7 +112,7 @@ def parse_int_list(raw: Any, *, reference: str | None = None) -> Any:
         return []
     if reference is not None and text == reference:
         return text
-    if REFERENCE_PATTERN.match(text):
+    if REFERENCE_PATTERN.fullmatch(text):
         if reference is not None:
             raise ValueError(f"must be whole numbers or {reference}, got {text!r}")
         raise ValueError(f"must be whole numbers, got {text!r}")

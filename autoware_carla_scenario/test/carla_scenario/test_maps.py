@@ -454,6 +454,16 @@ class TestMapSource:
         assert not MapSource.parse(f"{base}@1a2b3c4").pinned
         assert MapSource.parse(f"{base}@{'a1' * 20}").pinned
 
+    def test_a_trailing_newline_is_no_commit(self) -> None:
+        """``$`` matched before a final newline (#2414)."""
+        from autoware_carla_scenario.maps import source
+
+        full = "A1" * 20
+        assert source.looks_like_commit(full) and source.looks_like_commit("1a2b")
+        assert not source.looks_like_commit(full + "\n")
+        assert not source.looks_like_commit("1a2b\n")
+        assert source._canonical_ref(full + "\n") == full + "\n"
+
     def test_a_repositoryless_uri_is_refused(self) -> None:
         with pytest.raises(MapSourceError):
             MapSource.parse("   ")
@@ -2386,6 +2396,8 @@ class TestResolveDirectory:
         asset = tmp_path / "TownL.xodr"
         asset.write_text("<OpenDRIVE/>")
         monkeypatch.setenv(map_asset_env_var("TownL"), str(asset))
+        # The map directory is held to the editor's map roots (#2414).
+        monkeypatch.setenv("SCENARIO_EDITOR_MAP_ROOTS", str(tmp_path))
 
         draft_id = _new_draft(editor)
         editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
