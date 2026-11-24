@@ -27,9 +27,12 @@ import pytest
 #: whose CARLA went away does.  With ``+raise_value=true`` every case raises a
 #: ``ValueError``.  With ``+pass_then_raise=true`` each case, as
 #: ``ScenarioRunner`` does, names its outputs after the first stem none has
-#: taken (``App``, ``App-1`` ...); the first time it runs it writes a passing
-#: result and raises after it (as a teardown that raises does), and the retry
-#: fails.  With ``+hang=true`` every case sleeps past any job timeout, with
+#: taken (``App``, ``App-1`` ...); the first time it runs it writes its
+#: coverage file and trajectory log and raises before its result, and the
+#: retry fails.  With ``+late_crash=raise`` (``die``, ``hang``) each case
+#: writes its result (failing with ``+fail=true``) and then raises (kills
+#: itself with ``SIGKILL``, sleeps past any job timeout), as a run that dies
+#: in the Rerun conversion or stopping its queue does (#2416).  With ``+hang=true`` every case sleeps past any job timeout, with
 #: ``+die=true`` every case kills itself with ``SIGKILL``, and with
 #: ``+kill_sweep=true`` the first case kills the sweep (its parent) with
 #: ``SIGKILL``, as the OOM killer would.  With ``+gated=true`` each case, as
@@ -38,7 +41,8 @@ import pytest
 #: ``STEM`` replaced by the stem) and a passing result under it.  With
 #: ``+service_logs_once=true`` each case appends to the logs services write
 #: into its directory, takes the first free stem and writes a CARLA recorder
-#: log and a result under it, and raises the first time it runs.  With
+#: log under it, and raises the first time it runs, else writes a result
+#: there too.  With
 #: ``+unremovable=true`` the sweeper cannot remove a run's outputs.
 _SWEEPER_APP = """
 import json
@@ -98,13 +102,28 @@ def task(cfg: DictConfig) -> None:
             n += 1
             stem = f"App-{n}"
         first = not raised.exists()
-        result = {"passed": first, "message": stem, "elapsed_seconds": 1.0}
-        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
         (output_dir / f"{stem}_coverage.json").write_text("{}")
         (output_dir / f"{stem}.trajectory.jsonl").write_text("")
         if first:
             raised.write_text("yes")
-            raise RuntimeError("the world reset after the result raised")
+            raise RuntimeError("CARLA went away before the result")
+        result = {"passed": False, "message": stem, "elapsed_seconds": 1.0}
+        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
+        return
+    late_crash = cfg.get("late_crash", None)
+    if late_crash:
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+        passed = not cfg.get("fail", False)
+        result = {"passed": passed, "message": "App", "elapsed_seconds": 1.0}
+        (output_dir / "App_result.json").write_text(json.dumps(result))
+        if late_crash == "raise":
+            raise RuntimeError("the Rerun conversion raised after the result")
+        if late_crash == "die":
+            import signal
+            os.kill(os.getpid(), signal.SIGKILL)
+        if late_crash == "hang":
+            import time
+            time.sleep(120)
         return
     if cfg.get("service_logs_once", False):
         output_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -121,11 +140,11 @@ def task(cfg: DictConfig) -> None:
             n += 1
             stem = f"App-{n}"
         (output_dir / f"{stem}.log").write_text("")
-        result = {"passed": True, "message": stem, "elapsed_seconds": 1.0}
-        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
         if not raised.exists():
             raised.write_text("yes")
             raise RuntimeError("CARLA went away")
+        result = {"passed": True, "message": stem, "elapsed_seconds": 1.0}
+        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
         return
     if cfg.get("gated", False):
         output_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -299,10 +318,10 @@ def test_a_retried_case_keeps_none_of_the_failed_attempts_outputs(
     """Before a retry the sweeper removes what the failed attempt wrote in the
     job's directory, as the queue and the SLURM worker do (#1373).
 
-    The first attempt wrote a passing result, then raised; the retry failed.
-    The viewer, which shows a job's first stem, and the coverage merge, which
-    reads every coverage file, must read the retry's alone, as the sweeper's
-    verdict does.
+    The first attempt wrote its coverage file and trajectory log, then raised
+    before its result; the retry failed.  The coverage merge, which reads
+    every coverage file, must read the retry's alone, as the viewer and the
+    sweeper's verdict do.
     """
     from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
         _read_verdict,
@@ -1324,6 +1343,99 @@ def test_lanelet_sweeper_marks_a_job_given_up(
         assert f"+case={int(job) + 1}" in marker["overrides"]
 
 
+@pytest.mark.parametrize(
+    ("args", "returncode", "summary", "late"),
+    [
+        (("+late_crash=raise",), 0, "2/2 succeeded, 0 failed", "exit code 1"),
+        (
+            ("+late_crash=die", "+fail=true"),
+            1,
+            "0/2 succeeded, 2 failed (0 timed out)",
+            "crashed (SIGKILL)",
+        ),
+        (
+            ("+late_crash=hang", "+sweep.job_timeout_seconds=1"),
+            0,
+            "2/2 succeeded, 0 failed",
+            "timed out after 1s",
+        ),
+    ],
+)
+def test_a_verdict_written_before_a_late_crash_stands(
+    tmp_path: Path,
+    args: tuple[str, ...],
+    returncode: int,
+    summary: str,
+    late: str,
+) -> None:
+    """#2416: a case whose run wrote its result and then raised, crashed or
+    timed out while it wound down keeps that verdict: logged as a late
+    crash, not retried, its outputs kept and no marker left."""
+    import json
+
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        *args,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == returncode, output
+    assert summary in output, output
+    assert output.count("case 1") == 1 and output.count("case 2") == 1, output
+    assert f"but its job ended late ({late})" in output, output
+    assert "Removing the outputs" not in output, output
+    assert _markers(tmp_path / "multirun") == {}
+    passed = "+fail=true" not in args
+    for job in ("0", "1"):
+        result = tmp_path / "multirun" / job / "App_result.json"
+        assert json.loads(result.read_text())["passed"] is passed
+
+
+def test_an_earlier_runs_verdict_does_not_stand_for_a_crash(tmp_path: Path) -> None:
+    """#2416: only a result written since the attempt's marker is its
+    verdict: an earlier run's in a directory the jobs share (and so not
+    cleaned) leaves the crashed job crashed, retried and marked."""
+    session = tmp_path / "multirun"
+    (session / "shared").mkdir(parents=True)
+    # The last stem in stem order: the one the sweeper reads.
+    (session / "shared" / "Zzz_result.json").write_text('{"passed": true}')
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+die=true",
+        "hydra.sweep.subdir=shared",
+        sweep_dir=session,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    assert "ended late" not in output, output
+    assert output.count("case 1") == 2, output
+    assert "0/2 succeeded, 2 failed" in output, output
+    assert _markers(session)["shared"]["reason"] == "crashed (SIGKILL)"
+
+
+def test_read_verdict_reads_no_result_older_than_the_attempt(tmp_path: Path) -> None:
+    import os
+
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _read_verdict,
+    )
+
+    result = tmp_path / "App_result.json"
+    result.write_text('{"passed": true}')
+    os.utime(result, (100.0, 100.0))
+    assert _read_verdict(tmp_path) is True
+    assert _read_verdict(tmp_path, 100.0) is True
+    assert _read_verdict(tmp_path, 99.0) is True
+    assert _read_verdict(tmp_path, 100.5) is None
+
+
 def test_lanelet_sweeper_marks_no_job_that_failed_or_a_retry_passed(
     tmp_path: Path,
 ) -> None:
@@ -1605,8 +1717,10 @@ def test_a_job_resumed_into_its_directory_replaces_the_earlier_runs_outputs(
     session = tmp_path / "multirun"
     jobs = [(session / "0", ["+case=1"]), (session / "1", ["+case=2"])]
     write_sweep_plan(session, jobs)
+    # Job 1's attempt started (its marker, written before the run) ...
+    write_case_unfinished(session / "1", overrides=["+case=2"], attempt=1)
     for (job, overrides), passed in zip(jobs, (True, False)):
-        job.mkdir(parents=True)
+        job.mkdir(parents=True, exist_ok=True)
         record = passing
         record.passed = passed
         record.message = "ok" if passed else "collision"
@@ -1615,8 +1729,7 @@ def test_a_job_resumed_into_its_directory_replaces_the_earlier_runs_outputs(
         write_gate_record(job / "App_gate.json", record)
         (job / "App_coverage.json").write_text("{}")
         (job / "App_result.json").write_text(json.dumps({"passed": passed}))
-    # Job 1 was killed after writing them (in the world reset, say).
-    write_case_unfinished(session / "1", overrides=["+case=2"], attempt=1)
+    # ... and was killed after writing them (in the world reset, say).
     (session / "1" / "notes.txt").write_text("mine")
     assert main([str(session)]) == 1
     assert "1 of 2 run(s) passed" in capsys.readouterr().out
@@ -1787,9 +1900,11 @@ def test_an_output_a_retry_cannot_remove_is_logged_and_the_retry_runs(
     assert _markers(tmp_path / "multirun") == {}
     for job in ("0", "1"):
         directory = tmp_path / "multirun" / job
-        assert sorted(p.name for p in directory.glob("App*_result.json")) == [
+        # The failed attempt's log stays beside the retry's run.
+        assert sorted(p.name for p in directory.glob("App*")) == [
+            "App-1.log",
             "App-1_result.json",
-            "App_result.json",
+            "App.log",
         ]
 
 

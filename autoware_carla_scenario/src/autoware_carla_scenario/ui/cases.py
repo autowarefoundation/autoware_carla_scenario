@@ -190,7 +190,7 @@ def _same_result(entry: dict[str, Any], result: Any) -> bool:
     if not isinstance(result, dict):
         return False
     return (
-        bool(entry.get("passed")) == bool(result.get("passed"))
+        _passed(entry.get("passed")) == _passed(result.get("passed"))
         and entry.get("elapsed_seconds") == result.get("elapsed_seconds")
         and (entry.get("message") or "") == (result.get("message") or "")
     )
@@ -231,8 +231,8 @@ def match_batch_stems(
         chosen: str | None = None
         if (
             isinstance(entry, dict)
-            and not entry.get("error")
-            and not entry.get("pending")
+            and entry.get("error") is not True
+            and entry.get("pending") is not True
         ):
             for stem in stems:
                 if stem in used or not _same_result(entry, results.get(stem)):

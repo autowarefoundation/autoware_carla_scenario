@@ -78,6 +78,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
+from ..gate.errored import written_since
 from ..gate.sweep_plan import write_sweep_plan
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
@@ -109,6 +110,7 @@ from .job_status import (
     REFUSED_EXIT_CODE,
     RESUME_FROM_ENV,
     RESUME_FROM_EXPECTED,
+    marker_reason,
     owned_dirs,
     resume_from_env,
     verdict_exit_code,
@@ -225,10 +227,13 @@ def _resume_from(config_value: Any, env_value: str | None) -> int:
     return resume_from_env(env_value, from_config)
 
 
-def _read_verdict(output_dir: Path) -> bool | None:
+def _read_verdict(output_dir: Path, since: float | None = None) -> bool | None:
     """The verdict of the scenario result JSON the case just launched wrote in
     its job's output directory: the last run's
-    (:func:`..ui.case_paths.last_result_path`).  A retry
+    (:func:`..ui.case_paths.last_result_path`), and, given *since* (when the
+    attempt's unfinished marker was written), only one written no earlier
+    (:func:`..gate.errored.written_since`): an earlier attempt's or run's is
+    no verdict of this one (#2416).  A retry
     (``server.cooldown_max_retries``) runs the case again in the same job
     directory; the sweeper removes the failed attempt's outputs first (#1373),
     so the retry takes the same stem, and before the case's first attempt it
@@ -248,6 +253,8 @@ def _read_verdict(output_dir: Path) -> bool | None:
     """
     result_file = last_result_path(output_dir)
     if result_file is None:
+        return None
+    if since is not None and not written_since(result_file, since):
         return None
     try:
         data = json.loads(result_file.read_text(encoding="utf-8"))
@@ -888,7 +895,6 @@ class LaneletConstraintSweeper(Sweeper):
                     # what the failed attempt wrote (a result, a coverage
                     # file, a trajectory log ...) makes way for the retry's,
                     # which then takes the same stem.  Left behind, the
-                    # viewer, which shows a job's first stem, and the
                     # coverage merge, which reads every coverage file, would
                     # read the failed attempt's (#1373).  The services'
                     # logs, appended to, stay to explain the failed attempt,
@@ -930,7 +936,7 @@ class LaneletConstraintSweeper(Sweeper):
                 # leaves this marker, which scenario-gate refuses the sweep
                 # for (#1833).  It replaces any an earlier sweep left in the
                 # same directory, so this run of the job decides afresh.
-                _write_unfinished_marker(job_dir, batch, attempt + 1)
+                since = _write_unfinished_marker(job_dir, batch, attempt + 1)
                 logger.info(
                     "[%d/%d] Launching (attempt %d/%d): %s",
                     idx + 1,
@@ -969,6 +975,35 @@ class LaneletConstraintSweeper(Sweeper):
                     )
                     _write_marker(job_dir, batch, exit_code, attempt + 1)
                     sys.exit(_REFUSED_EXIT_CODE)
+
+                # The run may have ended with a verdict and the job died in
+                # what follows it (the Rerun conversion, stopping Autoware,
+                # the backends or the server): the result it wrote since this
+                # attempt's marker is final, as a verdict is, and not removed
+                # for a retry (#2416).
+                late = (
+                    None
+                    if job_dir is None or since is None
+                    else _read_verdict(job_dir[0], since)
+                )
+                if late is not None:
+                    logger.warning(
+                        "[%d/%d] Scenario %s, but its job ended late (%s) "
+                        "(attempt %d/%d) for overrides %s -- the verdict "
+                        "stands, not retried.",
+                        idx + 1,
+                        idx_offset + len(batches),
+                        "PASSED" if late else "FAILED",
+                        marker_reason(exit_code, job_timeout),
+                        attempt + 1,
+                        max_attempts,
+                        batch,
+                    )
+                    if late:
+                        succeeded = True
+                    else:
+                        exit_code = _FAILED_VERDICT_EXIT_CODE
+                    break
 
                 # Log based on exit code.
                 if exit_code is None:

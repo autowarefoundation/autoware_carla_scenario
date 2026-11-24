@@ -263,9 +263,14 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   (`server.cooldown_max_retries`), and Hydra's basic sweeper's, once its run
   raised -- leaves `case_errored.json` in its job directory, with its
   overrides, last exit code, attempts and why. Each counts, unless the job's
-  directory holds a gate record (its run wrote one before the job failed).
+  directory holds a gate record written since its attempt started (its run
+  wrote one before the job failed). A gate record older than that is an
+  earlier run's in the same directory (a `--multirun` run again into its
+  sweep directory, whose rerun takes the next stem), and the marker counts:
+  the marker of a job given up keeps when its attempt started (`since`).
   A job that ran and failed leaves no marker (its record is judged), nor does
-  one a retry passed.
+  one a retry passed, nor a lanelet sweeper's job whose run wrote its result
+  and then crashed or timed out while it wound down (its verdict stands).
 
   The marker is also written **before each attempt**, saying the job did not
   finish (`"unfinished": true`, reason `did not finish ...`), and removed

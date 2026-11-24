@@ -29,7 +29,13 @@ from ..batch_report import is_plain_stem
 
 # The suffix of a run's result, beside its gate record: run_outputs's (#2198).
 from ..run_outputs import RESULT_SUFFIX as _RESULT_SUFFIX
-from .errored import CASE_ERRORED, find_case_errored, read_case_errored
+from .errored import (
+    CASE_ERRORED,
+    find_case_errored,
+    marker_since,
+    read_case_errored,
+    written_since,
+)
 from .record import GATE_RECORD_SUFFIX
 from .sweep_plan import find_sweep_plans, read_sweep_plan
 
@@ -237,6 +243,20 @@ def _has_result(directory: Path) -> bool:
         return False
 
 
+def _has_file_since(directory: Path, suffix: str, since: float) -> bool:
+    """Whether *directory* holds a file whose name ends in *suffix* written
+    no earlier than *since* (:func:`.errored.written_since`): one of an
+    earlier run in the same directory is not this attempt's.  ``False`` when
+    the directory cannot be listed."""
+    try:
+        return any(
+            p.name.endswith(suffix) and written_since(p, since)
+            for p in directory.iterdir()
+        )
+    except OSError:
+        return False
+
+
 def _has_result_since(marker: Path) -> bool:
     """Whether the job directory of *marker* holds a run's result
     (``*_result.json``) written no earlier than the marker: one of an
@@ -244,14 +264,21 @@ def _has_result_since(marker: Path) -> bool:
     either cannot be read."""
     try:
         since = marker.stat().st_mtime
-        return any(
-            p.name.endswith(_RESULT_SUFFIX)
-            and p.is_file()
-            and p.stat().st_mtime >= since
-            for p in marker.parent.iterdir()
-        )
     except OSError:
         return False
+    return _has_file_since(marker.parent, _RESULT_SUFFIX, since)
+
+
+def _has_gate_record_since(marker: Path) -> bool:
+    """Whether the job directory of *marker* holds a gate record written no
+    earlier than the attempt the marker is of started
+    (:func:`.errored.marker_since`): one of an earlier run in the same
+    directory is not this attempt's (#2416).  Any gate record counts when
+    that time cannot be read, as before."""
+    since = marker_since(marker)
+    if since is None:
+        return _has_gate_record(marker.parent)
+    return _has_file_since(marker.parent, GATE_RECORD_SUFFIX, since)
 
 
 def _unstarted_jobs(path: Path) -> tuple[list[str], list[str]]:
@@ -296,7 +323,9 @@ def _unstarted_jobs(path: Path) -> tuple[list[str], list[str]]:
 def _errored_jobs(path: Path) -> list[str]:
     """One line per sweep under *path* whose ``--multirun`` jobs were given up
     or did not finish (``case_errored.json``, :mod:`.errored`) and left no
-    gate record.
+    gate record since the attempt the marker is of started
+    (:func:`_has_gate_record_since`): a gate record older than that is an
+    earlier run's in the same directory, and the marker counts (#2416).
 
     A marker saying the job did not finish (``"unfinished": true``) beside a
     run's result (``*_result.json``) written no earlier than it is not
@@ -310,7 +339,7 @@ def _errored_jobs(path: Path) -> list[str]:
     by_sweep: dict[Path, list[str]] = {}
     for marker in find_case_errored(path):
         job = marker.parent
-        if _has_gate_record(job):
+        if _has_gate_record_since(marker):
             # The run wrote its record before the job failed: it is judged.
             continue
         data = read_case_errored(marker)

@@ -622,7 +622,7 @@ def load_scenario(
                 # The case's own overrides: a batch directory has no
                 # .hydra/overrides.yaml (#2344).
                 overrides = _entry_overrides(entry)
-                if not entry.get("pending"):
+                if entry.get("pending") is not True:
                     data = entry
                 elif isinstance(entry.get("message"), str) and entry["message"]:
                     no_result = entry["message"]

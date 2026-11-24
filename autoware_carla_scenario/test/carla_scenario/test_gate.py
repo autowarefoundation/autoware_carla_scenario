@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1482,14 +1483,74 @@ class TestErroredJobs:
         (line,) = capsys.readouterr().err.strip().splitlines()
         assert line.startswith("scenario-gate: warning: ")
 
+    @staticmethod
+    def _dated(path: Path, marker: Path, offset: float) -> None:
+        """Date *path* *offset* seconds after the marker *marker*."""
+        at = marker.stat().st_mtime + offset
+        os.utime(path, (at, at))
+
     def test_a_marker_beside_a_gate_record_is_not_counted(self, tmp_path: Path) -> None:
-        from autoware_carla_scenario.gate.errored import write_case_errored
+        from autoware_carla_scenario.gate.errored import (
+            write_case_errored,
+            write_case_unfinished,
+        )
 
         self._sweep(tmp_path, given_up=0)
-        # Its run wrote a record, and then the job failed: the record is judged.
+        # Its attempt started (the unfinished marker), its run wrote a record,
+        # and then the job failed: the record is judged.  The marker of the
+        # job given up keeps when the attempt started (#2416).
+        marker = write_case_unfinished(tmp_path / "2", overrides=[], attempt=1)
+        self._dated(tmp_path / "2" / "App_gate.json", marker, 0.0)
+        self._dated(marker, marker, -10.0)
         write_case_errored(
             tmp_path / "2", overrides=[], exit_code=1, attempts=1, reason="x"
         )
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+
+    def test_a_marker_beside_an_older_gate_record_is_counted(
+        self, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.gate.errored import (
+            write_case_errored,
+            write_case_unfinished,
+        )
+
+        self._sweep(tmp_path, given_up=0)
+        # Job 0 passed before; run again into the same directory (#2416), it
+        # did not finish (a segfault): its marker is newer than the record,
+        # which is the earlier run's.
+        marker = write_case_unfinished(tmp_path / "0", overrides=[], attempt=1)
+        self._dated(tmp_path / "0" / "App_gate.json", marker, -1.0)
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 job(s)" in line and "0 (did not finish" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        # Its rerun raised instead (Hydra's basic sweeper): the marker of the
+        # job given up keeps when the attempt started, and still counts.
+        write_case_errored(
+            tmp_path / "0", overrides=[], exit_code=1, attempts=1, reason="x"
+        )
+        (line,) = unrecorded_cases(tmp_path)
+        assert "0 (x)" in line
+        # A given-up marker that replaced none is dated itself.
+        marker = write_case_errored(
+            tmp_path / "1", overrides=[], exit_code=1, attempts=1, reason="y"
+        )
+        self._dated(tmp_path / "1" / "App_gate.json", marker, -1.0)
+        (line,) = unrecorded_cases(tmp_path)
+        assert "2 job(s)" in line and "1 (y)" in line
+
+    def test_a_gate_record_written_after_the_marker_is_judged(
+        self, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.gate.errored import write_case_unfinished
+
+        self._sweep(tmp_path, given_up=0)
+        # The rerun wrote its record as old as its marker, or newer, and was
+        # killed after it: the record is judged, as before.
+        for job, offset in (("0", 0.0), ("1", 1.0)):
+            marker = write_case_unfinished(tmp_path / job, overrides=[], attempt=1)
+            self._dated(tmp_path / job / "App_gate.json", marker, offset)
         assert unrecorded_cases(tmp_path) == []
         assert main([str(tmp_path)]) == EXIT_PASSED
 
