@@ -1701,7 +1701,7 @@ def test_the_classes_codon_builds_by_other_arities_are_found() -> None:
         "FrameMismatchError": [1, 2, 10],
         "MapCacheError": [0, 2, 8],
         "OddCondition": [1],
-        "RunProgress": [5],
+        "RunProgress": [6],
         "SomaMotion": [2],
     }
     # Their `*_kw` refuses what the fields would take (#244's review).

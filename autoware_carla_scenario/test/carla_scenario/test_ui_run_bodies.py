@@ -177,3 +177,82 @@ def test_an_empty_resubmit_body_resubmits_with_no_flags(
     assert response.status_code == 200
     assert len(resubmitted) == 1
     assert "--failed" not in resubmitted[0]
+
+
+# ── Extra overrides that are flags (#2440) ──────────────────────────────────
+
+#: Lines that would reach ``scenario`` as flags: ``--cfg=job`` prints the
+#: config and exits 0 (a job "passed" though nothing ran), ``--multirun``
+#: sends the results elsewhere.
+_FLAGS = ["--cfg=job", "--multirun", "-m", "-c job", "--help"]
+
+
+@pytest.mark.parametrize("flag", _FLAGS)
+@pytest.mark.parametrize("launcher", ["local", "slurm"])
+def test_a_run_with_a_flag_for_an_override_is_a_400(
+    started: list[Any],
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+    launcher: str,
+) -> None:
+    submitted: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+    monkeypatch.setattr(
+        slurm_launch, "start_submit", lambda command, base: submitted.append(command)
+    )
+    response = client.post(
+        "/api/run",
+        json={
+            "scenario": "a/b",
+            "extra_overrides": ["server.host=h", flag],
+            "launcher": launcher,
+        },
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["status"] == "error"
+    assert f"'{flag}'" in body["message"]
+    assert "an override (key=value), not a flag" in body["message"]
+    assert started == [] and submitted == []
+
+
+@pytest.mark.parametrize("launcher", ["local", "slurm"])
+def test_a_preview_with_a_flag_for_an_override_is_a_400(
+    base: Path, client: TestClient, launcher: str
+) -> None:
+    response = client.post(
+        "/api/run/preview",
+        json={
+            "scenario": "a/b",
+            "extra_overrides": ["--cfg=job"],
+            "launcher": launcher,
+        },
+    )
+    assert response.status_code == 400
+    command = response.json()["command"]
+    assert command.startswith("# extra override '--cfg=job' starts with '-'")
+
+
+def test_overrides_that_only_hold_a_dash_are_still_overrides() -> None:
+    # Hydra's overrides start with a key, '+' or '~'; a value may be negative.
+    extra = ["a=-1", "+b=--x", "++c=1", "~d", "~e=-2", "f=-"]
+    body = app_module.parse_run_body({"scenario": "a/b", "extra_overrides": extra})
+    assert body.extra_overrides == extra
+
+
+def test_the_slurm_command_refuses_a_flag_through_the_same_check() -> None:
+    from autoware_carla_scenario.ui import request_values, slurm_options
+
+    assert app_module.check_extra_overrides is request_values.check_extra_overrides
+    with pytest.raises(ValueError, match="not a flag"):
+        slurm_options.build_command(
+            ["scenario"], "a/b", ["--multirun"], "", slurm_options.SlurmOptions()
+        )
+    with pytest.raises(ValueError, match="not a flag"):
+        slurm_launch.build_command(
+            "a/b", ["--cfg=job"], "", slurm_launch.SlurmOptions()
+        )
+    assert "a=-1" in slurm_options.build_command(
+        ["scenario"], "a/b", ["a=-1"], "", slurm_options.SlurmOptions()
+    )

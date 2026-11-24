@@ -77,5 +77,9 @@ class RunProgress(BaseModel):
     status: Status
     #: Why the run ended before any job ran (its multirun directory could not
     #: be created, #2183): set on its ``done``, which the viewer then shows as
-    #: a failure, not as completed.
+    #: a failure, not as completed; or, on the ``done`` of a run some of whose
+    #: jobs failed, ``"k of N failed"`` (#2440).
     message: str = ""
+    #: How many of the run's jobs failed, on its ``done`` (#2440): the viewer
+    #: shows a ``done`` with any as failed.
+    failed: int = 0

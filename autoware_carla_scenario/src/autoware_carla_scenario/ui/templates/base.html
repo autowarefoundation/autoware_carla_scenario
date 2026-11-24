@@ -437,18 +437,24 @@
     }
 
     // Off the index page: clear the viewer's cache (/api/refresh), ignoring
-    // the session table it returns, then reload the page.
-    function refreshAndReload() {
+    // the session table it returns, then reload the page -- or go to *url*
+    // when given: a Re-run writes a new session, which the page it was
+    // started from does not show (#2440).
+    function refreshAndReload(url) {
       fetch('/api/refresh', {method: 'POST'})
         .catch(e => console.warn('Failed to clear the cache:', e))
-        .finally(() => location.reload());
+        .finally(() => { if (url) location.assign(url); else location.reload(); });
     }
 
     // The override lines of the extra-overrides text: key=value, and Hydra's
     // delete overrides (~key, ~key=value), which have no '=' of their own.
+    // A line starting with '-' (a flag: --cfg=job, --multirun) is kept, not
+    // dropped, so the server refuses it and the preview and the run say why
+    // (#2440).
     function overrideLines(raw) {
       if (!raw) return [];
-      return raw.split('\n').map(l => l.trim()).filter(l => l && (l.includes('=') || l.startsWith('~')));
+      return raw.split('\n').map(l => l.trim()).filter(
+        l => l && (l.includes('=') || l.startsWith('~') || l.startsWith('-')));
     }
 
     // Collect all run options from the panel
@@ -640,9 +646,10 @@
       const count = document.getElementById('progress-count');
       const fill = document.getElementById('progress-fill');
 
-      if (data.status === STATUS.DONE && data.message) {
-        // A run that ended before any job ran says why (#2183).
-        text.textContent = data.message;
+      if (data.status === STATUS.DONE && (data.message || data.failed > 0)) {
+        // A run that ended before any job ran says why (#2183); one whose
+        // jobs failed says how many ("k of N failed", #2440).
+        text.textContent = data.message || `${data.failed} of ${data.total} failed`;
         count.textContent = `${data.current}/${data.total}`;
         fill.style.width = '100%';
         fill.className = 'bg-red-500 h-2 rounded-full transition-all duration-300';

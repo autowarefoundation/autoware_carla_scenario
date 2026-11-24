@@ -10,18 +10,24 @@ Status = str
 
 
 # A pydantic model in Python, whose constructor takes its fields by keyword
-# only (`RunProgress(*, current, total, scenario_name, status, message="")`).
+# only (`RunProgress(*, current, total, scenario_name, status, message="",
+# failed=0)`).
 class RunProgress:
     current: int
     total: int
     scenario_name: str
     status: Status
     message: str
+    failed: int
 
     # Codon would build it by its fields, by position, too (docs/typecheck.md,
     # #244): its constructor takes no positional argument to refuse them.
-    # One guard for every field and one for the fields without a default,
-    # which `message` is not.
+    # One guard for every field, one for the fields but the last default and
+    # one for the fields without a default, which `message` and `failed` are
+    # not.
+    def __init__(self, current, total, scenario_name, status, message, failed):
+        compile_error("RunProgress(): its fields are keyword-only")
+
     def __init__(self, current, total, scenario_name, status, message):
         compile_error("RunProgress(): its fields are keyword-only")
 
@@ -36,6 +42,7 @@ class RunProgress:
         scenario_name: str,
         status: Status,
         message: str = "",
+        failed: int = 0,
     ):
         _keyword_only(_kw, "RunProgress(): its fields")
         self.current = current
@@ -43,3 +50,4 @@ class RunProgress:
         self.scenario_name = scenario_name
         self.status = status
         self.message = message
+        self.failed = failed

@@ -16,6 +16,8 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from .request_values import check_extra_overrides
+
 __all__ = [
     "SlurmOptions",
     "build_command",
@@ -289,7 +291,14 @@ def build_command(
     With a sweeper the batch runs every case of each scenario's sweep
     (``--multirun``, expanded by the batch itself); without one each scenario
     the pattern matches runs once.
+
+    Raises:
+        ValueError: An extra override starts with ``-``, a flag of
+            ``scenario`` rather than an override
+            (:func:`.request_values.check_extra_overrides`, which ``/api/run``
+            checks first, #2440).
     """
+    check_extra_overrides(extra_overrides)
     cmd = list(command)
     if sweeper:
         cmd.append("--multirun")
