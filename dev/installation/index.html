@@ -2717,7 +2717,7 @@
   <code>server.host=&lt;address&gt;</code> (the server already listening there is used; the
   runner launches CARLA only for a local host, see
   <a href="#carla-simulator">CARLA Simulator</a>); <code>scenario-setup</code> refuses to download
-  the nightly there.</li>
+  CARLA's own packages there.</li>
 </ul>
 <h3 id="python-version">Python Version<a class="headerlink" href="#python-version" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2744,11 +2744,49 @@
   <code>import autoware_carla_scenario.hydra_compat  # noqa: F401</code>.</li>
 </ul>
 <h3 id="carla-simulator">CARLA Simulator<a class="headerlink" href="#carla-simulator" title="Permanent link">&para;</a></h3>
-<p>The framework targets CARLA UE5 (<code>0.10.0</code> and <code>ue5-dev</code>). CARLA 0.9.x (UE4)
-is not supported. <code>uv run scenario-setup</code> downloads CARLA's nightly Linux
-build into <code>~/.autoware_carla_scenario/bin/carla</code>, and the runner launches it
-from there (see the <a href="../quickstart/">Quick Start</a>). A CARLA installed any other
-way is used through <code>CARLA_EXECUTABLE</code>. Ctrl-C during the download or the
+<p>The framework targets <strong>CARLA 1.0</strong> (Unreal Engine 5.8). <code>uv run
+scenario-setup</code> downloads the 1.0 release
+(<code>https://downloads.carlasim.com/Linux/CARLA_1.0.tar.gz</code>, about 14 GB) into
+<code>~/.autoware_carla_scenario/bin/carla</code>, and the runner launches it from there
+(see the <a href="../quickstart/">Quick Start</a>); <code>scenario-setup --nightly</code> installs
+CARLA's nightly build (the <code>ue58-dev</code> branch) instead. A CARLA installed any
+other way is used through <code>CARLA_EXECUTABLE</code>. Both package layouts are
+accepted: CARLA 1.0's, with <code>CarlaUnreal.sh</code> at the package's top, and
+0.10's, with it in <code>Linux/</code>. An install made before CARLA 1.0 became the
+default (the old nightly) is replaced by the next <code>scenario-setup</code>, since it
+was downloaded from another URL.</p>
+<p>The client must be built from the same CARLA branch as the server: their RPC
+messages differ. typesafe_carla carries one client per branch, chosen by
+<code>TYPESAFE_CARLA_CARLA_REF</code> when it is first imported, and the framework makes
+CARLA 1.0's the default (<code>autoware_carla_scenario.carla_release</code>). Another
+server wants it set in the environment that runs the scenarios (a <code>.env</code> file
+is read too late, after the client is loaded), and SLURM jobs inherit it:</p>
+<table>
+<thead>
+<tr>
+<th>Server</th>
+<th><code>TYPESAFE_CARLA_CARLA_REF</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CARLA 1.0 (<code>scenario-setup</code>)</td>
+<td>unset, or <code>1.0</code></td>
+</tr>
+<tr>
+<td>CARLA's nightly (<code>scenario-setup --nightly</code>), a <code>ue58-dev</code> build</td>
+<td><code>ue58-dev</code></td>
+</tr>
+<tr>
+<td>CARLA 0.10.0, a <code>ue5-dev</code> build</td>
+<td><code>ue5-dev</code></td>
+</tr>
+</tbody>
+</table>
+<p>Once a server is reached (launched or reused), the runner compares its
+version with the client's and stops with a message naming the value to set
+when they are of different branches, rather than failing later on the run's
+first world settings. CARLA 0.9.x (UE4) is not supported. Ctrl-C during the download or the
 unpack prints <code>scenario-setup: interrupted</code> and exits 130, leaving no partial
 install behind.</p>
 <p>The runner launches CARLA only for a <strong>local</strong> <code>server.host</code>: <code>localhost</code>
@@ -2765,7 +2803,7 @@ check <code>server.host</code> and <code>server.port</code> when the message app
 <h3 id="carla-client">CARLA client<a class="headerlink" href="#carla-client" title="Permanent link">&para;</a></h3>
 <p>The Python client is
 <a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>, a plain
-dependency of the package (<code>typesafe-carla&gt;=0.8.1,&lt;0.9</code>, from PyPI, Linux
+dependency of the package (<code>typesafe-carla&gt;=0.8.7,&lt;0.9</code>, from PyPI, Linux
 x86_64 and aarch64), imported as <code>import typesafe_carla.carla as carla</code>. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in <code>typesafe-carla-toolchain</code>, the pinned Codon compiler. The official
@@ -2903,7 +2941,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <p>The package's runtime dependencies (declared in <code>pyproject.toml</code>):</p>
 <ul>
-<li><code>typesafe-carla&gt;=0.8.1,&lt;0.9</code> (Linux x86_64 and aarch64) — the CARLA client and its Codon
+<li><code>typesafe-carla&gt;=0.8.7,&lt;0.9</code> (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in <code>typesafe-carla-toolchain</code></li>
 <li><code>pyxodr&gt;=0.1.0</code> — OpenDRIVE parser used by <code>MapManager</code> / <code>to_opendrive</code></li>
 <li><code>lxml&gt;=5.0</code> — the XML elements pyxodr's roads hold, which the road
@@ -2974,7 +3012,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 03:10:28 UTC"><span class="timeago" datetime="2026-11-23T03:10:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 03:10:28 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 07:42:41 UTC"><span class="timeago" datetime="2026-11-24T07:42:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 07:42:41 UTC">2026-11-24</span>
   </span>
 
     
