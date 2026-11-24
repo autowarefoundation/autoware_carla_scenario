@@ -1132,6 +1132,9 @@ class TrajectoryFollower:
     # How many non-finite plans, measurements and commands were refused (the log's
     # rate limit); not cleared by reset().
     _non_finite: int
+    # Whether a negative speed at the target has been logged: once a follower,
+    # not cleared by reset().
+    _reverse_logged: bool
 
     def __init__(
         self,
@@ -1151,6 +1154,7 @@ class TrajectoryFollower:
         self._config = config
         self.powertrain = powertrain
         self._non_finite = 0
+        self._reverse_logged = False
         self.reset()
 
     @property
@@ -1672,6 +1676,7 @@ class TrajectoryFollower:
         )
         stop_dist = _stop_distance(trajectory, dist_threshold, yaw_threshold)
         self._stop_distance = stop_dist
+        self._note_reverse(trajectory[target_index].vel)
 
         self._update_control_state(
             trajectory, nearest_index, speed_mps, stop_dist, predicted_vel
@@ -1689,6 +1694,23 @@ class TrajectoryFollower:
             self._vel_history.pop(0)
         self._previous_acc = _finite_or(acceleration, self._previous_acc)
         return acceleration, velocity
+
+    def _note_reverse(self, target_vel: float) -> None:
+        """Warn, once a follower, that the plan asks to reverse.
+
+        Autoware's controller reverses when its trajectory's speeds are negative
+        (``applyVelocityFeedback``'s reverse gear); this port tracks forward
+        gear only, so a negative speed is braked to rather than driven
+        backwards, and the vehicle stays put.
+        """
+        if target_vel < 0.0 and not self._reverse_logged:
+            self._reverse_logged = True
+            logger.warning(
+                "TrajectoryFollower: the plan asks for a negative speed "
+                "(%g m/s) at its target; reversing is not driven (forward gear "
+                "only), so the vehicle brakes instead (logged once)",
+                target_vel,
+            )
 
     def _predicted_state_after_delay(
         self, current_vel: float, current_acc: float

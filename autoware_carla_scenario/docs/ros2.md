@@ -76,7 +76,7 @@ CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 | --- | --- | --- |
 | `kinematic_state_topic` (`/localization/kinematic_state`) | `nav_msgs/Odometry` | pose in `frame_id`, twist in `child_frame_id` |
 | `steering_status_topic` (`/vehicle/status/steering_status`) | `autoware_vehicle_msgs/SteeringReport` | front tyre angle, positive to the left |
-| `speed_topic` (`/vehicle/speed`) | `std_msgs/Float64` | ground speed, m/s |
+| `speed_topic` (`/vehicle/speed`) | `std_msgs/Float64` | ground speed, m/s: a magnitude, never negative, even while a `control` source reverses the ego (the odometry's twist is signed) |
 | `clock_topic` (off) | `rosgraph_msgs/Clock` | for a CARLA server built without ROS 2 |
 | `turn_indicators_report_topic` (`/vehicle/status/turn_indicators_status`) | `autoware_vehicle_msgs/TurnIndicatorsReport` | the indicators the ego shows (hazard, both lit, reports as off, as the report has no hazard) |
 
@@ -133,7 +133,7 @@ ros2:
 
 | `kind` | Topics | Applied by |
 | --- | --- | --- |
-| `trajectory` | `topic`: `autoware_planning_msgs/Trajectory` | the framework's trajectory follower (pure pursuit + Autoware's PID longitudinal controller on the trajectory's own speeds, through the powertrain model), as for an [external driver policy](driver_interface.md) |
+| `trajectory` | `topic`: `autoware_planning_msgs/Trajectory` | the framework's trajectory follower (pure pursuit + Autoware's PID longitudinal controller on the trajectory's own speeds, through the powertrain model), as for an [external driver policy](driver_interface.md); forward only: a negative speed at the follower's target is braked to, not reversed, so a reversing trajectory leaves the ego standing (logged once) |
 | `control` | `topic`: `autoware_control_msgs/Control` | CARLA's Ackermann controller; Autoware's steering (positive left) is negated into CARLA's (positive right), and its signed velocity is handed over as given, so a negative one -- however small: there is no deadband -- reverses (the controller comes to a stop before it changes direction) |
 | `steer_accel` | `steering_topic`, `acceleration_topic`: `std_msgs/Float64` | CARLA's Ackermann controller, as VisionPilot's `carla_control_publisher` hands it: target speed `speed + acceleration * speed_horizon_s`, never below zero (a deceleration past standstill stops the ego rather than reversing it) |
 
@@ -198,8 +198,16 @@ command has arrived, the ego is held on its brakes.
 
 A command that is not all finite (a NaN or an infinity in a steering angle, a speed,
 an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
-refused, with a warning: the active source's last good command of that kind drives
-on, and with none, the ego is held on its brakes.
+refused before arbitration, with a warning once per source. A refused command does
+not keep its source fresh: the source's last good command drives on until it is
+`stale_s` old, and then the source ages out as one that fell silent does -- a
+lower-priority fresh source takes over, or with none, `on_stale` applies. A source
+that has sent no good command does not drive at all.
+
+With `on_stale: brake`, a source that comes back after it went stale starts its
+trajectory follower afresh (its integrators and state are reset), as the ego was
+braked rather than tracked meanwhile; with `hold`, the follower kept tracking the
+held trajectory and carries on.
 
 A `control` command's jerk is signed in Autoware (negative while the deceleration
 grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
@@ -308,6 +316,14 @@ installed. They are written in XCDR1, the representation `rmw_cyclonedds_cpp` wr
 * A camera in `cameras` publishes no `sensor_msgs/CameraInfo`.
 * Commands are read in the local frame `frame_id` names; nothing transforms a plan
   published in another frame (a Lanelet2 `map`, say).
+* The ego publishes no acceleration (`/localization/acceleration`), no
+  `autoware_vehicle_msgs/VelocityReport` (`/vehicle/status/velocity_status`) and no
+  `autoware_vehicle_msgs/GearReport` (`/vehicle/status/gear_status`): stock
+  Autoware planners and controllers that wait for them do not start. Its states are
+  those in [What the ego publishes](#what-the-ego-publishes).
+* `/vehicle/speed` is a magnitude: a node that needs the direction of travel reads
+  the odometry's twist.
+* A `trajectory` source is tracked forward only: the follower does not reverse.
 * `control` and `steer_accel` hand the acceleration to CARLA's Ackermann controller as
   given, as VisionPilot's relay does; the controller's own settings
   (`AckermannControllerSettings`) are CARLA's defaults.

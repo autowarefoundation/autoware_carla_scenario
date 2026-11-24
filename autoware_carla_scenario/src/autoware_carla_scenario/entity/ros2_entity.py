@@ -15,8 +15,9 @@ applies its command:
   ``/carla/hero/ackermann_control_cmd``.
 
 A command that is not all finite (a NaN or an infinity in a pose, a speed, an
-acceleration, a steering angle or a jerk) is refused: the last good command of its
-kind drives on, and with none, the ego brakes.
+acceleration, a steering angle or a jerk) is refused before the arbiter sees it: it
+neither drives nor keeps its source fresh.  The source's last good command drives
+on until the source goes stale; with none, the source does not drive.
 
 Nothing waits for a command: the loop runs at the pace
 ``ScenarioRunner`` sets (``max_tick_rate_hz``), and a source that falls silent
@@ -34,7 +35,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Set, Tuple
 
 from ..constants import FIXED_DELTA_SECONDS, US_PER_S
 from ..debug_markers import DebugMarkers
@@ -73,9 +74,6 @@ __all__ = ["Ros2EgoEntity", "plan_from_trajectory"]
 
 #: Below this speed (m/s) a trajectory without timing is not timed from it.
 _MIN_TIMING_SPEED_MPS: float = 0.1
-
-#: A refused non-finite command is logged the first time, then once in this many.
-_NON_FINITE_LOG_EVERY: int = 100
 
 
 def plan_from_trajectory(
@@ -156,15 +154,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     _plan_steps: int
     #: Whether the last tick tracked that plan, rather than another command.
     _tracking: bool
-    #: The last finite Ackermann command applied: ``(steer_rad, speed_mps,
-    #: acceleration_mps2, jerk_mps3)``, CARLA's sign; ``None`` before any.
-    _last_ackermann: Optional[Tuple[float, float, float, float]]
     #: The steer_accel command last applied and its Ackermann tuple, computed
     #: from the speed at the tick it was first applied: a held or repeated
     #: command keeps its target, as a relay node's does.
     _steer_accel: Optional[Tuple[SteerAccelCommand, Tuple[float, float, float, float]]]
-    #: Non-finite commands refused so far (the log's rate limit).
-    _non_finite: int
+    #: The sources a non-finite command has been refused from, each logged once.
+    _refused_sources: Set[str]
     #: Whether a control command's negative jerk has been logged.
     _negative_jerk_logged: bool
 
@@ -190,9 +185,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._planned = None
         self._plan_steps = 0
         self._tracking = False
-        self._last_ackermann = None
         self._steer_accel = None
-        self._non_finite = 0
+        self._refused_sources = set()
         self._negative_jerk_logged = False
 
     # ------------------------------------------------------------------
@@ -266,8 +260,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._planned = None
         self._plan_steps = 0
         self._tracking = False
-        self._last_ackermann = None
         self._steer_accel = None
+        self._refused_sources = set()
         self._negative_jerk_logged = False
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
@@ -291,7 +285,10 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         state, observation = self._state(world, actor)
         transport.publish_state(state)
         for source_name, command in transport.poll():
-            self._arbiter.observe(source_name, command, state.stamp_us)
+            # A non-finite command is refused here, before it could keep its
+            # source fresh: a source sending nothing else goes stale.
+            if not self._arbiter.observe(source_name, command, state.stamp_us):
+                self._refuse_non_finite(source_name)
         selection = self._arbiter.select(state.stamp_us)
         self._note_selection(selection)
         self._apply(actor, selection, observation)
@@ -425,9 +422,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         if name != self._active:
             logger.info("Ego driven by command source %r", name)
             self._follower.reset()
-            # A refused command falls back on the source's own last good one.
             self._planned = None
-            self._last_ackermann = None
             self._steer_accel = None
         elif self._active_fresh and not fresh:
             logger.warning(
@@ -439,6 +434,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             )
         elif fresh and not self._active_fresh:
             logger.info("Command source %r is fresh again", name)
+            if self._config.on_stale == "brake":
+                # The ego was braked while the source was stale, not driven by
+                # the follower: its integrators and state would resume from a
+                # gap they did not see.  Held, the follower tracked on, so it
+                # carries on.
+                self._follower.reset()
         self._active = name
         self._active_fresh = fresh
 
@@ -460,13 +461,6 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         # attribute of a union (docs/typecheck.md).
         if isinstance(command, TrajectoryCommand):
             trajectory: TrajectoryCommand = command
-            if not _trajectory_is_finite(trajectory):
-                self._refuse_non_finite("trajectory")
-                planned = self._planned
-                if planned is None:
-                    actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
-                    return
-                trajectory = planned[0]
             vehicle_command = self._follower.step(
                 self._plan(trajectory, selection.received_us),
                 observation.pose,
@@ -509,21 +503,19 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                     # so it takes the magnitude.
                     self._note_negative_jerk(control_jerk)
                     jerk_mps3 = -control_jerk
-        if (
+        # The arbiter took only finite commands (command_is_finite), but a
+        # finite steer_accel command can still overflow its target speed
+        # (``speed + acceleration * speed_horizon_s``) to infinity: CARLA would
+        # take that as given, so the ego brakes instead.
+        if not (
             math.isfinite(steer_rad)
             and math.isfinite(speed_mps)
             and math.isfinite(acceleration_mps2)
             and math.isfinite(jerk_mps3)
         ):
-            self._last_ackermann = (steer_rad, speed_mps, acceleration_mps2, jerk_mps3)
-        else:
-            # CARLA would take a NaN steering or speed as given.
-            self._refuse_non_finite("Ackermann command")
-            last = self._last_ackermann
-            if last is None:
-                actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
-                return
-            steer_rad, speed_mps, acceleration_mps2, jerk_mps3 = last
+            self._refuse_non_finite(source.name)
+            actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
+            return
         import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         actor.apply_ackermann_control(
@@ -585,17 +577,23 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             )
             self._negative_jerk_logged = True
 
-    def _refuse_non_finite(self, what: str) -> None:
-        """Log a refused non-finite *what*: the first time, then once in a hundred."""
-        if self._non_finite % _NON_FINITE_LOG_EVERY == 0:
-            logger.warning(
-                "Command source %r sent a non-finite %s (NaN or infinite); "
-                "its last good command drives on (%d refused so far)",
-                self._active,
-                what,
-                self._non_finite + 1,
-            )
-        self._non_finite += 1
+    def _refuse_non_finite(self, source_name: str) -> None:
+        """Log, once a session per source, that a non-finite command was refused.
+
+        A source can send one every cycle: logged each time, it would flood the
+        log at its rate.  The refusals that follow are silent; the source going
+        stale, if it sends nothing else, is logged by :meth:`_note_selection`.
+        """
+        if source_name in self._refused_sources:
+            return
+        self._refused_sources.add(source_name)
+        logger.warning(
+            "Command source %r sent a non-finite command (NaN or infinite): "
+            "refused, and it does not keep the source fresh; its last good "
+            "command drives on until the source goes stale (logged once per "
+            "source)",
+            source_name,
+        )
 
     def debug_markers(self) -> DebugMarkers:
         """The trajectory being tracked, as a line along the road; none while
@@ -622,23 +620,6 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 ego_plan_markers(plan, anchor_us, self._plan_steps),
             )
         return self._planned[1]
-
-
-def _trajectory_is_finite(command: TrajectoryCommand) -> bool:
-    """Whether every pose, speed and acceleration of *command* is finite."""
-    for point in command.points:
-        if not (
-            math.isfinite(point.velocity_mps) and math.isfinite(point.acceleration_mps2)
-        ):
-            return False
-        pose = point.pose
-        for index in range(3):
-            if not math.isfinite(float(pose.position[index])):
-                return False
-        for index in range(4):
-            if not math.isfinite(float(pose.quat_xyzw[index])):
-                return False
-    return True
 
 
 def _cyclone_transport(config: Ros2EgoConfig) -> Ros2EgoTransport:

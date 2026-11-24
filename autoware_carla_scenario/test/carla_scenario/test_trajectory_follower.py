@@ -930,6 +930,40 @@ def test_non_finite_given_speeds_are_refused(bad: float, field: str) -> None:
     assert hit[-1].throttle > 0.0
 
 
+def test_a_negative_plan_speed_is_warned_once_and_not_reversed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The follower tracks forward gear only (#2434): a reversing trajectory is
+    braked to, not driven backwards, and that is said once a follower."""
+    follower = _follower()
+    plans = [_policy_plan() for _ in range(10)]
+    with caplog.at_level("WARNING", logger="autoware_carla_scenario.driver.control"):
+        commands = _drive(
+            follower,
+            plans,
+            velocities=[[-2.0] * 40 for _ in plans],
+            accelerations=[[0.0] * 40 for _ in plans],
+        )
+        # A reset (a new command source) does not log it again.
+        follower.reset()
+        _drive(follower, plans[:2], velocities=[[-2.0] * 40] * 2)
+    # Braked towards a stop (the moving vehicle decelerates), never driven on.
+    assert all(command.acceleration_mps2 < 0.0 for command in commands)
+    assert commands[-1].brake > commands[0].brake > 0.0
+    assert [record.getMessage() for record in caplog.records] == [
+        "TrajectoryFollower: the plan asks for a negative speed (-2 m/s) at its "
+        "target; reversing is not driven (forward gear only), so the vehicle "
+        "brakes instead (logged once)"
+    ]
+
+
+def test_forward_plan_speeds_are_not_warned(caplog: pytest.LogCaptureFixture) -> None:
+    plans = [_policy_plan() for _ in range(5)]
+    with caplog.at_level("WARNING", logger="autoware_carla_scenario.driver.control"):
+        _drive(_follower(), plans, velocities=[[8.0] * 40 for _ in plans])
+    assert not caplog.records
+
+
 def test_the_time_indexed_controller_ignores_the_speeds_it_does_not_read() -> None:
     config = ControlConfig(longitudinal_controller="time_indexed")
     plans = [_policy_plan() for _ in range(5)]
