@@ -33,7 +33,7 @@ import math
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
-from ..utils.vehicles import as_vehicle
+from ..utils.vehicles import apply_physics_control, as_vehicle
 from ..visibility import set_world_visibility, world_visibility
 from ..entity_role import _role_name
 from ..weather_inputs import cloud_cover_level, time_of_day_level
@@ -294,7 +294,9 @@ def _scale_wheels(
             changed = True
     if changed:
         physics.wheels = wheels
-        vehicle.apply_physics_control(physics)
+        # Not vehicle.apply_physics_control: CARLA 0.10 would put its curves'
+        # leading keys in twice and weaken the vehicle's steering.
+        apply_physics_control(actor, physics)
 
 
 def _vehicle_factor(world_id: int, actor: "carla.Actor", factor: float) -> float:

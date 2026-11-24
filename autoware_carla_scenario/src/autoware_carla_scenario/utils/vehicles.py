@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Collection
+from typing import TYPE_CHECKING, Collection, List, Tuple
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EMERGENCY_BLUEPRINT_WORDS",
     "EMERGENCY_SPECIAL_TYPE",
+    "apply_physics_control",
     "as_vehicle",
     "hold_vehicles_still",
     "is_emergency_vehicle_type",
@@ -24,6 +25,22 @@ EMERGENCY_SPECIAL_TYPE: str = "emergency"
 #: What an emergency vehicle's blueprint id holds, for CARLA 0.10, which gives
 #: none a ``special_type`` (``entity.fit.FIT_EXCLUDED`` leaves the same out).
 EMERGENCY_BLUEPRINT_WORDS: tuple[str, ...] = ("firetruck", "ambulance", "cop", "police")
+
+
+#: The keys CARLA 0.10's server puts in front of every steering curve it
+#: stores, as ``(speed, factor)``, and of every torque curve, as ``(rpm,
+#: torque)``: ``get_physics_control()`` hands them back with the curve, and
+#: ``apply_physics_control()`` puts them in front of whatever curve it is given,
+#: so a physics control read and applied unchanged has them twice.  Measured on
+#: every vehicle blueprint of a CARLA 0.10 (UE5) server, with typesafe_carla's
+#: client and with CARLA's own: a read-and-apply drops the MKZ's steering to
+#: two thirds (steer 0.4 at 4 m/s: an 8.8 degree wheel angle becomes 5.9),
+#: and the same read-and-apply with these keys taken off first changes nothing.
+CARLA_STEERING_CURVE_LEAD: Tuple[Tuple[float, float], ...] = ((0.0, 1.0), (10.0, 0.5))
+CARLA_TORQUE_CURVE_LEAD: Tuple[Tuple[float, float], ...] = (
+    (0.0, 500.0),
+    (5000.0, 500.0),
+)
 
 
 def is_emergency_vehicle_type(type_id: str, special_type: str) -> bool:
@@ -134,3 +151,36 @@ def release_vehicle(actor: "carla.Actor", throttle: float = 0.0) -> None:
             gear=1,
         )
     )
+
+
+def _without_lead(
+    curve: List["carla.Vector2D"], lead: Tuple[Tuple[float, float], ...]
+) -> List["carla.Vector2D"]:
+    """*curve* without *lead*'s keys in front, when it starts with exactly
+    those and holds more; otherwise *curve* as it is (a curve written fresh,
+    or one from a server that does not add them)."""
+    if len(curve) <= len(lead):
+        return curve
+    for point, (x, y) in zip(curve, lead):
+        if abs(float(point.x) - x) > 1e-3 or abs(float(point.y) - y) > 1e-3:
+            return curve
+    return curve[len(lead) :]
+
+
+def apply_physics_control(
+    actor: "carla.Actor", physics: "carla.VehiclePhysicsControl"
+) -> None:
+    """Apply *physics* to *actor* as ``apply_physics_control()`` does, without
+    the keys CARLA 0.10 adds in front of its steering and torque curves
+    (:data:`CARLA_STEERING_CURVE_LEAD`, :data:`CARLA_TORQUE_CURVE_LEAD`), so a
+    physics control read off a vehicle, changed and applied back leaves both
+    curves as they were.  A curve that does not start with those keys -- one
+    the caller set itself -- is applied as it is.
+    """
+    physics.steering_curve = _without_lead(
+        list(physics.steering_curve), CARLA_STEERING_CURVE_LEAD
+    )
+    physics.torque_curve = _without_lead(
+        list(physics.torque_curve), CARLA_TORQUE_CURVE_LEAD
+    )
+    as_vehicle(actor).apply_physics_control(physics)

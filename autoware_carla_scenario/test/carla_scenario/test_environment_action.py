@@ -25,6 +25,12 @@ from autoware_carla_scenario.actions.environment import (
     tire_friction_range,
     world_tire_friction,
 )
+from autoware_carla_scenario.utils.vehicles import (
+    CARLA_STEERING_CURVE_LEAD,
+    CARLA_TORQUE_CURVE_LEAD,
+)
+
+from ._vehicle_physics import Carla010Curves
 
 
 def _world(**current: float) -> MagicMock:
@@ -408,17 +414,20 @@ class _Vehicle:
     def __init__(self, actor_id: int, friction: float = 3.5) -> None:
         self.id = actor_id
         self.frictions = [friction] * 4
+        self.curves = Carla010Curves()
         self.applied = 0
 
     def get_physics_control(self) -> SimpleNamespace:
         return SimpleNamespace(
             wheels=[
                 SimpleNamespace(friction_force_multiplier=f) for f in self.frictions
-            ]
+            ],
+            **self.curves.read(),
         )
 
     def apply_physics_control(self, physics: SimpleNamespace) -> None:
         self.frictions = [w.friction_force_multiplier for w in physics.wheels]
+        self.curves.write(physics)
         self.applied += 1
 
 
@@ -582,6 +591,24 @@ class TestTireFriction:
         EnvironmentAction(tire_friction=0.5).execute(world)
         EnvironmentAction(tire_friction=0.8).execute(world)
         assert world.fleet[0].frictions == pytest.approx([3.5 * 0.8] * 4)
+
+    def test_scaling_the_grip_leaves_the_curves_as_they_were(self) -> None:
+        """CARLA 0.10 puts its curves' leading keys in front of every curve it is
+        given: applied back as read, they would be in twice, and the steering
+        weakened to two thirds (measured on a CARLA 0.10 server)."""
+        vehicle = _Vehicle(1)
+        before = (list(vehicle.curves.steering), list(vehicle.curves.torque))
+        world = _world_with(vehicle)
+        EnvironmentAction(tire_friction=0.5).execute(world)
+        EnvironmentAction(tire_friction=0.8).execute(world)
+        assert vehicle.frictions == pytest.approx([3.5 * 0.8] * 4)
+        assert (vehicle.curves.steering, vehicle.curves.torque) == before
+        lead = len(CARLA_STEERING_CURVE_LEAD)
+        assert vehicle.curves.steering[:lead] == list(CARLA_STEERING_CURVE_LEAD)
+        assert vehicle.curves.steering[lead : lead + 2] != list(
+            CARLA_STEERING_CURVE_LEAD
+        )
+        assert vehicle.curves.torque[lead : lead + 2] != list(CARLA_TORQUE_CURVE_LEAD)
 
     def test_vehicles_spawned_later_follow(self) -> None:
         world = _world_with(_Vehicle(1))
