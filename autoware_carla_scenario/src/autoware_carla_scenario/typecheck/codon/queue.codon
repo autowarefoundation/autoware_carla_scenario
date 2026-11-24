@@ -6,13 +6,27 @@
 
 
 class Empty(Static[Exception]):
-    def __init__(self, message: str = ""):
-        super().__init__("Empty", message)
+    # CPython's takes any values by position and no keyword, as Exception
+    # does; declared are none and one message.
+    def __init__(self, *args):
+        if static.len(args) == 0:
+            super().__init__("Empty", "")
+        elif static.len(args) == 1:
+            super().__init__("Empty", str(args[0]))
+        else:
+            compile_error("Empty() takes one message here")
 
 
 class Full(Static[Exception]):
-    def __init__(self, message: str = ""):
-        super().__init__("Full", message)
+    # CPython's takes any values by position and no keyword, as Exception
+    # does; declared are none and one message.
+    def __init__(self, *args):
+        if static.len(args) == 0:
+            super().__init__("Full", "")
+        elif static.len(args) == 1:
+            super().__init__("Full", str(args[0]))
+        else:
+            compile_error("Full() takes one message here")
 
 
 class Queue:

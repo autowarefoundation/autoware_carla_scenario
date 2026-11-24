@@ -42,14 +42,6 @@ plugins:
       enable_creation_date: true
       type: timeago
       fallback_to_build_date: true
-  - mkdocstrings:
-      handlers:
-        python:
-          options:
-            docstring_style: google
-            show_source: true
-            show_root_heading: true
-            show_root_full_path: false
   - with-pdf:
       author: Tier4 Autoware Team
       copyright: Copyright © 2025 Tier4
@@ -83,6 +75,7 @@ nav:
   - Quick Start: quickstart.md
   - Installation: installation.md
   - Tutorial: tutorial.md
+  - Writing Scenarios with a Coding Agent: coding_agents.md
   - Usage: usage.md
   - Scenario Editor: scenario_editor.md
   - Example Scenarios:
@@ -112,6 +105,7 @@ nav:
   - Logical Scenarios from Routes: logical_scenarios.md
   - Gates for Logical Scenarios: gate.md
   - Running a Batch on SLURM: slurm.md
+  - Crash Reports: crash_reports.md
   - Coverage: coverage.md
   - ODD: odd.md
   - Metrics: metrics.md

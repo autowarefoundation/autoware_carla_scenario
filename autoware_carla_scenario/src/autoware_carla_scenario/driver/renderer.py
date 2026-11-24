@@ -27,6 +27,7 @@ too early.
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -57,6 +58,11 @@ _KMH_TO_MPS: float = 1.0 / 3.6
 #: Microseconds in a second: :meth:`RendererDataBuilder.build`'s timestamp is
 #: in microseconds, :class:`WalkerVelocities` measures in seconds.
 _US_PER_S: float = 1e6
+
+#: How far (m) past ``actor_horizon_m`` the planar pre-check of
+#: :meth:`RendererDataBuilder._actor_states` still keeps an actor: rounding
+#: only, as the bound it checks is exact (#2336).
+_HORIZON_MARGIN_M: float = 1.0
 
 #: Proto states by :func:`traffic_light_state_name`.
 _LIGHT_STATES: Dict[str, "carla_driver_pb2.TrafficLightState"] = {
@@ -394,6 +400,22 @@ class RendererDataBuilder:
                 continue
             box = actor.bounding_box
             centre = box.location
+            # A planar pre-check before any pose is built (#2336), never
+            # stricter than the horizon below: the box centre is the actor's
+            # local origin (CARLA x, -y, z) plus the box offset rotated by yaw
+            # alone, which keeps the offset's length |box.location|, so its 3D
+            # distance from the ego is at least the planar distance of the
+            # origin minus that length.  The margin is for rounding; NaN is
+            # never skipped here.
+            location = transform.location
+            reach = math.hypot(
+                float(location.x) - float(ego_position[0]),
+                -float(location.y) - float(ego_position[1]),
+            ) - math.sqrt(
+                float(centre.x) ** 2 + float(centre.y) ** 2 + float(centre.z) ** 2
+            )
+            if reach > horizon + _HORIZON_MARGIN_M:
+                continue
             # The offset is in the actor's own CARLA frame (y right): its y
             # flips into the right-handed local frame, like the pose's.
             pose = to_local_pose(transform) @ Pose.from_xyz_yaw(

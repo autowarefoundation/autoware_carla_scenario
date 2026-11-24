@@ -28,6 +28,7 @@ from autoware_carla_scenario.autoware_stack.bridge_node import (
     ROUTE_WATCH_PERIOD_S,
     DOUBLE_PARAMETERS,
     INTEGER_PARAMETERS,
+    POSITIVE_PARAMETERS,
     bridge_package_dir,
     bridge_ros_args,
     host_python_root,
@@ -352,6 +353,7 @@ code = group.stop()
 json.dump(
     {
         "parent_int_ignored": signal.getsignal(signal.SIGINT) == signal.SIG_IGN,
+        "parent_quit_ignored": signal.getsignal(signal.SIGQUIT) == signal.SIG_IGN,
         "child": json.loads(child_out.read_text()) if child_out.exists() else None,
         "code": code,
     },
@@ -374,13 +376,19 @@ def test_process_group_child_hears_sigint_from_a_background_run(
     out = tmp_path / "result.json"
     pid_file = out.with_suffix(".pid")
 
-    def ignore_sigint() -> None:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        signal.signal(signal.SIGQUIT, signal.SIG_IGN)
-
+    # Started as a shell starts a background job: SIGINT and SIGQUIT ignored
+    # by a trap, which survives the exec.  Not preexec_fn, which forces a
+    # real fork() in this multithreaded worker and runs at-fork hooks (gRPC's,
+    # say) and Python code in the child before the exec (#2257).
     parent = subprocess.Popen(  # noqa: S603 - a fixed test command
-        [sys.executable, str(script), str(out)],
-        preexec_fn=ignore_sigint,  # noqa: PLW1509 - the point of the test
+        [
+            "sh",
+            "-c",
+            'trap \'\' INT QUIT; exec "$0" "$@"',
+            sys.executable,
+            str(script),
+            str(out),
+        ],
         start_new_session=True,
     )
     try:
@@ -400,8 +408,13 @@ def test_process_group_child_hears_sigint_from_a_background_run(
             signal_group(pgid, (pgid, started))
         parent.wait()
 
+    assert parent.returncode == 0, (
+        f"the background parent exited with {parent.returncode}"
+        " (its traceback, if any, is in the captured stderr)"
+    )
     result = json.loads(out.read_text())
     assert result["parent_int_ignored"] is True
+    assert result["parent_quit_ignored"] is True
     assert result["child"] == {"int_ignored": False, "quit_default": True}
     # Python dies of the SIGINT it did not catch; a SIGTERM would be -15.
     assert result["code"] == -signal.SIGINT
@@ -525,6 +538,29 @@ def test_command_launcher_fills_in_the_episode(tmp_path: Path) -> None:
     assert [e.index for e in episodes] == [0, 1]
     assert (tmp_path / "autoware-000-left_turn.log").exists()
     assert (tmp_path / "autoware-001-left_turn.log").exists()
+
+
+def test_command_launcher_names_its_log_after_the_stem_it_is_given(
+    tmp_path: Path,
+) -> None:
+    """#2247: the tasks of a SLURM batch each count their stacks from 0 and
+    run cases of one scenario name: a case's stem tells their logs apart."""
+    launcher = CommandAutowareLauncher([sys.executable, "-c", "print('up')"])
+    launcher.prepare(log_dir=tmp_path)
+    for stem in ("CutIn-3", None):
+        launcher.use_log_stem(stem)
+        launcher.start(name="cut in", bridge_address="localhost:1")
+        _wait_for(lambda: launcher.poll() is not None)
+        launcher.stop()
+    assert (tmp_path / "autoware-CutIn-3.log").read_text() == "up\n"
+    # Without a stem, as before: the second stack, counted from 0.
+    assert (tmp_path / "autoware-001-cut_in.log").exists()
+    episode = AutowareEpisode(7, "x", "localhost:1")
+    assert (
+        episode_log_path(tmp_path, episode, "a b/c") == tmp_path / "autoware-a_b_c.log"
+    )
+    assert episode_log_path(tmp_path, episode, "") == tmp_path / "autoware-007-x.log"
+    assert episode_log_path(None, episode, "s") is None
 
 
 def test_command_launcher_runs_one_stack_at_a_time() -> None:
@@ -830,6 +866,45 @@ def test_a_build_whose_output_fails_mid_stream_is_ended(
     assert process.stdout.closed
     # The log is closed, with what came before the failure.
     assert (tmp_path / "out" / "autoware-build.log").read_text() == "first\n"
+
+
+def test_a_write_failure_mid_stream_is_not_docker_failing_to_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #2321: a full disk while writing the build's output is said to be that,
+    # not "Could not run 'docker'", which means docker itself did not start.
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+    _FakePopen.instances.clear()
+    monkeypatch.setattr(
+        docker_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FakePopen(OSError(28, "No space left on device")),
+    )
+
+    with pytest.raises(AutowareStackError) as raised:
+        launcher._stream(["docker", "build"], "autoware-build.log")
+
+    assert "Could not run" not in str(raised.value)
+    assert "Could not stream the output of" in str(raised.value)
+    assert "No space left on device" in str(raised.value)
+    (process,) = _FakePopen.instances
+    assert process.killed and process.waited
+
+
+def test_a_command_that_cannot_start_is_docker_failing_to_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+
+    def no_docker(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(docker_module.subprocess, "Popen", no_docker)
+
+    with pytest.raises(AutowareStackError, match="Could not run"):
+        launcher._stream(["docker", "build"], "autoware-build.log")
 
 
 def test_docker_launcher_does_not_build_when_told_not_to(
@@ -1291,9 +1366,70 @@ def test_a_build_lock_interrupt_is_raised(
     monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
     error = KeyboardInterrupt()
     _flock_raising(monkeypatch, BlockingIOError(), error)
+    closed = _closes_recorded(monkeypatch)
     with pytest.raises(KeyboardInterrupt) as raised:
         launcher._lock_workspace()
     assert raised.value is error
+    assert len(closed) == 1
+
+
+def test_a_build_lock_interrupt_while_waiting_closes_the_file(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The caller's try/finally only starts once _lock_workspace returns, so
+    # an interrupt in its sleep must close the descriptor itself (#2327).
+    import time
+
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    _flock_raising(monkeypatch, *[BlockingIOError() for _ in range(1000)])
+    closed = _closes_recorded(monkeypatch)
+    error = KeyboardInterrupt()
+
+    def _sleep(seconds: float) -> None:
+        raise error
+
+    monkeypatch.setattr(time, "sleep", _sleep)
+    with pytest.raises(KeyboardInterrupt) as raised:
+        launcher._lock_workspace()
+    assert raised.value is error
+    assert len(closed) == 1
+    # Really closed, not just recorded: the descriptor is gone.
+    with pytest.raises(OSError):
+        os.fstat(closed[0])
+
+
+def test_a_build_lock_taken_after_a_wait_is_handed_over_open(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
+    _flock_raising(monkeypatch, BlockingIOError(), BlockingIOError())
+    closed = _closes_recorded(monkeypatch)
+    fd = launcher._lock_workspace()
+    try:
+        assert fd >= 0
+        assert closed == []
+        os.fstat(fd)  # still open
+    finally:
+        launcher._unlock_workspace(fd)
+    assert closed == [fd]
+
+
+def _closes_recorded(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the descriptors ``docker`` closes (and close them)."""
+    closed: list[int] = []
+    real_close = os.close
+
+    def _close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(docker_module.os, "close", _close)
+    return closed
 
 
 def test_a_build_lock_held_too_long_closes_the_file(
@@ -1367,7 +1503,8 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
             "source /home/aw/autoware/install/setup.bash && "
             '(PYTHONPATH=/opt/autoware_carla_scenario/python"${PYTHONPATH:+:$PYTHONPATH}" '
             "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge --ros-args "
-            "-p bridge_address:=localhost:50052 -p use_sim_time:=true &) && "
+            "-p bridge_address:=localhost:50052 -p use_sim_time:=true "
+            "-p parent_pid:=$$ &) && "
             "exec ros2 launch autoware_launch e2e_simulator.launch.xml "
             "bridge_address:=localhost:50052"
         )
@@ -1376,6 +1513,14 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
 
     assert len(set(names)) == 3
     assert launcher.poll() is None
+
+    # Named after the case's stem while one is given (#2247).
+    launcher.use_log_stem("CutIn-2")
+    launcher.start(name="cut_in", bridge_address="localhost:50052")
+    _wait_for(lambda: len(_stack_runs(calls())) == 4)
+    launcher.stop()
+    assert (tmp_path / "out" / "autoware-CutIn-2.log").exists()
+    assert not (tmp_path / "out" / "autoware-003-cut_in.log").exists()
 
 
 def test_launcher_env_values_reach_the_container_but_not_the_command_line(
@@ -1528,7 +1673,7 @@ def test_the_dependency_image_commit_gets_the_longer_timeout(
     monkeypatch.setattr(docker_module.subprocess, "run", run)
     monkeypatch.setattr(launcher, "_stream", lambda argv, log_name, env=None: 0)
     launcher._container = launcher._resolve_container()
-    launcher._dependency_image("img:1")
+    launcher._dependency_image("img:1", launcher._dependency_tag("img:1"))
     assert timeouts["commit"] == docker_module._DOCKER_COMMIT_TIMEOUT_S
     assert timeouts["image"] == timeouts["rm"] == docker_module._DOCKER_TIMEOUT_S
     assert docker_module._DOCKER_COMMIT_TIMEOUT_S > docker_module._DOCKER_TIMEOUT_S
@@ -1639,6 +1784,17 @@ def test_docker_config_rejects_a_text_field_that_is_no_text(
             launch=("a",),
             **{field: value},  # type: ignore[arg-type]
         )
+
+
+@pytest.mark.parametrize("stop_timeout_s", [True, False, "20", None])
+def test_command_launcher_rejects_a_stop_timeout_that_is_no_number_naming_it(
+    stop_timeout_s: object,
+) -> None:
+    """#2275: True was a 1 s wait, and "20" a TypeError naming no field."""
+    with pytest.raises(
+        ValueError, match=rf"^stop_timeout_s must be a number, got {stop_timeout_s!r}$"
+    ):
+        CommandAutowareLauncher(["true"], stop_timeout_s=stop_timeout_s)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
@@ -2028,6 +2184,47 @@ def test_command_launcher_fills_in_the_scenario_bridge(
     assert "-p use_sim_time:=true -p auto_engage:=false" in written
 
 
+def test_the_scenario_bridge_is_given_the_pid_of_the_shell_that_starts_the_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2405: ``$$`` in the ``( ... &)`` subshell is the ``bash -c``'s pid,
+    the one that ``exec``s the launch, so the node ends with the stack."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    args_file = tmp_path / "args.txt"
+    python3 = bin_dir / "python3"
+    python3.write_text(
+        f'#!/bin/sh\necho "$@" > {args_file}.tmp\nmv {args_file}.tmp {args_file}\n'
+    )
+    python3.chmod(0o755)
+    shell_pid = tmp_path / "shell_pid.txt"
+    launcher = CommandAutowareLauncher(
+        [
+            "bash",
+            "-c",
+            f"({{scenario_bridge}} &) && echo $$ > {shell_pid} && exec sleep 30",
+        ],
+        env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+    launcher.prepare()
+    launcher.start(name="x", bridge_address="localhost:7")
+    try:
+        _wait_for(lambda: args_file.exists() and shell_pid.exists())
+        args = args_file.read_text().split()
+        pid = shell_pid.read_text().strip()
+        assert args[-2:] == ["-p", f"parent_pid:={pid}"]
+        assert launcher.poll() is None  # the shell, now the launch, lives on
+    finally:
+        launcher.stop()
+
+
+def test_parent_pid_is_not_a_bridge_parameter_to_set() -> None:
+    """#2405: the launcher sets it, to the pid of the stack's shell."""
+    with pytest.raises(ValueError, match=r"^parent_pid is not a bridge parameter"):
+        bridge_ros_args("h:1", {"parent_pid": 1})
+
+
 def test_the_host_python_root_replaces_a_stale_link(tmp_path: Path) -> None:
     """A link to another install is replaced, and no temporary link is left."""
     root = host_python_root(tmp_path)
@@ -2215,7 +2412,7 @@ def test_the_smallest_liveness_timeout_takes_one_lost_poll() -> None:
         {"use_sim_time": True},
         {"route_watch_period_s": 14.0},
         {"route_watch_period_s": 0},
-        {"route_watch_period_s": "not a number"},  # the node refuses it itself
+        {"route_watch_period_s": "not a number"},  # bridge_ros_args() refuses it
         {"route_watch_period_s": True},
         {"route_watch_period_s": float("nan")},
     ],
@@ -2225,7 +2422,7 @@ def test_a_liveness_timeout_the_node_cannot_trip_is_no_problem(parameters) -> No
 
 
 def test_a_liveness_timeout_the_node_would_trip_is_a_problem() -> None:
-    problem = liveness_timeout_problem(30.0, {"route_watch_period_s": "60"})
+    problem = liveness_timeout_problem(30.0, {"route_watch_period_s": 60})
     assert problem is not None
     assert "route_watch_period_s (60 s)" in problem
     assert "122 s" in problem
@@ -2272,6 +2469,79 @@ def test_a_boolean_for_a_number_parameter_is_refused_naming_it(
     assert name in INTEGER_PARAMETERS + DOUBLE_PARAMETERS
     with pytest.raises(ValueError, match=rf"^{name} must be a number, .* got {value}"):
         bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("value", ["60", True, float("nan")])
+def test_a_seconds_parameter_bridge_ros_args_refuses_reads_as_the_default(
+    value: object,
+) -> None:
+    """#2275: as bridge_ros_args() refuses it, with an error of its own."""
+    assert liveness_timeout_problem(4.0, {"route_watch_period_s": value}) is None
+    assert liveness_timeout_problem(3.0, {"route_watch_period_s": value}) is not None
+
+
+@pytest.mark.parametrize("name", ["reroute_max_attempts", "rpc_timeout_s"])
+@pytest.mark.parametrize("value", ["5", "5.0", ""])
+def test_a_string_for_a_number_parameter_is_refused_naming_it(
+    name: str, value: str
+) -> None:
+    """#2275: ``rpc_timeout_s:=5`` reached ROS as an INTEGER, which rclpy
+    refuses for a DOUBLE, and the run waited out boot_timeout_s."""
+    with pytest.raises(
+        ValueError, match=rf"^{name} must be a number, .* got {value!r}$"
+    ):
+        bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("name", DOUBLE_PARAMETERS)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_a_double_parameter_that_is_not_finite_is_refused_naming_it(
+    name: str, value: float
+) -> None:
+    with pytest.raises(ValueError, match=rf"^{name} must be finite, got {value!r}$"):
+        bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("name", POSITIVE_PARAMETERS)
+@pytest.mark.parametrize("value", [0, 0.0, -1, -0.5])
+def test_a_wait_or_period_that_is_not_positive_is_refused_naming_it(
+    name: str, value: float
+) -> None:
+    """#2275: a negative rpc_timeout_s never let a readiness report through, a
+    step_timeout_s of 0 re-sent every startup request on each pass, and a
+    tick_period_s of 0 reached create_timer."""
+    with pytest.raises(ValueError, match=rf"^{name} must be positive, got {value!r}$"):
+        bridge_ros_args("h:1", {name: value})
+
+
+def test_the_positive_parameters_are_double_parameters() -> None:
+    assert set(POSITIVE_PARAMETERS) == set(DOUBLE_PARAMETERS) - {"route_watch_period_s"}
+
+
+@pytest.mark.parametrize("value", [0, -1.0])
+def test_a_route_watch_period_of_zero_or_less_turns_the_watch_off(
+    value: float,
+) -> None:
+    """Not refused: the node stops polling once ready, as it did before
+    re-routing (ros_bridge/node.py)."""
+    args = bridge_ros_args("h:1", {"route_watch_period_s": value})
+    assert args[3:] == ["-p", f"route_watch_period_s:={float(value)}"]
+
+
+def test_the_nodes_defaults_pass() -> None:
+    args = bridge_ros_args(
+        "h:1",
+        {
+            "use_sim_time": True,
+            "rpc_timeout_s": 5.0,
+            "mission_poll_timeout_s": 1.0,
+            "step_timeout_s": 10.0,
+            "route_watch_period_s": 1.0,
+            "reroute_max_attempts": 10,
+            "tick_period_s": 0.5,
+        },
+    )
+    assert len(args) == 3 + 2 * 7
 
 
 def test_a_null_bridge_parameter_is_the_nodes_default() -> None:

@@ -41,20 +41,17 @@ __all__ = [
     "resolve_along_lane",
     "resolve_position",
     "resolve_trajectory",
+    "road_height",
 ]
 
 # The signatures below spell these aliases out: the static check
 # (docs/typecheck.md) reads a callable or a union through an alias as no type.
 
-#: ``(x, y, z_hint) -> z`` of the ground at a CARLA world point: of the road
-#: nearest *z_hint* there, where roads are stacked.
-GroundHeight = Callable[[float, float, float], Optional[float]]
-
-#: ``(x, y, z, yaw_deg)`` of a vertex in CARLA world coordinates.
-ResolvedPosition = Tuple[float, float, Optional[float], Optional[float]]
-
-#: Turns one vertex position into a :data:`ResolvedPosition`.
-PositionResolver = Callable[[TrajectoryPosition], ResolvedPosition]
+#: Turns one vertex position into its ``(x, y, z, yaw_deg)`` in CARLA world
+#: coordinates.
+PositionResolver = Callable[
+    [TrajectoryPosition], Tuple[float, float, Optional[float], Optional[float]]
+]
 
 #: Where a :class:`~.model.RelativeLanePose`'s reference entity is now, by its
 #: ``entity_ref`` (``None`` for the entity the action moves).
@@ -73,10 +70,12 @@ def map_pose_to_carla(
     sense (counter-clockwise radians to clockwise degrees).  ``z`` and the yaw
     stay ``None`` when the pose does not state them.
     """
-    offset_x, offset_y = mgrs_offset
+    from ..coordinate.transform import map_xy_to_carla  # noqa: PLC0415
+
+    x, y = map_xy_to_carla(pose.x, pose.y, mgrs_offset)
     return (
-        pose.x - offset_x,
-        -(pose.y - offset_y),
+        x,
+        y,
         None if pose.z is None else pose.z - z_offset,
         None if pose.yaw is None else -math.degrees(pose.yaw),
     )
@@ -484,11 +483,13 @@ def resolve_trajectory(
         trajectory: The trajectory as written.
         ground: Height of the ground at a CARLA point, for the vertices that
             state none, called with ``(x, y, z_hint)`` where *z_hint* is the
-            last height known along the path (or 0), so that the road read
-            where roads are stacked is the one the path is on
+            last height known along the path -- before the first, the first
+            height known, and 0 only when no vertex has one -- so that the
+            road read where roads are stacked is the one the path is on
             (:func:`road_height`).  ``None`` -- or a point it cannot answer
-            for -- puts such a vertex at the last height known along the path,
-            or at 0.
+            for -- puts such a vertex at the last height known along the path
+            and, before the first known height, at that first height; at 0
+            only when no vertex has a height.
         resolve: Turns one position into ``(x, y, z, yaw_deg)``; the default
             uses the loaded map (:func:`position_resolver`).  Injected by the
             tests.

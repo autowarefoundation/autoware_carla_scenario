@@ -92,7 +92,7 @@ class _RecordingRunner:
         self.results.append(result)
         return result
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         pass
 
 
@@ -117,7 +117,7 @@ class _SecondCaseRaises:
             raise self.error
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         self.events.append("reset")
 
 
@@ -143,7 +143,7 @@ class _RaisesThenRuns:
             raise RuntimeError("RPC timed out")
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         self.events.append(("reset", scenario_name))
         if self.reset_failures > 0:
             self.reset_failures -= 1
@@ -181,7 +181,7 @@ class _ResetsAtItsEnd:
             self.reset_world(type(scenario).__name__)
         return result
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         fails = self.reset_outcomes.pop(0) if self.reset_outcomes else False
         if fails:
             self.events.append("reset failed")
@@ -236,6 +236,35 @@ class TestScenarioQueueUnit:
     def test_negative_cooldown_max_retries_is_refused(self) -> None:
         with pytest.raises(ValueError, match="cooldown_max_retries must be >= 0"):
             ScenarioQueue(cooldown_max_retries=-1)
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+    def test_a_default_timeout_that_never_fires_is_refused(
+        self, seconds: float
+    ) -> None:
+        # Before the server is made, not once each case (and each retry) has
+        # spawned its ego (#2287).
+        with (
+            patch(
+                "autoware_carla_scenario.scenario_queue.CarlaServerManager"
+            ) as server,
+            pytest.raises(
+                ValueError, match=r"^timeout_seconds must be positive and finite"
+            ),
+        ):
+            ScenarioQueue(timeout_seconds=seconds)
+        server.assert_not_called()
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+    def test_a_case_timeout_that_never_fires_is_refused_and_not_added(
+        self, seconds: float
+    ) -> None:
+        queue = ScenarioQueue()
+        with pytest.raises(
+            ValueError, match=r"^timeout_seconds must be positive and finite"
+        ):
+            queue.add(_NullScenario(_make_ego_config()), timeout_seconds=seconds)
+        assert len(queue) == 0
+        assert queue._timeouts == {}
 
     def test_empty_queue_len_is_zero(self) -> None:
         queue = ScenarioQueue()
@@ -392,7 +421,7 @@ class TestScenarioQueueUnit:
         mock_runner.reset_world.assert_not_called()
         queue.run_all()
 
-        mock_runner.reset_world.assert_called_once_with("_NullScenario")
+        mock_runner.reset_world.assert_called_once_with("_NullScenario", strict=True)
 
     def test_a_releasing_run_lets_go_of_each_scenario_once_it_has_run(
         self,
@@ -466,7 +495,7 @@ class TestScenarioQueueUnit:
         for k in range(3):
             queue.add(
                 _HeavyScenario(_make_ego_config()),
-                timeout_seconds=float(k),
+                timeout_seconds=float(k + 1),
                 case=MagicMock(),
             )
 
@@ -982,6 +1011,66 @@ def test_a_fixture_whose_queue_fails_to_start_stops_its_server(
     assert events == ["prepare", "start", "runner", "close", "stop"]
 
 
+def _remote_fixture_queue(
+    monkeypatch: pytest.MonkeyPatch, answers: bool
+) -> tuple[ScenarioQueue, list[str]]:
+    """A queue for as_fixture() of a remote host, on a machine with no CARLA
+    installed, whose start() starts its own (real) server manager."""
+    from autoware_carla_scenario.server import CarlaServerManager
+
+    monkeypatch.setattr(CarlaServerManager, "executable", classmethod(lambda cls: None))
+    monkeypatch.setattr(CarlaServerManager, "_ping", lambda self: answers)
+    events: list[str] = []
+    queue = ScenarioQueue(host="192.0.2.10", cooldown_max_retries=0)
+
+    def start() -> None:
+        queue._server.start()
+        events.append("start")
+        queue._runner = MagicMock()
+
+    monkeypatch.setattr(queue, "start", start)
+    monkeypatch.setattr(queue, "stop", lambda: events.append("stop"))
+    return queue, events
+
+
+def test_a_fixture_uses_a_remote_server_with_no_carla_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No CARLA installed here does not skip a fixture whose server answers
+    at a remote host (#2300): it is tried, and reused."""
+    queue, events = _remote_fixture_queue(monkeypatch, answers=True)
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    try:
+        yielded = next(generator)
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"the fixture skipped: {exc}")
+    assert yielded is queue
+    assert queue._server.reused
+    with pytest.raises(StopIteration):
+        next(generator)
+    assert events == ["start", "stop"]
+
+
+def test_a_fixture_whose_remote_server_does_not_answer_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no server at the remote host, start() raises and the fixture
+    skips, naming the host."""
+    queue, events = _remote_fixture_queue(monkeypatch, answers=False)
+    generator = queue.as_fixture().__wrapped__()  # type: ignore[attr-defined]
+    with pytest.raises(pytest.skip.Exception, match="192.0.2.10:2000"):
+        next(generator)
+    assert events == []
+
+
+def test_a_bracketed_ipv6_host_reaches_the_runner_unbracketed() -> None:
+    """The runner and a map pack connect to the queue's host, so "[::1]" is
+    kept as "::1", as its server manager keeps it (#2300)."""
+    queue = ScenarioQueue(host="[::1]")
+    assert queue._host == "::1"
+    assert queue._server.host == "::1"
+
+
 def _fixture_queue(
     monkeypatch: pytest.MonkeyPatch, tmp_path: object, runner: object
 ) -> tuple[ScenarioQueue, list[str]]:
@@ -1142,6 +1231,20 @@ class TestScenarioQueueIntegration:
         for result in carla_queue._results:
             assert isinstance(result, ScenarioResult)
 
+    def test_result_fixtures_hold_each_scenarios_own_result(
+        self,
+        immediate_scenario_result: ScenarioResult,
+        another_immediate_result: ScenarioResult,
+    ) -> None:
+        """The fixtures conftest.py makes with CarlaScenarioFixture.as_fixture()
+        each hand their own scenario's result from the one session run: both
+        scenarios end on their first is_done(), so both passed."""
+        assert isinstance(immediate_scenario_result, ScenarioResult)
+        assert isinstance(another_immediate_result, ScenarioResult)
+        assert immediate_scenario_result is not another_immediate_result
+        assert immediate_scenario_result.passed, immediate_scenario_result.message
+        assert another_immediate_result.passed, another_immediate_result.message
+
 
 # ---------------------------------------------------------------------------
 # Retries and the files a failed attempt left (issue #1028)
@@ -1178,7 +1281,7 @@ class _FirstAttemptFailsMidRun:
         (self.output_dir / f"{stem}_result.json").write_text(f"{attempt}\n")
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         pass
 
 
@@ -1232,6 +1335,60 @@ def test_a_retry_over_a_given_stem_starts_from_a_clean_slate(
     assert runner.attempts == [(stem, False), (stem, False)]
     assert (tmp_path / f"{stem}.trajectory.jsonl").read_text() == "2\n"
     assert neighbour[0].read_text() == "other case\n"
+
+
+class _StemLauncher:
+    """An Autoware launcher recording the stems use_log_stem() is given."""
+
+    def __init__(self) -> None:
+        self.stems: list[str | None] = []
+
+    def use_log_stem(self, stem: str | None) -> None:
+        self.stems.append(stem)
+
+
+@pytest.mark.parametrize("by_stem", [True, False])
+def test_a_batch_queue_names_each_stack_log_after_its_case_stem(
+    tmp_path: Path, by_stem: bool
+) -> None:
+    """#2247: with stack_logs_by_stem (a batch's queue, a SLURM task's) the
+    launcher is told each case's stem before it runs -- once per case, its
+    retries included -- and None for a case without one; without it, never
+    (a single run names its log as before)."""
+    launcher = _StemLauncher()
+    queue = ScenarioQueue(
+        server=MagicMock(),
+        output_dir=tmp_path,
+        cooldown_max_retries=1,
+        autoware_launcher=launcher,  # type: ignore[arg-type]
+        stack_logs_by_stem=by_stem,
+    )
+    queue._runner = _FirstAttemptFailsMidRun(tmp_path)  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()), file_stem="_NullScenario-3")
+    queue.add(_NullScenario(_make_ego_config()))
+
+    results = queue.run_all(release=True, continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert launcher.stems == (["_NullScenario-3", None] if by_stem else [])
+
+
+def test_a_launcher_without_use_log_stem_runs_in_a_batch_queue(
+    tmp_path: Path,
+) -> None:
+    """use_log_stem() is not part of the AutowareLauncher protocol: a
+    launcher of one's own without it names its logs as it does."""
+    queue = ScenarioQueue(
+        server=MagicMock(),
+        output_dir=tmp_path,
+        cooldown_max_retries=1,
+        autoware_launcher=_RecordingLauncher([]),  # type: ignore[arg-type]
+        stack_logs_by_stem=True,
+    )
+    queue._runner = _FirstAttemptFailsMidRun(tmp_path)  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()), file_stem="_NullScenario-3")
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+    assert result.passed
 
 
 def test_a_retry_waits_for_the_failed_attempts_recording_first(
@@ -1326,7 +1483,7 @@ class _CrashingRunner:
             self.server.alive = False
         return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         self.events.append("reset")
 
 
@@ -1481,6 +1638,44 @@ def test_a_failed_restart_ends_a_run_that_does_not_continue_on_error(
     with pytest.raises(RuntimeError, match="failed after 1 attempt") as info:
         queue.run_all()
     assert "CARLA did not come up" in str(info.value.__cause__)
+
+
+def test_a_server_that_dies_in_the_reset_is_restarted_by_the_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The queue resets strictly (#2243): a load that fails because the
+    server died in it fails the attempt, and the retry finds the server dead
+    and restarts it, rather than running on the world the case before left."""
+    queue, server, events, runners = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=None, cases=2, retries=1
+    )
+    stricts: list[bool] = []
+
+    def dies_in_the_load(scenario_name: str = "", *, strict: bool = False) -> None:
+        stricts.append(strict)
+        events.append("reset")
+        server.alive = False
+        raise RuntimeError("time-out of 10000ms while waiting for the simulator")
+
+    runners[0].reset_world = dies_in_the_load  # type: ignore[method-assign]
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert queue.errored_indices() == []
+    assert stricts == [True]
+    assert events == [
+        "is_alive",
+        "run 0",
+        "is_alive",
+        "reset",
+        "is_alive",
+        "stop",
+        "start",
+        "runner",
+        "load_map",
+        "run 1",
+    ]
 
 
 @pytest.mark.parametrize("given", [True, False], ids=["given", "reused"])

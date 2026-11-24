@@ -52,7 +52,6 @@ from autoware_carla_scenario.coordinate.transform import (
 # easting/northing around Tokyo are ~81 km / ~33 km).
 _MAP_EXTENT_M = 5_000.0
 
-DATA_DIR = Path(__file__).parent / "data"
 _CONVERTER_TEST_DATA = Path(__file__).resolve().parents[3] / "data"
 XODR_PATH = _CONVERTER_TEST_DATA / "nishishinjuku_carla.xodr"
 OSM_PATH = _CONVERTER_TEST_DATA / "nishishinjuku.osm"
@@ -114,6 +113,32 @@ class TestParseGeoReference:
         lat, lon, alt = _parse_geo_reference(xodr)
         assert lat == pytest.approx(10.0)
         assert lon == pytest.approx(20.0)
+
+    def test_exponent_is_read(self):
+        """Python writes a float below 1e-4 with an exponent (#2296)."""
+        xodr = f"<geoReference>+proj=tmerc +lat_0={5e-05} +lon_0=139 +h_0=1.5E1</geoReference>"
+        lat, lon, alt = _parse_geo_reference(xodr)
+        assert lat == pytest.approx(5e-05, abs=1e-12)
+        assert lon == pytest.approx(139.0)
+        assert alt == pytest.approx(15.0)
+
+    def test_leading_plus_is_read(self):
+        """PROJ accepts a signed `+lon_0=+141` (#2296)."""
+        xodr = "<geoReference>+proj=tmerc +lat_0=+35 +lon_0=+141</geoReference>"
+        assert _parse_geo_reference(xodr) == pytest.approx((35.0, 141.0, 0.0))
+
+    def test_false_easting_with_exponent(self):
+        """`+x_0=1e3` is the same false easting as `+x_0=1000` (#2296)."""
+        proj = "+proj=tmerc +lat_0=35 +lon_0=139 +k=0.9999 +x_0={} +y_0=-2.5e2"
+        exponent = _parse_geo_reference(
+            f"<geoReference>{proj.format('1e3')}</geoReference>"
+        )
+        plain = _parse_geo_reference(
+            f"<geoReference>{proj.format('1000').replace('-2.5e2', '-250')}</geoReference>"
+        )
+        assert exponent == pytest.approx(plain, abs=1e-12)
+        # And it moves the origin: x_0=1 would put it about a kilometre closer.
+        assert exponent[1] != pytest.approx(139.0, abs=1e-3)
 
     @pytest.mark.parametrize(
         ("proj", "expected_lat", "expected_lon"),
@@ -690,6 +715,57 @@ class TestMapManagerInit:
         raw_mm._mgrs_offset = None
         with pytest.raises(FileNotFoundError):
             raw_mm.initialize(Path("nonexistent.xodr"), Path("nonexistent.osm"))
+
+
+class TestMissingMapFile:
+    """A missing map file's error says how to point at the file (#2340)."""
+
+    def test_default_map_names_its_variables(self, tmp_path, monkeypatch):
+        from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+        # Outside the repository root, as a wheel install runs.
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(FileNotFoundError) as caught:
+            load_lanelet2_map("data/nishishinjuku.osm")
+        message = str(caught.value)
+        assert message.startswith("Lanelet2 file not found: data/nishishinjuku.osm")
+        assert f"resolved against the current directory {tmp_path}" in message
+        assert "NISHISHINJUKU_LANELET2_PATH" in message
+        assert "map.lanelet2_path=" in message
+
+    def test_default_xodr_names_its_variable(self, tmp_path, monkeypatch):
+        from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+        osm = tmp_path / "map.osm"
+        osm.write_text("<osm/>", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(FileNotFoundError) as caught:
+            load_lanelet2_map(osm, "data/nishishinjuku_carla.xodr")
+        message = str(caught.value)
+        assert message.startswith("OpenDRIVE file not found:")
+        assert "NISHISHINJUKU_XODR_PATH" in message
+        assert "map.xodr_path=" in message
+
+    def test_other_relative_path_says_only_where_it_was_looked_for(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        raw_mm = object.__new__(MapManager)
+        raw_mm._lanelet_map = None
+        raw_mm._road_network = None
+        with pytest.raises(FileNotFoundError) as caught:
+            raw_mm.initialize(Path("nonexistent.xodr"), Path("nonexistent.osm"))
+        message = str(caught.value)
+        assert f"resolved against the current directory {tmp_path}" in message
+        assert "NISHISHINJUKU" not in message
+
+    def test_absolute_path_is_unchanged(self, tmp_path):
+        from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+        missing = tmp_path / "missing.osm"
+        with pytest.raises(FileNotFoundError) as caught:
+            load_lanelet2_map(missing)
+        assert str(caught.value) == f"Lanelet2 file not found: {missing}"
 
 
 # ---------------------------------------------------------------------------

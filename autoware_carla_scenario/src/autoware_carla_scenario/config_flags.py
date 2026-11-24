@@ -10,8 +10,8 @@ one-line ``ValueError`` naming the key.  The ``launcher.*`` switches of a
 SLURM run (``slurm.settings``) and the run's ``rerun``, ``t4``, ``t4scene``
 and ``background_traffic`` switches, ``autoware.launcher.rosdep`` and
 ``metrics.heavy`` (``examples.run``, #1761) are read with it, as
-are ``sweep.odd_sample``'s ``tire_friction`` and ``visibility``
-(``odd.sampler``), a route search's ``ego_goal`` (``route.model``, #1756),
+are ``sweep.odd_sample``'s ``tire_friction`` and ``visibility``, and its
+``flaky`` when it is not a mapping (``odd.sampler``, #2269), a route search's ``ego_goal`` (``route.model``, #1756),
 the traffic options' (``traffic.sumo.config``, ``traffic.fidelity``),
 the bool vehicle parameters (``traffic.parameters``) and the ``driver``
 switches (``send_ground_truth``, ``send_renderer_data``,

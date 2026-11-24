@@ -32,6 +32,7 @@ import math
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
+from ..constants import FIXED_DELTA_SECONDS
 from ..conditions.route_progress import RouteProgressCondition, route_s_of_carla_point
 from ..waypoint_arrival import WaypointArrival
 
@@ -58,13 +59,18 @@ _BLOCK_RANGE_M: float = 30.0
 HOLD_MARGIN_M: float = 2.0
 #: The deceleration (m/s²) the speed cap towards a hold brakes at.
 _HOLD_DECELERATION_MPS2: float = 1.5
-#: How much of the way to a new target speed the command moves each tick.
+#: How much of the way to a new target speed the command moves in a tick of
+#: :data:`~autoware_carla_scenario.constants.FIXED_DELTA_SECONDS`, the step
+#: it was tuned at; a tick of another length moves it as far as the same
+#: simulated time does (:func:`_per_tick`).
 _SMOOTHING: float = 0.3
 #: Below this progress rate (m/s) a measured entity is not moving forward,
 #: and when it will have come far enough cannot be told.
 _PREDICTABLE_RATE_MPS: float = 0.5
-#: How much of a new progress rate reading the estimate takes each tick (the
-#: first reading of an estimate it takes whole).
+#: How much of a new progress rate reading the estimate takes over a
+#: :data:`~autoware_carla_scenario.constants.FIXED_DELTA_SECONDS` tick (the
+#: first reading of an estimate it takes whole); scaled to the time a
+#: reading covers as :data:`_SMOOTHING` is.
 _RATE_SMOOTHING: float = 0.1
 #: The shortest time to go (s) a target speed is worked out over: a waypoint
 #: due now or past is caught up with at the limit.
@@ -243,13 +249,16 @@ class RoutePacer:
         cruise: float,
         limit: float,
         position: Optional[tuple[float, float]] = None,
+        tick_seconds: float = FIXED_DELTA_SECONDS,
     ) -> float:
         """The speed (m/s) to command now, the entity being *here* (at CARLA
         *position*, for the deadlock guard).
 
         *cruise* is the speed where nothing ahead is due, *limit* the most
         it may go at.  Checks the departure condition of the next waypoint
-        not yet passed (only that one, to keep a tick cheap).
+        not yet passed (only that one, to keep a tick cheap).  *tick_seconds*
+        is the simulated time the last tick covered: the command closes on
+        its target at the same rate in simulated time whatever the tick.
         """
         target = cruise
         pending = self._pending()
@@ -257,7 +266,7 @@ class RoutePacer:
             mark: PaceMark = pending
             target = self._towards(world, mark, here, elapsed, cruise, limit, position)
         target = min(max(target, 0.0), limit)
-        self._command += _SMOOTHING * (target - self._command)
+        self._command += _per_tick(_SMOOTHING, tick_seconds) * (target - self._command)
         if target <= 0.0 and self._command < 0.1:
             self._command = 0.0
         return self._command
@@ -402,7 +411,8 @@ class RoutePacer:
             if self._rate_readings == 0:
                 self._rate = reading
             else:
-                self._rate += _RATE_SMOOTHING * (reading - self._rate)
+                share = _per_tick(_RATE_SMOOTHING, elapsed - self._rate_time)
+                self._rate += share * (reading - self._rate)
             self._rate_readings += 1
         self._rate_progress = now
         self._rate_time = elapsed
@@ -410,6 +420,24 @@ class RoutePacer:
             return None
         far: float = threshold
         return elapsed + max(0.0, far - now) / self._rate
+
+
+def _per_tick(share: float, seconds: float) -> float:
+    """How much of the way to its target a smoothed value moves over
+    *seconds*, given it moves *share* of it over a tick of
+    :data:`~autoware_carla_scenario.constants.FIXED_DELTA_SECONDS`.
+
+    ``1 - (1 - share) ** (seconds / FIXED_DELTA_SECONDS)``: what is left of
+    the way decays at the same rate in simulated time, so the smoothing
+    settles as fast at 20 Hz as at 10 Hz.  A tick of the reference length
+    gets *share* itself, bit for bit, as before the smoothing was scaled
+    (#2219); a tick that covered no time moves nothing.
+    """
+    if seconds <= 0.0:
+        return 0.0
+    if abs(seconds - FIXED_DELTA_SECONDS) <= 1e-9:
+        return share
+    return 1.0 - (1.0 - share) ** (seconds / FIXED_DELTA_SECONDS)
 
 
 def _progress_gate(condition: BaseCondition) -> Optional[RouteProgressCondition]:

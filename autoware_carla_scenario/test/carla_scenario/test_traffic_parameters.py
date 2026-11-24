@@ -9,6 +9,7 @@ pinned in ``test_traffic_sumo``.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, List, Optional, Tuple
 
 import pytest
@@ -122,6 +123,105 @@ def test_a_non_finite_std_is_refused(std: float) -> None:
     """An infinite std draws infinite values, which an INF bound lets through."""
     with pytest.raises(ValueError, match="std must be finite and not negative"):
         Spread(1.0, std)
+
+
+# ---------------------------------------------------------------------------
+# An error names the full key, and the value as written (#2245)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "group, mapping, message",
+    [
+        (
+            "vehicles",
+            {"min_gap_m": -1},
+            "traffic.vehicles.min_gap_m must be within [0, inf] (got -1)",
+        ),
+        (
+            "pedestrians",
+            {"min_gap_m": "-1"},
+            "traffic.pedestrians.min_gap_m must be within [0, inf] (got '-1')",
+        ),
+        (
+            "bicycles",
+            {"min_gap_m": {"mean": "-1", "std": 0.2}},
+            "traffic.bicycles.min_gap_m.mean must be within [0, inf] (got '-1')",
+        ),
+        (
+            "bicycles",
+            {"min_gap_m": {"mean": 1.0, "std": "-1"}},
+            "traffic.bicycles.min_gap_m.std must be finite and not negative "
+            "(got '-1')",
+        ),
+        (
+            "vehicles",
+            {"speed_factor": {"mean": 1.0, "std": "inf"}},
+            "traffic.vehicles.speed_factor.std must be finite and not negative "
+            "(got 'inf')",
+        ),
+        (
+            "vehicles",
+            {"speed_factor": "inf"},
+            "traffic.vehicles.speed_factor must be finite (got 'inf')",
+        ),
+        (
+            "vehicles",
+            {"ignore_lights": {"mean": 3}},
+            "traffic.vehicles.ignore_lights.mean must be within [0, 1] (got 3)",
+        ),
+    ],
+)
+def test_a_config_error_names_the_full_key_and_the_value_as_written(
+    group: str, mapping: dict, message: str
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    cls = {
+        "vehicles": VehicleParameters,
+        "pedestrians": PedestrianParameters,
+        "bicycles": BicycleParameters,
+    }[group]
+    with pytest.raises(ValueError) as caught:
+        cls.from_mapping(mapping)  # type: ignore[attr-defined]
+    assert str(caught.value) == message
+
+
+def test_a_constructor_error_names_the_node_of_its_field() -> None:
+    """Built in Python, the same field is told apart by its node: a
+    ``min_gap_m`` is a vehicle's, a pedestrian's or a bicycle's."""
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    for cls, node in (
+        (VehicleParameters, "traffic.vehicles"),
+        (PedestrianParameters, "traffic.pedestrians"),
+        (BicycleParameters, "traffic.bicycles"),
+    ):
+        with pytest.raises(ValueError) as caught:
+            cls(min_gap_m=Spread(-1.0, 0.5))  # type: ignore[operator]
+        assert str(caught.value) == (
+            f"{node}.min_gap_m must be within [0, inf] (got a mean of -1.0)"
+        )
+    with pytest.raises(ValueError) as caught:
+        VehicleParameters(speed_factor=math.inf)
+    assert str(caught.value) == (
+        "traffic.vehicles.speed_factor must be finite (got a mean of inf)"
+    )
+
+
+def test_a_trafficparametersaction_field_names_its_std() -> None:
+    from autoware_carla_scenario.traffic.authoring import (
+        authored_bicycle_parameters,
+        authored_vehicle_parameters,
+    )
+
+    with pytest.raises(ValueError) as caught:
+        authored_vehicle_parameters(speed_factor_mean=1.0, speed_factor_std=-0.5)
+    assert str(caught.value) == (
+        "speed_factor_std must be finite and not negative (got -0.5)"
+    )
+    with pytest.raises(ValueError, match=r"^traffic\.bicycles\.decel must be within"):
+        authored_bicycle_parameters(bicycle_decel_mean=-1.0)
 
 
 def test_a_mapping_with_an_unknown_key_is_refused() -> None:
@@ -1292,10 +1392,104 @@ def test_the_authored_parameters_refuse_a_bool_and_read_a_spelling() -> None:
     assert parameters.lane_changes is False
     with pytest.raises(ValueError, match=r"traffic\.vehicles\.lane_changes"):
         authored_vehicle_parameters(lane_changes="maybe")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="ignore_lights: a mean or std"):
+    with pytest.raises(ValueError, match="^ignore_lights_mean must be a number, not"):
         authored_vehicle_parameters(ignore_lights_mean=True)
-    with pytest.raises(ValueError, match="ignore_lights: a mean or std"):
+    with pytest.raises(ValueError, match="^ignore_lights_std must be a number, not"):
         authored_vehicle_parameters(ignore_lights_mean=0.5, ignore_lights_std=True)
+
+
+@pytest.mark.parametrize(
+    ("builder", "fields", "message"),
+    [
+        # The bicycle's own field, not the vehicles' `accel` on the same form.
+        (
+            "bicycle",
+            {"bicycle_accel_std": 1.0},
+            "bicycle_accel_std needs bicycle_accel_mean: a std needs a mean",
+        ),
+        (
+            "pedestrian",
+            {"pedestrian_min_gap_m_std": 0.2},
+            "pedestrian_min_gap_m_std needs pedestrian_min_gap_m_mean",
+        ),
+        (
+            "vehicle",
+            {"decel_std": 1.0},
+            "decel_std needs decel_mean: a std needs a mean",
+        ),
+        (
+            "bicycle",
+            {"bicycle_decel_mean": 3.0, "bicycle_decel_std": -1},
+            "bicycle_decel_std must be finite and not negative (got -1)",
+        ),
+        # Text that is no number was a bare "could not convert string to float".
+        (
+            "vehicle",
+            {"speed_factor_mean": "fast"},
+            "speed_factor_mean must be a number (got 'fast')",
+        ),
+        ("vehicle", {"speed_factor_mean": ""}, "speed_factor_mean must be a number"),
+        (
+            "vehicle",
+            {"speed_factor_mean": 1.0, "speed_factor_std": "wide"},
+            "speed_factor_std must be a number (got 'wide')",
+        ),
+        (
+            "bicycle",
+            {"bicycle_imperfection_mean": [0.5]},
+            "bicycle_imperfection_mean must be a number (got [0.5])",
+        ),
+        (
+            "pedestrian",
+            {"walking_speed_mps_mean": 10**400},
+            "walking_speed_mps_mean must be a number (got ",
+        ),
+    ],
+)
+def test_an_authored_parameter_error_names_its_form_field(
+    builder: str, fields: dict[str, Any], message: str
+) -> None:
+    from autoware_carla_scenario.traffic import authoring
+
+    build = getattr(authoring, f"authored_{builder}_parameters")
+    with pytest.raises(ValueError, match="^" + re.escape(message)):
+        build(**fields)
+
+
+def test_an_authored_parameter_reads_a_numbers_text_as_the_editor_does() -> None:
+    # The editor's compiler reads a number field's text with float(); a
+    # caller passing text is read the same way.
+    from autoware_carla_scenario.traffic.authoring import authored_bicycle_parameters
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    assert authored_bicycle_parameters(
+        bicycle_accel_mean=" 1.5 ",  # type: ignore[arg-type]
+        bicycle_accel_std="0.25",  # type: ignore[arg-type]
+    ) == BicycleParameters(accel=Spread(1.5, 0.25))
+    assert authored_bicycle_parameters(bicycle_accel_mean=2) == BicycleParameters(
+        accel=Spread(2.0)
+    )
+
+
+def test_an_authored_parameter_takes_any_number_float_reads() -> None:
+    # A numpy scalar, a Decimal or a Fraction float() reads, as before the
+    # fields were checked: only bools and what is no number are refused.
+    from decimal import Decimal
+    from fractions import Fraction
+
+    import numpy as np
+
+    from autoware_carla_scenario.traffic.authoring import authored_bicycle_parameters
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    for mean, std in [
+        (np.int64(2), np.float32(0.5)),
+        (Decimal("2"), Fraction(1, 2)),
+    ]:
+        assert authored_bicycle_parameters(
+            bicycle_accel_mean=mean,  # type: ignore[arg-type]
+            bicycle_accel_std=std,  # type: ignore[arg-type]
+        ) == BicycleParameters(accel=Spread(2.0, 0.5))
 
 
 @pytest.mark.parametrize("traffic", ["traffic_manager", "sumo"])

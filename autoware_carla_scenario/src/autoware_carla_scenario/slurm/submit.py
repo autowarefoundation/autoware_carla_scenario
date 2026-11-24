@@ -64,14 +64,11 @@ from .scripts import _shell_path as _shell_path
 from .scripts import _write_script as _write_script
 from .scripts import relative_batch_dir as relative_batch_dir
 from .scripts import sbatch_command as sbatch_command
-from .scripts import squeue_task_states as squeue_task_states
 from .settings import (
     DEFAULT_MAX_ARRAY_SIZE,
     SlurmSettings,
     snapshot_environment,
 )
-from .settings import parse_max_array_size as parse_max_array_size
-from .settings import require_sbatch as require_sbatch
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig

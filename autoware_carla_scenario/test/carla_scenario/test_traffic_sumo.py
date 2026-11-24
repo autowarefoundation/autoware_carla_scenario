@@ -14,6 +14,7 @@ import logging
 import itertools
 import math
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,7 @@ def test_a_sumo_switch_is_read_strictly_by_its_key(
     ):
         config = SumoBackendConfig.from_mapping(_nested(path, value))
         assert _read(config, path) is expected
-    key = ".".join(path)
+    key = "traffic.options." + ".".join(path)
     for bad in ("maybe", 2, 0.5, ["true"]):
         with pytest.raises(
             ValueError, match=rf"^{re.escape(key)} must be true or false, got "
@@ -149,7 +150,9 @@ def test_a_nested_sumo_config_reads_its_switch_when_built_directly() -> None:
     assert AmbientTrafficConfig(enabled="no").enabled is False  # type: ignore[arg-type]
     assert PedestrianConfig(enabled="1").enabled is True  # type: ignore[arg-type]
     assert BicycleConfig(enabled=0).enabled is False  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match=r"^bicycles\.enabled must be true or false"):
+    with pytest.raises(
+        ValueError, match=r"^traffic\.options\.bicycles\.enabled must be true or false"
+    ):
         BicycleConfig(enabled="maybe")  # type: ignore[arg-type]
 
 
@@ -481,6 +484,121 @@ def test_a_vehicle_not_held_takes_its_speed_into_the_queue_model() -> None:
     assert backend._meso_held == {}
 
 
+class _Roads:
+    """MesoRoads, as far as placing a mesoscopic vehicle uses it: every
+    place at (110, -5.25), facing east, *z* m up."""
+
+    def __init__(self, z: float, has_elevation: bool) -> None:
+        self.z = z
+        self.has_elevation = has_elevation
+
+    def pose(self, edge: str, offset: float) -> Pose2D:
+        return Pose2D(110.0, -5.25, self.z, 90.0)
+
+
+class _Map:
+    """A CARLA map whose driving lane is everywhere 7.5 m up."""
+
+    def __init__(self) -> None:
+        self.asked: list[Any] = []
+
+    def get_waypoint(self, location: Any, **kwargs: Any) -> Any:
+        self.asked.append((location, kwargs))
+        return SimpleNamespace(
+            transform=SimpleNamespace(location=SimpleNamespace(z=7.5))
+        )
+
+
+def _placing_backend(
+    monkeypatch: pytest.MonkeyPatch, z: float, has_elevation: bool
+) -> tuple[Any, _Map]:
+    from autoware_carla_scenario.traffic.sumo import backend as backend_module
+
+    backend, _vehicles, meso, _world = _fogged_backend()
+    meso.max_speed["v"] = 20.0
+    backend._meso_roads = _Roads(z, has_elevation)  # type: ignore[assignment]
+    carla_map = _Map()
+    monkeypatch.setattr(backend_module, "run_carla_map", lambda world: carla_map)
+    return backend, carla_map
+
+
+def _as_background(backend: Any) -> None:
+    """Make "v", in the queue model, one of *backend*'s background vehicles."""
+    backend._background = {"v"}
+    backend._running = True
+    backend._traci.vehicle.getIDList = lambda: []
+    backend._traci.simulation.getPendingVehicles = lambda: []
+    backend._traci.simulation.getTime = lambda: 0.0
+    backend._background_unstepped = set()
+    backend._background_requested = {}
+
+
+def test_a_mesoscopic_vehicle_is_placed_at_its_lanes_height(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scenario vehicle back from the mesoscopic model was spawned at
+    z = 0 + lift: up to 13.8 m off the road on the fixture map (#2221)."""
+    backend, carla_map = _placing_backend(monkeypatch, -13.8, True)
+    pose = backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1))
+    # The box centre, half the length behind the front bumper, on its lane.
+    assert (pose.x, pose.y) == pytest.approx((110.0 - 2.25, 5.25))
+    assert pose.z == pytest.approx(-13.8)
+    assert carla_map.asked == []  # the network's height, not CARLA's
+    # Reported with its height too.
+    _as_background(backend)
+    assert backend.background_vehicles(None)["v"][2] == pytest.approx(-13.8)
+
+
+def test_on_a_network_without_elevation_the_height_is_carlas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, carla_map = _placing_backend(monkeypatch, 0.0, False)
+    pose = backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1))
+    assert pose.z == pytest.approx(7.5)
+    ((location, kwargs),) = carla_map.asked
+    assert (location.x, location.y) == pytest.approx((110.0 - 2.25, 5.25))
+    assert kwargs["project_to_road"] is True
+    # Without a world to ask (a report), the network's: no height.
+    assert backend._meso_carla_pose("v", 0.0).z == 0.0
+    _as_background(backend)
+    assert backend.background_vehicles(None)["v"][2] is None
+
+
+@pytest.mark.parametrize("answer", ["none", "error"])
+def test_where_carla_has_no_lane_the_height_stays_the_networks(
+    monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    """CARLA finding no driving lane, or the map not answering, leaves the
+    network's height rather than failing the spawn."""
+    backend, carla_map = _placing_backend(monkeypatch, 0.0, False)
+
+    def get_waypoint(location: Any, **kwargs: Any) -> Any:
+        if answer == "error":
+            raise RuntimeError("the map is gone")
+        return None
+
+    monkeypatch.setattr(carla_map, "get_waypoint", get_waypoint)
+    assert backend._meso_carla_pose("v", 0.0, SimpleNamespace(id=1)).z == 0.0
+
+
+@pytest.mark.parametrize(("has_elevation", "z"), [(True, 3.1), (False, 7.5)])
+def test_a_scenario_vehicle_back_from_the_mesoscopic_model_spawns_on_its_road(
+    monkeypatch: pytest.MonkeyPatch, has_elevation: bool, z: float
+) -> None:
+    backend, _carla_map = _placing_backend(monkeypatch, 3.1, has_elevation)
+    backend._meso_entities["v"] = SimpleNamespace(role_name="npc")
+    spawned: list[Pose2D] = []
+
+    def spawn(world: Any, blueprint: str, role_name: str, pose: Pose2D) -> Any:
+        spawned.append(pose)
+        return None  # no room: it stays mesoscopic
+
+    backend._spawn_actor = spawn
+    assert not backend._to_microscopic(SimpleNamespace(id=1), "v", 1.0)
+    (pose,) = spawned
+    assert pose.z == pytest.approx(z)
+
+
 def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
     from autoware_carla_scenario.traffic.parameters import (
         TrafficParameterError,
@@ -712,8 +830,9 @@ class _FakeWorld:
         return _Actors(self.actors)
 
     def get_map(self) -> Any:
-        """A map no actor stands on: no road ahead to search for a dead end."""
-        return SimpleNamespace(get_waypoint=lambda location: None)
+        """A map no actor stands on: no road ahead to search for a dead end,
+        and no lane to give a height where SUMO's network has none."""
+        return SimpleNamespace(get_waypoint=lambda location, **kwargs: None)
 
     def get_blueprint_library(self) -> _Library:
         self.library_fetches += 1
@@ -1118,10 +1237,183 @@ def test_ride_options_are_the_ones_network_built(
     ) == _old_ride_options(out, min_distance, max_distance, bicycle_type)
 
 
+def test_a_tool_that_cannot_run_is_a_backend_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2321: netconvert missing, or randomTrips.py's interpreter, is a
+    TrafficBackendError naming it, not a raw FileNotFoundError."""
+    import sys
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    def no_sumo() -> Path:
+        raise network_module.TrafficBackendUnavailable("SUMO is not installed")
+
+    monkeypatch.setattr(network_module, "sumo_home", no_sumo)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    with pytest.raises(TrafficBackendError, match="netconvert was not found"):
+        network_module._binary("netconvert")
+
+    home = tmp_path / "sumo_home"
+    monkeypatch.setattr(network_module, "sumo_home", lambda: home)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "no-python"))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    with pytest.raises(
+        TrafficBackendError, match=r"^Could not run randomTrips\.py .*no-python"
+    ):
+        network_module.generate_trips(
+            network, tmp_path / "out" / "a.rou.xml", seed=3, period=1.5, end=9.0
+        )
+
+
+@needs_sumo
+def test_a_netconvert_that_cannot_run_is_a_backend_error(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2321: a netconvert found but not runnable (here a script whose
+    interpreter is gone) is a TrafficBackendError, not a raw OSError."""
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    netconvert = tmp_path / "netconvert"
+    netconvert.write_text(f"#!{tmp_path / 'no-interpreter'}\n")
+    netconvert.chmod(0o755)
+    monkeypatch.setattr(network_module, "_binary", lambda name: str(netconvert))
+    with pytest.raises(
+        TrafficBackendError, match=r"^Could not run SUMO's netconvert \("
+    ):
+        network_module.build_network(crossroads.read_text(), tmp_path / "cache")
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
+
+
+def test_a_random_trips_that_does_not_finish_is_a_backend_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: a stuck randomTrips.py times out as a TrafficBackendError
+    naming it and the timeout, not a hung run."""
+    import sys
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    # The "interpreter" randomTrips.py runs under never finishes.
+    stuck = tmp_path / "stuck-python"
+    stuck.write_text("#!/bin/sh\nexec sleep 60\n")
+    stuck.chmod(0o755)
+    monkeypatch.setattr(network_module, "sumo_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "executable", str(stuck))
+    monkeypatch.setattr(network_module, "_RANDOM_TRIPS_TIMEOUT_S", 0.2)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    start = time.monotonic()
+    with pytest.raises(
+        TrafficBackendError,
+        match=r"^randomTrips\.py \(walks\) did not finish within 0\.2 s$",
+    ):
+        network_module._random_trips(
+            network,
+            tmp_path / "out" / "a.rou.xml",
+            seed=3,
+            period=1.5,
+            end=9.0,
+            prefix="walk",
+            options=[],
+            what=" (walks)",
+        )
+    assert time.monotonic() - start < 30
+
+
+def test_a_random_trips_timeout_kills_the_duarouter_it_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: randomTrips.py runs duarouter as a child of its own; a timeout
+    kills that one too, not only randomTrips.py."""
+    import os
+    import sys
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    pid_file = tmp_path / "duarouter.pid"
+    # The "interpreter" starts a "duarouter" that never finishes, and waits.
+    stuck = tmp_path / "stuck-python"
+    stuck.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > '{pid_file}'\nwait\n")
+    stuck.chmod(0o755)
+    monkeypatch.setattr(network_module, "sumo_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "executable", str(stuck))
+    monkeypatch.setattr(network_module, "_RANDOM_TRIPS_TIMEOUT_S", 1.0)
+    network = network_module.SumoNetwork(
+        tmp_path / "network.net.xml", tmp_path / "network.safe"
+    )
+    with pytest.raises(TrafficBackendError, match="did not finish within 1 s"):
+        network_module._random_trips(
+            network,
+            tmp_path / "out" / "a.rou.xml",
+            seed=3,
+            period=1.5,
+            end=9.0,
+            prefix="sumo",
+            options=[],
+        )
+    grandchild = int(pid_file.read_text())
+
+    def alive() -> bool:
+        # Killed, it may linger as a zombie until init reaps it.
+        try:
+            stat = Path(f"/proc/{grandchild}/stat").read_text()
+        except OSError:
+            return False
+        return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+    deadline = time.monotonic() + 10.0
+    while alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    still_alive = alive()
+    if still_alive:
+        os.kill(grandchild, 9)
+    assert not still_alive
+
+
+@needs_sumo
+def test_a_netconvert_that_does_not_finish_is_a_backend_error(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2327: a stuck netconvert times out as a TrafficBackendError naming
+    it and the timeout, and leaves nothing in the cache."""
+    import time
+
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    netconvert = tmp_path / "netconvert"
+    netconvert.write_text("#!/bin/sh\nexec sleep 60\n")
+    netconvert.chmod(0o755)
+    monkeypatch.setattr(network_module, "_binary", lambda name: str(netconvert))
+    monkeypatch.setattr(network_module, "_NETCONVERT_TIMEOUT_S", 0.2)
+    start = time.monotonic()
+    with pytest.raises(
+        TrafficBackendError,
+        match=r"^SUMO's netconvert \(.*netconvert\) did not finish within 0\.2 s$",
+    ):
+        network_module.build_network(crossroads.read_text(), tmp_path / "cache")
+    assert time.monotonic() - start < 30
+    assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
+
+
 def test_generate_demand_runs_the_command_network_built(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """generate_trips/walks/rides still hand subprocess.run the old argv,
+    """generate_trips/walks/rides still hand subprocess.Popen the old argv,
     with sys.executable and sumo_home() as network finds them."""
     import subprocess
     import sys
@@ -1131,13 +1423,14 @@ def test_generate_demand_runs_the_command_network_built(
     home = tmp_path / "sumo_home"
     monkeypatch.setattr(network_module, "sumo_home", lambda: home)
     commands: list[list[str]] = []
+    popen = subprocess.Popen
 
-    def run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def recording_popen(cmd: list[str], **kwargs: Any) -> Any:
         commands.append(cmd)
         Path(cmd[cmd.index("-r") + 1]).write_text("<routes/>")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return popen([sys.executable, "-c", ""], **kwargs)
 
-    monkeypatch.setattr(network_module.subprocess, "run", run)
+    monkeypatch.setattr(network_module.subprocess, "Popen", recording_popen)
     cache = tmp_path / "cache"
     cache.mkdir()
     network = network_module.SumoNetwork(
@@ -3260,6 +3553,7 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     backend._crossing_links = {}
     backend._bicycle_rides = {}
     backend._permissive_links = {}
+    backend._own_programs = {}
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
@@ -3291,6 +3585,7 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     backend._crossing_links = {"tls": [(4, [0, 1]), (5, [2, 3])]}
     backend._bicycle_rides = {}
     backend._permissive_links = {}
+    backend._own_programs = {}
     backend._signals = {
         ("tls", 0): green,
         ("tls", 1): red,
@@ -3299,6 +3594,193 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     }
     backend._signals_to_sumo()
     assert states["tls"] == "GrrrrG"
+
+
+class _GhostActor:
+    """Another handle to a vehicle destroyed elsewhere: it raises nothing,
+    reads the origin, and only ``is_alive`` says it is gone (#2245)."""
+
+    def __init__(self, actor_id: int) -> None:
+        self.id = actor_id
+        self.is_alive = False
+        self.moved = 0
+
+    def get_location(self) -> Any:
+        return SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+    def get_transform(self) -> Any:
+        self.moved += 1
+        return _carla_transform(0.0, 0.0, 0.0)
+
+    def get_velocity(self) -> Any:
+        return SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+
+class _GhostVehicles:
+    def __init__(self) -> None:
+        self.removed: list[str] = []
+        self.moved: list[str] = []
+
+    def remove(self, sumo_id: str) -> None:
+        self.removed.append(sumo_id)
+
+    def moveToXY(self, sumo_id: str, *args: Any) -> None:
+        self.moved.append(sumo_id)
+
+
+def test_a_published_vehicle_destroyed_elsewhere_leaves_sumo() -> None:
+    """Not moved to the map's origin every step: it leaves SUMO, and is not
+    parked to come back up (#2245)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    vehicles = _GhostVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    ghost = _GhostActor(7)
+    backend._external = {"vehicle_7": ghost}
+    backend._push_external()
+    assert vehicles.removed == ["vehicle_7"]
+    assert vehicles.moved == [] and ghost.moved == 0
+    assert backend._external == {} and backend._parked == {}
+
+
+def test_a_parked_vehicle_destroyed_elsewhere_does_not_come_up() -> None:
+    """Read at the origin, it is above the hiding depth: without is_alive it
+    would join SUMO there (#2245)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    vehicles = _GhostVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    ghost = _GhostActor(8)
+    backend._parked = {8: (ghost, None)}
+    backend._bring_in()
+    assert backend._parked == {} and backend._arriving == {}
+    assert vehicles.moved == []
+
+
+def test_a_destroyed_focus_actor_is_no_focus_at_the_origin() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    backend._external = {"vehicle_9": _GhostActor(9)}
+    assert backend._focus(True) == ([], [])
+
+
+def _program_backend(
+    program: list[tuple[str, float]],
+    phase: int,
+    next_switch: float,
+    lights: dict[int, Any],
+    *,
+    rides: Any = None,
+    crossings: Any = None,
+    readable: bool = True,
+) -> tuple[Any, dict[str, str], list[float]]:
+    """A backend whose tls ``tls`` runs the fixed-time *program*, in *phase*
+    until *next_switch*, with *lights* switching some of its links; and the
+    states set, and its clock."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    states = {"tls": program[phase][0]}
+    clock = [0.0]
+    logic = SimpleNamespace(
+        programID="0",
+        phases=[SimpleNamespace(state=s, duration=d) for s, d in program],
+    )
+
+    def next_switch_of(tls: str) -> float:
+        if not readable:
+            raise RuntimeError("no next switch")
+        return next_switch
+
+    trafficlight = SimpleNamespace(
+        getRedYellowGreenState=lambda tls: states[tls],
+        setRedYellowGreenState=lambda tls, state: states.__setitem__(tls, state),
+        getAllProgramLogics=lambda tls: [
+            SimpleNamespace(programID="off", phases=[]),
+            logic,
+        ],
+        getProgram=lambda tls: "0",
+        getPhase=lambda tls: phase,
+        getNextSwitch=next_switch_of,
+    )
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(
+        trafficlight=trafficlight,
+        simulation=SimpleNamespace(getTime=lambda: clock[0]),
+    )
+    backend._crossing_links = crossings or {}
+    backend._bicycle_rides = rides or {}
+    backend._signals = {("tls", index): light for index, light in lights.items()}
+    backend._permissive_links = backend._match_permissive()
+    backend._own_programs = backend._match_own_programs()
+    return backend, states, clock
+
+
+def test_unmatched_links_of_a_partly_matched_junction_run_sumos_own_program(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Once a junction's state is set SUMO runs a fixed program there: the
+    links no CARLA light switches go on with the program it had, phase by
+    phase, instead of holding their first state for the run (#2245)."""
+    import typesafe_carla.carla as carla
+
+    red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+    program = [("GGrr", 10.0), ("yyrr", 3.0), ("rrGG", 10.0), ("rryy", 3.0)]
+    with caplog.at_level(logging.INFO):
+        backend, states, clock = _program_backend(
+            program, phase=0, next_switch=4.0, lights={0: red}
+        )
+    assert "tls (1, 2, 3)" in caplog.text
+    seen = []
+    for now in (0.0, 4.5, 7.5, 17.5, 21.0, 30.5):
+        clock[0] = now
+        backend._signals_to_sumo()
+        seen.append(states["tls"])
+    # Link 0 is CARLA's red throughout; 1-3 follow SUMO's own program.
+    assert seen == ["rGrr", "ryrr", "rrGG", "rryy", "rGrr", "ryrr"]
+
+
+def test_a_junction_whose_program_cannot_be_read_says_its_links_hold(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import typesafe_carla.carla as carla
+
+    red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+    with caplog.at_level(logging.WARNING):
+        backend, states, clock = _program_backend(
+            [("GGrr", 10.0), ("rrGG", 10.0)],
+            phase=0,
+            next_switch=10.0,
+            lights={0: red},
+            readable=False,
+        )
+    assert backend._own_programs == {}
+    assert "link(s) 1, 2, 3 of junction tls" in caplog.text
+    assert "keep the state they have now" in caplog.text
+    clock[0] = 15.0
+    backend._signals_to_sumo()
+    assert states["tls"] == "rGrr"
+
+
+def test_a_junction_whose_links_are_all_followed_reads_no_program() -> None:
+    """Every link set by a CARLA light, a ride or a crossing: nothing runs on
+    SUMO's own program."""
+    import typesafe_carla.carla as carla
+
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    backend, states, _clock = _program_backend(
+        [("rrrG", 10.0)],
+        phase=0,
+        next_switch=10.0,
+        lights={0: green, 1: green},
+        rides={"tls": [(2, "with", [0])]},
+        crossings={"tls": [(3, [0, 1])]},
+    )
+    assert backend._own_programs == {}
+    backend._signals_to_sumo()
+    assert states["tls"] == "GGgr"
 
 
 def _permissive_backend(
@@ -3321,6 +3803,7 @@ def _permissive_backend(
     backend._bicycle_rides = {}
     backend._signals = {("tls", index): light for index, light in lights.items()}
     backend._permissive_links = backend._match_permissive()
+    backend._own_programs = {}
     return backend, states
 
 
@@ -3446,7 +3929,7 @@ class _FakeTrace:
 def test_the_signal_table_reads_a_lights_links_off_the_traces() -> None:
     from autoware_carla_scenario.traffic.sumo.network import SignalTable
 
-    table = SignalTable(_FakeTrace())
+    table = SignalTable(_FakeTrace())  # type: ignore[arg-type]  # roadgen.Trace's stand-in
     assert table.links("949") == [("j_189", 12), ("j_189", 13)]
     assert table.links("1") == []
 
@@ -5313,14 +5796,18 @@ def test_the_mirror_limits_take_whole_numbers_from_zero() -> None:
     assert BicycleConfig.from_mapping({"max_bicycles": 0}).max_bicycles == 0
     assert PedestrianConfig.from_mapping({"max_persons": 0}).max_persons == 0
     for bad in (-1, -2, 2.5, 3.0, True, "3"):
-        with pytest.raises(ValueError, match="^max_vehicles must be an integer"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.max_vehicles must be an integer"
+        ):
             SumoBackendConfig.from_mapping({"max_vehicles": bad})
         with pytest.raises(
-            ValueError, match="^bicycles.max_bicycles must be an integer"
+            ValueError,
+            match="^traffic.options.bicycles.max_bicycles must be an integer",
         ):
             SumoBackendConfig.from_mapping({"bicycles": {"max_bicycles": bad}})
         with pytest.raises(
-            ValueError, match="^pedestrians.max_persons must be an integer"
+            ValueError,
+            match="^traffic.options.pedestrians.max_persons must be an integer",
         ):
             SumoBackendConfig.from_mapping({"pedestrians": {"max_persons": bad}})
 
@@ -5331,19 +5818,27 @@ def test_the_radii_must_be_positive_and_finite() -> None:
     )
     assert SumoBackendConfig(spawn_radius_m=50).spawn_radius_m == 50
     for bad in (0.0, -5.0, math.nan, math.inf, -math.inf):
-        with pytest.raises(ValueError, match="^spawn_radius_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.spawn_radius_m must be positive"
+        ):
             SumoBackendConfig.from_mapping({"spawn_radius_m": bad})
-        with pytest.raises(ValueError, match="^bicycles.radius_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.bicycles.radius_m must be positive"
+        ):
             BicycleConfig(radius_m=bad)
-        with pytest.raises(ValueError, match="^pedestrians.radius_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.pedestrians.radius_m must be positive"
+        ):
             PedestrianConfig(radius_m=bad)
     for bad in (0.0, -5.0, math.nan, -math.inf):
         with pytest.raises(
-            ValueError, match="^bicycles.max_distance_m must be positive"
+            ValueError,
+            match="^traffic.options.bicycles.max_distance_m must be positive",
         ):
             BicycleConfig(max_distance_m=bad)
         with pytest.raises(
-            ValueError, match="^pedestrians.max_distance_m must be positive"
+            ValueError,
+            match="^traffic.options.pedestrians.max_distance_m must be positive",
         ):
             PedestrianConfig(max_distance_m=bad)
     # inf is no limit on how far a walk or a ride goes, as before.
@@ -5360,23 +5855,33 @@ def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
     not_negative = ("feedback_distance_m", "warmup_s")
     for bad in (-1.0, math.nan, math.inf):
         for key in positive:
-            with pytest.raises(ValueError, match=f"^{key} must be positive and finite"):
+            with pytest.raises(
+                ValueError, match=f"^traffic.options.{key} must be positive and finite"
+            ):
                 SumoBackendConfig.from_mapping({key: bad})
-        with pytest.raises(ValueError, match="^lane_change_duration_s must be"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.lane_change_duration_s must be"
+        ):
             SumoBackendConfig.from_mapping(
                 {"lane_change_duration_s": bad, "lateral_resolution_m": None}
             )
         for key in not_negative:
-            with pytest.raises(ValueError, match=f"^{key} must be finite and not"):
+            with pytest.raises(
+                ValueError, match=f"^traffic.options.{key} must be finite and not"
+            ):
                 SumoBackendConfig.from_mapping({key: bad})
     for key in positive:
-        with pytest.raises(ValueError, match=f"^{key} must be positive"):
+        with pytest.raises(
+            ValueError, match=f"^traffic.options.{key} must be positive"
+        ):
             SumoBackendConfig.from_mapping({key: 0.0})
     # resync_distance_m: inf never puts a car back, as before; NaN, 0 and
     # below are refused.
     assert SumoBackendConfig(resync_distance_m=math.inf).resync_distance_m == math.inf
     for bad in (0.0, -1.0, math.nan, -math.inf):
-        with pytest.raises(ValueError, match="^resync_distance_m must be positive"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.resync_distance_m must be positive"
+        ):
             SumoBackendConfig.from_mapping({"resync_distance_m": bad})
     # 0 is meaningful for these: never correct SUMO, and no warm-up.
     zero = SumoBackendConfig(feedback_distance_m=0.0, warmup_s=0.0)
@@ -5386,7 +5891,9 @@ def test_the_options_refuse_negative_and_non_finite_numbers() -> None:
 def test_the_tm_port_must_be_a_port() -> None:
     assert SumoBackendConfig.from_mapping({"tm_port": 8200}).tm_port == 8200
     for bad in (0, -1, 65536, 8000.0, True, "8000"):
-        with pytest.raises(ValueError, match="^tm_port must be an integer"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.tm_port must be an integer"
+        ):
             SumoBackendConfig.from_mapping({"tm_port": bad})
 
 
@@ -5546,18 +6053,24 @@ def test_the_generated_demand_refuses_negative_and_non_finite_numbers() -> None:
         # No demand per hour is allowed: as good as none generated.
         assert cls.from_mapping({rate: 0}).period() > 1e9
         for bad in (-1.0, math.nan, math.inf):
-            with pytest.raises(ValueError, match=f"^{group}.{rate} must be finite"):
+            with pytest.raises(
+                ValueError, match=f"^traffic.options.{group}.{rate} must be finite"
+            ):
                 cls.from_mapping({rate: bad})
         for bad in (0.0, -1.0, math.nan, math.inf):
             for key in ("period_s", "end_s"):
                 with pytest.raises(
-                    ValueError, match=f"^{group}.{key} must be positive"
+                    ValueError, match=f"^traffic.options.{group}.{key} must be positive"
                 ):
                     SumoBackendConfig.from_mapping({group: {key: bad}})
     for bad in (-1.0, math.nan, math.inf):
-        with pytest.raises(ValueError, match="^ambient.fringe_factor must be finite"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.ambient.fringe_factor must be finite"
+        ):
             AmbientTrafficConfig(fringe_factor=bad)
-        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be finite"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.bicycles.min_distance_m must be finite"
+        ):
             BicycleConfig(min_distance_m=bad)
 
 
@@ -5622,7 +6135,9 @@ def test_a_sumo_number_option_refuses_what_is_no_number_by_its_key(
 ) -> None:
     # A bool passed as 0 or 1 (period_s: true was a 1 s period), and a string
     # or a null in a required field raised a TypeError naming no key (#1663).
-    name = re.escape(f"{group}.{key}" if group else key)
+    name = re.escape(
+        f"traffic.options.{group}.{key}" if group else f"traffic.options.{key}"
+    )
     bad: list[Any] = [True, False, "2", "", [1.0], {"a": 1}, 10**400, -(10**400)]
     for value in bad:
         with pytest.raises(ValueError, match=f"^{name} {message}"):
@@ -5662,7 +6177,8 @@ def test_the_lane_change_duration_refuses_what_is_no_number_by_its_key() -> None
 
     for value in (True, "3", 10**400):
         with pytest.raises(
-            ValueError, match="^lane_change_duration_s must be positive and finite"
+            ValueError,
+            match="^traffic.options.lane_change_duration_s must be positive and finite",
         ):
             build(value)
     duration = build(3).lane_change_duration_s
@@ -5685,16 +6201,99 @@ def test_the_shipped_sumo_options_still_load_and_a_bool_is_refused_up_front() ->
             run.check_run_config(_shipped(["traffic=sumo", override]))
 
 
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        (
+            {"warmup_s": -1},
+            "traffic.options.warmup_s must be finite and not negative (got -1)",
+        ),
+        (
+            {"spawn_radius_m": 0},
+            "traffic.options.spawn_radius_m must be positive and finite or null "
+            "(got 0)",
+        ),
+        (
+            {"resync_distance_m": 0},
+            "traffic.options.resync_distance_m must be positive (got 0)",
+        ),
+        (
+            {"max_vehicles": -1},
+            "traffic.options.max_vehicles must be an integer >= 0 or null (got -1)",
+        ),
+        (
+            {"tm_port": 0},
+            "traffic.options.tm_port must be an integer within 1-65535 (got 0)",
+        ),
+        (
+            {"vehicle_control": "pedal"},
+            "traffic.options.vehicle_control must be one of physics, teleport "
+            "(got 'pedal')",
+        ),
+        (
+            {"lane_change_duration_s": 2},
+            "traffic.options.lane_change_duration_s needs "
+            "traffic.options.lateral_resolution_m: null",
+        ),
+        (
+            {"ambient": {"end_s": 0}},
+            "traffic.options.ambient.end_s must be positive and finite (got 0)",
+        ),
+        (
+            {"ambient": {"enabled": "maybe"}},
+            "traffic.options.ambient.enabled must be true or false, got 'maybe'",
+        ),
+        (
+            {"pedestrians": {"max_distance_m": -5}},
+            "traffic.options.pedestrians.max_distance_m must be positive (got -5)",
+        ),
+        (
+            {"pedestrians": {"max_persons": -1}},
+            "traffic.options.pedestrians.max_persons must be an integer >= 0 or "
+            "null (got -1)",
+        ),
+        (
+            {"bicycles": {"radius_m": 0}},
+            "traffic.options.bicycles.radius_m must be positive and finite or "
+            "null (got 0)",
+        ),
+        (
+            {"bicycles": {"min_distance_m": 3000, "max_distance_m": 2000}},
+            "traffic.options.bicycles.min_distance_m must be less than "
+            "traffic.options.bicycles.max_distance_m (got 3000 and 2000)",
+        ),
+        (
+            {"bicycles": {"vehicle_control": "pedal"}},
+            "traffic.options.bicycles.vehicle_control must be one of physics, "
+            "teleport (got 'pedal')",
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_a_sumo_option_error_names_the_full_key_and_the_value_as_written(
+    mapping: dict[str, Any], message: str
+) -> None:
+    # A bare `warmup_s` or `bicycles.radius_m` (easy to take for
+    # traffic.bicycles), and the float a value became, misled (#2283).
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}"):
+        SumoBackendConfig.from_mapping(mapping)
+
+
 def test_the_bicycle_ride_distances_must_be_an_interval() -> None:
     # randomTrips.py keeps a ride min <= distance < max: an inverted or equal
     # pair kept none, and generated no ride without a word (#1452).
     for low, high in ((3000.0, 2000.0), (2000.0, 2000.0)):
         with pytest.raises(
             ValueError,
-            match="^bicycles.min_distance_m must be less than bicycles.max_distance_m",
+            match=(
+                r"^traffic\.options\.bicycles\.min_distance_m must be less than "
+                r"traffic\.options\.bicycles\.max_distance_m"
+            ),
         ):
             BicycleConfig(enabled=True, min_distance_m=low, max_distance_m=high)
-        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be less"):
+        with pytest.raises(
+            ValueError, match="^traffic.options.bicycles.min_distance_m must be less"
+        ):
             SumoBackendConfig.from_mapping(
                 {"bicycles": {"min_distance_m": low, "max_distance_m": high}}
             )
@@ -5921,9 +6520,10 @@ def test_the_default_walker_blueprints_are_ones_carla_0_10_has() -> None:
 class _DeadTraci:
     """A traci (or libsumo) whose SUMO dies right after it starts.
 
-    It keeps traci's module-level registry of connections: ``start`` refuses
-    while "default" is open, as traci does, and ``close`` frees it.  Anything
-    else fails, as with a SUMO process that is gone.
+    It keeps traci's module-level registry of connections: ``start`` (libsumo)
+    and ``init`` (traci, on the process the backend started) refuse while
+    "default" is open, as traci does, and ``close`` frees it.  Anything else
+    fails, as with a SUMO process that is gone.
     """
 
     active: set[str] = set()
@@ -5939,6 +6539,20 @@ class _DeadTraci:
         _DeadTraci.active.add("default")
         self.starts += 1
 
+    def init(self, port: int, *, numRetries: int, label: str, proc: Any) -> None:  # noqa: N803 - traci's name
+        assert numRetries == 0 and proc.poll() is None
+        if label in _DeadTraci.active:
+            raise RuntimeError(f"Connection {label!r} is already active.")
+        _DeadTraci.active.add(label)
+        self.starts += 1
+
+    def getConnection(self, label: str) -> Any:  # noqa: N802 - traci's name
+        from traci.exceptions import TraCIException
+
+        if label not in _DeadTraci.active:
+            raise TraCIException(f"Connection {label!r} is not known.")
+        return self
+
     def close(self, *args: Any) -> None:
         self.closes.append(args)
         if "default" not in _DeadTraci.active:
@@ -5947,6 +6561,31 @@ class _DeadTraci:
 
     def __getattr__(self, name: str) -> Any:
         raise RuntimeError(f"connection closed by SUMO ({name})")
+
+
+class _SumoProcess:
+    """A SUMO process that runs until it is waited for (its connection
+    closed) or killed."""
+
+    started: list["_SumoProcess"] = []
+
+    def __init__(self, args: list[str]) -> None:
+        self.args = args
+        self.pid = 4242
+        self.returncode: Any = None
+        _SumoProcess.started.append(self)
+
+    def poll(self) -> Any:
+        return self.returncode
+
+    def kill(self) -> None:
+        if self.returncode is None:
+            self.returncode = -9
+
+    def wait(self, timeout: Any = None) -> int:
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
 
 
 def _dead_sumo_backend(
@@ -5958,6 +6597,17 @@ def _dead_sumo_backend(
 
     monkeypatch.setattr(backend_module, "_load_traci", lambda use_libsumo: traci)
     monkeypatch.setattr(_DeadTraci, "active", set())
+    # Through traci the backend starts SUMO's process itself: a stand-in that
+    # runs until its connection closes (netconvert and the rest run).
+    popen = subprocess.Popen
+
+    def sumo_or_popen(args: Any, **kwargs: Any) -> Any:
+        if "--remote-port" in args:
+            return _SumoProcess(args)
+        return popen(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", sumo_or_popen)
+    monkeypatch.setattr(_SumoProcess, "started", [])
     backend = SumoTrafficBackend(
         SumoBackendConfig(
             scenario_vehicles="sumo",
@@ -5993,6 +6643,9 @@ def test_close_closes_sumo_after_the_steps_were_given_up_on(
     backend.close()
     assert traci.closes == [() if name == "libsumo" else (False,)]
     assert _DeadTraci.active == set()
+    # Through traci, SUMO's process is reaped too.
+    assert backend._sumo_process is None
+    assert all(p.returncode is not None for p in _SumoProcess.started)
     backend.close()  # closed once only
     assert len(traci.closes) == 1
 

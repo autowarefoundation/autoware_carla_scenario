@@ -31,7 +31,19 @@ Where the data comes from:
   tick than the sweep (a camera faster than the LiDAR, or on the other ticks
   of its interval) still goes on the step's key frame, at most a policy step
   off: the dataset stamps a sample's data with the sample's time, and such a
-  camera's frames would otherwise never be written. The entity attaches its
+  camera's frames would otherwise never be written. A camera frame is
+  written once: a camera slower than the policy hands it the same frame on
+  its next step, which is dropped even when it is after the key frame written
+  last (a sweep older than the step, or another camera, put that key frame
+  before it), so it neither shows twice nor pulls the step's key frame back
+  onto its tick (#2352). Without a LiDAR the samples can still be uneven
+  when a slow camera's new frames are older than the other cameras': each
+  such frame puts its step's key frame back onto its own tick (a camera
+  rendering on each step beside one rendering every other step, a tick
+  before it, gives samples 150 and 50 ms apart), since the writer stamps
+  every camera's data with the sample's time. A step whose every fed
+  item is dropped -- a camera slower than the policy hands it the frame
+  written already -- is no key frame: every sample has sensor data. The entity attaches its
   LiDARs only for the policy's `renderer_data`, so `driver.lidars` with
   `driver.send_renderer_data: false` is refused before the run starts: the
   dataset would have no point cloud (#2208).
@@ -56,7 +68,7 @@ the dataset stops, it never fails the scenario.
 | `driver.lidars`, `driver.cameras` | list | | The sensors and their mounts |
 | `driver.policy_timestep_s` | float | `0.1` | Seconds from one key frame to the next |
 | `driver.image_quality` | int | `90` | The JPEG quality of the camera frames |
-| `driver.rear_axle_offset_m` | float or null | `null` | Where the ego's `base_link` is (null: from the vehicle's wheels, else its box), unless the ego puts it elsewhere: a ROS 2 ego's `rear_axle_offset_m`, an Autoware ego's `base_link_offset_m` |
+| `driver.rear_axle_offset_m` | float or null | `null` | Where the ego's `base_link` is (null: from the vehicle's wheels, else its box), unless the ego puts it elsewhere: a ROS 2 ego's `rear_axle_offset_m`, an Autoware ego's `base_link_offset_m`. The run's [trajectory log](trajectory_log.md) (its `rear_axle` record, so its T4Scenes) takes the same offset, by the same rule, so the two put `base_link` in one place |
 
 A dataset needs at least one LiDAR or camera; without a LiDAR the first
 camera's frames are the key frames. A batch takes the first case's settings,
@@ -108,6 +120,10 @@ costs the run's thread about 0.3 ms.
 
 A sweep is T4's default layout: `float32` `(x, y, z, intensity, ring = -1)`
 per point, every LiDAR's points of the key frame together, in the ego's frame.
+The intensity is on T4's 0-255 scale, as Autoware's point clouds and the
+[T4Scenes](t4_scene.md)' sweeps: CARLA's `[0, 1]` times 255
+(`t4.INTENSITY_SCALE`), applied once as the sweep is written, whether the
+recorder's own LiDAR took it or a driver policy's ego fed it.
 Timestamps are Unix microseconds: the wall-clock time the run's clock
 started, plus the simulated time since, so key frames are exactly one policy
 step apart.

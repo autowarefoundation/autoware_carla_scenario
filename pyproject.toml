@@ -37,7 +37,6 @@ dev = [
     "mkdocs-git-revision-date-localized-plugin>=1.5.1",
     "mkdocs-material>=9.5.0",
     "mkdocs-with-pdf>=0.9.3",
-    "mkdocstrings[python]>=0.27.0",
     "mypy>=1.19.0",
     "pre-commit>=4.5.0",
     "pytest>=9.0.3",
@@ -49,7 +48,7 @@ dev = [
     "sumolib>=1.23",
     "traci>=1.23",
     # ...and the `map` extra (driver map files) and its tests.
-    "roadgen>=0.42.0",
+    "roadgen>=0.45.0",
     # ...and the `ros2` extra (the DDS ego) and its tests, where it has wheels.
     "cyclonedds>=11.0.1; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.14'",
     # `ui/scanner.py` and `test_driver_config.py` read YAML, and without these
@@ -74,6 +73,8 @@ dev = [
     # `uv run ruff` must be the ruff CI runs, the pre-commit hook's: pinned to
     # its rev, which test_ruff_pin.py keeps in step.
     "ruff==0.7.4",
+    # ...and the `agent` extra (`scenario-agent`) and its tests.
+    "agent-skill-installer>=0.5.0,<0.6",
 ]
 
 [tool.ruff]

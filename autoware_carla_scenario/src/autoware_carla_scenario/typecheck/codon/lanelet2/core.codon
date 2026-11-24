@@ -360,6 +360,14 @@ class Polygon3d:
     def id(self) -> int:
         raise NotImplementedError()
 
+    @property
+    def attributes(self) -> AttributeMap:
+        raise NotImplementedError()
+
+    # Its corners, in order.
+    def __iter__(self) -> Generator[Point3d]:
+        raise NotImplementedError()
+
 
 class Area:
     @property

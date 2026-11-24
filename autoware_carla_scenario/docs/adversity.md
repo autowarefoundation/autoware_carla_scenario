@@ -141,10 +141,15 @@ map. A crosswalk without one has no red light to run.
    max_is_probability (0.05))`, or `fixed_is_probability` when that is set.
    At most one adversity is sampled per tick, the nearest challenger first,
    and none for `cooldown` (5.5 s) after one.
-7. **Response**: the sampled adversity's NPC victims avoid it with
-   probability q = 0.2 (p = 0.99) by braking at the emergency deceleration
-   for 3 s, or else accept it and hold their speed for 2 s. That response
-   carries its own weight. An ego victim is never driven.
+7. **Response**: when the ego is not among the sampled adversity's
+   victims, its NPC victims avoid it with probability q = 0.2 (p = 0.99) by
+   braking at the emergency deceleration for 3 s, or else accept it and hold
+   their speed for 2 s. That response carries its own weight; for an
+   unavoidable adversity nothing is drawn and they accept it. When the ego
+   is a victim (TeraSim's `AV_neglected`), no response is drawn and no
+   victim is driven, not even an NPC one beside it: the ego drives itself.
+   Without `challenge_npcs` (the default) the ego is the only victim an
+   adversity can have, so there is never a response.
 
 `NadeSettings` refuses, when it is built, a value outside its bounds, naming
 the field and the value (#1458): `max_controlled` below 0; a negative or
@@ -196,6 +201,20 @@ another, and a sweep over consecutive seeds gives independent runs (#2024).
 A run still repeats from its seed. Before #2024 the streams were seeded
 `s`, `s + 1` and `s + 2`, so run `k`'s triggers drew what run `k + 1`
 sampled with; the draws for a given seed other than 0 changed with the fix.
+
+An `AdversityFeasibleCondition` -- the default trigger of every adversarial
+action -- draws from a stream of its own as well. Its seed is
+`3 * 2**31 + s * 2**30 + k` (`adversity.nade.trigger_stream_seed`), where `s`
+is its seed (the run's, by default) and `k` is a 30-bit key of its entity,
+kind and label: FNV-1a over `"<entity>\x1f<kind>\x1f<label>"`
+(`adversity.nade.trigger_key`), not `hash()`, which Python salts per process.
+These seeds are above every seed NADE's streams or a component seeded with
+the run's seed itself use, and one-to-one over seeds and keys, so two
+jaywalkers following the run's seed draw different speeds and waits, and no
+condition draws another run's numbers (#2226). Before #2226 a condition drew
+from `random.Random(s)`, the same stream for every condition of a run and, at
+seed `3 k`, NADE's sampling stream of seed `k`; the triggers' draws of every
+seed changed with the fix.
 
 It drives the NPCs and pedestrians a scenario registers, and with
 `drive_background` (the default) the traffic backend's background vehicles in
@@ -344,12 +363,25 @@ MUTCD's spacings apply instead. A taper can be `linear` or `curved` (an
 s-curve). The zone closes in from `side`, `"right"` by default; TeraSim instead
 picked the side from the SUMO lane's index.
 
+A zone shorter than `taper_length_in + buffer_zone_length + taper_length_out`
+(100 m by default) has no work zone. The two tapers and the buffer are then
+shortened in proportion so that they fill the zone from `start_s` to `end_s`,
+one after another. At full length they would overlap, with cones on top of
+each other and past `end_s` (#2263). The editor warns of such a zone. The
+warning zone never reaches before `s = 0`, so a zone that starts at 0 or
+before it has none.
+
 `start_s` and `end_s` must be finite, with `end_s` after `start_s`.
 `ConstructionSettings` refuses a number that is not finite, a spacing
 (`spacing`, `warning_zone_spacing`) that is not positive, and a negative
 length, `speed_limit_mph` or `merge_signs`; a length of 0 means no such
-zone. A zone whose spacing would lay out more than `MAX_ZONE_OBJECTS`
-(100,000) objects is refused when it is placed (#1479).
+zone. Its text fields must be spelled exactly as listed, in lower case:
+`construction_type` one of `cone`, `barrier` or `mixed`; `side` one of
+`right` or `left`; `taper_type` one of `linear` or `curved`; and `layout`
+one of `highway` or `urban`. Any other value is refused when the settings
+are built, naming the field and the value (#2263). A zone whose spacing
+would lay out more than `MAX_ZONE_OBJECTS` (100,000) objects is refused
+when it is placed (#1479).
 
 From `start_time` to `end_time` (`None`: never removed) the objects stand in
 the world as CARLA props, each added by a `SpawnAction` and named

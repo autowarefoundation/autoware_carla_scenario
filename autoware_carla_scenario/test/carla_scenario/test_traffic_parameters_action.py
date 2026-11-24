@@ -312,7 +312,7 @@ def test_the_editors_fields_become_parameters() -> None:
     assert authored_bicycle_parameters(
         bicycle_decel_mean=3.5, bicycle_decel_std=0.4
     ) == BicycleParameters(decel=Spread(3.5, 0.4))
-    with pytest.raises(ValueError, match="a std needs a mean"):
+    with pytest.raises(ValueError, match="^decel_std needs decel_mean: a std needs"):
         authored_vehicle_parameters(decel_std=1.0)
 
 

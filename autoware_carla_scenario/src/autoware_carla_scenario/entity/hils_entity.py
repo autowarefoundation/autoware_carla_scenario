@@ -41,6 +41,7 @@ from ..hils.protocol import (
     format_address,
 )
 from ..entity_role import EntityRole
+from ..number_settings import check_port
 from .externally_driven import ExternallyDrivenEgo
 from .registry import find_vehicle_entity
 
@@ -113,14 +114,7 @@ class HilsEgoConfig:
                 f"hils.host must be a host name or address, got {host!r}; leave "
                 "it out (or null) for the default, localhost"
             )
-        if (
-            isinstance(self.port, bool)
-            or not isinstance(self.port, int)
-            or not 1 <= self.port <= 65535
-        ):
-            raise ValueError(
-                f"hils.port must be a whole number within 1-65535, got {self.port!r}"
-            )
+        check_port("hils.port", self.port)
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
                 f"hils.on_stale must be one of {', '.join(ON_STALE_ACTIONS)}, "

@@ -1031,6 +1031,179 @@ class EntityCountCondition(BaseCondition):
         raise NotImplementedError()
 
 
+@tuple
+class AreaGround:
+    value: str
+    CROSSWALK: ClassVar[AreaGround] = AreaGround("crosswalk")
+    WALKWAY: ClassVar[AreaGround] = AreaGround("walkway")
+    ROAD_SHOULDER: ClassVar[AreaGround] = AreaGround("road_shoulder")
+    ROAD: ClassVar[AreaGround] = AreaGround("road")
+    JUNCTION: ClassVar[AreaGround] = AreaGround("junction")
+    LANELET: ClassVar[AreaGround] = AreaGround("lanelet")
+    INTERSECTION_AREA: ClassVar[AreaGround] = AreaGround("intersection_area")
+    DETECTION_AREA: ClassVar[AreaGround] = AreaGround("detection_area")
+    NO_STOPPING_AREA: ClassVar[AreaGround] = AreaGround("no_stopping_area")
+    NO_PARKING_AREA: ClassVar[AreaGround] = AreaGround("no_parking_area")
+    PARKING_LOT: ClassVar[AreaGround] = AreaGround("parking_lot")
+    POLYGON: ClassVar[AreaGround] = AreaGround("polygon")
+    SURFACE_RAISED: ClassVar[AreaGround] = AreaGround("surface_raised")
+    SURFACE_GROOVED: ClassVar[AreaGround] = AreaGround("surface_grooved")
+    SURFACE_RELIEF: ClassVar[AreaGround] = AreaGround("surface_relief")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == AreaGround.CROSSWALK:
+            return "CROSSWALK"
+        if self == AreaGround.WALKWAY:
+            return "WALKWAY"
+        if self == AreaGround.ROAD_SHOULDER:
+            return "ROAD_SHOULDER"
+        if self == AreaGround.ROAD:
+            return "ROAD"
+        if self == AreaGround.JUNCTION:
+            return "JUNCTION"
+        if self == AreaGround.LANELET:
+            return "LANELET"
+        if self == AreaGround.INTERSECTION_AREA:
+            return "INTERSECTION_AREA"
+        if self == AreaGround.DETECTION_AREA:
+            return "DETECTION_AREA"
+        if self == AreaGround.NO_STOPPING_AREA:
+            return "NO_STOPPING_AREA"
+        if self == AreaGround.NO_PARKING_AREA:
+            return "NO_PARKING_AREA"
+        if self == AreaGround.PARKING_LOT:
+            return "PARKING_LOT"
+        if self == AreaGround.POLYGON:
+            return "POLYGON"
+        if self == AreaGround.SURFACE_RAISED:
+            return "SURFACE_RAISED"
+        if self == AreaGround.SURFACE_GROOVED:
+            return "SURFACE_GROOVED"
+        if self == AreaGround.SURFACE_RELIEF:
+            return "SURFACE_RELIEF"
+        raise ValueError("not a member of AreaGround")
+
+    @property
+    def on_lanelets(self) -> bool:
+        return (self.value == "crosswalk" or self.value == "walkway"
+                or self.value == "road_shoulder" or self.value == "road"
+                or self.value == "junction" or self.value == "lanelet")
+
+    @property
+    def on_surface(self) -> bool:
+        return (self.value == "surface_raised" or self.value == "surface_grooved"
+                or self.value == "surface_relief")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[AreaGround]:
+        return [AreaGround.CROSSWALK, AreaGround.WALKWAY, AreaGround.ROAD_SHOULDER,
+                AreaGround.ROAD, AreaGround.JUNCTION, AreaGround.LANELET,
+                AreaGround.INTERSECTION_AREA, AreaGround.DETECTION_AREA,
+                AreaGround.NO_STOPPING_AREA, AreaGround.NO_PARKING_AREA,
+                AreaGround.PARKING_LOT, AreaGround.POLYGON,
+                AreaGround.SURFACE_RAISED, AreaGround.SURFACE_GROOVED,
+                AreaGround.SURFACE_RELIEF]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> AreaGround:
+        if name == "CROSSWALK":
+            return AreaGround.CROSSWALK
+        if name == "WALKWAY":
+            return AreaGround.WALKWAY
+        if name == "ROAD_SHOULDER":
+            return AreaGround.ROAD_SHOULDER
+        if name == "ROAD":
+            return AreaGround.ROAD
+        if name == "JUNCTION":
+            return AreaGround.JUNCTION
+        if name == "LANELET":
+            return AreaGround.LANELET
+        if name == "INTERSECTION_AREA":
+            return AreaGround.INTERSECTION_AREA
+        if name == "DETECTION_AREA":
+            return AreaGround.DETECTION_AREA
+        if name == "NO_STOPPING_AREA":
+            return AreaGround.NO_STOPPING_AREA
+        if name == "NO_PARKING_AREA":
+            return AreaGround.NO_PARKING_AREA
+        if name == "PARKING_LOT":
+            return AreaGround.PARKING_LOT
+        if name == "POLYGON":
+            return AreaGround.POLYGON
+        if name == "SURFACE_RAISED":
+            return AreaGround.SURFACE_RAISED
+        if name == "SURFACE_GROOVED":
+            return AreaGround.SURFACE_GROOVED
+        if name == "SURFACE_RELIEF":
+            return AreaGround.SURFACE_RELIEF
+        raise KeyError(name)
+
+
+class MapArea:
+    # Python's frozen dataclass. lanelet_ids and attributes, tuple[X, ...] in
+    # Python, are List[X] here (docs/typecheck.md), so the constructor takes
+    # them untyped.
+    def __init__(self, ground: AreaGround = AreaGround("crosswalk"), lanelet_ids = (),
+                 attributes = (), relief_m: float = 0.01):
+        pass
+
+    # Python's frozen dataclass fields, read as properties (#298).
+    @property
+    def ground(self) -> AreaGround:
+        raise NotImplementedError()
+
+    @property
+    def lanelet_ids(self) -> List[int]:
+        raise NotImplementedError()
+
+    @property
+    def attributes(self) -> List[Tuple[str, str]]:
+        raise NotImplementedError()
+
+    @property
+    def relief_m(self) -> float:
+        raise NotImplementedError()
+
+    def validate(self) -> None:
+        raise NotImplementedError()
+
+    def describe(self) -> str:
+        raise NotImplementedError()
+
+
+class EntityAreaDistanceCondition(BaseCondition):
+    def __init__(self, label):
+        compile_error("EntityAreaDistanceCondition(): no constructor takes these arguments "
+                      "(required: entity_name, area, value, keyword label)")
+
+    def __init__(self, entity_name, area: MapArea, value: float,
+                 rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
+                 tolerance: float = 1e-06, *_kw, label = _Required()):
+        _keyword_only(_kw, "EntityAreaDistanceCondition(): label")
+        _expect_role(entity_name)
+        super().__init__(_required_str(label, "EntityAreaDistanceCondition(): label"))
+
+    @property
+    def area(self) -> MapArea:
+        raise NotImplementedError()
+
+    @property
+    def closest_m(self) -> Optional[float]:
+        raise NotImplementedError()
+
+    @property
+    def problem(self) -> str:
+        raise NotImplementedError()
+
+    @property
+    def closest_at_s(self) -> Optional[float]:
+        raise NotImplementedError()
+
+
 class EntityPositionDistanceCondition(BaseCondition):
     def __init__(self, label):
         compile_error("EntityPositionDistanceCondition(): no constructor takes these arguments "

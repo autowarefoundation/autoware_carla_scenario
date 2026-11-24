@@ -31,6 +31,7 @@ from autoware_carla_scenario.adversity.avoidance import (
     respond,
     victims,
 )
+from autoware_carla_scenario.adversity import nade as nade_module
 from autoware_carla_scenario.adversity.nade import (
     ImportanceSampler,
     NadeAdversity,
@@ -181,14 +182,20 @@ def test_a_nade_setting_refuses_an_avoid_is_probability_above_1() -> None:
         NadeSettings(avoidance=AvoidanceSettings(avoid_is_probability=1.5))
 
 
-@pytest.mark.parametrize("q", [0.0, 0.2, 0.5, 1.0])
-@pytest.mark.parametrize("p", [0.0, 0.5, 0.99, 1.0])
+@pytest.mark.parametrize(
+    ("p", "q"),
+    [
+        (p, q)
+        for q in (0.0, 0.2, 0.5, 1.0)
+        for p in (0.0, 0.5, 0.99, 1.0)
+        # Not a q that never draws a response p can.
+        if not ((q == 0.0 and p > 0.0) or (q == 1.0 and p < 1.0))
+    ],
+)
 def test_the_response_s_weight_averages_to_1(p: float, q: float) -> None:
     """The weight is p / q or (1 - p) / (1 - q), so its mean is 1 for a q
     that can draw both responses; one above 1 would draw avoid every time
     and still weight it by p / q (#1463)."""
-    if (q == 0.0 and p > 0.0) or (q == 1.0 and p < 1.0):
-        pytest.skip("q never draws a response p can")
     settings = AvoidanceSettings(avoid_probability=p, avoid_is_probability=q)
     rng = random.Random(7)
     weights = [respond(rng, False, True, settings).weight for _ in range(20000)]
@@ -237,3 +244,33 @@ def test_npc_victims_respond_when_npcs_are_challenged(features: MapFeatures) -> 
     assert avoided or response == accept_command()
     factor = 0.99 / 0.2 if avoided else 0.01 / 0.8
     assert npcs.weight == pytest.approx(0.01 * factor)
+
+
+def test_no_victim_responds_when_the_ego_is_hit(
+    features: MapFeatures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the ego among the victims nothing is drawn and no victim is
+    driven, not even an NPC one challenged beside it (#2263): the docs said
+    the NPC victims respond whatever the victims."""
+    # npc1 brake-checks the ego behind it and, with challenge_npcs, npc2
+    # behind the ego too.
+    scene = Scene(
+        features, [_car("ego", -55.0), _car("npc1", -45.0), _car("npc2", -62.0)], {}
+    )
+    sampler = ImportanceSampler(
+        settings=NadeSettings(fixed_is_probability=1.0, challenge_npcs=True)
+    )
+    found: list[list[str]] = []
+    real = nade_module._Futures.victims
+
+    def recorded(self: Any, *args: Any) -> Any:
+        hit, future = real(self, *args)
+        found.append(list(hit))
+        return hit, future
+
+    monkeypatch.setattr(nade_module._Futures, "victims", recorded)
+    choice = _step(sampler, scene, "npc1", "npc2")
+    assert set(found[0]) == {"ego", "npc2"}
+    assert choice is not None and choice.name == "npc1"
+    assert choice.response == "" and choice.responses == []
+    assert sampler.weight == pytest.approx(0.01)  # no response's weight

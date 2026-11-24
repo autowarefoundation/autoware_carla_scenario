@@ -5,6 +5,7 @@ before a run; a run's rules over them, and rules that differ by vehicle."""
 from __future__ import annotations
 
 import itertools
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -358,6 +359,71 @@ class TestRulesByVehicle:
             use_weather_rules(
                 {"vehicles": {"vehicle.*": "missing.yaml", "ego": location}}
             )
+
+    @pytest.mark.parametrize("blank", ["", " ", "\t\n"])
+    @pytest.mark.parametrize(
+        ("spec", "key"),
+        [
+            (lambda b: b, r"environment\.rules"),
+            (lambda b: {"default": b}, r"environment\.rules\.default"),
+            (
+                lambda b: {"vehicles": {"vehicle.*": "missing.yaml", "ego": b}},
+                r"environment\.rules\.vehicles\.ego",
+            ),
+        ],
+    )
+    def test_a_blank_path_is_refused_naming_its_key(self, blank, spec, key) -> None:
+        # #2251: read as a path it is the run's directory, which failed only
+        # once a run read it ("Is a directory"), naming no key.
+        with pytest.raises(
+            RulesError, match=f"^{key}: expected a file, got {re.escape(repr(blank))}$"
+        ):
+            check_weather_rules(spec(blank))
+        with pytest.raises(RulesError, match=f"^{key}: expected a file"):
+            use_weather_rules(spec(blank))
+
+    @pytest.mark.parametrize("blank", [Path(""), Path(".")])
+    @pytest.mark.parametrize(
+        ("spec", "key"),
+        [
+            (lambda b: b, r"environment\.rules"),
+            (lambda b: {"default": b}, r"environment\.rules\.default"),
+            (lambda b: {"vehicles": {"ego": b}}, r"environment\.rules\.vehicles\.ego"),
+        ],
+    )
+    def test_a_blank_path_object_is_refused_naming_its_key(
+        self, blank, spec, key
+    ) -> None:
+        # #2296: Path("") is Path("."), the run's directory, as a blank str is.
+        with pytest.raises(
+            RulesError, match=f"^{key}: expected a file, got {re.escape(repr(blank))}$"
+        ):
+            check_weather_rules(spec(blank))
+
+    @pytest.mark.parametrize("blank", ["", " ", "\t\n"])
+    def test_a_blank_vehicles_pattern_is_refused(self, blank) -> None:
+        # #2296: it matches no vehicle, so its file would be read and never
+        # followed.
+        match = (
+            r"^environment\.rules\.vehicles: expected a vehicle pattern, "
+            f"got {re.escape(repr(blank))}$"
+        )
+        with pytest.raises(RulesError, match=match):
+            check_weather_rules({"vehicles": {"ego": "a.yaml", blank: "b.yaml"}})
+        with pytest.raises(RulesError, match=match):
+            use_weather_rules({"vehicles": {blank: "missing.yaml"}})
+
+    def test_a_refusal_names_the_value(self) -> None:
+        with pytest.raises(
+            RulesError,
+            match=r"^environment\.rules\.vehicles: expected pattern -> file, got False$",
+        ):
+            check_weather_rules({"vehicles": False})
+        with pytest.raises(
+            RulesError,
+            match=r"^environment\.rules\.vehicles\.ego: expected a file, got 5$",
+        ):
+            check_weather_rules({"vehicles": {"ego": 5}})
 
     def test_the_form_is_checked_without_reading_a_file(self) -> None:
         assert check_weather_rules(None) == (None, [])
@@ -890,6 +956,12 @@ def _composed(rules: object) -> object:
         ({"vehicles": {"ego": 5}}, r"environment\.rules\.vehicles\.ego: expected"),
         ({"vehicle": {}}, r"environment\.rules: unknown fields \['vehicle'\]"),
         (42, r"environment\.rules: expected a file or"),
+        ("", r"environment\.rules: expected a file, got ''"),
+        ({"default": " "}, r"environment\.rules\.default: expected a file, got ' '"),
+        (
+            {"vehicles": {"ego": ""}},
+            r"environment\.rules\.vehicles\.ego: expected a file, got ''",
+        ),
     ],
 )
 def test_a_batch_is_refused_for_malformed_rules_before_it_runs(rules, match) -> None:
@@ -899,6 +971,17 @@ def test_a_batch_is_refused_for_malformed_rules_before_it_runs(rules, match) -> 
     # reads a rule file.
     with pytest.raises(run.RunConfigError, match=f"^case: {match}"):
         run.check_batch_configs([_composed(rules)], ["case"])  # type: ignore[list-item]
+
+
+def test_a_blank_path_stays_blank_when_made_absolute() -> None:
+    from autoware_carla_scenario.examples import run
+
+    # So add_environment refuses it too, rather than read the run's directory.
+    assert run._rules_locations("") == ""
+    assert run._rules_locations({"default": " ", "vehicles": {"ego": ""}}) == {
+        "default": " ",
+        "vehicles": {"ego": ""},
+    }
 
 
 def test_well_formed_rules_pass_the_batch_check_unread() -> None:

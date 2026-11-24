@@ -29,6 +29,7 @@ import pytest
 
 from autoware_carla_scenario import heavy_metrics, metrics
 from autoware_carla_scenario.commonroad import frame as cr_frame
+from autoware_carla_scenario.commonroad import map as cr_map
 from autoware_carla_scenario.commonroad import session as cr_session
 from autoware_carla_scenario.commonroad import worker as cr_worker
 from autoware_carla_scenario.commonroad.map import MAP_FILE, commonroad_map
@@ -258,6 +259,42 @@ def test_the_map_is_converted_once(opendrive: str, tmp_path: Path) -> None:
     )
     assert commonroad_map(opendrive, tmp_path) == path
     assert len([p for p in tmp_path.iterdir() if not p.name.startswith(".")]) == 1
+
+
+def test_the_map_cache_is_keyed_on_the_sanitized_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2403: the key hashes what roadgen converts, so a sanitizer change
+    converts the map again rather than serving the old conversion."""
+    read: list[str] = []
+
+    class _Map:
+        def read_warnings(self) -> list[str]:
+            return []
+
+        def export_commonroad(self, path: str, **_: Any) -> None:
+            Path(path).write_text("<commonRoad/>", encoding="utf-8")
+
+        def commonroad_warnings(self) -> list[str]:
+            return []
+
+    def read_opendrive(path: str) -> _Map:
+        read.append(Path(path).read_text(encoding="utf-8"))
+        return _Map()
+
+    roadgen = SimpleNamespace(
+        __version__="0.42.0", Map=_Map, read_opendrive=read_opendrive
+    )
+    monkeypatch.setitem(sys.modules, "roadgen", roadgen)
+    opendrive = "<OpenDRIVE/>"
+    before = cr_map.commonroad_map(opendrive, tmp_path)
+    assert cr_map.commonroad_map(opendrive, tmp_path) == before
+    monkeypatch.setattr(
+        cr_map, "sanitize_opendrive", lambda text: text + "<!-- fixed -->"
+    )
+    after = cr_map.commonroad_map(opendrive, tmp_path)
+    assert after != before
+    assert read == [opendrive, opendrive + "<!-- fixed -->"]
 
 
 @pytest.mark.xfail(
@@ -543,6 +580,36 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
             {"planning": 1},
             "reach_settings['planning'] must be a mapping or None, got 1",
         ),
+        # #2290: what JSON cannot carry raised a bare TypeError as a worker
+        # started, and a name not a string is no section or key of Reach's.
+        (
+            "reach_settings",
+            {"reachable_set": {"size_grid": np.float32(0.3)}},
+            "reach_settings['reachable_set']['size_grid'] must be a JSON value "
+            f"(no NaN or infinity), got {np.float32(0.3)!r}",
+        ),
+        (
+            "reach_settings",
+            {"reachable_set": {"size_grid": math.nan}},
+            "reach_settings['reachable_set']['size_grid'] must be a JSON value "
+            "(no NaN or infinity), got nan",
+        ),
+        (
+            "reach_settings",
+            {"reachable_set": {"size_grid": [object]}},
+            "reach_settings['reachable_set']['size_grid'] must be a JSON value "
+            "(no NaN or infinity), got [<class 'object'>]",
+        ),
+        (
+            "reach_settings",
+            {1: {"size_grid": 0.3}},
+            "reach_settings section names must be strings, got 1",
+        ),
+        (
+            "reach_settings",
+            {"reachable_set": {("size_grid",): 0.3}},
+            "reach_settings['reachable_set'] key names must be strings, got ('size_grid',)",
+        ),
         (
             "metric_periods_s",
             0.5,
@@ -589,6 +656,80 @@ def test_none_settings_are_their_defaults() -> None:
         "planning": {"steps_computation": 5},
         "reachable_set": {},
     }
+
+
+def test_json_reach_settings_are_kept() -> None:
+    """#2290: JSON values -- a NumPy float64 is a float -- pass."""
+    reach = {"reachable_set": {"size_grid": np.float64(0.3), "mode_inflation": 2}}
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)
+    assert settings.worker_settings()["reach_settings"] == {
+        "reachable_set": {"size_grid": 0.3, "mode_inflation": 2}
+    }
+
+
+def test_omegaconf_reach_settings_are_plain() -> None:
+    """#2316: a Hydra DictConfig was turned into a dict at its top only, so
+    a ListConfig or DictConfig inside it failed the JSON check."""
+    from omegaconf import OmegaConf
+
+    reach = OmegaConf.create(
+        {
+            "planning": {"some_list": [1, 2], "nested": {"a": [{"b": 3}]}},
+            "reachable_set": {"size_grid": "${planning.some_list}"},
+        }
+    )
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)  # type: ignore[arg-type]
+    expected = {
+        "planning": {"some_list": [1, 2], "nested": {"a": [{"b": 3}]}},
+        "reachable_set": {"size_grid": [1, 2]},
+    }
+    assert settings.reach_settings == expected
+    assert settings.worker_settings()["reach_settings"] == expected
+    assert type(settings.reach_settings["planning"]["some_list"]) is list
+    # A plain mapping that holds OmegaConf containers is made plain as well.
+    held = {"planning": OmegaConf.create({"some_list": [1, 2]})}
+    settings = cr_session.CommonRoadSettings(reach_settings=held)  # type: ignore[arg-type]
+    assert settings.reach_settings == {"planning": {"some_list": [1, 2]}}
+    periods = OmegaConf.create({"crime_ttc_s": 0.5})
+    settings = cr_session.CommonRoadSettings(metric_periods_s=periods)  # type: ignore[arg-type]
+    assert settings.metric_periods_s["crime_ttc_s"] == 0.5
+
+
+def test_a_missing_omegaconf_reach_setting_is_refused() -> None:
+    """A mandatory value left out (``???``) raises, as reading the config
+    does, rather than reach the worker as the string ``"???"``."""
+    from omegaconf import MissingMandatoryValue, OmegaConf
+
+    reach = OmegaConf.create({"planning": {"dt": "???"}})
+    with pytest.raises(MissingMandatoryValue):
+        cr_session.CommonRoadSettings(reach_settings=reach)  # type: ignore[arg-type]
+
+
+def test_plain_reach_settings_are_unchanged() -> None:
+    """Plain containers come out equal, OmegaConf or not."""
+    reach = {"planning": {"some_list": [1, (2, 3)], "dt": 0.1}}
+    settings = cr_session.CommonRoadSettings(reach_settings=reach)
+    assert settings.reach_settings == reach
+
+
+def test_a_request_json_cannot_carry_is_a_worker_error(tmp_path: Path) -> None:
+    """#2290: json.dumps' TypeError escaped request() bare; nothing is sent,
+    and the worker still answers the next request."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", '{"ok": true, "values": {}}'],
+        tmp_path / "map.xml",
+    )
+    try:
+        with pytest.raises(
+            cr_worker.CommonRoadWorkerError,
+            match=re.escape("cannot send 'evaluate' to the CommonRoad worker: "),
+        ):
+            worker.request({"op": "evaluate", "x": np.float32(1.0)})
+        assert worker.request({"op": "evaluate"}) == {"ok": True, "values": {}}
+    finally:
+        worker.close()
 
 
 def test_a_str_cache_dir_is_a_path(tmp_path: Path) -> None:
@@ -889,6 +1030,30 @@ def test_the_heavy_metrics_are_on_unless_the_environment_says(
         assert settings.evaluates(CRIME_WTTR_S)
     monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
     assert cr_session.CommonRoadSettings().evaluates(CRIME_TTR_S)
+
+
+@pytest.mark.parametrize("value", ["false", "", 0, 1, 0.0, np.array([True])])
+def test_heavy_metrics_must_be_a_bool(value: Any) -> None:
+    """#2266: ``"false"`` is truthy, so TTR still ran."""
+    with pytest.raises(ValueError) as error:
+        cr_session.CommonRoadSettings(heavy_metrics=value)
+    assert str(error.value) == f"heavy_metrics must be a bool, got {value!r}"
+
+
+def test_heavy_metrics_takes_a_bool_and_null_is_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0")
+    cases: list[tuple[Any, bool]] = [
+        (True, True),
+        (False, False),
+        (None, False),
+        (np.bool_(True), True),
+        (np.bool_(False), False),
+    ]
+    for value, expected in cases:
+        settings = cr_session.CommonRoadSettings(heavy_metrics=value)
+        assert settings.heavy_metrics is expected
 
 
 def test_the_heavy_metrics_settings_are_heavy_metrics_reexported() -> None:
@@ -1413,6 +1578,62 @@ def test_a_worker_answering_its_init_out_of_protocol_is_not_left_running(
         )
     (process,) = started
     assert process.poll() is not None
+
+
+#: A worker that answers each request after a moment, naming the request's
+#: ``n``: what tells one thread's answer from another's.
+_ECHOES_SLOWLY = textwrap.dedent(
+    """
+    import json, sys, time
+
+    for line in sys.stdin:
+        request = json.loads(line)
+        if request["op"] == "close":
+            break
+        if request["op"] == "init":
+            answer = {"ok": True, "measures": ["crime_ttc_s"]}
+        else:
+            time.sleep(0.01)
+            answer = {"ok": True, "n": request["n"]}
+        sys.stdout.write(json.dumps(answer) + "\\n")
+        sys.stdout.flush()
+    """
+)
+
+
+def test_requests_from_two_threads_each_get_their_own_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2323: the write and the read were under separate locks, so a thread
+    could write its request between another's write and read, and the two
+    read each other's answers."""
+    import threading
+
+    worker, process = _started_worker(tmp_path, monkeypatch, _ECHOES_SLOWLY)
+    wrong: list[tuple[int, Any]] = []
+    errors: list[BaseException] = []
+
+    def ask(first: int) -> None:
+        try:
+            for n in range(first, first + 10):
+                answer = worker.request({"op": "echo", "n": n}, timeout=10.0)
+                if answer.get("n") != n:
+                    wrong.append((n, answer.get("n")))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=ask, args=(k * 100,)) for k in range(3)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30.0)
+        assert not any(thread.is_alive() for thread in threads)
+        assert not errors, errors
+        assert wrong == []
+    finally:
+        worker.close()
+        _kill(process)
 
 
 #: A worker that answers its ``init`` and then neither reads nor answers
@@ -1998,13 +2219,15 @@ def test_the_batch_check_refuses_a_bad_metrics_heavy_in_any_case(
 
 #: A worker that knows the measures ``sys.argv[1]`` (a JSON list), answers
 #: each ``evaluate`` with ``sys.argv[2]`` (a JSON object, ``ok`` added) after
-#: sleeping ``sys.argv[3]`` seconds, and logs every request to ``sys.argv[4]``.
+#: sleeping ``sys.argv[3]`` seconds, and logs every request to ``sys.argv[4]``;
+#: the first ``evaluate`` with ``sys.argv[5]`` instead, when given.
 _ANSWERS_WITH = textwrap.dedent(
     """
     import json, sys, time
 
     measures, answer = json.loads(sys.argv[1]), json.loads(sys.argv[2])
     delay, log = float(sys.argv[3]), open(sys.argv[4], "a")
+    first = json.loads(sys.argv[5]) if len(sys.argv) > 5 else answer
     for line in sys.stdin:
         request = json.loads(line)
         log.write(line)
@@ -2014,7 +2237,8 @@ _ANSWERS_WITH = textwrap.dedent(
             reply = {"ok": True, "measures": measures}
         elif op == "evaluate":
             time.sleep(delay)
-            reply = {"ok": True, **answer}
+            reply = {"ok": True, **first}
+            first = answer
         else:
             reply = {"ok": True}
         sys.stdout.write(json.dumps(reply) + "\\n")
@@ -2030,9 +2254,11 @@ def _answering(
     measures: list[str],
     answer: dict[str, Any],
     delay: float = 0.0,
+    first: Optional[dict[str, Any]] = None,
     **settings: Any,
 ) -> Path:
-    """Configure the workers to run :data:`_ANSWERS_WITH`; its request log."""
+    """Configure the workers to run :data:`_ANSWERS_WITH`, each answering its
+    first frame *first* when given; its request log."""
     script = tmp_path / "answers_with.py"
     script.write_text(_ANSWERS_WITH)
     log = tmp_path / "requests.jsonl"
@@ -2044,6 +2270,7 @@ def _answering(
             json.dumps(answer),
             str(delay),
             str(log),
+            *([] if first is None else [json.dumps(first)]),
         ),
         cache_dir=tmp_path / "maps",
         **{"workers": 1, **settings},
@@ -2135,6 +2362,37 @@ def test_a_metric_failing_in_every_frame_fails_the_run(
     # The metric that reads is read.
     series = evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
     assert series[CRIME_TTC_S].values == [1.0, 1.0, 1.0]
+
+
+def test_a_frame_failing_every_metric_reads_nothing_and_the_run_reads_on(
+    opendrive: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2342: the worker answers a frame with a NaN reading with every metric
+    failed; those read nothing in that frame alone, with a warning, and the
+    other frames are read."""
+    nan = "vx must be finite, got nan"
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S, CRIME_HW_M],
+        {"values": {CRIME_TTC_S: 1.0, CRIME_HW_M: 2.0}, "errors": {}},
+        first={
+            "values": {CRIME_TTC_S: None, CRIME_HW_M: None},
+            "errors": {CRIME_TTC_S: nan, CRIME_HW_M: nan},
+        },
+        period_s=0.5,
+    )
+    world = _following(opendrive)
+    with caplog.at_level(logging.WARNING):
+        series = evaluate_metrics(
+            _recorded(world, TIMES), world.get_map(), [CRIME_TTC_S, CRIME_HW_M]
+        )
+    assert series[CRIME_TTC_S].values == [None, 1.0, 1.0]
+    assert series[CRIME_HW_M].values == [None, 2.0, 2.0]
+    assert f"CommonRoad metric crime_ttc_s reads nothing: {nan}" in caplog.text
+    assert f"CommonRoad metric crime_hw_m reads nothing: {nan}" in caplog.text
+    # The workers are fine, and kept.
+    (worker,) = cr_session._POOL.workers
+    assert worker.running()
 
 
 def test_a_metric_reading_nothing_with_no_one_to_measure_from_passes(
@@ -2248,6 +2506,62 @@ def test_an_answer_written_in_pieces_is_read_whole(tmp_path: Path) -> None:
         worker.close()
 
 
+#: A worker that answers each request at once.
+_ANSWERS_AT_ONCE = textwrap.dedent(
+    """
+    import json, sys
+
+    for line in sys.stdin:
+        op = json.loads(line)["op"]
+        if op == "close":
+            break
+        if op == "init":
+            answer = {"ok": True, "measures": ["crime_ttc_s"]}
+        else:
+            answer = {"ok": True, "values": {"crime_ttc_s": 2.5}, "errors": {}}
+        sys.stdout.write(json.dumps(answer) + "\\n")
+        sys.stdout.flush()
+    """
+)
+
+
+def test_waiting_for_another_request_spends_none_of_the_timeout(
+    tmp_path: Path,
+) -> None:
+    """#2403: the deadline is counted once the request holds the worker, so a
+    request that waited behind a slow one longer than its timeout is still
+    answered, and the worker is not killed."""
+    import threading
+
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_AT_ONCE)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml", timeout=30
+    )
+    outcome: list[Any] = []
+
+    def evaluate() -> None:
+        try:
+            outcome.append(worker.evaluate([CRIME_TTC_S], {}, [], timeout=1.0))
+        except BaseException as exc:  # noqa: BLE001
+            outcome.append(exc)
+
+    requesting = threading.Thread(target=evaluate, daemon=True)
+    try:
+        # Held longer than the request's timeout, which is long enough for an
+        # idle worker to answer on a loaded CI runner.
+        with worker._request_lock:  # a slow request in another thread
+            requesting.start()
+            requesting.join(1.5)
+            assert requesting.is_alive()
+        requesting.join(10)
+        assert not requesting.is_alive()
+        assert outcome == [({CRIME_TTC_S: 2.5}, {})]
+        assert worker._process.poll() is None
+    finally:
+        worker.close()
+
+
 def test_a_timeout_longer_than_poll_waits_at_once_is_fine(
     opendrive: str, tmp_path: Path
 ) -> None:
@@ -2264,3 +2578,31 @@ def test_a_timeout_longer_than_poll_waits_at_once_is_fine(
     world = _following(opendrive)
     series = evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
     assert series[CRIME_TTC_S].values == [1.0]
+
+
+@pytest.mark.parametrize("block", [None, {}])
+def test_an_absent_or_null_metrics_block_is_the_default(block: Any) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import metrics_heavy
+
+    assert metrics_heavy(OmegaConf.create({})) is None
+    assert metrics_heavy(OmegaConf.create({"metrics": block})) is None
+
+
+@pytest.mark.parametrize(
+    ("block", "shown"),
+    [(False, "False"), (0, "0"), ("", "''"), (3, "3"), ([1], "[1]")],
+)
+def test_a_metrics_block_that_is_not_a_mapping_is_refused(
+    block: Any, shown: str
+) -> None:
+    """``metrics: false`` is not read as unset, nor ``metrics: 3`` raise an
+    AttributeError that names neither ``metrics`` nor the value (#2224)."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import metrics_heavy
+
+    with pytest.raises(ValueError, match=r"^metrics must be a mapping, got ") as info:
+        metrics_heavy(OmegaConf.create({"metrics": block}))
+    assert str(info.value).endswith(shown)

@@ -397,6 +397,25 @@ def test_object_ids_can_be_given(tmp_path: Path) -> None:
         trajectory_log_to_rollout(log, object_ids={"ego": -1})
 
 
+def test_two_object_ids_of_one_role_are_refused(tmp_path: Path) -> None:
+    # `ego` and `hero` are both the ego: the last one won silently (#2265).
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    with pytest.raises(
+        ValueError, match="the object ids 'ego' and 'hero' are both of the role 'Ego'"
+    ):
+        trajectory_log_to_rollout(log, object_ids={"ego": 5, "hero": 6})
+
+
+@pytest.mark.parametrize("scenario_id", ["", 5, b"S"])
+def test_a_scenario_id_that_is_no_text_is_refused(
+    tmp_path: Path, scenario_id: Any
+) -> None:
+    # An empty id was stored as none, which pack refused later (#2265).
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    with pytest.raises(ValueError, match=f"scenario_id must be .*{scenario_id!r}"):
+        trajectory_log_to_rollout(log, scenario_id=scenario_id)
+
+
 def test_two_actors_of_one_role_are_refused(tmp_path: Path) -> None:
     log = _write_log(
         tmp_path / "Run.trajectory.jsonl", actors=(EGO, CAR, {**CAR, "id": 9})
@@ -602,6 +621,55 @@ def test_the_submission_carries_its_metadata(tmp_path: Path) -> None:
         build_submission(scenarios, {"no_such_field": 1})
     with pytest.raises(ValueError, match="cannot set scenario_rollouts"):
         build_submission(scenarios, {"scenario_rollouts": []})
+
+
+def test_a_rollout_is_written_after_its_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each file goes in one rename, the ``.wosac.json`` first, and an earlier
+    export's ``.wosac.pb`` is removed before: a killed export never leaves a
+    rollout without its sidecar (``pack`` would take it for a merged file) or
+    beside an earlier export's (#2237)."""
+    from autoware_carla_scenario import atomic_file
+
+    log = _write_log(tmp_path / "Run-1.trajectory.jsonl")
+    out = tmp_path / "out"
+    rollouts_path, agents_path = write_rollout(log, out, scenario_id="S")
+    written: list[str] = []
+    real = atomic_file.os.replace
+
+    def replace(src: str, dst: str) -> None:
+        written.append(Path(dst).name)
+        if dst.endswith(".pb"):
+            raise OSError("killed before the rename")
+        real(src, dst)
+
+    monkeypatch.setattr(atomic_file.os, "replace", replace)
+    with pytest.raises(OSError, match="killed"):
+        write_rollout(log, out, scenario_id="S")
+    assert written == [agents_path.name, rollouts_path.name]
+    assert not rollouts_path.exists()
+    assert sorted(p.name for p in out.iterdir()) == [agents_path.name]
+
+
+def test_a_shard_killed_mid_write_leaves_no_shard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shard goes in one rename: a killed pack leaves no truncated shard,
+    which would parse as a submission short of scenarios (#2237)."""
+    from autoware_carla_scenario import atomic_file
+
+    scenarios = merge_rollouts([_rollout(tmp_path, f"r{n}", f"S{n}") for n in range(3)])
+    submission = build_submission(scenarios, {"unique_method_name": "m"})
+
+    def killed(src: str, dst: str) -> None:
+        raise OSError("killed before the rename")
+
+    monkeypatch.setattr(atomic_file.os, "replace", killed)
+    out = tmp_path / "submission"
+    with pytest.raises(OSError, match="killed"):
+        write_submission(submission, out)
+    assert list(out.iterdir()) == []
 
 
 def test_the_submission_is_written_in_shards(tmp_path: Path) -> None:
@@ -845,14 +913,61 @@ def test_headings_either_side_of_pi_are_close() -> None:
     check_runs([(run(math.pi - 0.01, 0), "a"), (run(-math.pi + 0.01, 1), "b")])
 
 
-def test_the_initial_state_is_compared_without_the_maps_offsets(tmp_path: Path) -> None:
+def test_runs_in_different_frames_are_refused(tmp_path: Path) -> None:
+    # Their rollouts would be one scenario's joint scenes kilometres apart
+    # (#2265).
     local = _export(tmp_path, "Run-0", 0)
     path = tmp_path / "Run-1.trajectory.jsonl"
     _write_log(path, extra=(_run_record(1),))
     _, agents = write_rollout(path, scenario_id="S", map_frame=True)
     mapped = json.loads(agents.read_text())
-    assert mapped["offset"] != local["offset"]
-    check_runs([(local, "Run-0"), (mapped, "Run-1")])
+    with pytest.raises(
+        ValueError, match=r"Run-0 and Run-1 differ in frame \('local' and 'map'\)"
+    ):
+        check_runs([(local, "Run-0"), (mapped, "Run-1")])
+    check_runs([(mapped, "Run-1"), ({**mapped, "seed": 2}, "Run-2")])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("offset", [1.0, 0.0, 0.0]), ("step_s", 0.05), ("current_index", 11)],
+)
+def test_runs_on_different_grids_are_refused(
+    tmp_path: Path, field: str, value: Any
+) -> None:
+    first = _export(tmp_path, "Run-0", 0)
+    other = {**_export(tmp_path, "Run-1", 1), field: value}
+    with pytest.raises(ValueError, match=f"Run-0 and Run-1 differ in {field} "):
+        check_runs([(first, "Run-0"), (other, "Run-1")])
+
+
+def test_a_null_offset_is_no_offset(tmp_path: Path) -> None:
+    first = _export(tmp_path, "Run-0", 0)
+    check_runs(
+        [(first, "Run-0"), ({**_export(tmp_path, "Run-1", 1), "offset": None}, "Run-1")]
+    )
+
+
+@pytest.mark.parametrize(
+    ("options", "field"),
+    [(["--map-frame"], "frame"), (["--current-index", "12", "--pad"], "current_index")],
+)
+def test_the_command_refuses_to_pack_runs_exported_apart(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], options: list, field: str
+) -> None:
+    for n in range(2):
+        _write_log(tmp_path / f"CutIn-{n}.trajectory.jsonl", extra=(_run_record(n),))
+    assert main(["export", str(tmp_path / "CutIn-0.trajectory.jsonl")]) == 0
+    one = tmp_path / "CutIn-1.trajectory.jsonl"
+    assert main(["export", str(one), "--scenario-id", "CutIn", *options]) == 0
+    capsys.readouterr()
+    assert main(["pack", str(tmp_path), "-o", str(tmp_path / "s")]) == 1
+    err = capsys.readouterr().err
+    assert (
+        f"CutIn-0.wosac.pb and {tmp_path / 'CutIn-1.wosac.pb'} differ in {field} "
+        in err
+    )
+    assert not (tmp_path / "s").exists()
 
 
 def test_a_run_that_does_not_say_its_seed_is_let_through_with_a_warning(
@@ -984,3 +1099,78 @@ def test_the_command_names_the_tolerance_flag_it_refuses(
     assert f"{flag} must be a finite number >= 0, not {float(value)!r}" in err
     assert "tolerance_m" not in err and "tolerance_rad" not in err
     assert not (tmp_path / "s").exists()
+
+
+@pytest.mark.parametrize(
+    ("command", "flag", "value"),
+    [
+        ("export", "--steps", "0"),
+        ("export", "--current-index", "-1"),
+        ("pack", "--rollouts", "0"),
+        ("pack", "--shards", "0"),
+    ],
+)
+def test_the_command_names_the_count_flag_it_refuses(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    flag: str,
+    value: str,
+) -> None:
+    # They were refused by their parameters' names, exit 1, and by export
+    # once per log (#2265).
+    for n in range(2):
+        _write_log(tmp_path / f"CutIn-{n}.trajectory.jsonl", extra=(_run_record(n),))
+    assert main(["export", str(tmp_path), "--scenario-id", "CutIn"]) == 0
+    capsys.readouterr()
+    argv = [command, str(tmp_path), flag, value]
+    if command == "pack":
+        argv += ["-o", str(tmp_path / "s")]
+    with pytest.raises(SystemExit) as exited:
+        main(argv)
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert err.count(f"{flag} must be a whole number >= ") == 1
+    assert f"not {int(value)}" in err
+    assert not (tmp_path / "s").exists()
+
+
+def test_the_command_refuses_an_empty_scenario_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    with pytest.raises(SystemExit) as exited:
+        main(["export", str(log), "--scenario-id", ""])
+    assert exited.value.code == 2
+    assert "--scenario-id must not be empty" in capsys.readouterr().err
+    assert not (tmp_path / "Run.wosac.pb").exists()
+
+
+def test_export_refuses_a_path_that_does_not_exist(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A usage error, as a directory holding no log is (#2333).
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    missing = tmp_path / "missing.trajectory.jsonl"
+    with pytest.raises(SystemExit) as exited:
+        main(["export", str(log), str(missing)])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert err.endswith(
+        f"scenario-wosac export: error: {missing}: no such file or directory\n"
+    )
+    assert not (tmp_path / "Run.wosac.pb").exists()
+
+
+def test_export_ctrl_c_prints_one_line_and_exits_130(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import autoware_carla_scenario.wosac.__main__ as cli
+
+    def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "write_rollout", interrupted)
+    log = _write_log(tmp_path / "Run.trajectory.jsonl")
+    assert main(["export", str(log)]) == 130
+    assert capsys.readouterr().err == "scenario-wosac: interrupted\n"

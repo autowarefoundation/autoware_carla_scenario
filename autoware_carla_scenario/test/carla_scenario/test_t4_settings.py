@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import itertools
+import random
 import re
 
 import numpy as np
@@ -401,3 +402,174 @@ def test_a_driver_ego_with_cameras_only_needs_no_renderer_data() -> None:
         {"driver": {"cameras": [camera]}},
     )
     run.check_run_config(cfg)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "autoware_carla_scenario.t4_settings",
+        "autoware_carla_scenario.t4",
+        "autoware_carla_scenario.entity.carla_driver_entity",
+    ],
+)
+def test_importing_the_settings_loads_no_t4scene_converter(module: str) -> None:
+    """The settings and t4 share the T4Scenes' distance check and point
+    helpers (#2237) without importing the t4_scene package, whose converter
+    (protobuf messages, Lanelet2) a driver entity or a config check never
+    needs: t4 imports it only where a recording starts."""
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    code = (
+        f"import sys, {module}; "
+        "print('autoware_carla_scenario.t4_scene' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"
+
+
+def _reference_fed_selection(
+    frame: int,
+    sweeps: list[int],
+    images: list[tuple[int, str]],
+    snapshots: set[int],
+    start_frame: int,
+    last_frame: int,
+    camera_written: dict[str, int],
+) -> tuple[list[int], list[int], int]:
+    """T4Recording._record_fed's choice before #2355, as the kept sweeps' and
+    camera frames' indices and the key frame (-1: nothing written).  #2362
+    changed why a sweep is dropped (:func:`_reference_sweep_fate`), not which.
+    """
+
+    def is_new(taken_on: int) -> bool:
+        return not (taken_on < start_frame or taken_on <= last_frame)
+
+    def has_snapshot(taken_on: int) -> bool:
+        return is_new(taken_on) and taken_on in snapshots
+
+    def is_unwritten(taken_on: int, logical_id: str) -> bool:
+        written = camera_written.get(logical_id)
+        return not (written is not None and taken_on <= written)
+
+    kept_sweeps = [i for i, t in enumerate(sweeps) if has_snapshot(t)]
+    kept_images = [
+        i for i, (t, cam) in enumerate(images) if is_new(t) and is_unwritten(t, cam)
+    ]
+    if not kept_sweeps and not kept_images:
+        return [], [], -1
+    if kept_sweeps:
+        key_frame = min(sweeps[i] for i in kept_sweeps)
+    else:
+        key_frame = min(
+            (images[i][0] for i in kept_images if images[i][0] in snapshots),
+            default=frame,
+        )
+    if key_frame <= last_frame:
+        return kept_sweeps, kept_images, -1
+    on_key = [i for i in kept_sweeps if sweeps[i] == key_frame]
+    return on_key, kept_images, key_frame
+
+
+def _reference_sweep_fate(
+    taken_on: int, snapshots: set[int], start_frame: int, last_frame: int
+) -> int:
+    """Why a sweep is dropped, as t4 logs it since #2362: not new (from before
+    the recording, or not after the key frame written last -- the sweep a
+    driver entity feeds again on every tick) before a missing snapshot."""
+    if taken_on < start_frame or taken_on <= last_frame:
+        return t4_settings.FED_NOT_NEW
+    if taken_on not in snapshots:
+        return t4_settings.FED_NO_SNAPSHOT
+    return t4_settings.FED_KEPT
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_fed_selection_is_the_one_t4_made(seed: int) -> None:
+    rng = random.Random(seed)
+    for _ in range(200):
+        frame = rng.randint(5, 30)
+        start_frame = rng.randint(0, 10)
+        last_frame = rng.choice([-1, rng.randint(0, frame - 1)])
+        snapshots = {f for f in range(frame + 1) if rng.random() < 0.6} | {frame}
+        sweeps = [rng.randint(0, frame) for _ in range(rng.randint(0, 3))]
+        cams = ["front", "rear"]
+        images = [
+            (rng.randint(0, frame), rng.choice(cams)) for _ in range(rng.randint(0, 3))
+        ]
+        written = {c: rng.randint(0, frame) for c in cams if rng.random() < 0.5}
+        sweep_fates, image_fates, key_frame = t4_settings.fed_key_frame(
+            frame, sweeps, images, snapshots, start_frame, last_frame, written
+        )
+        old_sweeps, old_images, old_key = _reference_fed_selection(
+            frame, sweeps, images, snapshots, start_frame, last_frame, written
+        )
+        assert key_frame == old_key
+        # t4 logs that nothing can be written exactly when the old code kept
+        # nothing.
+        kept = t4_settings.FED_KEPT in sweep_fates + image_fates
+        assert kept == bool(old_sweeps or old_images)
+        if old_key >= 0:
+            # And the count of later sweeps it logs is the old one.
+            kept_sweeps = sum(
+                not (t < start_frame or t <= last_frame or t not in snapshots)
+                for t in sweeps
+            )
+            assert sweep_fates.count(t4_settings.FED_LATER) == kept_sweeps - len(
+                old_sweeps
+            )
+            assert old_sweeps == [
+                i for i, f in enumerate(sweep_fates) if f == t4_settings.FED_KEPT
+            ]
+            assert old_images == [
+                i for i, f in enumerate(image_fates) if f == t4_settings.FED_KEPT
+            ]
+        # Why each dropped one was dropped: a sweep not new apart from one
+        # whose frame has no snapshot (#2362), a camera frame as before.
+        for t, fate in zip(sweeps, sweep_fates):
+            expected = _reference_sweep_fate(t, snapshots, start_frame, last_frame)
+            if expected == t4_settings.FED_KEPT:
+                assert fate in (t4_settings.FED_KEPT, t4_settings.FED_LATER)
+            else:
+                assert fate == expected
+        for (t, cam), fate in zip(images, image_fates):
+            if t < start_frame or t <= last_frame:
+                assert fate == t4_settings.FED_NOT_NEW
+            elif cam in written and t <= written[cam]:
+                assert fate == t4_settings.FED_REPEATED
+            else:
+                assert fate == t4_settings.FED_KEPT
+
+
+def test_a_sweep_fed_again_after_its_key_frame_is_not_new() -> None:
+    """A driver entity feeds the LiDAR's latest sweep on every tick: once its
+    key frame is written, the sweep fed again is not new, not missing its
+    snapshot (#2362), and nothing is written."""
+    sweep_fates, image_fates, key_frame = t4_settings.fed_key_frame(
+        103, [101], [], {99, 100, 101, 102, 103}, 100, 101, {}
+    )
+    assert sweep_fates == [t4_settings.FED_NOT_NEW]
+    assert image_fates == []
+    assert key_frame == -1
+
+
+def test_a_sweep_from_before_the_recording_is_not_new() -> None:
+    sweep_fates, _, key_frame = t4_settings.fed_key_frame(
+        101, [99], [], {99, 100, 101}, 100, -1, {}
+    )
+    assert sweep_fates == [t4_settings.FED_NOT_NEW]
+    assert key_frame == -1
+
+
+def test_a_new_sweep_whose_frame_has_no_snapshot_has_none() -> None:
+    """A sweep after the key frame written last whose frame the recording
+    holds no snapshot of is the one logged as missing its snapshot; a camera
+    frame fed with it is written on the step."""
+    sweep_fates, image_fates, key_frame = t4_settings.fed_key_frame(
+        107, [102], [(107, "front")], {104, 105, 106, 107}, 100, 101, {}
+    )
+    assert sweep_fates == [t4_settings.FED_NO_SNAPSHOT]
+    assert image_fates == [t4_settings.FED_KEPT]
+    assert key_frame == 107

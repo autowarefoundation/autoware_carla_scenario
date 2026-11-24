@@ -2,63 +2,36 @@
 
 This tutorial shows two paths to creating a scenario:
 
-1. **Quick Start (recommended)** — Use the bundled Claude Code plugin.
-   Describe what you want in plain text and let Claude generate all files.
+1. **Quick Start (recommended)** — Use the bundled agent skills with a
+   coding agent (Claude Code or Codex). Describe what you want in plain text
+   and let the agent generate all files.
 2. **Manual walkthrough** — Understand every file by building one yourself.
 
 ---
 
-## Quick Start with Claude Code Plugin
+## Quick Start with a Coding Agent
 
-This repository ships a **`write-scenario` plugin** inside
-`.claude/local-marketplace/`. It is pre-enabled in `.claude/settings.json`
-— **no extra setup is needed**. Just open Claude Code in the repository root
-and the plugin is ready to use.
+The framework ships scenario-writing **agent skills** that a coding agent —
+Claude Code or Codex — loads to walk you through a scenario:
+it asks clarifying questions, writes the scenario class, config and YAML, runs
+the static check, debugs the run in CARLA, reviews the parameters and adds the
+sweep. In a Git repository — this checkout, or your scenario package's — one
+command (the `agent` extra) installs the skills and starts the agent on your
+description:
 
-### How It Works
-
-Type `/write-scenario` followed by a natural-language description of the
-test you want. Claude walks you through a 7-stage workflow automatically:
-
-| Stage | What Claude does |
-|---|---|
-| 1. Understand | Parses your description, asks clarifying questions |
-| 2. Discover | Scans the codebase for available Conditions, Actions, Constraints, and Bindings |
-| 3. Write | Generates all four files: Python class, config dataclass, YAML, and `run.py` registration |
-| 4. Debug | Runs the scenario in CARLA, reads logs, fixes failures iteratively |
-| 5. Review | Analyzes parameter orthogonality and sweeper compatibility |
-| 6. Sweep | Adds `sweep.constraints` / `bindings` to the YAML for parametric testing |
-| 7. Multirun | Provides the exact command to execute the logical scenario across the map |
-
-### Example
-
-```
-> /write-scenario I want to test that the ego stops at a stop sign,
-  waits 3 seconds, then proceeds through the intersection.
+```bash
+uv run scenario-agent claude "I want to test that the ego stops at a stop sign"
+# or: uv run scenario-agent codex "..."
 ```
 
-Claude will:
-
-1. Identify `StandstillCondition` and `TimeoutCondition` from the codebase
-2. Generate `my_scenario.py`, update `configs.py`, create YAML, register in `run.py`
-3. Run the scenario, analyze the result, and iterate until it passes
-4. Propose sweep constraints so the test generalizes to every stop sign on the map
-
-You do not need to memorize the framework API — the plugin discovers
-everything dynamically.
-
-### Other Plugin Commands
-
-| Command | When to use |
-|---|---|
-| `/write-scenario` | Create a new scenario from scratch |
-| `/debug-concrete-scenario` | An existing scenario fails — analyze logs and fix |
-| `/review-scenario` | Before adding sweep — check parameter design |
+[Writing Scenarios with a Coding Agent](coding_agents.md) has the whole
+procedure: prerequisites, the options, the stages the agent goes through,
+editing the skills, and troubleshooting.
 
 ---
 
 The rest of this page explains the manual process. Read on if you want to
-understand what the plugin generates under the hood.
+understand what the skills generate under the hood.
 
 ---
 
@@ -103,6 +76,8 @@ Create `src/autoware_carla_scenario/examples/my_scenario.py`:
 ```python
 from __future__ import annotations
 
+import typesafe_carla.carla as carla
+
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
     AndCondition,
@@ -114,6 +89,8 @@ from autoware_carla_scenario import (
     Lanelet2Pose,
     StickyCondition,
     TimeoutCondition,
+    TrafficLightTarget,
+    TrafficSignalAction,
 )
 
 from .configs import MyScenarioConfig
@@ -145,7 +122,18 @@ class MyScenario(BaseScenario):
 
         cfg = self._config
 
-        # 2. Build pass condition — "ego visited all expected roads"
+        # 2. Every traffic light green from the start: the route below
+        #    crosses a signalised junction, and an ego that stops at a red
+        #    light would pass or time out on the light's phase.
+        self.register_init(
+            TrafficSignalAction(
+                state=carla.TrafficLightState.Green,
+                lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                label="set_all_green",
+            )
+        )
+
+        # 3. Build pass condition — "ego visited all expected roads"
         stickies: list[BaseCondition] = []
         for ll_id in cfg.expected_lanelet_ids:
             stickies.append(
@@ -166,7 +154,7 @@ class MyScenario(BaseScenario):
             visited_all = AndCondition(stickies)
         self.register_pass_condition(visited_all)
 
-        # 3. Fail-safe timeout
+        # 4. Fail-safe timeout
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="timeout")
         )
@@ -191,7 +179,11 @@ Every scenario follows the same structure:
    If any fail condition fires, the scenario fails. On each tick the pass
    conditions are checked before the fail conditions, so a pass and a fail on
    the same tick ends the run as a pass.
-4. **Actions** (optional) — e.g. `TurnAction`, `TrafficSignalAction`.
+4. **Actions** (optional) — e.g. `TurnAction`, or the `TrafficSignalAction`
+   above, which `register_init` runs once as the scenario starts. Without it
+   the lights keep CARLA's own cycle, and an ego that obeys them (the
+   default TrafficManager ego does) waits at a red light for as long as it
+   lasts.
 
 !!! tip "Discovering available Conditions and Actions"
     Run `grep -r "class.*Condition" src/autoware_carla_scenario/conditions/` and
@@ -202,18 +194,46 @@ Every scenario follows the same structure:
 
 ## Step 3 — Register the Scenario
 
-In `src/autoware_carla_scenario/examples/run.py`, add the import and
-registration:
+In `src/autoware_carla_scenario/examples/run.py`, import the classes beside
+the other built-ins (add `MyScenarioConfig` to the existing
+`from .configs import (...)`) and register it after the others with
+`_register_builtin_scenario`, which `run.py` already imports from the
+registry:
 
 ```python
+from .configs import MyScenarioConfig  # in the existing `from .configs import (...)`
 from .my_scenario import MyScenario
-from .configs import MyScenarioConfig
 
-register_scenario("my_scenario", MyScenario, MyScenarioConfig)
+_register_builtin_scenario("my_scenario", MyScenario, MyScenarioConfig)
 ```
 
 The first argument (`"my_scenario"`) is the name referenced in YAML's
-`scenario.name` field.
+`scenario.name` field. `run.py` does not import the public
+`register_scenario`: what it registers is recorded as a built-in, so an
+installed scenario package that replaces it is warned about (see
+[Packaging Scenarios in a Separate Package](#packaging-scenarios-in-a-separate-package)).
+A built-in's name also belongs in
+`autoware_carla_scenario.scaffold.names.BUILTIN_SCENARIO_NAMES` (sorted), which
+`scenario-new` refuses as a package's scenario name; `test_scaffold.py` checks
+the list against what `run.py` registers.
+
+### List the new module for the library check
+
+The framework's own source is compiled with Codon a module at a time
+(`uv run scenario-check --library`, [Checking the framework itself](typecheck.md#checking-the-framework-itself)),
+and `src/autoware_carla_scenario/typecheck/library.py` must name every module
+of the package, either in `CHECKED` or in `EXCLUDED` with a reason.
+`test_typecheck_library.py::test_every_module_is_either_checked_or_excluded`
+fails until `autoware_carla_scenario.examples.my_scenario` is in one of them.
+The other built-in scenario modules are in `CHECKED`, kept sorted; add yours
+there and check that it compiles:
+
+```bash
+uv run scenario-check --library autoware_carla_scenario.examples.my_scenario
+```
+
+If it does not compile yet, list it in `EXCLUDED` as `NOT_YET_CHECKED`
+instead.
 
 !!! tip "Prefer a separate package for reusable scenarios"
     `register_scenario` (and `register_conf_dir`) are part of the public API:
@@ -233,7 +253,9 @@ Create `src/autoware_carla_scenario/examples/conf/scenario/my_scenario/default.y
 scenario:
   name: my_scenario
   expected_lanelet_ids: [460, 265]
-  timeout_seconds: 8.0
+  # 5 m to the stop line, across the junction (every light is set green)
+  # and onto the lane beyond it, from 5 km/h.
+  timeout_seconds: 15.0
 
 ego:
   initial_speed_kmh: 5.0
@@ -354,37 +376,90 @@ once the run completes — click **Update** to refresh.
 ## Adding Sweep (Parametric Testing)
 
 To test the same scenario across many lanelets automatically, add a `sweep`
-section to the YAML:
+section to the YAML, say as `conf/scenario/my_scenario/sweep.yaml`:
 
 ```yaml
 # @package _global_
 scenario:
   name: my_scenario
   expected_lanelet_ids: [460, 265]
-  timeout_seconds: 8.0
+  timeout_seconds: 15.0
 
 ego:
   initial_speed_kmh: 5.0
   spawn_lanelet_id: 242
-  spawn_s: 25.0
+  # Off the lanelet's start, which can sit on the seam between two
+  # OpenDRIVE roads; inside every lanelet the sweep picks (30 m or more).
+  spawn_s: 5.0
 
 sweep:
   constraints:
     ego.spawn_lanelet_id:
       - type: and
         constraints:
+          # Long enough for the spawn above, short enough to leave in the
+          # timeout from 5 km/h.
           - type: lanelet_length
             rule: greater_than_or_equal
-            value: 10.0
+            value: 30.0
+          - type: lanelet_length
+            rule: less_than_or_equal
+            value: 60.0
           - type: not
             constraint:
               type: is_junction
+          # Nor one the map draws no 3D model for.
+          - type: not
+            constraint:
+              type: in_set
+              values: ${map.no_3d_model_lanelet_ids}
+          # Nor one that leads into a junction: nothing here tells the ego
+          # which way to take through it, so it could leave by another lane
+          # than the one the route below expects.
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: is_junction
+          # Nor one that leads onto a lanelet with no 3D model: the route
+          # below ends there, so CARLA must draw it too.
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: in_set
+                  values: ${map.no_3d_model_lanelet_ids}
+  bindings:
+    # The spawn lanelet and the lanelet after it: the route the run asserts,
+    # replaced with each pick.  Without it every case would still expect
+    # [460, 265], which almost no spawn leads to.
+    # A pick with no lanelet after it has no such route and is skipped; where
+    # the lane splits in two, the lower lanelet ID is taken.
+    scenario.expected_lanelet_ids:
+      type: route_through
+      depth: 1
+```
+
+Every swept key that a case depends on must move with the pick: a value
+outside `sweep:` that only fits the fixed case (a `spawn_s` beyond a shorter
+lanelet's end, a route from another lanelet) is kept as it is for every case.
+Even so, a pick where the lane splits in two outside a junction (7 of the
+80 cases on the default map) expects the branch with the lower ID, and the
+default TrafficManager ego, told nothing about which way to go, may take
+the other; an ego that plans its own route to the goal does not.
+The shipped sweeps do the same -- `intersection_passing/straight` binds
+`ego.spawn_s` with `stop_line_offset` and the route with `route_through`
+([Usage](usage.md)). Check what a sweep expands to, without CARLA, before
+running it:
+
+```bash
+uv run scenario-expand scenario=my_scenario/sweep
 ```
 
 Run as a multirun:
 
 ```bash
-uv run scenario --multirun scenario=my_scenario/default \
+uv run scenario --multirun scenario=my_scenario/sweep \
   hydra/sweeper=lanelet_constraint
 ```
 
@@ -454,8 +529,8 @@ names `__init__.py` defines (`register`, `register_scenario`,
 (including when they come from the package name, as in `configs_package`).
 
 Nor can a scenario take the name of a module the generated package imports:
-`math` and `dataclasses` (`configs.py`), `logging` (`scenario.py`), `pathlib`
-(`__init__.py`), `autoware_carla_scenario`, and `enum`, which the static
+`math` and `dataclasses` (`configs.py`), `logging` and `typesafe_carla`
+(`scenario.py`), `pathlib` (`__init__.py`), `autoware_carla_scenario`, and `enum`, which the static
 check's prelude (`typecheck.transform.PRELUDE`) imports into every module it
 compiles. Codon resolves an import to a module beside the importing one first,
 so a scenario module `math.py` would

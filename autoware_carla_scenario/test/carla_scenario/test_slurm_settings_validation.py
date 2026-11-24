@@ -243,3 +243,44 @@ def test_the_default_port_range_is_taken() -> None:
 def test_the_message_names_the_keys() -> None:
     with pytest.raises(ValueError, match=re.escape("launcher.port_base/port_slots")):
         SlurmSettings.from_mapping({"port_slots": 100000})
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--clusters", "other"],
+        ["--clusters=other"],
+        ["--cluster=other"],
+        ["--cluster", "other"],
+        ["--nice=10", "-M", "other"],
+        ["-Mother"],
+        "--clusters=a,b",
+    ],
+)
+def test_extra_sbatch_args_may_not_name_another_cluster(args: Any) -> None:
+    """#2247: squeue, scancel and the collect job's dependency ask the
+    default cluster, so a batch on another one would be followed, checked
+    for and cancelled wrongly."""
+    with pytest.raises(ValueError) as caught:
+        SlurmSettings.from_mapping({"extra_sbatch_args": args})
+    message = str(caught.value)
+    assert message.startswith("launcher.extra_sbatch_args: ")
+    assert "does not support" in message
+    first = next(
+        a
+        for a in ([args] if isinstance(args, str) else args)
+        if "M" in a or "cluster" in a
+    )
+    assert repr(first) in message
+
+
+def test_extra_sbatch_args_that_only_look_like_a_cluster_are_kept() -> None:
+    settings = SlurmSettings.from_mapping(
+        {"extra_sbatch_args": ["--cluster-constraint=x", "-m", "block", "--mem=1M"]}
+    )
+    assert settings.extra_sbatch_args == (
+        "--cluster-constraint=x",
+        "-m",
+        "block",
+        "--mem=1M",
+    )

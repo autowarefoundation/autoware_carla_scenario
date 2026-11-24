@@ -46,13 +46,27 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
-from urllib.parse import urlsplit
 
-from starlette.exceptions import HTTPException
-from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from fastapi import HTTPException
+from fastapi.requests import Request
+from fastapi.responses import PlainTextResponse
 
-from .serve_bind import DEFAULT_HOST, is_loopback
+from . import web_origin
+
+# The decisions on header values, which the library check compiles from their
+# own module; every name of it is re-exported here, where it has always been
+# imported from (the same objects), and so are serve_bind's.
+from .serve_bind import DEFAULT_HOST as DEFAULT_HOST
+from .serve_bind import is_loopback as is_loopback
+from .web_origin import _DEFAULT_PORTS as _DEFAULT_PORTS
+from .web_origin import _FOREIGN_FETCH_SITES as _FOREIGN_FETCH_SITES
+from .web_origin import STATE_CHANGING_METHODS as STATE_CHANGING_METHODS
+from .web_origin import HostAllowlist as HostAllowlist
+from .web_origin import _normalize_host as _normalize_host
+from .web_origin import _origin as _origin
+from .web_origin import _parse_origin as _parse_origin
+from .web_origin import _split_host as _split_host
+from .web_origin import is_wildcard as is_wildcard
 
 __all__ = [
     "FRAME_HEADERS",
@@ -69,101 +83,12 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
-#: The methods that change state, and so must come from the application's
-#: own pages.
-STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-
-#: The ``Sec-Fetch-Site`` values that name another site.  ``same-site`` is a
-#: sibling origin (another port or subdomain), which is not this application
-#: either.
-_FOREIGN_FETCH_SITES = frozenset({"cross-site", "same-site"})
-
 #: The headers every response carries so that no page can frame it (#2053):
 #: ``X-Frame-Options`` for browsers that predate CSP's ``frame-ancestors``.
 FRAME_HEADERS: tuple[tuple[bytes, bytes], ...] = (
     (b"x-frame-options", b"DENY"),
     (b"content-security-policy", b"frame-ancestors 'none'"),
 )
-
-_DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
-
-
-def _normalize_host(name: str) -> str:
-    """*name* lower-cased, without IPv6 brackets or a trailing dot."""
-    return name.strip().strip("[]").rstrip(".").lower()
-
-
-def is_wildcard(host: str) -> bool:
-    """Whether *host* is an address that binds every interface (``0.0.0.0``, ``::``)."""
-    return _normalize_host(host) in ("0.0.0.0", "::", "")  # noqa: S104
-
-
-class HostAllowlist:
-    """The ``Host`` names an application answers to.
-
-    The loopback names, and the host it is bound to; none checked when it is
-    bound to every interface.  Mutable through :meth:`bind`, for the viewer,
-    whose application exists before its command line is read.
-    """
-
-    def __init__(self, bound_host: str = DEFAULT_HOST) -> None:
-        """Allow the loopback names and *bound_host*."""
-        self.bound_host = bound_host
-
-    def bind(self, bound_host: str) -> None:
-        """Allow *bound_host* (in place of the host bound before)."""
-        self.bound_host = bound_host
-
-    def allows(self, name: str) -> bool:
-        """Whether a request whose ``Host`` names *name* (no port) is answered."""
-        if is_wildcard(self.bound_host):
-            return True
-        normalized = _normalize_host(name)
-        if not normalized:
-            return False
-        return is_loopback(normalized) or normalized == _normalize_host(self.bound_host)
-
-
-def _split_host(header: str) -> tuple[str, int | None] | None:
-    """A ``Host`` header's name and port; ``None`` when it is malformed."""
-    header = header.strip()
-    if header.startswith("["):
-        end = header.find("]")
-        if end < 0:
-            return None
-        name, rest = header[1:end], header[end + 1 :]
-        if not rest:
-            return name, None
-        if not rest.startswith(":"):
-            return None
-        port_text = rest[1:]
-    elif header.count(":") == 1:
-        name, port_text = header.split(":")
-    elif ":" in header:
-        return None  # An IPv6 address must be bracketed.
-    else:
-        return header, None
-    if not (port_text.isascii() and port_text.isdigit()):
-        return None
-    return name, int(port_text)
-
-
-def _origin(scheme: str, host: str, port: int | None) -> tuple[str, str, int | None]:
-    """An origin as a comparable tuple, the scheme's default port filled in."""
-    scheme = scheme.lower()
-    return scheme, _normalize_host(host), port or _DEFAULT_PORTS.get(scheme)
-
-
-def _parse_origin(text: str) -> tuple[str, str, int | None] | None:
-    """An ``Origin`` header's origin; ``None`` for ``null`` or a malformed one."""
-    try:
-        parts = urlsplit(text.strip())
-        port = parts.port
-    except ValueError:
-        return None
-    if not parts.scheme or not parts.hostname:
-        return None
-    return _origin(parts.scheme, parts.hostname, port)
 
 
 def _headers(scope: Scope) -> dict[str, str]:
@@ -180,16 +105,10 @@ def _foreign_site(
     """The 403 a request from another site is refused with; ``None`` otherwise.
 
     *host* is the request's own ``Host`` (:func:`_split_host`); without one,
-    no ``Origin`` is the request's own.
+    no ``Origin`` is the request's own.  The decision is the checked
+    :func:`.web_origin.foreign_site`'s.
     """
-    if headers.get("sec-fetch-site", "").strip().lower() in _FOREIGN_FETCH_SITES:
-        return 403, "Cross-site request refused"
-    origin = headers.get("origin")
-    if origin is not None:
-        own = _origin(scope.get("scheme", "http"), *host) if host else None
-        if own is None or _parse_origin(origin) != own:
-            return 403, "Cross-origin request refused"
-    return None
+    return web_origin.foreign_site(headers, scope.get("scheme", "http"), host)
 
 
 def cross_site_refusal(scope: Scope) -> tuple[int, str] | None:
@@ -269,10 +188,9 @@ class RequestGuard:
 
     def refusal(self, scope: Scope) -> tuple[int, str] | None:
         """The status and message *scope* is refused with; ``None`` to serve it."""
-        headers = _headers(scope)
-        host = _split_host(headers.get("host", ""))
-        if host is None or not self.hosts.allows(host[0]):
-            return 400, "Invalid Host header"
-        if scope.get("method", "GET").upper() not in STATE_CHANGING_METHODS:
-            return None
-        return _foreign_site(scope, headers, host)
+        return web_origin.refusal(
+            _headers(scope),
+            scope.get("method", "GET"),
+            scope.get("scheme", "http"),
+            self.hosts,
+        )

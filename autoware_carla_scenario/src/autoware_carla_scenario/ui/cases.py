@@ -32,10 +32,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..slurm.manifest import verdict_of_document
+# Whether a SLURM case's outcome is stale, compiled by the library check.
+from ..slurm.collect import _stale as _stale
+from ..slurm.collect import stale_reason as stale_reason
+from ..slurm.manifest import BatchLayout, verdict_of_document
 
-# The path guard, the case stems and a batch's stamp, compiled by the library check; every
-# name stays importable from here.
+# The path guard, the case stems, a batch's stamp and the overrides a session's jobs
+# share, compiled by the library check; every name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
@@ -46,6 +49,7 @@ from .case_paths import _TRAJECTORY as _TRAJECTORY
 from .case_paths import SESSION_TYPES as SESSION_TYPES
 from .case_paths import CaseFiles as CaseFiles
 from .case_paths import _safe as _safe
+from .case_paths import _shared_overrides as _shared_overrides
 from .case_paths import _stat as _stat
 from .case_paths import _stems_in as _stems_in
 from .case_paths import _summary_is_current as _summary_is_current
@@ -66,6 +70,7 @@ __all__ = [
     "job_dir",
     "match_batch_stems",
     "session_dir",
+    "session_overrides",
     "stem_order",
 ]
 
@@ -116,6 +121,69 @@ def _hydra_overrides(directory: Path) -> list[str]:
     except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
         return []
     return [str(o) for o in data] if isinstance(data, list) else []
+
+
+def _multirun_task(directory: Path) -> list[str] | None:
+    """The command line of the Hydra multirun in *directory*: the
+    ``hydra.overrides.task`` its ``multirun.yaml`` records, each item as a
+    string (a sweep as given, ``ego.speed=10,20``; the others as each job
+    received them).  ``None`` when there is no such file or it records no
+    list there -- a session the viewer's Run panel grouped writes none -- and
+    for one that cannot be read, as :func:`_hydra_overrides` reads its
+    file."""
+    try:
+        import yaml  # noqa: PLC0415
+
+        data = yaml.safe_load((directory / "multirun.yaml").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
+        return None
+    hydra = data.get("hydra") if isinstance(data, dict) else None
+    overrides = hydra.get("overrides") if isinstance(hydra, dict) else None
+    task = overrides.get("task") if isinstance(overrides, dict) else None
+    return [str(o) for o in task] if isinstance(task, list) else None
+
+
+def _as_jobs_receive(overrides: list[str]) -> set[str]:
+    """Each of *overrides*, as the command line gave it, and as a job of the
+    multirun received it: Hydra's basic sweeper hands each job a fixed
+    override re-written from its parsed value (``x=[1, 2]`` as ``x=[1,2]``,
+    ``w= 3`` as ``w=3``), where this package's sweeper passes it on as given.
+    A sweep (``ego.speed=10,20``, ``range(...)``, ``choice(...)``,
+    ``glob(...)``) is only kept as given, which no job's value equals; so is
+    an override Hydra's parser cannot read."""
+    forms = set(overrides)
+    try:
+        from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+            OverridesParser,
+        )
+
+        parser = OverridesParser.create()
+    except Exception:  # noqa: BLE001 -- Hydra cannot be imported
+        return forms
+    for override in overrides:
+        try:
+            parsed = parser.parse_override(override)
+            if not parsed.is_sweep_override():
+                value = parsed.get_value_element_as_str()
+                forms.add(f"{parsed.get_key_element()}={value}")
+        except Exception:  # noqa: BLE001, S112 -- OverrideParseException, ...
+            continue
+    return forms
+
+
+def session_overrides(directory: Path, jobs: list[list[str]]) -> set[str]:
+    """The overrides of a multirun or single session's command line, which
+    every case of it ran with and so are not what tells its cases apart:
+    those its ``multirun.yaml`` records (:func:`_multirun_task`, each also
+    as its jobs received it, :func:`_as_jobs_receive`), else those every one
+    of its jobs' overrides (*jobs*) holds -- for a session of one job (a
+    single run), all of them.  A job whose overrides could not be read (an
+    empty list: no ``.hydra/overrides.yaml``) is left out of that, rather
+    than leave no override shared."""
+    recorded = _multirun_task(directory)
+    if recorded is not None:
+        return _as_jobs_receive(recorded)
+    return _shared_overrides(jobs)
 
 
 def _same_result(entry: dict[str, Any], result: Any) -> bool:
@@ -234,10 +302,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     has no ``batch_results.json`` yet. A case without an outcome yet has
     ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
     verdict, or a result that cannot be reported (``verdict_of_document``,
-    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
+    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it.
+    A stale outcome, an earlier submission's that the last one to give the
+    case stopped before replacing (``slurm.collect.stale_reason``, #2247),
+    is not the case's: it is pending too, with a message saying why, as
+    ``status`` and the SLURM panel count it, never its old verdict (#2285)."""
     cases = _manifest_cases(directory)
     if cases is None:
         return None
+    layout = BatchLayout(directory)
     entries: list[dict[str, Any]] = []
     for case in cases:
         overrides = case.get("case_overrides")
@@ -248,7 +321,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             "scenario": case.get("label") or case.get("scenario") or "unknown",
             "overrides": list(overrides) if isinstance(overrides, list) else [],
         }
-        if isinstance(record, dict) and isinstance(record.get("result"), dict):
+        stale = _stale(layout, int(case["index"])) if isinstance(record, dict) else None
+        if stale is not None:
+            entry.update(
+                passed=None,
+                message=f"Stale result: {stale}",
+                elapsed_seconds=None,
+                pending=True,
+            )
+        elif isinstance(record, dict) and isinstance(record.get("result"), dict):
             entry.update(record["result"])
             if record.get("errored"):
                 entry["error"] = True

@@ -9,10 +9,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ..action_state import ActionState
-from ..conditions.base import BaseCondition
+from ..conditions.base import BaseCondition, refuse_post_run
 from ..conditions.always_true import AlwaysTrueCondition
 from ..adversity_event import AdversityEvent
 from ..control_domain import ControlConflictError, ControlDomain
+from ..entity_role import canonical_role_name
 from ..waypoint_arrival import WaypointArrival
 
 if TYPE_CHECKING:
@@ -49,11 +50,17 @@ class BaseAction(ABC):
         timing: Whether to run on the pre-tick or post-tick phase.
         once: If ``True`` (default), the action fires at most once.  After
             ``execute`` has been called the condition is no longer evaluated.
+            With ``False`` it is checked on every tick, a run's included, so
+            a stateful trigger sees them all, but it fires the action only
+            from standby.
         until: A :class:`BaseCondition` that ends the run, on the first tick
             it returns a non-``None`` result -- the same "a result means it
             fired" convention the trigger uses, so a failing result ends the
-            run too.  ``None`` (default) makes the action instantaneous: it is
-            over on the tick after the one it was commanded on.
+            run too.  It is reset (:meth:`BaseCondition.reset`) as each run
+            of a repeating action after its first begins, so a run never ends
+            on what an earlier run left in it.  ``None`` (default) makes the action
+            instantaneous: it is over on the tick after the one it was
+            commanded on.
         reissue: Whether :meth:`execute` is called again on every tick of the
             run, overriding what the action would decide for itself.  ``None``
             (default) leaves that decision to
@@ -63,6 +70,11 @@ class BaseAction(ABC):
             action, rather than raise
             :class:`~autoware_carla_scenario.control_domain.ControlConflictError`
             (default) -- :attr:`overrides`.
+
+    Raises:
+        ValueError: *label* is empty, or *condition* or *until* is a
+            :class:`~autoware_carla_scenario.MetricCondition`, which is judged
+            once the run is over and so would never fire on a tick.
 
     Firing and finishing are two different moments.  :meth:`execute` only
     *starts* the work -- a lane change request returns long before the vehicle
@@ -133,7 +145,13 @@ class BaseAction(ABC):
                 "Provide a non-empty string to identify this action."
             )
         self.label = label
+        # Read every tick, like a wrapper's condition, where a MetricCondition
+        # (judged once the run is over) reads nothing: the action would stay
+        # in STANDBY, or never end (#2287).
+        if until is not None:
+            refuse_post_run(until, f"{type(self).__name__} {label!r}: until")
         if condition is not None:
+            refuse_post_run(condition, f"{type(self).__name__} {label!r}: condition")
             self._condition = condition
         else:
             self._condition = AlwaysTrueCondition()
@@ -377,6 +395,18 @@ class BaseAction(ABC):
                 ActionState.COMPLETE if self._once else ActionState.STANDBY
             )
 
+    def _watch_trigger(self, world: "carla.World", elapsed: float) -> None:
+        """Check the trigger of a repeating action on a tick it cannot fire
+        on (its run is under way, or ending), dropping the result: a stateful
+        trigger -- a :class:`~..conditions.persistent.PersistentCondition`
+        timing a hold, a :class:`~..conditions.sticky.StickyCondition`
+        latching -- has to see every tick to be right on the one it is next
+        asked on (#2219), as the children of an ``And`` / ``Or`` do (#663).
+        Not for a ``once`` action, which never asks it again."""
+        if self._once:
+            return
+        self._condition.check(world, elapsed)
+
     def tick(self, world: "carla.World", elapsed: float) -> None:
         """Evaluate the condition and, if met, run :meth:`execute`.
 
@@ -413,9 +443,10 @@ class BaseAction(ABC):
                 self._until is None or self._until.check(world, elapsed) is not None
             )
             if not finished:
-                # The trigger is deliberately not re-evaluated while running,
-                # so a repeating action cannot start a second run on top of one
-                # that has not finished.
+                # A repeating action cannot start a second run on top of one
+                # that has not finished: its trigger is checked, so that a
+                # stateful one sees this tick, but what it says is dropped.
+                self._watch_trigger(world, elapsed)
                 return
             self._lifecycle = ActionState.END_TRANSITION
             self._release_control()
@@ -431,6 +462,7 @@ class BaseAction(ABC):
                 # ran, and pausing on a transition it passed straight through
                 # would only make every instantaneous action a tick slower to
                 # repeat.
+                self._watch_trigger(world, elapsed)
                 return
 
         if self._lifecycle is ActionState.END_TRANSITION:
@@ -455,6 +487,16 @@ class BaseAction(ABC):
         # Before it commands anything: a conflict raises with the entity
         # untouched.
         self._take_control(world, elapsed)
+        if self._done and self._until is not None:
+            # Each run waits on its own `until`: a latch, or a hold timed, in
+            # an earlier run of a repeating action is not this run's (#2219).
+            # Only from the second run on: the runner reset it before the
+            # first, and resetting it again there would only clear what a
+            # condition shared with the scenario (a success condition, a
+            # collision sensor) had seen.  Before `execute`, so what that
+            # sets up for it is kept.
+            run_until: BaseCondition = self._until
+            run_until.reset()
         self.execute(world)
         self._done = True
         # Held for this whole tick, so a condition watching `startTransition`
@@ -473,7 +515,13 @@ class _Hold:
 
 class _ControlSlots:
     """Who holds each control domain of each entity
-    (:mod:`~autoware_carla_scenario.control_domain`)."""
+    (:mod:`~autoware_carla_scenario.control_domain`).
+
+    An entity is keyed on its :func:`canonical_role_name`, so the ego is one
+    entity under each of its names (``"Ego"``, ``"ego"``, ``"hero"``): two
+    actions commanding it under two of them conflict (#2273).  A release is
+    by owner, so it frees whatever name the domain was taken under.
+    """
 
     _holds: dict[tuple[str, str], _Hold]
 
@@ -500,7 +548,8 @@ class _ControlSlots:
                 *owner* does not override; none is taken then.
         """
         overridden: list[BaseAction] = []
-        for entity, domain in claims:
+        for named, domain in claims:
+            entity = canonical_role_name(named)
             held = self.holder(entity, domain, at)
             if held is None:
                 continue
@@ -513,8 +562,9 @@ class _ControlSlots:
                 overridden.append(holder)
         for stopped in overridden:
             self.release(stopped)
-        for entity, domain in claims:
-            self._holds[(entity, domain.value)] = _Hold(owner, at, runs)
+        for named, domain in claims:
+            key = (canonical_role_name(named), domain.value)
+            self._holds[key] = _Hold(owner, at, runs)
         return overridden
 
     def release(self, owner: BaseAction) -> None:
@@ -527,7 +577,7 @@ class _ControlSlots:
     ) -> Optional[BaseAction]:
         """The action holding *domain* of *entity* at scenario time *at*, or
         ``None``."""
-        key = (entity, domain.value)
+        key = (canonical_role_name(entity), domain.value)
         if key not in self._holds:
             return None
         hold = self._holds[key]

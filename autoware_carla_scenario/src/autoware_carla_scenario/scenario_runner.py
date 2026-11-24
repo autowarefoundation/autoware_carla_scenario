@@ -50,9 +50,8 @@ from .metric_frames import FrameRecorder
 from .metrics import (
     BUILT_IN_METRICS,
     ego_progress,
-    reset_ego_motion,
-    set_importance_sampling_weight,
-    track_ego_motion,
+    reset_ego_progress,
+    track_ego_progress,
 )
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
@@ -61,6 +60,7 @@ from .entity_role import canonical_role_name
 from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
 from .signals.registry import clear_signal_controllers
+from .run_timeout import check_run_timeout
 from .seed import check_seed, set_run_seed
 from .server import CarlaServerManager
 from .traffic.base import DrivenEntity, TrafficBackend, TrafficContext
@@ -104,9 +104,14 @@ _CONDITION_LOG_INTERVAL: int = 20
 
 
 def _bounds_the_run(condition: BaseCondition) -> bool:
-    """Whether *condition*, as a fail condition, ends the run by a timeout.
+    """Whether *condition*, as a pass or a fail condition, ends the run by a
+    timeout.
 
-    Exactly these count:
+    The runner ends the run on the first tick a pass or a fail condition
+    reports anything at all, so the same composites count on either side
+    (#2382): a pass-side timeout ends the run as a pass -- ``lane_change``
+    with ``expect=fail`` passes once its timeout runs out.  Exactly these
+    count:
 
     - a bare :class:`TimeoutCondition`;
     - an :class:`OrCondition` with a child that counts -- an OR fires as soon
@@ -139,12 +144,15 @@ def _register_default_timeout(
 ) -> bool:
     """Give *scenario* the runner's default timeout, unless it has its own.
 
-    A scenario that registers a timeout fail condition has said how long it
-    runs -- a red light that turns green after a drawn delay needs that delay
-    and then some, however short the run's default is -- so the default would
-    only cut it short.  A scenario that registers none is given the default,
-    so that no run goes on forever.  What counts as a timeout of its own is
-    :func:`_bounds_the_run`.
+    A scenario that registers a timeout condition has said how long it runs
+    -- a red light that turns green after a drawn delay needs that delay and
+    then some, however short the run's default is -- so the default would
+    only cut it short.  That holds for a pass condition as much as for a fail
+    one (#2382): a scenario that passes when its timeout runs out (the
+    ``lane_change`` example expecting no lane change) ends there, and a
+    default fail timeout could only fail it first.  A scenario that registers
+    none is given the default, so that no run goes on forever.  What counts
+    as a timeout of its own, on either side, is :func:`_bounds_the_run`.
 
     So the runner's ``timeout_seconds``, ``run_scenario(timeout_seconds=...)``
     and ``ScenarioQueue.add(timeout_seconds=...)`` -- the run's
@@ -162,7 +170,9 @@ def _register_default_timeout(
     Returns:
         Whether the default was registered.
     """
-    if any(_bounds_the_run(c) for c in scenario._fail_conditions):
+    if any(_bounds_the_run(c) for c in scenario._pass_conditions) or any(
+        _bounds_the_run(c) for c in scenario._fail_conditions
+    ):
         logger.info(
             "[%s] Scenario registers its own timeout; the default of %.1fs "
             "is not added",
@@ -487,6 +497,9 @@ def _judge_metrics(
             it, one of them fails (exits, answers out of protocol, or does not
             answer in time), or the metric fails in every frame evaluated: a
             metric that read nothing does not pass the run.
+        ~autoware_carla_scenario.metric_batch.MetricEvaluationError: Any
+            other metric judged raised in every frame evaluated, for the same
+            reason.
     """
     if recorder is None:
         return result
@@ -1054,14 +1067,18 @@ class ScenarioRunner:
             port: CARLA server RPC port.
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default ``TimeoutCondition`` registered on every
-                scenario that registers no timeout fail condition of its own,
-                in **simulated** seconds -- the same clock every other
+                scenario that registers no timeout condition (pass or fail) of
+                its own, in **simulated** seconds -- the same clock every other
                 duration is on, so a scenario given sixty seconds is given
                 sixty of its own however fast the host runs.  A scenario with
                 its own timeout keeps it, longer or shorter than this one, and
                 this one does not apply to it (see
                 ``_register_default_timeout`` for what counts).
-            output_dir: Directory where CARLA recording logs are saved.
+            output_dir: Directory where each run's outputs are saved, CARLA's
+                recorder log among them.  A relative one is taken from this
+                process's working directory; the recorder is handed it
+                made absolute (symlinks kept), since the CARLA server would
+                take a relative path from its own.
             max_tick_rate_hz: Upper bound on how fast the tick loop steps the
                 world, or *None* to step as fast as the server allows.  Slow
                 that down to the rate of the slowest client reading the
@@ -1089,9 +1106,13 @@ class ScenarioRunner:
 
         Raises:
             ValueError: *world_reset* is not ``"reload"`` or ``"soft"``, or
-                *reload_every* is negative.
+                *reload_every* is negative, or *timeout_seconds* is not
+                positive and finite.
         """
         check_world_reset(world_reset, reload_every)
+        # Refused now, not once a run has set the world up and spawned the
+        # ego, where the default timeout is registered (#2287).
+        check_run_timeout(timeout_seconds, key="timeout_seconds")
         self._world_reset = world_reset
         self._reload_every = reload_every
         self._soft_resets = 0
@@ -1532,7 +1553,7 @@ class ScenarioRunner:
         self._soft_resets += 1
         return True
 
-    def reset_world(self, scenario_name: str = "") -> None:
+    def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
         """Reset the world, so the next scenario starts on a clean one.
 
         With ``world_reset="reload"`` (the default) the map is loaded again:
@@ -1540,10 +1561,21 @@ class ScenarioRunner:
         and the server's current map otherwise.  With ``world_reset="soft"``
         the world is put back as it was loaded, without a load, when it can
         be (:meth:`_soft_reset`), and the map is loaded otherwise.
+
+        A soft reset that fails falls back on the load.  A load that fails is
+        logged, and the world may keep what the last run left in it (its
+        weather, re-timed traffic lights, actors).  Then, with *strict*, the
+        load's error is raised: a :class:`~autoware_carla_scenario.scenario_queue.ScenarioQueue`
+        resets the world this way before each attempt, so that a world it
+        could not reset is that attempt's failure (retried, or erroring the
+        case) rather than the world the next case runs on (#2243).  Without
+        it (the default; :meth:`restore_world`, and a run's own reset in
+        :meth:`run_scenario`), nothing is raised.  Either way, the next reset
+        loads the map, however the runner resets.
         """
         if self._world_reset == RESET_SOFT and self._soft_reset(scenario_name):
             return
-        self._reload_world(scenario_name)
+        self._reload_world(scenario_name, strict)
 
     def restore_world(self, scenario_name: str = "") -> None:
         """Hand the world back to the server's other clients after the last run.
@@ -1596,8 +1628,9 @@ class ScenarioRunner:
                 exc_info=True,
             )
 
-    def _reload_world(self, scenario_name: str) -> None:
-        """Load the map again (see :meth:`reset_world`)."""
+    def _reload_world(self, scenario_name: str, strict: bool = False) -> None:
+        """Load the map again (see :meth:`reset_world`); raise the load's
+        error, once logged, when *strict*."""
         # Reload the world to guarantee a completely clean state (all
         # actors, sensors, physics state, settings and weather are reset).
         # This is more reliable than destroying actors individually, which
@@ -1645,6 +1678,11 @@ class ScenarioRunner:
                     scenario_name,
                     exc_info=True,
                 )
+            if strict:
+                # The caller (a queue, before an attempt) must not run on
+                # this world: the attempt fails, and the next one -- after a
+                # restart, if the server is down -- resets it again.
+                raise
 
     def run_scenario(
         self,
@@ -1661,14 +1699,17 @@ class ScenarioRunner:
         1. Enable synchronous mode on the world
         2. Prepare the traffic backend (synchronous mode, seed, whatever it
            needs to start), before anything is spawned
-        3. Call ``scenario.setup(world)``
+        3. Call ``scenario.setup()``
         4. Spawn the ego vehicle
         5. Start the CARLA native recorder
-        6. Register the default timeout fail condition, unless the scenario
+        6. Bring the ego up (``on_scenario_start``) and wait until it is
+           ready, release the vehicles' brakes, start the traffic backend and
+           give the vehicles their initial speeds
+        7. Register the default timeout fail condition, unless the scenario
            registered a timeout of its own
-        7. Run the tick loop
-        8. Stop the recorder and destroy the ego vehicle
-        9. Close the traffic backend and restore the world
+        8. Run the tick loop, then judge the run's metric conditions
+        9. Destroy the ego vehicle, then stop the recorder
+        10. Close the traffic backend and restore the world
 
         Args:
             scenario: The scenario to run.
@@ -1703,8 +1744,9 @@ class ScenarioRunner:
         Raises:
             ValueError: If the scenario's ``random_seed`` is not a whole
                 number from 0 to :data:`~autoware_carla_scenario.seed.MAX_SEED`
-                (:func:`~autoware_carla_scenario.seed.check_seed`), before the
-                world is touched.
+                (:func:`~autoware_carla_scenario.seed.check_seed`), or the
+                timeout (*timeout_seconds*, or the runner's) is not positive
+                and finite, before the world is touched.
         """
         if timeout_seconds is None:
             timeout_seconds = self.timeout_seconds
@@ -1712,8 +1754,10 @@ class ScenarioRunner:
         # Checked before the world is touched (autoware_carla_scenario.seed):
         # a scenario's random_seed may be assigned after it was built, and a
         # seed CARLA or SUMO refuses would otherwise raise once the world is
-        # synchronous, outside the cleanup that puts it back.
+        # synchronous, outside the cleanup that puts it back.  The timeout
+        # likewise: it is registered only after the ego is up (#2287).
         seed = check_seed("random_seed", scenario.random_seed)
+        timeout_seconds = check_run_timeout(timeout_seconds, key="timeout_seconds")
         try:
             result = self._run_scenario(
                 scenario, scenario_name, seed, timeout_seconds, case, file_stem
@@ -2001,7 +2045,12 @@ class ScenarioRunner:
             output_path = self.output_dir / f"{file_stem}.log"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self._client.start_recorder(str(output_path))
+                # Absolute: the CARLA server resolves a relative path against
+                # its own directory, not this process's (#2382).  Not
+                # resolved: a symlinked output_dir keeps the spelling it was
+                # given, which a server in another mount namespace may share
+                # where it does not share the link's target.
+                self._client.start_recorder(str(output_path.absolute()))
             except RuntimeError as error:
                 # CARLA 0.10 (UE5) can refuse start_recorder; a missing replay
                 # log must not fail an otherwise healthy scenario run.
@@ -2159,8 +2208,7 @@ class ScenarioRunner:
                     pass
                 else:
                     set_measured_scenario(scenario)
-                set_importance_sampling_weight(scenario.importance_sampling_weight)
-                reset_ego_motion()
+                reset_ego_progress()
                 metric_recorder = _metric_recorder(scenario)
                 # Walkers measured outside a run (or by a run that never reached
                 # its cleanup) are not this run's.
@@ -2272,13 +2320,12 @@ class ScenarioRunner:
                                 "fallen walker", entity, actor_id, "fallen"
                             )
 
-                    # The weight the actions above leave the run with, for the
-                    # metric that reads it.
-                    set_importance_sampling_weight(scenario.importance_sampling_weight)
-                    # The ego's motion, which the weaving metrics read.
-                    track_ego_motion(world, elapsed)
+                    # How far the ego has got, which tells a run out of time
+                    # apart (ego_progress).
+                    track_ego_progress(world, elapsed)
                     # The frames the MetricConditions are judged on once the run
-                    # is over.
+                    # is over, with the weight the actions above leave the run
+                    # with: the weaving metrics and the weight are read off them.
                     if metric_recorder is not None:
                         metric_recorder.record(
                             world, elapsed, scenario.importance_sampling_weight
@@ -2387,13 +2434,18 @@ class ScenarioRunner:
                         )
                         break
 
-                # If the loop exited via is_done() with no result, treat as passed
+                # If the loop exited via is_done() with no result, treat as
+                # passed, with each registered condition's status, as on the
+                # other paths (#2243).
                 if result is None:
                     elapsed = clock.simulated
                     result = ScenarioResult(
                         passed=True,
                         message="Scenario completed successfully",
                         elapsed_seconds=elapsed,
+                        condition_statuses=_condition_statuses(
+                            scenario, world, elapsed, scenario_name
+                        ),
                     )
 
                 if TYPE_CHECKING:
@@ -2420,8 +2472,7 @@ class ScenarioRunner:
         finally:
             set_run_seed(previous_seed)
             set_measured_scenario(None)
-            set_importance_sampling_weight(None)
-            reset_ego_motion()
+            reset_ego_progress()
             # The walkers the trajectory runs and the vehicles led out of their
             # junctions measured were this run's.
             forget_walkers()

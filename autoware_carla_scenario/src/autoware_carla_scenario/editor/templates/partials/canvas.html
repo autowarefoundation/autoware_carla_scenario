@@ -32,7 +32,7 @@
             class="ed-add-form">
         <input type="hidden" name="actor" value="{{ actor }}">
         {% if phase %}<input type="hidden" name="phase" value="{{ phase }}">{% endif %}
-        <select name="type_id" class="ed-input-xs" style="flex:1">
+        <select name="type_id" class="ed-input-xs" style="flex:1" aria-label="Action type">
           {# Each track offers only what belongs in it: a vehicle cannot set the
              traffic lights, the environment cannot change lane, and a
              pedestrian can do neither -- the kinds an action is for are the
@@ -46,7 +46,7 @@
             {% endif %}
           {% endfor %}
         </select>
-        <button type="submit" class="ed-btn-xs">{{ ic.icon('plus', 11) }}</button>
+        <button type="submit" class="ed-btn-xs" aria-label="Add the action" title="Add">{{ ic.icon('plus', 11) }}</button>
       </form>
     </details>
   </div>
@@ -87,12 +87,12 @@
     </div>
 
     <div class="ed-move">
-      <button class="ed-move-btn" title="Move earlier"
+      <button class="ed-move-btn" title="Move earlier" aria-label="Move earlier"
               hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/move"
               hx-vals='{"delta": -1}' hx-target="#editor-body" hx-swap="innerHTML">
         {{ ic.icon('left', 11) }}
       </button>
-      <button class="ed-move-btn" title="Move later"
+      <button class="ed-move-btn" title="Move later" aria-label="Move later"
               hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/move"
               hx-vals='{"delta": 1}' hx-target="#editor-body" hx-swap="innerHTML">
         {{ ic.icon('right', 11) }}
@@ -178,7 +178,7 @@
     </div>
     <form hx-post="/draft/{{ draft.id }}/entity" hx-target="#editor-body" hx-swap="innerHTML"
           style="display:flex; align-items:center; gap:7px">
-      <select name="kind" class="ed-input-sm">
+      <select name="kind" class="ed-input-sm" aria-label="Kind of actor">
         <option value="vehicle">Vehicle</option>
         <option value="motorcycle">Motorcycle</option>
         <option value="pedestrian">Pedestrian</option>

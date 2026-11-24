@@ -59,9 +59,10 @@ So the gap does not depend on how the lanelets beside each other are cut or
 how long they are, and on a curve it is the distance along the road.  Where
 there is no lane to measure along -- no Lanelet2 map loaded, or the ego on no
 lanelet that runs its way -- the measure falls back to the **geometric**
-definition: a vehicle ahead of the ego's origin within a lane of its centre
-line (:data:`LANE_HALF_WIDTH_M`), the gap bumper to bumper along the ego's
-heading.  Which definition read the gap is recorded
+definition: a vehicle ahead of the ego's origin within three
+:data:`LANE_HALF_WIDTH_M` of its centre line (5.25 m: its lane or a lane
+beside it), but not one alongside in the next lane, the gap bumper to bumper
+along the ego's heading.  Which definition read the gap is recorded
 (:func:`vehicle_ahead_definitions`).
 
 :data:`VEHICLE_AHEAD_RELATIVE_SPEED_KPH` is read in the same frame: the
@@ -102,11 +103,17 @@ import lanelet2.geometry
 
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
-from .coordinate.transform import _STACKED_HEIGHT_TOLERANCE, _project_with_height
+from .coordinate.transform import (
+    _STACKED_HEIGHT_TOLERANCE,
+    _project_with_height,
+    carla_xy_to_map,
+    lanelets_beside,
+    map_xy_to_carla,
+)
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
-from .metrics import is_metric
-from .utils.clearance import _vertical_span, on_another_level
+from .metrics import _in_frame, is_metric
+from .utils.clearance import actor_vertical_span, on_another_level
 from .utils.stop_line import regulatory_element_stop_lines
 
 if TYPE_CHECKING:
@@ -374,11 +381,7 @@ def in_ego_frame(
     The pedestrian measures read in it, and the vehicle-ahead measures where
     there is no lane to read along.
     """
-    yaw = math.radians(ego.rotation.yaw)
-    forward_x, forward_y = math.cos(yaw), math.sin(yaw)
-    dx = location.x - ego.location.x
-    dy = location.y - ego.location.y
-    return dx * forward_x + dy * forward_y, -dx * forward_y + dy * forward_x
+    return _in_frame(ego, location.x, location.y)
 
 
 def _pedestrians_around(
@@ -393,7 +396,7 @@ def _pedestrians_around(
     falling away is around
     (:func:`~autoware_carla_scenario.utils.clearance.on_another_level`)."""
     transform = ego.get_transform()
-    ego_span = _vertical_span(ego, transform)
+    ego_span = actor_vertical_span(ego, transform)
     found: list[_Around] = []
     for actor in actors:
         if actor.id == ego.id or not actor.type_id.startswith("walker."):
@@ -403,7 +406,7 @@ def _pedestrians_around(
         velocity = _WALKERS.walker(actor, elapsed, location)
         ahead, lateral = in_ego_frame(transform, location)
         if on_another_level(
-            ego_span, _vertical_span(actor, placed), math.hypot(ahead, lateral)
+            ego_span, actor_vertical_span(actor, placed), math.hypot(ahead, lateral)
         ):
             continue
         found.append(
@@ -727,12 +730,13 @@ def _line(lanelet_id: int) -> _Line:
     _forget_other_maps(lanelet_map)
     if lanelet_id in _LINES.by_id:
         return _LINES.by_id[lanelet_id]
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     xs: list[float] = []
     ys: list[float] = []
     for point in lanelet_map.laneletLayer[lanelet_id].centerline:
-        xs.append(float(point.x) - offset_x)
-        ys.append(-(float(point.y) - offset_y))
+        x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+        xs.append(x)
+        ys.append(y)
     line = _Line(xs, ys)
     _LINES.by_id[lanelet_id] = line
     return line
@@ -745,18 +749,20 @@ def _area(lanelet_id: int) -> _Area:
     _forget_other_maps(lanelet_map)
     if lanelet_id in _LINES.areas:
         return _LINES.areas[lanelet_id]
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     lanelet = lanelet_map.laneletLayer[lanelet_id]
     xs: list[float] = []
     ys: list[float] = []
     for point in lanelet.leftBound:
-        xs.append(float(point.x) - offset_x)
-        ys.append(-(float(point.y) - offset_y))
+        x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+        xs.append(x)
+        ys.append(y)
     right_xs: list[float] = []
     right_ys: list[float] = []
     for point in lanelet.rightBound:
-        right_xs.append(float(point.x) - offset_x)
-        right_ys.append(-(float(point.y) - offset_y))
+        x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+        right_xs.append(x)
+        right_ys.append(y)
     for i in range(len(right_xs) - 1, -1, -1):
         xs.append(right_xs[i])
         ys.append(right_ys[i])
@@ -770,8 +776,8 @@ def _lanelets_at(x: float, y: float) -> list[int]:
     ``(x, y)``: asked of the nearest :data:`_CANDIDATES`, then of twice as
     many while every one asked holds it (a junction where many overlap)."""
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    point = lanelet2.core.BasicPoint2d(x + offset_x, -y + offset_y)
+    map_x, map_y = carla_xy_to_map(x, y, mm.mgrs_offset)
+    point = lanelet2.core.BasicPoint2d(map_x, map_y)
     asked = _CANDIDATES
     while True:
         nearest = lanelet2.geometry.findNearest(
@@ -816,9 +822,9 @@ def _at_the_egos_level(
         z_offset = mm.z_offset
     except RuntimeError:
         return running
-    offset_x, offset_y = mm.mgrs_offset
     layer = mm.lanelet_map.laneletLayer
-    x, y, z = ego.x + offset_x, -ego.y + offset_y, ego.z + z_offset
+    x, y = carla_xy_to_map(ego.x, ego.y, mm.mgrs_offset)
+    z = ego.z + z_offset
     heights: list[float] = []
     for lanelet_id, _angle, _d2 in running:
         heights.append(_project_with_height(layer[lanelet_id], x, y, z)[0])
@@ -894,15 +900,14 @@ def _lanelet_boxes() -> list[tuple[int, float, float, float, float]]:
     _forget_other_maps(lanelet_map)
     if _LINES.boxes:
         return _LINES.boxes
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     boxes: list[tuple[int, float, float, float, float]] = []
     for lanelet in lanelet_map.laneletLayer:
         min_x, min_y = math.inf, math.inf
         max_x, max_y = -math.inf, -math.inf
         for bound in (lanelet.leftBound, lanelet.rightBound):
             for point in bound:
-                x = float(point.x) - offset_x
-                y = -(float(point.y) - offset_y)
+                x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
                 min_x, max_x = min(min_x, x), max(max_x, x)
                 min_y, max_y = min(min_y, y), max(max_y, y)
         boxes.append((int(lanelet.id), min_x, min_y, max_x, max_y))
@@ -918,7 +923,7 @@ def _overlapping(lanelet_id: int) -> list[int]:
     box meets a block of its outline (:func:`_lanelet_boxes`)."""
     mm = MapManager.get_instance()
     layer = mm.lanelet_map.laneletLayer
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     area = _area(lanelet_id)
     line = _line(lanelet_id)
     grow = 2 * ON_LANELET_M
@@ -959,34 +964,13 @@ def _overlapping(lanelet_id: int) -> list[int]:
             xs: list[float] = []
             ys: list[float] = []
             for point in bound:
-                xs.append(float(point.x) - offset_x)
-                ys.append(-(float(point.y) - offset_y))
+                x, y = map_xy_to_carla(float(point.x), float(point.y), offset)
+                xs.append(x)
+                ys.append(y)
             if _runs_inside(area, line, xs, ys, limit):
                 rivals.append(candidate)
                 break
     return rivals
-
-
-def _beside(lanelet_id: int) -> list[int]:
-    """The lanelets beside *lanelet_id*, either side, a lane change allowed
-    across the line between or not (the routing graph's neighbours)."""
-    mm = MapManager.get_instance()
-    graph = mm.routing_graph
-    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
-    found: list[int] = []
-    left = graph.left(lanelet)
-    if left is not None:
-        found.append(int(left.id))
-    right = graph.right(lanelet)
-    if right is not None:
-        found.append(int(right.id))
-    adjacent_left = graph.adjacentLeft(lanelet)
-    if adjacent_left is not None:
-        found.append(int(adjacent_left.id))
-    adjacent_right = graph.adjacentRight(lanelet)
-    if adjacent_right is not None:
-        found.append(int(adjacent_right.id))
-    return found
 
 
 class _LaneFrame:
@@ -1091,7 +1075,7 @@ class _LaneFrame:
             back = previous_id
         self.beside = {}
         for lanelet_id in list(self.start):
-            for other in _beside(lanelet_id):
+            for other in lanelets_beside(lanelet_id):
                 if other not in self.start and other not in self.beside:
                     self.beside[other] = lanelet_id
         self.rivals = _overlapping(ego_lanelet)
@@ -1402,7 +1386,7 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
             ego = _moving(ego_actor)
             ego_placed = ego_actor.get_transform()
             ego_z = float(ego_placed.location.z)
-            ego_span = _vertical_span(ego_actor, ego_placed)
+            ego_span = actor_vertical_span(ego_actor, ego_placed)
             reach = AHEAD_RANGE_M + 2 * _REACH_MARGIN_M
             others: list[_Vehicle] = []
             for actor in actors:
@@ -1422,7 +1406,7 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
                     ego_z,
                     ego_span,
                     float(location.z),
-                    _vertical_span(actor, placed),
+                    actor_vertical_span(actor, placed),
                     planar,
                 ):
                     continue
@@ -1500,7 +1484,7 @@ def _stop_lines_on(frame: _LaneFrame) -> list[tuple[float, int]]:
         return _STOP_LINES.at
     mm = MapManager.get_instance()
     layer = mm.lanelet_map.laneletLayer
-    offset_x, offset_y = mm.mgrs_offset
+    offset = mm.mgrs_offset
     seen: set[int] = set()
     found: list[tuple[float, int]] = []
     for lanelet_id in frame.start:
@@ -1509,8 +1493,11 @@ def _stop_lines_on(frame: _LaneFrame) -> list[tuple[float, int]]:
                 points = list(line)
                 if not points:
                     continue
-                x = sum(float(p.x) for p in points) / len(points) - offset_x
-                y = -(sum(float(p.y) for p in points) / len(points) - offset_y)
+                x, y = map_xy_to_carla(
+                    sum(float(p.x) for p in points) / len(points),
+                    sum(float(p.y) for p in points) / len(points),
+                    offset,
+                )
                 s, _yaw = frame.project(lanelet_id, x, y)
                 found.append((s, lanelet_id))
     found.sort()

@@ -33,11 +33,15 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from ...utils.opendrive import sanitize_opendrive
+from ...utils.process_group import kill_group
 from ..base import TrafficBackendError, TrafficBackendUnavailable
 from .options import random_trips_argv, ride_options, trip_options, walk_options
+
+if TYPE_CHECKING:
+    import roadgen
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +58,13 @@ __all__ = [
 ]
 
 _INSTALL = "install the `sumo` extra (autoware-carla-scenario[sumo])"
+
+#: How long netconvert, and randomTrips.py, may run before the run gives up
+#: on them, seconds: generous (netconvert builds a 6400-junction grid with
+#: crossings in about 12 s), but a stuck tool no longer hangs the run
+#: (#2327).  Read when they run, not bound once.
+_NETCONVERT_TIMEOUT_S = 600.0
+_RANDOM_TRIPS_TIMEOUT_S = 600.0
 
 
 @dataclass(frozen=True)
@@ -83,7 +94,9 @@ class SignalTable:
     ``(tls id, link index)`` of every movement it governs in SUMO.
     """
 
-    def __init__(self, trace: Any) -> None:
+    _trace: roadgen.Trace
+
+    def __init__(self, trace: roadgen.Trace) -> None:
         self._trace = trace
 
     @classmethod
@@ -95,8 +108,8 @@ class SignalTable:
 
         # The files are this cache's own and never change, but they were renamed
         # from roadgen's prefix to `network.*` after the traces recorded them.
-        files = (str(path) for path in network.trace_files)
-        return cls(roadgen.Trace.load(*files, check_files=False))
+        ir, read, sumo = network.trace_files
+        return cls(roadgen.Trace.load(str(ir), str(read), str(sumo), check_files=False))
 
     def links(self, signal_id: str) -> list[tuple[str, int]]:
         """The ``(tls id, link index)`` pairs the signal *signal_id* switches."""
@@ -144,9 +157,14 @@ def sumo_home() -> Path:
 
 
 def _binary(name: str) -> str:
-    path = sumo_home() / "bin" / name
-    if path.is_file():
-        return str(path)
+    """SUMO's binary *name*: in :func:`sumo_home`'s ``bin``, else on ``PATH``
+    (a SUMO installed without its tools, or without ``$SUMO_HOME``)."""
+    try:
+        path = sumo_home() / "bin" / name
+        if path.is_file():
+            return str(path)
+    except TrafficBackendUnavailable:
+        pass
     found = shutil.which(name)
     if found is None:
         raise TrafficBackendUnavailable(f"SUMO's {name} was not found: {_INSTALL}")
@@ -234,19 +252,34 @@ def build_network(
             ) from exc
         for warning in road_map.sumo_warnings():
             logger.debug("roadgen: %s", warning)
-        proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
-            [
-                _binary("netconvert"),
-                "-c",
-                f"{prefix}.netccfg",
-                *(["--crossings.guess"] if pedestrian_crossings else []),
-            ],
-            cwd=tmp,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        netconvert = _binary("netconvert")
+        timeout = _NETCONVERT_TIMEOUT_S
+        try:
+            proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
+                [
+                    netconvert,
+                    "-c",
+                    f"{prefix}.netccfg",
+                    *(["--crossings.guess"] if pedestrian_crossings else []),
+                ],
+                cwd=tmp,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TrafficBackendError(
+                f"SUMO's netconvert ({netconvert}) did not finish within "
+                f"{timeout:g} s"
+            ) from exc
+        except OSError as exc:
+            # Found but not runnable: gone since, not executable, or a
+            # script whose interpreter is missing (#2321).
+            raise TrafficBackendError(
+                f"Could not run SUMO's netconvert ({netconvert}): {exc}"
+            ) from exc
         if proc.returncode != 0 or not (tmp / f"{prefix}.net.xml").is_file():
             raise TrafficBackendError(
                 f"netconvert failed ({proc.returncode}): {proc.stderr.strip()[-2000:]}"
@@ -302,18 +335,44 @@ def _random_trips(
     home = str(sumo_home())
     env = os.environ.copy()
     env["SUMO_HOME"] = home
-    proc = subprocess.run(  # noqa: S603
-        cmd,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        check=False,
-    )
-    if proc.returncode != 0 or not out.is_file():
+    timeout = _RANDOM_TRIPS_TIMEOUT_S
+    try:
+        # In a session of its own: randomTrips.py runs duarouter as its own
+        # child, which killing randomTrips.py alone would leave running.
+        process = subprocess.Popen(  # noqa: S603
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        # The interpreter that runs it could not be started (#2321).
         raise TrafficBackendError(
-            f"randomTrips.py{what} failed ({proc.returncode}): "
-            f"{proc.stderr.strip()[-2000:]}"
+            f"Could not run randomTrips.py{what} ({cmd[0]}): {exc}"
+        ) from exc
+    # Closes its pipes, and reaps it, however this ends.
+    with process:
+        try:
+            _stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            kill_group(process)
+            process.wait()
+            raise TrafficBackendError(
+                f"randomTrips.py{what} did not finish within {timeout:g} s"
+            ) from exc
+        except BaseException:
+            # An interrupt: the group, in a session of its own, did not get
+            # the terminal's SIGINT.
+            kill_group(process)
+            process.wait()
+            raise
+    if process.returncode != 0 or not out.is_file():
+        tail = stderr.strip()[-2000:] if stderr else ""
+        raise TrafficBackendError(
+            f"randomTrips.py{what} failed ({process.returncode}): {tail}"
         )
     return out
 

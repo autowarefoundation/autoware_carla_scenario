@@ -1095,6 +1095,77 @@ class TestOneGoalLanelet:
                 del sys.modules[name]
 
 
+def _assert_all_lights_green(scenario: Any) -> None:
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    from autoware_carla_scenario import TrafficSignalAction  # noqa: PLC0415
+
+    (action,) = [
+        a for a in scenario._init_actions if isinstance(a, TrafficSignalAction)
+    ]
+    assert action.label == "set_all_green"
+    assert action._all_lights
+    assert action._state == carla.TrafficLightState.Green
+
+
+class TestAllLightsGreen:
+    """The default route crosses a signalised junction: every light is set
+    green as the run starts, so the verdict does not hang on its phase (#2253)."""
+
+    def test_the_template_sets_every_light_green(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module, configs = _import_from(
+            _TEMPLATE_SRC,
+            "my_scenario_package.reach_goal",
+            "my_scenario_package.configs",
+        )
+        scenario = _set_up(
+            monkeypatch, module, module.ReachGoalScenario, configs.ReachGoalConfig()
+        )
+        _assert_all_lights_green(scenario)
+
+    def test_a_scaffolded_scenario_sets_every_light_green(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = create_scenario_package("green_pkg", output_dir=tmp_path)
+        module, configs = _import_from(
+            result.root / "src", "green_pkg.green", "green_pkg.configs"
+        )
+        try:
+            scenario = _set_up(
+                monkeypatch,
+                module,
+                getattr(module, result.names["scenario_class"]),
+                getattr(configs, result.names["config_class"])(),
+            )
+            _assert_all_lights_green(scenario)
+        finally:
+            for name in [m for m in sys.modules if m.split(".")[0] == "green_pkg"]:
+                del sys.modules[name]
+
+    def test_the_template_and_the_scaffold_allow_the_same_time(
+        self, tmp_path: Path
+    ) -> None:
+        import yaml  # noqa: PLC0415
+
+        result = create_scenario_package("timed_pkg", output_dir=tmp_path)
+        (generated,) = (result.root / "src" / "timed_pkg" / "conf").rglob("*.yaml")
+        template = (
+            _TEMPLATE_SRC
+            / "my_scenario_package"
+            / "conf"
+            / "scenario"
+            / "reach_goal"
+            / "default.yaml"
+        )
+        timeouts = [
+            yaml.safe_load(path.read_text())["scenario"]["timeout_seconds"]
+            for path in (generated, template)
+        ]
+        assert timeouts == [15.0, 15.0]
+
+
 class TestGeneratedConfig:
     """The generated config refuses a bad timeout, as the template's does (#1818)."""
 

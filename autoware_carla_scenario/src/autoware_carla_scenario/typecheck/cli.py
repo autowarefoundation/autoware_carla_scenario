@@ -13,9 +13,11 @@ status is 0 when every scenario passed, 1 when one failed (or its ``controls:`` 
 invalid, or the checker itself raised on it: ``[FAILED] <config>: checker
 error: ...``, with the traceback on stderr, and the other configs are still
 checked and reported), and 2 when there is
-no Codon compiler to check with or the command line does not compose: no config
+no Codon compiler to check with, a config could not be checked (``[SKIPPED]``
+says why) and none failed, or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
-(the message suggests the closest key; ``+key=value`` adds a new one).  ``HYDRA_FULL_ERROR=1``
+(the message suggests the closest key; ``+key=value`` adds a new one; each
+config of a glob that does not compose is reported, named).  ``HYDRA_FULL_ERROR=1``
 shows the traceback of such an error.
 ``scenario='*'`` is every config, like ``scenario='*/*'`` or no ``scenario=``.
 A package author checks only theirs: ``scenario='my_package/*'``.
@@ -23,7 +25,15 @@ A package author checks only theirs: ``scenario='my_package/*'``.
 ``--library`` checks the framework's own modules instead: those
 ``typecheck/library.py`` lists as checked, or the modules named after it with
 the checked modules they import (docs/typecheck.md, "Checking the framework
-itself").
+itself").  A name that is not a module of the package, or that it EXCLUDES,
+is refused (``[FAILED]``, exit status 1) before Codon is looked for.
+
+The flags are ``-h``/``--help`` and ``--library``.  Any other argument that
+starts with ``-`` is refused with ``Error: scenario-check does not take
+<flag>`` and exit 2, rather than read as an override (or, after
+``--library``, as a module name).  Overrides (``key=value``, ``+key=value``,
+``++key=value``, ``~key``) are passed on as the runner passes them.  Ctrl-C
+prints ``scenario-check: interrupted`` and exits 130.
 """
 
 from __future__ import annotations
@@ -35,7 +45,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from .check import find_supported_codon, typecheck_library
+from .check import find_supported_codon, refuse_library_modules, typecheck_library
 from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
@@ -57,7 +67,18 @@ def _checker_error(what: str, exc: BaseException) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Check the scenario configs *argv* selects (``sys.argv[1:]`` by default)."""
+    """Check the scenario configs *argv* selects (``sys.argv[1:]`` by default).
+
+    Ctrl-C prints one line, not a traceback, and exits 130 (#2333).
+    """
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        print("scenario-check: interrupted", file=sys.stderr)  # noqa: T201
+        return 130
+
+
+def _main(argv: list[str] | None) -> int:
     logging.basicConfig(
         level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
@@ -65,18 +86,37 @@ def main(argv: list[str] | None = None) -> int:
     if any(a in ("-h", "--help") for a in args):
         print(__doc__)  # noqa: T201
         return 0
+    # Hydra would read a flag it does not know as an override, and report it
+    # once for every config (#2333); after --library, it is no module name.
+    for arg in args:
+        if arg.startswith("-") and arg != "--library":
+            # --library takes no value: `--library=x` is named whole.
+            flag = arg if arg.startswith("--library=") else arg.split("=", 1)[0]
+            print(f"Error: scenario-check does not take {flag}", file=sys.stderr)  # noqa: T201
+            return 2
+    library = "--library" in args
+    modules = [a for a in args if a != "--library"]
+    if library and modules:
+        # Refused the same with Codon or without (#2288).
+        refusal = refuse_library_modules(modules)
+        if refusal is not None:
+            print(f"[FAILED] {refusal.format()}")  # noqa: T201
+            return 1
     try:
         toolchain = find_supported_codon()
     except ToolchainError as exc:
         print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
         return 2
-    if "--library" in args:
-        modules = [a for a in args if a != "--library"]
+    if library:
         try:
             result = typecheck_library(modules or None, toolchain=toolchain)
         except Exception as exc:  # noqa: BLE001 - reported as a failed check
             print(_checker_error("library check", exc))  # noqa: T201
             return 1
+        if result.skipped is not None:
+            # No verdict either way, as for a skipped config (#2249).
+            print(f"[SKIPPED] {result.format()}")  # noqa: T201
+            return 2
         print(f"[{'ok' if result.ok else 'FAILED'}] {result.format()}")  # noqa: T201
         return 0 if result.ok else 1
 
@@ -91,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         get_scenario_registry,
         load_scenario_plugins,
     )
+    from ..scenario_glob import is_scenario_glob  # noqa: PLC0415
 
     load_scenario_plugins()
     pattern, overrides = run._extract_scenario_override(["scenario-check", *args])
@@ -99,12 +140,19 @@ def main(argv: list[str] | None = None) -> int:
     names = resolve_scenarios(pattern)
     if names is None:
         return 2
+    # Each config of a glob is composed and may fail on its own: every
+    # failure is reported, each headed by its config's name, as
+    # scenario-expand reports them (#2249), before the command gives up.
+    globbed = is_scenario_glob(pattern)
     cfgs = []
+    composed = True
     for name in names:
-        cfg = compose_or_report(name, overrides)
+        cfg = compose_or_report(name, overrides, named=globbed)
         if cfg is None:
-            return 2
+            composed = False
         cfgs.append(cfg)
+    if not composed:
+        return 2
 
     # The sweep reads `controls:` only when it expands; a wrong one is an
     # authoring error, reported here with its config path (#546).
@@ -144,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     results: list[Any] = [None if n in control_errors else next(checked) for n in names]
 
     failed = len(control_errors)
+    skipped = 0
     for config_name, cfg, result in zip(names, cfgs, results):
         scenario_name = str(cfg.scenario.name)
         if config_name in control_errors:
@@ -164,12 +213,19 @@ def main(argv: list[str] | None = None) -> int:
         if result is None:
             print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
             continue
+        if result.skipped is not None:
+            # No verdict either way: never a pass (#2249).
+            print(f"[SKIPPED] {config_name}: {result.format()}")  # noqa: T201
+            skipped += 1
+            continue
         status = "ok" if result.ok else "FAILED"
         print(f"[{status}] {config_name}: {result.format()}")  # noqa: T201
         failed += not result.ok
     if failed:
         print(f"{failed} of {len(names)} scenario config(s) failed the static check")  # noqa: T201
-    return 1 if failed else 0
+    if skipped:
+        print(f"{skipped} of {len(names)} scenario config(s) could not be checked")  # noqa: T201
+    return 1 if failed else 2 if skipped else 0
 
 
 if __name__ == "__main__":

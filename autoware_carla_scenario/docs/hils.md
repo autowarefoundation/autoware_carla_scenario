@@ -174,7 +174,16 @@ PCs), run the playbooks with the variables `--setup-vars` prints.
 
 The bridge waits for a CARLA server that is not up yet, and for runs, for as
 long as it runs; Ctrl-C or SIGTERM end a running scenario (its `scenario_end`
-steps), run the `shutdown` steps and close the devices. A systemd unit keeps it
+steps), run the `shutdown` steps and close the devices. A step that waits (a
+`wait` or a `sleep`) in any phase but `shutdown` ends at once on SIGTERM rather
+than wait out its timeout: a stop during `startup` ends the startup steps (the
+bridge does not reach CARLA), one during `scenario_start` or `warmup` fails the
+run's start, and in `scenario_end` the waits left are skipped while its sends
+still go. The `shutdown` steps always run whole.
+The bridge takes the `runner.listen` address before the `startup` steps: one
+it cannot listen at (a port in use) ends `scenario-hils` with status 1 and a
+one-line error before anything reaches the ECUs, and no `shutdown` step is sent
+either. A systemd unit keeps it
 up across reboots:
 
 ```ini
@@ -195,6 +204,16 @@ WantedBy=multi-user.target
 ```
 
 A failing `startup` step stops the bridge with status 1 (systemd restarts it).
+
+### Exposure
+
+The run link has no authentication: anyone who can reach `runner.listen` can
+start and end runs on the ECUs and read the commands they send. Its default,
+`0.0.0.0:7700`, is every interface, so bind it to the interface that faces the
+scenario runner (or to `127.0.0.1` when the runner is on the same machine), or
+firewall the port so only the runner reaches it. Listening on an address that
+is not a loopback one, `scenario-hils` says so on stderr when it starts, as the
+viewer and the scenario editor do.
 
 ## Configuration
 
@@ -220,7 +239,7 @@ devices:
 | `ego.wait` | `120.0` | seconds (not negative; wall clock) without an ego -- since the bridge reached CARLA, or since the last scenario ended -- before a warning, logged once a wait (it keeps waiting) |
 | `canvas` | none | a carla_canvas configuration: see [carla_canvas](#sensors-rendered-by-carla_canvas) |
 | `clock` | `simulation` | the devices' time: see [Time](#time) |
-| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge: `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link (an empty `""` is refused) |
+| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge, with no authentication ([Exposure](#exposure)): `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link (an empty `""` is refused) |
 | `commands.mode` | `control` | how the ECUs' command drives the ego: see [ECU to simulation](#ecu-to-simulation) |
 | `devices` | | one entry per device, by name |
 | `lifecycle` | none | steps around the bridge and each scenario: see [Lifecycle](#lifecycle) |
@@ -257,7 +276,12 @@ its `intensity_scale` are finite.
 
 A device is one hilspy channel: `url` (the transport), `codec` (`raw` when
 omitted) and `options` (codec options), exactly what `hilspy.open(url, codec,
-**options)` takes. It has `messages` (periodic messages filled from the ego's
+**options)` takes. The `url` is non-blank text, and the `codec` a name
+(`raw`, `nmea`, ...) or a name and its argument (`dbc:vehicle.dbc`,
+`lidar:vlp16`): an empty or blank `url`, an empty `codec` and a `dbc:` with
+nothing after the colon are refused when the file loads, naming the key and
+the value (`devices.vehicle_can.codec: expected an argument after the colon
+..., got 'dbc:'`), not passed on to hilspy. It has `messages` (periodic messages filled from the ego's
 signals, sent while a scenario runs) and `inputs` (messages the ECU sends that
 carry its command), **or** a `sensor` (a CARLA sensor on the ego whose
 measurements it is sent). A device with neither still serves the lifecycle
@@ -500,7 +524,9 @@ A `send` has either a `name` (and `fields`) or raw `data` (and `id`), never
 keys of both: only a missing or null key counts as absent.
 
 A `wait` is satisfied by a matching message received since its phase began, so
-an ECU that answers a `send` at once is not missed. While steps run the bridge
+an ECU that answers a `send` at once is not missed, nor is a matching message
+that later ones of its name do not match (a one-frame `Ready: 1` pulse among
+periodic `Ready: 0` status frames). While steps run the bridge
 does not follow the world, and with `clock: simulation` its clock follows the
 wall clock instead, so periodic messages keep flowing to an ECU that is being
 waited on. `startup` and `shutdown` steps have no ego, so their fields are

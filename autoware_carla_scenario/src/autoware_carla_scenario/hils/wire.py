@@ -26,7 +26,9 @@ __all__ = [
     "parse_address",
 ]
 
-#: Bumped on an incompatible change; both ends check it.
+#: Bumped on an incompatible change.  The bridge announces it (``hello``) and
+#: the run checks it: a run of another version ends rather than misread the
+#: bridge.
 PROTOCOL_VERSION = 1
 
 #: The port the bridge listens on unless told otherwise.
@@ -86,6 +88,18 @@ LINK_DIRECTIONS: Tuple[str, ...] = ("to_ecu", "from_ecu", "both")
 def encode(message: Mapping[str, Any]) -> bytes:
     """One message, as the line that carries it."""
     return (json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+#: How much of a refused line an error of :mod:`.protocol`'s ``LineReader``
+#: quotes, bytes.
+_PREVIEW_BYTES = 200
+
+
+def _preview(line: bytes) -> str:
+    """The start of *line*, for an error message."""
+    if len(line) > _PREVIEW_BYTES:
+        return f"{line[:_PREVIEW_BYTES]!r}... ({len(line)} bytes)"
+    return repr(line)
 
 
 def _parse_port(text: str, address: str) -> int:

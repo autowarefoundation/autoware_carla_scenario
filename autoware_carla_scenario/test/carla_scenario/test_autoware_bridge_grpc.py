@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import math
 import time
+import threading
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 import grpc
 import pytest
@@ -162,13 +163,57 @@ def test_close_is_idempotent(bridge: GrpcAutowareBridgeServer) -> None:
 
 def test_bind_failure_raises() -> None:
     # Bind an ephemeral port, then try to reuse that exact port for a second
-    # server: the explicit (non-zero) request must fail loudly.
+    # server: the explicit (non-zero) request must fail loudly, naming the
+    # server and the address (grpcio's own error names neither server).
     first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(
+            RuntimeError,
+            match=rf"^Failed to bind the AutowareBridge server to "
+            rf"'localhost:{first.port}' \(port already in use\?\): ",
+        ):
             GrpcAutowareBridgeServer(
                 AutowareBridgeConfig(address=f"localhost:{first.port}")
             )
+    finally:
+        first.close()
+
+
+def test_a_failed_bind_stops_the_server_and_its_handler_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #2321: neither the half-made server nor its executor is left behind
+    # when the bind fails; close() only stops a bridge that started.
+    first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    second = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address=f"localhost:{first.port}"), autostart=False
+    )
+    made: list[Any] = []
+    stopped: list[Any] = []
+    new_server = second._new_server
+
+    def recording_new_server() -> Any:
+        server = new_server()
+        stop = server.stop
+
+        def recording_stop(grace: Any) -> Any:
+            stopped.append(grace)
+            return stop(grace)
+
+        server.stop = recording_stop
+        made.append((server, second._executor))
+        return server
+
+    monkeypatch.setattr(second, "_new_server", recording_new_server)
+    try:
+        with pytest.raises(RuntimeError, match="Failed to bind"):
+            second.start()
+        ((_server, executor),) = made
+        assert stopped == [None]
+        assert executor._shutdown
+        assert second._server is None and second._executor is None
+        assert second.port is None
+        second.close()  # still harmless
     finally:
         first.close()
 
@@ -179,17 +224,18 @@ def test_autostart_false_binds_nothing_until_started() -> None:
     # may hold it.
     first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
     address = f"localhost:{first.port}"
+    deferred = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address=address), autostart=False
+    )
     try:
-        deferred = GrpcAutowareBridgeServer(
-            AutowareBridgeConfig(address=address), autostart=False
-        )
         assert deferred.port is None
         first.close()
         deferred.start()
         assert deferred.port == int(address.rsplit(":", 1)[-1])
         deferred.start()  # idempotent
-        deferred.close()
     finally:
+        # Both, whatever failed: no server thread outlives the test (#2257).
+        deferred.close()
         first.close()
 
 
@@ -338,3 +384,24 @@ def test_there_is_nothing_to_re_route_before_configure(
 ) -> None:
     with pytest.raises(RuntimeError, match="before configure"):
         bridge.reroute(_GOAL)
+
+
+def test_no_thread_of_the_server_outlives_close() -> None:
+    """#2257: grpc.Server.stop() leaves its handler pool running; close() ends
+    it, so a test worker carries no gRPC thread into the tests after it."""
+    before = set(threading.enumerate())
+    server = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    try:
+        with _client(server) as stub:
+            stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    finally:
+        server.close()
+    # gRPC's own serving thread sets the event stop() waits for and only then
+    # returns, so it may still be finishing as close() returns: give each new
+    # thread a bounded while to end.  The handler pool's workers, which only
+    # an executor shutdown ends, would still be alive after it.
+    deadline = time.monotonic() + 10.0
+    new = [t for t in threading.enumerate() if t not in before]
+    for thread in new:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    assert [t.name for t in new if t.is_alive()] == []

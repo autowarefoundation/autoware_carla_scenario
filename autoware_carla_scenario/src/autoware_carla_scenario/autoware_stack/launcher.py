@@ -49,6 +49,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ..utils.process_group import signal_group
 from .bridge_node import bridge_command, host_python_root
 
 logger = logging.getLogger(__name__)
@@ -221,12 +222,18 @@ def _check_stop_timeout_s(stop_timeout_s: float) -> None:
     field; a caller prefixes the group it came from
     (``autoware.launcher.``).
 
+    A bool or a quoted number is refused as well, not taken as a 1 s wait or
+    left to ``math.isfinite()``'s ``TypeError``, which names no field (#2275).
+
     Raises:
-        ValueError: ``stop_timeout_s must be positive and finite, got ...``.
+        ValueError: ``stop_timeout_s must be a number, got ...``, or
+            ``stop_timeout_s must be positive and finite, got ...``.
     """
+    if isinstance(stop_timeout_s, bool) or not isinstance(stop_timeout_s, (int, float)):
+        raise ValueError(f"stop_timeout_s must be a number, got {stop_timeout_s!r}")
     if not math.isfinite(stop_timeout_s) or stop_timeout_s <= 0.0:
         raise ValueError(
-            f"stop_timeout_s must be positive and finite, got {stop_timeout_s}"
+            f"stop_timeout_s must be positive and finite, got {stop_timeout_s!r}"
         )
 
 
@@ -252,13 +259,6 @@ def _check_argument_list(name: str, value: Sequence[str]) -> None:
                 f"{name} must be a sequence of arguments (a list or a tuple), "
                 f"not a {type(value).__name__}: {value!r}"
             )
-
-
-def _signal_group(pgid: int, sig: signal.Signals) -> None:
-    try:
-        os.killpg(pgid, sig)
-    except ProcessLookupError:
-        pass
 
 
 def _start_session(
@@ -379,7 +379,7 @@ class ProcessGroup:
         for sig in signals:
             if self._process.poll() is not None:
                 break
-            _signal_group(self._pgid, sig)
+            signal_group(self._pgid, int(sig))
             try:
                 self._process.wait(timeout=self._stop_timeout_s)
             except subprocess.TimeoutExpired:
@@ -391,7 +391,7 @@ class ProcessGroup:
                 )
         # The leader may be gone while a node it started is not: whatever is
         # left of the group goes too.
-        _signal_group(self._pgid, signal.SIGKILL)
+        signal_group(self._pgid, int(signal.SIGKILL))
         self._close_log()
         return self._process.poll()
 
@@ -432,7 +432,8 @@ class CommandAutowareLauncher:
         argv: The command, with the placeholders above.
         env: Variables added to this process's environment for the command.
         log_dir: Where each stack's output goes, as
-            ``autoware-<index>-<name>.log``; ``None`` discards it.  A
+            ``autoware-<index>-<name>.log`` (``autoware-<stem>.log`` while
+            :meth:`use_log_stem` names one); ``None`` discards it.  A
             ``log_dir`` passed to :meth:`prepare` replaces it.
         stop_timeout_s: How long stopping waits after each signal, positive
             and finite.
@@ -456,6 +457,7 @@ class CommandAutowareLauncher:
 
     _process: Optional[ProcessGroup] = field(default=None, init=False, repr=False)
     _episodes: int = field(default=0, init=False, repr=False)
+    _log_stem: Optional[str] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Checked here, not when the first stack is stopped.
@@ -467,6 +469,11 @@ class CommandAutowareLauncher:
             self.log_dir = log_dir
         if not self.argv:
             raise AutowareStackError("CommandAutowareLauncher needs a command to run")
+
+    def use_log_stem(self, stem: Optional[str]) -> None:
+        """Name the next stacks' log after *stem*; ``None`` goes back to the
+        index and name (:func:`episode_log_path`)."""
+        self._log_stem = stem
 
     def start(self, *, name: str, bridge_address: str) -> AutowareEpisode:
         if self._process is not None:
@@ -499,7 +506,7 @@ class CommandAutowareLauncher:
         self._process = ProcessGroup(
             argv,
             env=env,
-            log_path=episode_log_path(self.log_dir, episode),
+            log_path=episode_log_path(self.log_dir, episode, self._log_stem),
             stop_timeout_s=self.stop_timeout_s,
         )
         return episode
@@ -535,14 +542,22 @@ def _safe_name(name: str) -> str:
 
 
 def episode_log_path(
-    log_dir: Optional[Path], episode: AutowareEpisode
+    log_dir: Optional[Path], episode: AutowareEpisode, stem: Optional[str] = None
 ) -> Optional[Path]:
     """``<log_dir>/autoware-<index>-<name>.log``, or ``None`` without a directory.
 
-    The name is :func:`_safe_name`'s, as ``{name}`` in a command is.
+    The name is :func:`_safe_name`'s, as ``{name}`` in a command is.  With
+    *stem*, the file stem of the case the stack runs for (which the queue
+    hands a built-in launcher through ``use_log_stem()`` when a batch or a
+    SLURM task names its cases' files), ``<log_dir>/autoware-<stem>.log``
+    instead: the index restarts in every process and the name is the same
+    for every case of a sweep, so tasks of one SLURM batch writing into the
+    same directory would otherwise append to the same file (#2247).
     """
     if log_dir is None:
         return None
+    if stem:
+        return log_dir / f"autoware-{_safe_name(stem)}.log"
     return log_dir / f"autoware-{episode.index:03d}-{_safe_name(episode.name)}.log"
 
 

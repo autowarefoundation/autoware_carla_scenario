@@ -26,6 +26,7 @@ one to measure from does.
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import operator
 import os
@@ -52,7 +53,12 @@ from ..heavy_metrics import (  # noqa: F401
 from ..metrics import COMMONROAD_METRICS
 from .frame import read_frame
 from .map import commonroad_map
-from .worker import WORKER_ENV, CommonRoadWorker, CommonRoadWorkerError, worker_command
+from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
+
+# Re-exported: the checks of a worker's answers are the checked
+# .worker_start's (#2386).
+from .worker_start import _UNKNOWN_MEASURE as _UNKNOWN_MEASURE
+from .worker_start import answer_problem, unknown_measures_problem
 
 
 if TYPE_CHECKING:
@@ -117,6 +123,21 @@ def _check_workers(workers: Any) -> int:
     return count
 
 
+def _check_heavy_metrics(heavy: Any) -> bool:
+    """*heavy* as a ``bool``: a bool (a NumPy one too); ``None`` is the
+    default (:func:`~..heavy_metrics._heavy_metrics_default`).  Not a string
+    or a number: ``"false"`` is truthy, and would leave TTR on (#2266)."""
+    if heavy is None:
+        return _heavy_metrics_default()
+    if isinstance(heavy, bool):
+        return heavy
+    if getattr(getattr(heavy, "dtype", None), "kind", None) == "b" and (
+        getattr(heavy, "ndim", None) == 0
+    ):
+        return bool(heavy)
+    raise ValueError(f"heavy_metrics must be a bool, got {heavy!r}")
+
+
 def _check_command(command: Any) -> Optional[tuple[str, ...]]:
     """*command*, ``None`` (find the worker) or the command line starting a
     worker -- a tuple or list of strings, none of them empty, not empty
@@ -136,22 +157,68 @@ def _check_command(command: Any) -> Optional[tuple[str, ...]]:
     )
 
 
+def _plain(value: Any) -> Any:
+    """*value* with every OmegaConf container in it a plain one.
+
+    A Hydra config's ``DictConfig`` is a mapping, but the ``ListConfig`` and
+    ``DictConfig`` values it holds are no JSON values (#2316): they become a
+    ``list`` and a ``dict`` (interpolations resolved), wherever they sit.  A
+    mandatory value left out (``???``) raises, as reading it does, rather
+    than reach the worker as the string ``"???"``.  Anything else is
+    returned as it is.
+    """
+    from omegaconf import DictConfig, ListConfig, OmegaConf  # noqa: PLC0415
+
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=True, throw_on_missing=True)
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_plain(item) for item in value)
+    return value
+
+
 def _check_mapping(name: str, value: Any, default: dict[str, Any]) -> dict[str, Any]:
-    """*value*, ``None`` (*default*) or a mapping, as a ``dict``."""
+    """*value*, ``None`` (*default*) or a mapping, as a ``dict`` -- holding
+    plain containers, not OmegaConf ones (:func:`_plain`)."""
     if value is None:
         return default
     if isinstance(value, Mapping):
-        return dict(value)
+        return dict(_plain(value))
     raise ValueError(f"{name} must be a mapping or None, got {value!r}")
 
 
 def _check_reach_settings(reach_settings: Any) -> dict[str, dict[str, Any]]:
     """*reach_settings*, ``None`` (no overrides) or a mapping of
     CommonRoad-Reach configuration sections to mappings of their keys, as
-    dicts."""
+    dicts.
+
+    Section and key names are strings and every value is one JSON carries
+    as it is (``allow_nan=False``: no NaN or infinity, no NumPy ``float32``),
+    as the worker is sent them.  Whether Reach's configuration has the
+    section and key is the worker's to say, as it starts (``init``).
+    """
     checked = _check_mapping("reach_settings", reach_settings, {})
     for section, overrides in checked.items():
+        if not isinstance(section, str):
+            raise ValueError(
+                f"reach_settings section names must be strings, got {section!r}"
+            )
         checked[section] = _check_mapping(f"reach_settings[{section!r}]", overrides, {})
+        for key, value in checked[section].items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    f"reach_settings[{section!r}] key names must be strings, got {key!r}"
+                )
+            try:
+                json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"reach_settings[{section!r}][{key!r}] must be a JSON value "
+                    f"(no NaN or infinity), got {value!r}"
+                ) from None
     return checked
 
 
@@ -169,7 +236,8 @@ class CommonRoadSettings:
             evaluated at all; off, a metric condition on one is not judged.
             On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``
             (or the ``scenario`` command decided otherwise,
-            :data:`HEAVY_METRICS_DECIDED_ENV`).
+            :data:`HEAVY_METRICS_DECIDED_ENV`), which ``None`` also is.  A
+            bool (a NumPy one too); anything else is refused.
         workers: How many workers evaluate frames at once; at least 1.
         dt: The time step of the CommonRoad scenario a frame becomes (s);
             positive and finite.
@@ -178,7 +246,10 @@ class CommonRoadSettings:
         radius_m: How far from the ego road users and lanelets are taken in;
             positive and finite.
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
-            section and key: a mapping of mappings; ``None`` for none.
+            section and key: a mapping of mappings
+            (``{"reachable_set": {"size_grid": 0.3}}``), names strings and
+            values JSON ones; ``None`` for none.  A section or key Reach does
+            not have is refused by a worker as it starts.
         cache_dir: Where the converted maps are kept (a ``str`` is taken as
             a :class:`~pathlib.Path`); ``None`` for
             :func:`~.map.default_cache_dir`.
@@ -228,6 +299,9 @@ class CommonRoadSettings:
                     f"({', '.join(COMMONROAD_METRICS)})"
                 )
             _check_period(f"metric_periods_s[{key!r}]", period)
+        object.__setattr__(
+            self, "heavy_metrics", _check_heavy_metrics(self.heavy_metrics)
+        )
         object.__setattr__(self, "workers", _check_workers(self.workers))
         _check_period("dt", self.dt)
         _check_period("horizon_s", self.horizon_s)
@@ -524,14 +598,9 @@ def _check_measures(worker: CommonRoadWorker, keys: list[str]) -> None:
     """Raise when *worker* does not know one of *keys* (its ``init`` answer
     says which it knows): an older worker than the framework, found on the
     ``PATH``, would read nothing in every frame."""
-    unknown = [key for key in keys if key not in worker.measures]
-    if unknown:
-        raise CommonRoadWorkerError(
-            f"the CommonRoad worker {worker.command} does not know the metrics "
-            f"{', '.join(unknown)} (it knows {', '.join(worker.measures) or 'none'}): "
-            "update the commonroad_metrics project it runs, or name another "
-            f"command in ${WORKER_ENV}"
-        )
+    problem = unknown_measures_problem(str(worker.command), keys, worker.measures)
+    if problem is not None:
+        raise CommonRoadWorkerError(problem)
 
 
 def _check_answer(
@@ -542,25 +611,9 @@ def _check_answer(
 ) -> None:
     """Raise when *worker*'s answer to a frame asked *keys* leaves one out
     (neither a value nor an error) or calls it unknown: out of protocol."""
-    missing = [key for key in keys if key not in got and key not in errors]
-    unknown = [key for key in keys if errors.get(key) == _UNKNOWN_MEASURE]
-    if missing or unknown:
-        raise CommonRoadWorkerError(
-            f"the CommonRoad worker {worker.command} answered 'evaluate' out "
-            "of protocol: "
-            + "; ".join(
-                part
-                for part in (
-                    f"no value nor error for {', '.join(missing)}" if missing else "",
-                    f"{', '.join(unknown)} unknown" if unknown else "",
-                )
-                if part
-            )
-        )
-
-
-#: The error the worker gives a measure it does not know.
-_UNKNOWN_MEASURE = "unknown measure"
+    problem = answer_problem(str(worker.command), keys, got, errors)
+    if problem is not None:
+        raise CommonRoadWorkerError(problem)
 
 
 #: How long :func:`evaluate_commonroad`, given up, waits for its shares to

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import socket
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import pytest
 
 from autoware_carla_scenario import CarlaServerManager
+from autoware_carla_scenario import server as server_module
 from autoware_carla_scenario.carla_install import HOME_ENV, LAUNCHER, install_dir
 
 
@@ -58,7 +59,6 @@ def test_a_closed_port_does_not_ping_without_asking_the_carla_client(
 ) -> None:
     """On arm64 the CARLA client can abort the process on a refused
     connection, so a closed port is answered before it is made."""
-    from autoware_carla_scenario import server as server_module
 
     def no_client(*_args: object) -> None:
         raise AssertionError("the CARLA client was made for a closed port")
@@ -156,9 +156,41 @@ def test_a_launched_server_listens_on_the_configured_port(
     assert _launched(monkeypatch, tmp_path, free_port) == [
         f"-carla-rpc-port={free_port}"
     ]
-    assert _launched(monkeypatch, tmp_path, free_port, ["-carla-rpc-port=3000"]) == [
-        "-carla-rpc-port=3000"
-    ]
+    # A -carla-rpc-port= that names the server's port is passed on as it is.
+    same = [f"-carla-rpc-port={free_port}"]
+    assert _launched(monkeypatch, tmp_path, free_port, same) == same
+    # Spelled otherwise, it is followed by the exact spelling, the marker the
+    # SLURM cleanup finds the server's processes by.
+    upper = [f"-CARLA-RPC-PORT=0{free_port}"]
+    assert _launched(monkeypatch, tmp_path, free_port, upper) == upper + same
+
+
+@pytest.mark.parametrize(
+    "arg",
+    [
+        "-carla-rpc-port=3000",
+        "-carla-rpc-port=",
+        "-carla-rpc-port=2x",
+        "-CARLA-RPC-PORT=3000",
+        "--carla-rpc-port=3000",
+    ],
+)
+def test_a_carla_rpc_port_other_than_the_port_is_refused_before_launching(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int, arg: str
+) -> None:
+    """CARLA would listen on the extra argument's port while the manager
+    waited on its own until the timeout (#2300): refused, naming both, and
+    nothing is launched."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(
+        port=free_port, extra_args=[arg], reuse_if_running=False
+    )
+    with pytest.raises(ValueError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert repr(arg) in message and str(free_port) in message, message
+    assert not mark.exists()
+    assert manager._process is None
 
 
 def test_without_a_display_the_server_renders_off_screen(
@@ -199,7 +231,9 @@ def test_a_remote_host_that_does_not_answer_launches_nothing(
     with pytest.raises(RuntimeError) as raised:
         manager.start()
     message = str(raised.value)
-    assert message.startswith(f"No CARLA server reachable at {host}:2000"), message
+    # An IPv6 address is named in brackets, however it was given.
+    where = f"[{host.strip('[]')}]" if ":" in host else host
+    assert message.startswith(f"No CARLA server reachable at {where}:2000"), message
     assert "only launches CARLA for a local host" in message
     assert not mark.exists()
     assert manager._process is None
@@ -265,3 +299,220 @@ def test_other_machines_are_not_local(host: str) -> None:
     from autoware_carla_scenario.server import _is_local_host
 
     assert not _is_local_host(host)
+
+
+# ---------------------------------------------------------------------------
+# A server is never adopted from another process (#2233)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def listener() -> Iterator[int]:
+    """A plain TCP listener on loopback, not a CARLA server; its port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        yield int(sock.getsockname()[1])
+
+
+def test_a_launched_server_that_exits_fails_though_another_answers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    """A launched CARLA that died is not taken for the server answering the
+    port: start() fails with its exit code and points to its log."""
+    launcher = tmp_path / "CarlaUnreal.sh"
+    launcher.write_text("#!/bin/sh\nexit 1\n")
+    launcher.chmod(0o755)
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(launcher))
+    manager = CarlaServerManager(
+        host="127.0.0.1", port=free_port, timeout=30.0, reuse_if_running=False
+    )
+
+    def foreign_server_answers() -> bool:
+        # Answers only once the launched process has exited, as a server
+        # already on the port would after the new one died binding it.
+        assert manager._process is not None
+        manager._process.wait()
+        return True
+
+    monkeypatch.setattr(manager, "_ping", foreign_server_answers)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert (
+        f"exited with code 1 before it became reachable at 127.0.0.1:{free_port}"
+        in (message)
+    )
+    assert str(tmp_path / "CarlaUnreal" / "Saved" / "Logs") in message
+    assert manager._process is None
+    assert not manager.reused
+
+
+def test_a_taken_port_is_not_launched_onto(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listener: int
+) -> None:
+    """Without reuse_if_running, a port another process listens on is
+    refused before anything is launched."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(
+        host="127.0.0.1", port=listener, timeout=30.0, reuse_if_running=False
+    )
+    monkeypatch.setattr(manager, "_ping", lambda: True)  # never asked
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert f"Port {listener} on 127.0.0.1 is in use by another process" in message
+    assert "reuse_if_running=True" in message
+    assert not mark.exists()
+    assert manager._process is None
+
+
+def test_a_busy_server_that_answers_late_is_reused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listener: int
+) -> None:
+    """A CARLA that misses the first ping's deadline is pinged again and
+    reused, not launched over."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(host="127.0.0.1", port=listener, timeout=30.0)
+    answers = iter([False, False, True])
+    monkeypatch.setattr(manager, "_ping", lambda: next(answers))
+    monkeypatch.setattr(server_module.time, "sleep", lambda _: None)
+    manager.start()
+    assert manager.reused
+    assert not mark.exists()
+    manager.stop()
+
+
+def test_a_port_that_never_answers_as_carla_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, listener: int
+) -> None:
+    """With reuse_if_running, a process on the port that never answers as
+    CARLA is neither reused nor launched over."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    monkeypatch.setattr(CarlaServerManager, "REUSE_PING_S", 0.2)
+    manager = CarlaServerManager(host="127.0.0.1", port=listener, timeout=30.0)
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert f"Port {listener} on 127.0.0.1 is in use by a process" in message
+    assert "did not answer as a CARLA server within 0.2s" in message
+    assert not mark.exists()
+    assert not manager.reused
+
+
+def test_a_port_freed_while_it_is_pinged_is_launched_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    """A port that stops accepting connections during the reuse wait (a
+    server still shutting down, as a queue's restart stops one) is launched
+    on, not refused."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(host="127.0.0.1", port=free_port, timeout=30.0)
+    connects = iter([True, False, False])
+    monkeypatch.setattr(manager, "_tcp_connects", lambda: next(connects, False))
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    monkeypatch.setattr(server_module.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    # The marking launcher exits 3: it was launched, then failed as itself.
+    assert "exited with code 3" in str(raised.value)
+    assert mark.exists()
+
+
+# ---------------------------------------------------------------------------
+# A bracketed IPv6 host is connected to without its brackets (#2300)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("host", ["[::1]", "::1"])
+def test_a_bracketed_ipv6_host_is_connected_to_unbracketed(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    """getaddrinfo() resolves no "[::1]": the TCP probe and the CARLA client
+    are given "::1", so a server running there is found and reused."""
+    connected: list[tuple[str, int]] = []
+    clients: list[tuple[str, int]] = []
+
+    class _Connection:
+        def close(self) -> None:
+            pass
+
+    def create_connection(
+        address: tuple[str, int], timeout: Optional[float] = None
+    ) -> _Connection:
+        connected.append(address)
+        return _Connection()
+
+    class _Client:
+        def __init__(self, client_host: str, port: int) -> None:
+            clients.append((client_host, port))
+
+        def set_timeout(self, seconds: float) -> None:
+            pass
+
+        def get_server_version(self) -> str:
+            return "0.10.0"
+
+    monkeypatch.setattr(server_module.socket, "create_connection", create_connection)
+    monkeypatch.setattr(server_module.carla, "Client", _Client)
+    manager = CarlaServerManager(host=host, port=2000)
+    assert manager.host == "::1"
+    manager.start()
+    assert manager.reused
+    assert connected == [("::1", 2000)]
+    assert clients == [("::1", 2000)]
+
+
+def test_an_ipv6_host_is_named_in_brackets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = CarlaServerManager(host="[::1]", port=2000, timeout=0.0)
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    with pytest.raises(RuntimeError, match=r"at \[::1\]:2000"):
+        manager._wait_until_ready()
+
+
+# ---------------------------------------------------------------------------
+# The working directory's .env is loaded (#2300)
+# ---------------------------------------------------------------------------
+
+
+def test_the_working_directorys_dotenv_is_loaded(tmp_path: Path) -> None:
+    """The .env nearest the working directory is loaded on import, not the
+    one nearest the package, and the environment wins over it."""
+    import os
+    import subprocess
+    import sys
+
+    run_root = tmp_path / "run"
+    run_dir = run_root / "sub" / "dir"
+    run_dir.mkdir(parents=True)
+    (run_root / ".env").write_text(
+        "ACS_DOTENV_FROM_CWD=loaded\nACS_DOTENV_SET=from-file\n"
+    )
+    # A script file, not `python -c`: python-dotenv searches from the working
+    # directory anyway when __main__ has no __file__, which would hide the
+    # search from the package's own directory this guards against.
+    probe = tmp_path / "probe" / "probe.py"
+    probe.parent.mkdir()
+    probe.write_text(
+        "import os\n"
+        "import autoware_carla_scenario.server\n"
+        "print(os.environ.get('ACS_DOTENV_FROM_CWD'), os.environ['ACS_DOTENV_SET'])\n"
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ACS_DOTENV_FROM_CWD", "PYTHON_DOTENV_DISABLED")
+    }
+    env["ACS_DOTENV_SET"] = "from-env"
+    out = subprocess.run(
+        [sys.executable, str(probe)],
+        cwd=run_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert out == ["loaded", "from-env"]

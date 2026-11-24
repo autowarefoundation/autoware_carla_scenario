@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
 from typing import (
     TYPE_CHECKING,
@@ -49,6 +50,10 @@ from .traffic.base import DrivenEntity, TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
+
+#: Below this horizontal length, an actor's unit forward vector is taken to
+#: point straight up or down (no heading to set an initial speed along).
+_VERTICAL_FORWARD_EPS = 1e-9
 
 #: The plain callbacks of one phase (init, pre-tick or post-tick).
 _TickCallbacks: TypeAlias = List[Callable[[carla.World], None]]
@@ -1052,16 +1057,12 @@ class BaseScenario(ABC):
         samples what happens importance-sampled
         (:attr:`BaseAction.importance_sampled`), else ``None`` -- a run that
         samples nothing is no weighted run, though its weight is 1."""
-        weight = 1.0
-        sampled = False
         for action in (
             self._init_actions + self._pre_tick_actions + self._post_tick_actions
         ):
-            weight *= action.importance_sampling_weight
-            sampled = sampled or action.importance_sampled
-        if not sampled:
-            return None
-        return weight
+            if action.importance_sampled:
+                return self.importance_sampling_weight
+        return None
 
     @property
     def measures(self) -> dict[str, Measure]:
@@ -1329,8 +1330,17 @@ class BaseScenario(ABC):
                 return
             speed_ms = speed_kmh / 3.6
             fwd = actor.get_transform().get_forward_vector()
+            # On a slope the forward vector is pitched: scale its horizontal
+            # direction, not the vector itself, so the ground speed is the
+            # speed asked for rather than speed * cos(pitch).
+            horizontal = math.hypot(fwd.x, fwd.y)
+            if horizontal > _VERTICAL_FORWARD_EPS:
+                scale = speed_ms / horizontal
+            else:
+                # Facing straight up or down: no horizontal direction to go in.
+                scale = speed_ms
             actor.set_target_velocity(
-                carla.Vector3D(x=fwd.x * speed_ms, y=fwd.y * speed_ms, z=0.0)
+                carla.Vector3D(x=fwd.x * scale, y=fwd.y * scale, z=0.0)
             )
 
         for entity in self._entities:

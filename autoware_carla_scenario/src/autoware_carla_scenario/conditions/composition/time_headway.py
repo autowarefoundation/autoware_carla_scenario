@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...entity_role import EntityRole
@@ -106,8 +105,6 @@ class TimeHeadwayCondition(CompositionCondition):
         *,
         label: str,
     ) -> None:
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         super().__init__(entity_name=source, label=label)
         # Kept as its string, the one thing every use of it reads.
         self._target = str(target)

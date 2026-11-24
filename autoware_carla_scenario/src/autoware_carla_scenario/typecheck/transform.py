@@ -200,7 +200,7 @@ from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .scopes import ShadowScopes, _scope_bindings
+from .scopes import _COMPREHENSIONS, ShadowScopes, _scope_bindings
 
 __all__ = [
     "MISSING_BUILTIN_EXCEPTIONS",
@@ -3272,7 +3272,6 @@ def split_tuple_excepts(source: str) -> tuple[str, list[int]]:
         origin[first - 1 : last] = origin[first - 1 : last] * len(copies)
 
 
-_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 #: Built-ins that build a collection from an argument (``list(Color)``,
 #: ``tuple(gen)``, ``dict(a=1)``).
 _COLLECTION_CALLS = {"list", "tuple", "set", "dict", "frozenset", "sorted"}

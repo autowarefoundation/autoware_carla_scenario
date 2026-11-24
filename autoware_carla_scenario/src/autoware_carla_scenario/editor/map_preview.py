@@ -36,9 +36,11 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MAP_ROOTS_ENV",
+    "AreaPreview",
     "PreviewResult",
     "SpawnOffset",
     "clear_cache",
+    "evaluate_area",
     "evaluate_slot",
     "is_map_loaded",
     "MapStatus",
@@ -99,6 +101,11 @@ class _LoadedMap:
     )
     #: Swept spawns' derived offsets, by binding and pick, for the same reason.
     offsets: "OrderedDict[tuple[str, int], SpawnOffset]" = field(
+        default_factory=OrderedDict
+    )
+    #: What each area matches -- its lanelets and how many polygons -- by the
+    #: area, for the same reason: the places panel outlines them on every edit.
+    areas: "OrderedDict[Any, tuple[list[int], int]]" = field(
         default_factory=OrderedDict
     )
 
@@ -353,7 +360,26 @@ def lanelet2_source(
     paths = map_paths(document) if paths is None else paths
     if paths.lanelet2_path is None:
         return None
-    path = paths.lanelet2_path.expanduser()
+    resolved = _inside_map_roots(paths.lanelet2_path)
+    if resolved is None:
+        return None
+    if resolved.suffix.lower() != ".osm":
+        logger.warning("Refusing map that is not a .osm file: %s", resolved)
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _inside_map_roots(path: Path) -> Optional[Path]:
+    """Return *path* resolved when it lies inside one of :func:`map_roots`,
+    else ``None`` (logged).
+
+    The containment check every map file the editor reads goes through: the
+    drawn map (:func:`lanelet2_source`) and every parse (:func:`_load`, and
+    the OpenDRIVE an area reads its road surface from), so a map refused for
+    drawing is not parsed for a preview either (#2412).  A relative path is
+    the working directory's, as the document's paths are written.
+    """
+    path = path.expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
     try:
@@ -370,10 +396,16 @@ def lanelet2_source(
             resolved,
         )
         return None
-    if resolved.suffix.lower() != ".osm":
-        logger.warning("Refusing map that is not a .osm file: %s", resolved)
-        return None
-    return resolved if resolved.is_file() else None
+    return resolved
+
+
+def _outside_map_roots_reason(path: Path) -> str:
+    """Say that the map file *path* is outside the editor's map roots."""
+    return (
+        f"The map file {path} is outside the editor's map roots: add its "
+        f"directory to {MAP_ROOTS_ENV} (the working directory unless set) to "
+        "preview it."
+    )
 
 
 def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
@@ -440,8 +472,8 @@ def missing_map_reason(document: ScenarioDocument) -> str:
         )
     if document.map.lanelet2_path:
         return (
-            "The Lanelet2 file this scenario names cannot be read: "
-            f"{document.map.lanelet2_path}"
+            "The Lanelet2 file this scenario names cannot be read, or is "
+            f"outside the editor's map roots: {document.map.lanelet2_path}"
         )
     return (
         "The scenario has no map configured. Set a map source, or the Lanelet2 "
@@ -471,12 +503,18 @@ def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     """Parse the document's map, or return the cached parse.
 
     Raises:
-        FileNotFoundError: If the map files are not configured or missing.
+        FileNotFoundError: If the map files are not configured, missing or
+            outside :func:`map_roots`.
         RuntimeError: If Lanelet2 could not parse the map.
     """
     key = _cache_key(paths)
     if key is None:
         raise FileNotFoundError(missing_map_reason(document))
+    # Checked on every call, a cached parse too: the files load_map() reads
+    # are held to the roots lanelet2_source() holds the drawn map to.
+    for path in (paths.lanelet2_path, paths.xodr_path):
+        if path is not None and _inside_map_roots(path) is None:
+            raise FileNotFoundError(_outside_map_roots_reason(path))
     cached = _cached(key)
     if cached is not None:
         return cached
@@ -644,6 +682,7 @@ def derive_lanelet(
     asked = (json.dumps(binding.to_sweep_dict(), sort_keys=True), picked_id)
     with _CACHE_LOCK:
         if asked in loaded.derived:
+            loaded.derived.move_to_end(asked)
             return loaded.derived[asked]
 
     from ..sweeper.bindings import parse_binding  # noqa: PLC0415
@@ -691,6 +730,7 @@ def resolve_spawn_offset(
     asked = (json.dumps([s_key, binding], sort_keys=True), picked_id)
     with _CACHE_LOCK:
         if asked in loaded.offsets:
+            loaded.offsets.move_to_end(asked)
             return loaded.offsets[asked]
 
     from ..sweeper.bindings import parse_binding  # noqa: PLC0415
@@ -715,3 +755,127 @@ def resolve_spawn_offset(
         while len(loaded.offsets) > _MATCH_CACHE_SIZE:
             loaded.offsets.popitem(last=False)
     return offset
+
+
+@dataclass
+class AreaPreview:
+    """What an area of the map matches on the document's map.
+
+    Attributes:
+        lanelet_ids: The lanelets in it, which the map outlines.
+        polygon_count: How many polygons of the polygon layer are in it; the
+            viewer outlines lanelets only, so these are counted, not drawn.
+        surface_count: How many raised or grooved parts of the roads' surface
+            are in it, read from the OpenDRIVE map's OpenCRG grids; counted,
+            not drawn, as polygons are.
+        skipped: What of those grids could not be read, each said in words.
+        description: The area in words ("crosswalks (lanelet 587)"), or
+            ``""`` when its fields cannot be read (:attr:`error` says why).
+        map_loaded: Whether the map was parsed, so the match is known.
+        error: Why the area could not be matched -- one no map could hold, a
+            picked lanelet of another ground -- or ``""``.
+    """
+
+    lanelet_ids: list[int] = field(default_factory=list)
+    polygon_count: int = 0
+    surface_count: int = 0
+    skipped: list[str] = field(default_factory=list)
+    description: str = ""
+    map_loaded: bool = False
+    error: str = ""
+
+    @property
+    def empty(self) -> bool:
+        """Whether the map was matched and nothing on it is in the area: the
+        run would say so, and the card never hold."""
+        return (
+            self.map_loaded
+            and not self.error
+            and not (self.lanelet_ids or self.polygon_count or self.surface_count)
+        )
+
+
+def evaluate_area(
+    document: ScenarioDocument,
+    params: "dict[str, Any]",
+    *,
+    load_map: bool = False,
+    paths: Optional[MapPaths] = None,
+) -> AreaPreview:
+    """Match an area card's fields (``ground``, ``lanelet_ids``,
+    ``attributes``) against the document's map, with the framework's own
+    :func:`~autoware_carla_scenario.conditions.map_area.area_shapes`, so the
+    outline is the ground the run measures to.
+
+    Failures are reported in :attr:`AreaPreview.error`, never raised; an
+    unloaded map (with *load_map* off) returns an empty, unloaded result.
+    """
+    from ..conditions.map_area import (  # noqa: PLC0415
+        area_shapes,
+        map_area_from_fields,
+        surface_regions,
+    )
+
+    result = AreaPreview()
+    try:
+        area = map_area_from_fields(
+            str(params.get("ground") or "CROSSWALK"),
+            params.get("lanelet_ids") or None,
+            str(params.get("attributes") or ""),
+            params.get("relief_m"),
+        )
+    except (TypeError, ValueError) as exc:
+        result.error = str(exc)
+        return result
+    result.description = area.describe()
+    if area.ground.on_surface:
+        # On the OpenDRIVE map, not the Lanelet2 one: its grids are read (and
+        # remembered) without parsing a Lanelet2 map, so on every render.
+        resolved = map_paths(document) if paths is None else paths
+        xodr = resolved.xodr_path
+        # The roots first, so a path outside them is not even looked up.
+        if xodr is not None and _inside_map_roots(xodr) is None:
+            result.error = _outside_map_roots_reason(xodr)
+            return result
+        if xodr is None or not xodr.expanduser().exists():
+            result.error = (
+                "The road surface is read from the OpenDRIVE map, and there is "
+                "none yet."
+            )
+            return result
+        try:
+            regions, skipped = surface_regions(xodr.expanduser(), area)
+        except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not raised
+            result.error = f"The OpenDRIVE map could not be read: {exc}"
+            return result
+        result.map_loaded = True
+        result.surface_count = len(regions)
+        result.skipped = list(skipped)
+        return result
+    try:
+        loaded = _loaded(document, paths, load_map=load_map)
+    except (FileNotFoundError, RuntimeError) as exc:
+        result.error = str(exc)
+        return result
+    if loaded is None:
+        return result
+    result.map_loaded = True
+    with _CACHE_LOCK:
+        remembered = loaded.areas.get(area)
+        if remembered is not None:
+            loaded.areas.move_to_end(area)
+    if remembered is None:
+        try:
+            shapes = area_shapes(loaded.lanelet_map, area)
+        except ValueError as exc:
+            result.error = str(exc)
+            return result
+        lanelets = [s.element_id for s in shapes if s.layer == "lanelet"]
+        remembered = (lanelets, len(shapes) - len(lanelets))
+        with _CACHE_LOCK:
+            loaded.areas[area] = remembered
+            while len(loaded.areas) > _MATCH_CACHE_SIZE:
+                loaded.areas.popitem(last=False)
+    result.lanelet_ids = list(remembered[0])
+    result.polygon_count = remembered[1]
+    return result

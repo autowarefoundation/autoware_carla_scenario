@@ -5,15 +5,16 @@ OpenCV model of an F-theta camera.
 writer it imports at run time, on threads of its own; this is the part of it
 that needs neither: the settings (:class:`T4Settings`), where the dataset
 goes (:func:`dataset_path`), a camera's channel (:func:`camera_channel`), an
-actor's category (:func:`category_of`) and the fit of OpenCV's rational
-camera model to an F-theta lens (:func:`opencv_of_ftheta`).  ``t4``
+actor's category (:func:`category_of`), a sweep's points on T4's intensity
+scale (:func:`t4_lidar_points`) and the fit of OpenCV's rational camera model
+to an F-theta lens (:func:`opencv_of_ftheta`), and which of what a driver
+entity fed is written, on which key frame (:func:`fed_key_frame`).  ``t4``
 re-exports every name, and the library check compiles this module
 (docs/typecheck.md, #731).
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,12 +29,20 @@ from .sensor.carla_lidar import CarlaLidarSensorConfig
 
 __all__ = [
     "DATASET_SUFFIX",
+    "FED_KEPT",
+    "FED_LATER",
+    "FED_NOT_NEW",
+    "FED_NO_SNAPSHOT",
+    "FED_REPEATED",
+    "INTENSITY_SCALE",
     "LIDAR_CHANNEL",
     "T4Settings",
     "camera_channel",
     "category_of",
     "dataset_path",
+    "fed_key_frame",
     "opencv_of_ftheta",
+    "t4_lidar_points",
 ]
 
 #: What a run's dataset is named: ``{stem}.t4``, its one version ``0`` inside.
@@ -41,6 +50,9 @@ DATASET_SUFFIX = ".t4"
 #: The channel every LiDAR's sweep goes into, in the ego's frame (T4's own
 #: name for a concatenated cloud).
 LIDAR_CHANNEL = "LIDAR_CONCAT"
+#: A T4 sweep's intensity is on the 0-255 scale (as Autoware's point clouds'
+#: and the T4Scenes' are); CARLA's ray-cast LiDAR reports it in ``[0, 1]``.
+INTENSITY_SCALE = 255.0
 #: A vehicle blueprint's ``base_type`` -> its T4 category.
 _VEHICLE_CATEGORIES = {
     "car": "car",
@@ -63,11 +75,36 @@ def camera_channel(logical_id: str) -> str:
     return logical_id.upper()
 
 
-def _bad_max_distance(value: float) -> str:
-    """Why ``t4.max_distance_m`` = *value* is refused: 0, a negative distance
-    or NaN would annotate no road user, infinity is what null says, and a
-    bool is not a distance (t4_scene.grid.checked_max_distance's rule)."""
-    return f"t4.max_distance_m must be positive and finite (null for no limit), not {value!r}"
+def _checked_max_distance(value: Optional[float]) -> Optional[float]:
+    """``t4.max_distance_m`` = *value* as a float, or ``None`` (every road
+    user): 0, a negative distance or NaN would annotate no road user,
+    infinity is what null says, and a bool or a string is not a distance
+    (:func:`~autoware_carla_scenario.t4_scene.grid.checked_max_distance`,
+    the T4Scenes' rule, naming the key)."""
+    if value is None:
+        return None
+    # Inside: importing t4_scene.grid runs the t4_scene package, which loads
+    # its converter (protobuf, Lanelet2), more than the settings need, and
+    # this module is imported by every run that may write a dataset (t4).
+    from .t4_scene.grid import checked_max_distance  # noqa: PLC0415
+
+    return checked_max_distance(value, "t4.max_distance_m", "null")
+
+
+def t4_lidar_points(
+    points: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+) -> np.ndarray[tuple[int, int], np.dtype[np.float32]]:
+    """``[N, 4]`` x, y, z and CARLA's intensity in ``[0, 1]`` as a T4 sweep's
+    first four columns: float32, intensity on T4's 0-255 scale
+    (:data:`INTENSITY_SCALE`).  A new array: *points* (the sweep a driver
+    policy is sent too) is left as it is.
+
+    The T4 dataset (``t4``) writes its sweeps with it and the live T4Scenes
+    (``t4_scene.live``) theirs, so the two scale alike, and once.
+    """
+    out = np.asarray(points, dtype=np.float32).reshape(-1, 4).copy()
+    out[:, 3] = out[:, 3] * np.float32(INTENSITY_SCALE)
+    return out
 
 
 @dataclass(frozen=True)
@@ -104,9 +141,7 @@ class T4Settings:
                 "t4: a dataset needs a sensor: set driver.lidars or driver.cameras"
             )
         self.interval_ticks  # noqa: B018 - validates timestep_s
-        distance = self.max_distance_m
-        if distance is not None and not (math.isfinite(distance) and distance > 0.0):
-            raise ValueError(_bad_max_distance(distance))
+        _checked_max_distance(self.max_distance_m)
         if not 1 <= self.jpeg_quality <= 100:
             raise ValueError("driver.image_quality must be 1-100")
         # A bool is an int to Python and a float would be cut to one
@@ -146,17 +181,10 @@ class T4Settings:
         config section (``max_distance_m``, ``workers``)."""
         values: dict[str, Any] = {}
         if "max_distance_m" in config:
-            distance = config["max_distance_m"]
             # float() would read true as 1 m and parse a string; neither is a
             # distance, and anything else it cannot read is refused naming
             # the key rather than with its own message.
-            not_a_number = isinstance(distance, (bool, str))
-            if not_a_number:
-                raise ValueError(_bad_max_distance(distance))
-            try:
-                values["max_distance_m"] = None if distance is None else float(distance)
-            except TypeError:
-                raise ValueError(_bad_max_distance(distance)) from None
+            values["max_distance_m"] = _checked_max_distance(config["max_distance_m"])
         if config.get("workers") is not None:
             # As given: __post_init__ refuses a bool or a float, which int()
             # would turn into a count nobody asked for.
@@ -295,3 +323,86 @@ def category_of(type_id: str, base_type: str = "", wheels: int = 0) -> str:
     if category is not None:
         return category
     return "motorcycle" if wheels == 2 else "car"
+
+
+#: What :func:`fed_key_frame` makes of a fed sweep or camera frame: written on
+#: the key frame.
+FED_KEPT = 0
+#: A sweep, new by :data:`FED_NOT_NEW`, whose frame has no snapshot: dropped.
+FED_NO_SNAPSHOT = 1
+#: A sweep or camera frame from before the recording, or not after the key
+#: frame written last -- a sweep a driver entity feeds again on every tick
+#: until the LiDAR's next one (#2362): dropped.
+FED_NOT_NEW = 2
+#: A camera frame not after that camera's frame written last, which a camera
+#: slower than the policy hands it again (#2352): dropped.
+FED_REPEATED = 3
+#: A sweep taken after the key frame: it joins nothing, as a LiDAR's on another
+#: tick of the interval does not, and is dropped.
+FED_LATER = 4
+
+
+def fed_key_frame(
+    frame: int,
+    sweep_frames: list[int],
+    image_frames: list[tuple[int, str]],
+    snapshots: set[int],
+    start_frame: int,
+    last_frame: int,
+    camera_written: dict[str, int],
+) -> tuple[list[int], list[int], int]:
+    """Which of what a driver entity fed on *frame* is written, and on which
+    key frame (``t4``'s ``_record_fed``, #951, #2352, #2362).
+
+    *sweep_frames* are the frames the fed sweeps were taken on,
+    *image_frames* the fed camera frames' ``(frame rendered on, logical
+    id)``, *snapshots* the frames the recording holds a world snapshot of,
+    *start_frame* the recording's first frame, *last_frame* the key frame
+    written last (``-1`` for none) and *camera_written* the frame each
+    camera's frame written last was rendered on, by logical id.
+
+    Returns each sweep's and each camera frame's fate (``FED_*``, in the
+    order fed) and the key frame, ``-1`` when nothing is written.  The key
+    frame is the oldest kept sweep's; without one, the oldest kept camera
+    frame's that has a snapshot (*frame* when none has).  Every kept camera
+    frame goes on it, a sweep only when taken on it.  Nothing is written when
+    nothing is kept (no fate is ``FED_KEPT``), nor when the key frame is not
+    after *last_frame*.
+    """
+    sweep_fates: list[int] = []
+    oldest_sweep = -1
+    for taken_on in sweep_frames:
+        if taken_on < start_frame or taken_on <= last_frame:
+            sweep_fates.append(FED_NOT_NEW)
+            continue
+        if taken_on not in snapshots:
+            sweep_fates.append(FED_NO_SNAPSHOT)
+            continue
+        sweep_fates.append(FED_KEPT)
+        if oldest_sweep < 0 or taken_on < oldest_sweep:
+            oldest_sweep = taken_on
+    image_fates: list[int] = []
+    any_image = False
+    oldest_image = -1
+    for taken_on, logical_id in image_frames:
+        if taken_on < start_frame or taken_on <= last_frame:
+            image_fates.append(FED_NOT_NEW)
+        elif logical_id in camera_written and taken_on <= camera_written[logical_id]:
+            image_fates.append(FED_REPEATED)
+        else:
+            image_fates.append(FED_KEPT)
+            any_image = True
+            if taken_on in snapshots and (oldest_image < 0 or taken_on < oldest_image):
+                oldest_image = taken_on
+    if oldest_sweep < 0 and not any_image:
+        return sweep_fates, image_fates, -1
+    if oldest_sweep >= 0:
+        key_frame = oldest_sweep
+        for index, taken_on in enumerate(sweep_frames):
+            if sweep_fates[index] == FED_KEPT and taken_on != key_frame:
+                sweep_fates[index] = FED_LATER
+    else:
+        key_frame = oldest_image if oldest_image >= 0 else frame
+    if key_frame <= last_frame:
+        return sweep_fates, image_fates, -1
+    return sweep_fates, image_fates, key_frame

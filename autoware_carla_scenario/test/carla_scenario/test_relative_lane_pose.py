@@ -42,7 +42,14 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 from autoware_carla_scenario.entity_role import EntityRole
+from autoware_carla_scenario.coordinate.transform import (
+    _heading_at_s,
+    _interpolate_at_s,
+)
 from autoware_carla_scenario.trajectory.relative_lane import (
+    _end_heading,
+    _heading_at,
+    _straightest,
     advance_along_lane,
     reference_lane_pose,
     relative_lane_pose,
@@ -174,8 +181,12 @@ class TestThePose:
     @pytest.mark.parametrize("value", [math.inf, math.nan, None, "2.5", "2"])
     def test_a_value_int_refuses_is_no_d_lane_either(self, value: object) -> None:
         """int() of inf, nan, None or "2.5" raises its own OverflowError,
-        TypeError or ValueError; the pose names the field instead (#2151)."""
-        with pytest.raises(ValueError, match=r"d_lane must be a whole number"):
+        TypeError or ValueError; the pose names the field instead (#2151),
+        as seed.check_whole_number does (#2261)."""
+        with pytest.raises(
+            ValueError,
+            match=r"RelativeLanePose\.d_lane must be (a whole number|finite)",
+        ):
             RelativeLanePose(d_lane=value)  # type: ignore[arg-type]
 
     def test_a_trajectory_with_one_is_relative(self) -> None:
@@ -215,6 +226,176 @@ class TestWhereTheReferenceIs:
         # Just past the fork, inside both R2 and the branch.
         assert reference_lane_pose(road[0], 20.5, -0.2, 0.0).lanelet_id == R2
         assert reference_lane_pose(road[0], 20.5, -0.2, -math.pi / 4).lanelet_id == B
+
+
+class TestTheHeadingAtAVertex:
+    """A vertex belongs to the segment that starts there, as in
+    coordinate.transform (#2329)."""
+
+    _BEND = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+
+    def test_an_interior_vertex_takes_the_leaving_segment(self) -> None:
+        assert _heading_at(self._BEND, 1.0) == pytest.approx(math.pi / 2)
+        assert _heading_at(self._BEND, 0.999) == pytest.approx(0.0)
+
+    def test_it_agrees_with_the_transform_helpers(self) -> None:
+        import numpy as np
+
+        line = np.array(self._BEND)
+        arc = np.array([0.0, 1.0, 2.0])
+        points = [(x, y, 0.0) for x, y in self._BEND]
+        for s in (0.0, 0.5, 1.0, 1.5, 2.0, 3.0):
+            assert _heading_at(self._BEND, s) == pytest.approx(
+                _heading_at_s(line, arc, s)
+            )
+            assert _heading_at(self._BEND, s) == pytest.approx(
+                _interpolate_at_s(points, s)[3]
+            )
+
+    def test_an_s_an_ulp_short_of_the_vertex_is_at_the_vertex(self) -> None:
+        """Lanelet2 sums the segments in its own order: the s it snaps a wedge
+        point to can fall an ulp short of the vertex (#2329)."""
+        assert _heading_at(self._BEND, math.nextafter(1.0, 0.0)) == pytest.approx(
+            math.pi / 2
+        )
+        # Asking a little before the vertex still reads the arriving segment.
+        assert _heading_at(self._BEND, 1.0 - 1e-6) == pytest.approx(0.0)
+
+    def test_the_end_and_beyond_take_the_last_segment(self) -> None:
+        assert _heading_at(self._BEND, 2.0) == pytest.approx(math.pi / 2)
+        assert _heading_at(self._BEND, 5.0) == pytest.approx(math.pi / 2)
+
+    def test_zero_length_segments_are_skipped(self) -> None:
+        doubled = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (1.0, 1.0)]
+        assert _heading_at(doubled, 0.5) == pytest.approx(0.0)
+        assert _heading_at(doubled, 1.0) == pytest.approx(math.pi / 2)
+        assert _heading_at(doubled, 2.0) == pytest.approx(math.pi / 2)
+
+    def test_the_reference_pose_is_measured_as_the_transform_reads_it(
+        self,
+    ) -> None:
+        """A point in the wedge outside a convex bend projects onto the vertex;
+        its heading is measured against the segment to_carla_world reads
+        there, not the one arriving."""
+        from lanelet2.core import AttributeMap, Lanelet, LineString3d, Point3d, getId
+
+        def bound(coords: list[tuple[float, float]]) -> Any:
+            return LineString3d(
+                getId(), [Point3d(getId(), x, y, 0.0) for x, y in coords]
+            )
+
+        # Centreline (0, 0) -> (10, 0) -> (10, 10).
+        bend = Lanelet(
+            getId(),
+            bound([(0.0, 1.0), (9.0, 1.0), (9.0, 10.0)]),
+            bound([(0.0, -1.0), (11.0, -1.0), (11.0, 10.0)]),
+            AttributeMap(_LANE),
+        )
+        lanelet_map = lanelet2.core.LaneletMap()
+        lanelet_map.add(bend)
+        pose = reference_lane_pose(lanelet_map, 10.5, -0.5, math.pi / 2)
+        assert pose.s == pytest.approx(10.0)
+        centre = [(float(p.x), float(p.y), float(p.z)) for p in bend.centerline]
+        along = _interpolate_at_s(centre, pose.s)[3]
+        assert along == pytest.approx(math.pi / 2)
+        assert pose.heading == pytest.approx(0.0)
+
+
+def _lanelet_along(coords: list[tuple[float, float]]) -> Any:
+    """A lanelet whose centreline runs through *coords* (each bound 1 m to
+    either side in y, so the centreline keeps every point, repeats too)."""
+    from lanelet2.core import AttributeMap, Lanelet, LineString3d, Point3d, getId
+
+    def bound(dy: float) -> Any:
+        return LineString3d(
+            getId(), [Point3d(getId(), x - dy, y, 0.0) for x, y in coords]
+        )
+
+    return Lanelet(getId(), bound(1.0), bound(-1.0), AttributeMap(_LANE))
+
+
+class TestTheHeadingAtTheEnd:
+    """A centreline ending on a repeated point ends facing its last real
+    segment, not East (#2367)."""
+
+    def test_a_repeated_end_point_is_skipped(self) -> None:
+        lanelet = _lanelet_along([(0.0, 0.0), (0.0, 10.0), (0.0, 10.0)])
+        assert [(float(p.x), float(p.y)) for p in lanelet.centerline][-2:] == [
+            (0.0, 10.0),
+            (0.0, 10.0),
+        ]
+        assert _end_heading(lanelet) == pytest.approx(math.pi / 2)
+
+    def test_the_straight_predecessor_is_preferred(self) -> None:
+        straight = _lanelet_along([(0.0, 0.0), (0.0, 10.0), (0.0, 10.0)])
+        slanted = _lanelet_along([(-10.0, 0.0), (0.0, 10.0)])
+        assert _end_heading(slanted) == pytest.approx(math.pi / 4)
+        assert _straightest([slanted, straight], math.pi / 2, ahead=False) is straight
+
+    def test_a_lane_walk_runs_on_along_the_last_real_segment(self) -> None:
+        """adversity's lane walk carries on past the end along the end's
+        heading, which a repeated end point does not turn East."""
+        from autoware_carla_scenario.adversity.command import _LaneWalk
+        from autoware_carla_scenario.route.geometry import MapFeatures
+
+        lanelet = _lanelet_along([(0.0, 0.0), (0.0, 10.0), (0.0, 10.0)])
+        lanelet_map = lanelet2.core.LaneletMap()
+        lanelet_map.add(lanelet)
+        rules = lanelet2.traffic_rules.create(
+            lanelet2.traffic_rules.Locations.Germany,
+            lanelet2.traffic_rules.Participants.Vehicle,
+        )
+        graph = lanelet2.routing.RoutingGraph(lanelet_map, rules)
+        features = MapFeatures(lanelet_map, graph)
+        walk = _LaneWalk(features, lanelet_map.laneletLayer[lanelet.id], 0.0)
+        assert walk.at(15.0) == pytest.approx((0.0, 15.0, math.pi / 2))
+
+
+def _stacked_lanelet(z0: float, z1: float, dy_end: float) -> Any:
+    """A 100 m lanelet East from x = 0, rising from *z0* to *z1*, its end
+    *dy_end* north of its start."""
+    from lanelet2.core import Lanelet, LineString3d, Point3d, getId
+
+    def bound(y: float) -> Any:
+        return LineString3d(
+            getId(),
+            [Point3d(getId(), 0.0, y, z0), Point3d(getId(), 100.0, y + dy_end, z1)],
+        )
+
+    return Lanelet(
+        getId(), bound(1.75), bound(-1.75), lanelet2.core.AttributeMap(_LANE)
+    )
+
+
+class TestStackedLanelets:
+    """A deck over a nearly parallel road: elevation picks the level, heading
+    only chooses among lanelets on it (#2221)."""
+
+    def test_a_pose_on_the_deck_is_on_the_deck(self) -> None:
+        lanelet_map = lanelet2.core.LaneletMap()
+        ground = _stacked_lanelet(0.0, 0.0, 0.0)  # heading 0
+        deck = _stacked_lanelet(10.0, 10.0, 0.5)  # heading about 0.005 rad
+        lanelet_map.add(ground)
+        lanelet_map.add(deck)
+        # Heading 0.002 is nearer the ground road's direction than the deck's.
+        on_deck = reference_lane_pose(lanelet_map, 50.0, 0.2, 0.002, z=10.0)
+        assert on_deck.lanelet_id == deck.id
+        on_ground = reference_lane_pose(lanelet_map, 50.0, 0.2, 0.004, z=0.0)
+        assert on_ground.lanelet_id == ground.id
+        # Without an elevation, heading alone decides.
+        assert reference_lane_pose(lanelet_map, 50.0, 0.2, 0.004).lanelet_id == deck.id
+
+    def test_the_height_is_read_where_the_pose_is_not_averaged(self) -> None:
+        lanelet_map = lanelet2.core.LaneletMap()
+        # A ramp from 0 to 16 m (mean 8 m) and a deck level at 8 m: at x = 10
+        # the ramp is 1.6 m high, so a pose at z = 1.6 is on the ramp even
+        # though its heading matches the deck's exactly.
+        ramp = _stacked_lanelet(0.0, 16.0, 0.5)
+        deck = _stacked_lanelet(8.0, 8.0, 0.0)
+        lanelet_map.add(ramp)
+        lanelet_map.add(deck)
+        pose = reference_lane_pose(lanelet_map, 10.0, 0.0, 0.0, z=1.6)
+        assert pose.lanelet_id == ramp.id
 
 
 class TestAlongTheLane:

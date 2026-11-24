@@ -47,12 +47,12 @@ See [Coverage](coverage.md).
 | `SamplingEvent` | When an item is sampled: `START`, `END` (default) or `TICK`. Re-exported from the top-level package. |
 | `CoverItem`, `CrossItem` | The item definitions `register_cover()` / `register_cross()` build. |
 | `autoware_carla_scenario.metrics`: `BUILT_IN_METRICS`, `Metric`, `read_metric(key, world)`, `COLLISION_ANY`, `COLLISION_AT_FAULT`, `OFFROAD`, `WRONG_LANE`, `MIN_DISTANCE_TO_OBSTACLE_M`, `CRIME_TTC_S`, `REACH_DRIVABLE_AREA_M2`, ... | How the ego drove: AlpaSim's metrics, and CriMe's and CommonRoad-Reach's. An outcome, which no ODD maps onto. See [Metrics](metrics.md). |
-| `autoware_carla_scenario.commonroad`: `configure_commonroad_metrics(**settings)`, `CommonRoadSettings`, `CommonRoadWorkerError`, `commonroad_map(opendrive)` | The workers the CommonRoad metrics are computed by, and the world's map as CommonRoad. See [Metrics](metrics.md#commonroad-metrics). |
+| `autoware_carla_scenario.commonroad`: `configure_commonroad_metrics(**changes)`, `CommonRoadSettings`, `CommonRoadWorkerError`, `commonroad_map(opendrive)` | The workers the CommonRoad metrics are computed by, and the world's map as CommonRoad. See [Metrics](metrics.md#commonroad-metrics). |
 | `autoware_carla_scenario.metric_batch`: `FrameRecorder`, `evaluate_metrics(frames, carla_map, keys)`, `ReplayWorld` | The frames a run records for its metric conditions, and the metrics computed over them once it is over. See [Metrics](metrics.md#how-metrics-are-computed). |
 | `BaseScenario.register_measure(key, read, *, unit, text)`, `.measure(key, world)`, `.measures` | A scenario's measures: what it sets up, under fixed keys (`autoware_carla_scenario.measures`: `VEHICLE_AHEAD_GAP_M`, `VEHICLE_AHEAD_RELATIVE_SPEED_KPH`, `CROSSING_PEDESTRIAN_GAP_M`, `CROSSING_PEDESTRIAN_SPEED_MS`). Replace a built-in one or add one of its own. See [Scenario measures](odd.md#scenario-measures). |
 | `CoverageCollector` | Samples items on their events during a run; written as `{Scenario}_coverage.json`. |
 | `merge_coverage(documents)`, `CoverageReport` | Merge coverage files and grade them. |
-| `coverage.cod.export_cod(document, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
+| `coverage.cod.export_cod(doc, out_dir, stem)` | Write a run's ODD samples as an ASAM OpenODD COD table, manifest and taxonomy (`scenario-coverage --export-cod`). |
 
 ## ODD (`autoware_carla_scenario.odd`)
 
@@ -61,10 +61,10 @@ See [ODD](odd.md).
 | Symbol | Purpose |
 |--------|---------|
 | `OddAttribute(name, probe, *, unit, range, every, buckets, values, text, target, cover_by, min_stay)` | A measured taxonomy concept. Conditions: `is_in`, `equals`, `between`, `at_least`, `at_most`, `greater_than`, `less_than`, `is_unknown`. |
-| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text, situation, target, cover_by, min_stay)` | A named rule; with `situation=True`, also covered as a situation. `OddDefinition.situations()` lists those. |
+| `OddModule(name, *, include_and, include_or, exclude_and, exclude_or, labels, active, text, situation, target, cover_by, min_stay, metadata)` | A named rule; with `situation=True`, also covered as a situation. `OddDefinition.situations()` lists those. |
 | `OddDefinition(name, attributes, modules, *, roots, text)` | The ODD: judges values with OpenODD's semantics (roots, labels, inactive modules, missing values), and marks buckets outside it. |
 | `all_of`, `any_of`, `module_holds` | Group conditions; refer to another module or label. |
-| `default_odd()` | The built-in ODD: openodd's bundled `default` (every attribute, no modules), measured in CARLA. |
+| `default_odd()` | The built-in ODD: openodd's bundled `default` (the scenery, conditions and traffic the framework measures, no modules), measured in CARLA. |
 | `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
 | `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
@@ -75,8 +75,9 @@ See [ODD](odd.md).
 | `plan_route_coverage(odd, scenario_or_route, *, lanelet_map, routing_graph, name)` | Check a planned route against the ODD on the Lanelet2 map: the verdict per lanelet (inside, outside, undecided) and the expected metres per bucket. Takes a scenario, a `PlannedRoute(start, goal, via, name)` or lanelet ids. Raises `RouteError` when the route cannot be planned. See [Checking a planned route](odd.md#checking-a-planned-route). |
 | `combine_route_coverage(odd, routes)` | The expected coverage of several routes, and the buckets no route reaches. |
 | `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
-| `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
+| `UNDECIDED`, `Undecided` | What a probe's `on_lanelet` returns for a value only the run can tell, and its class (for an annotation). |
 | `OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries, weights)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first; `weights={module: share}` (`strategy="weighted"`) puts that share of the cases in each module. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
+| `OddCase`, `ParameterSpace` | A case drawn from the ODD and the space it was drawn in (`tuple[OddSample, ParameterSpace]`): what a run records. |
 | `OddKnob(key, values, scale, offset, integer, range, limits, quantity)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under `controls` in their config, by measure key. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
@@ -102,7 +103,7 @@ and composite conditions reset their children.
 | `ScenarioResult` | Pass / fail outcome with message, elapsed time, and per-condition statuses. |
 | `ConditionStatus` | Per-condition leaf record used for reporting. |
 | `AlwaysTrueCondition` | Default trigger for actions. |
-| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. `AndCondition` and `OrCondition` check every child on every tick, so a stateful child (`PersistentCondition`, `StickyCondition`) stays current wherever it sits; an AND of `StickyCondition`s therefore says each state was visited, in any order. An AND fires only once every child has fired: a pending child holds back a failing one, so an AND holding a timeout or a collision fails the run only once its other children have fired. `NotCondition(child, holds_when_pending=True)` is the logical NOT -- it holds while the child has not fired -- where the default flips a fired child's verdict; with `OrCondition` over `EntityLanePositionCondition`s it says "on none of these lanelets" ([cut-in](scenarios/cut_in.md#staying-on-the-lanes-ahead)). |
+| `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators. `AndCondition` and `OrCondition` check every child on every tick, so a stateful child (`PersistentCondition`, `StickyCondition`) stays current wherever it sits; an AND of `StickyCondition`s therefore says each state was visited, in any order. An AND fires only once every child has fired: a pending child holds back a failing one, so an AND holding a timeout or a collision fails the run only once its other children have fired. `NotCondition(condition, holds_when_pending=True)` is the logical NOT -- it holds while the child has not fired -- where the default flips a fired child's verdict; with `OrCondition` over `EntityLanePositionCondition`s it says "on none of these lanelets" ([cut-in](scenarios/cut_in.md#staying-on-the-lanes-ahead)). |
 | `StickyCondition`, `PersistentCondition` | Latch / persist a child condition's truth value. |
 | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers. |
 | `MetricCondition(metric, rule, value, tolerance, *, max_ng_seconds, label)` | A fail condition judged once the run is over: the run fails when a built-in metric -- how the ego drove -- met the rule for more than `max_ng_seconds` in all. Composes with no other condition. See [Metrics](metrics.md#judging-a-run-on-a-metric). |
@@ -112,7 +113,9 @@ and composite conditions reset their children.
 | `EntityCountCondition(entities, rule=GREATER_THAN_OR_EQUAL, count=1, *, label)` | Holds while the number of road users `entities` (an `EntityFilter`) takes compares to `count` (a whole number, not negative: `2.0` reads as 2; a boolean, a fraction or NaN is refused): "a vehicle within 30 m ahead of the ego" (`EntityFilter(kind=RoadUserKind.VEHICLE, min_ahead_m=0, max_ahead_m=30)`), "no pedestrian on the crosswalk" (`EQUAL_TO` 0). Its message names the ones it took. The `entity_count` card, whose filter fields every filtered condition shares. |
 | `AdversityActiveCondition(entities=None, kinds=None, include_responses=False, *, label)` | Holds while a road user that `entities` (an `EntityFilter`; `None`: every one) takes is carrying out an adversity of one of `kinds` (`AdversityKind`s; `None` or empty: any). It counts a named NPC's own adversarial action and a background vehicle that NADE sampled. It holds from when the road user starts driving the adversity's path until it is handed back to traffic, so put it under a `StickyCondition` to mean "it happened". A NADE victim's response counts only with `include_responses`. Imported from the top level or `conditions.adversity_active`, because it pulls in the Lanelet2 layer. See [Adversarial Actions and NADE](adversity.md#whether-an-adversity-is-under-way). |
 | `OffRoadFractionCondition(fraction, entity_name=None, *, label)` | Fails once at least `fraction` (in `(0, 1]`) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the `offroad` metric, with a tolerance. See [Metrics](metrics.md#off-the-road-as-a-fail-condition). |
-| `TrafficSignalAction(..., route_junction=0, route_approach="same", route_turn="any")` | With `lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE`: sets the lights of the paths through junction `route_junction` of the scenario's route that enter it from `route_approach` and turn `route_turn`, found on the map the run is on (`route.positions.junction_traffic_lights`). |
+| `TrafficSignalAction(..., route_junction=0, route_approach="same", route_turn="any")` | With `lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE`: sets the lights of the paths through junction `route_junction` of the scenario's route that enter it from `route_approach` and turn `route_turn`, found on the map the run is on (`route.positions.junction_traffic_lights`). An action, in `autoware_carla_scenario.actions`. |
+| `EntityAreaDistanceCondition(entity_name, area, value, rule=LESS_THAN, tolerance=1e-6, *, label)` | The distance on the ground from an entity's body (its bounding box, not its origin) to the nearest outline of an area of the map, `0` once the body touches or is over it, compared with `rule` and `value`. Whether or not it fires, it keeps the closest the entity came: `closest_m` and `closest_at_s`, and its details (`closest_m`, `closest_at_s`, `closest` naming the nearest element -- `lanelet 587`, `raised 0.060 m on road 80` -- and `closest_lanelet` or `closest_polygon` with its id) carry them into the run's result, so a run that never came within `value` still says how near it got. `reset()` forgets them. The area is resolved on the run's Lanelet2 map when the condition is built (`MapManager` initialised, as in `setup()`); an area no map could hold (picked lanelets for a ground of polygons) is refused there, while one this map cannot hold (a picked lanelet it lacks or of another ground, a ground it has none of) is said once as a warning, and the condition then never holds, its details carrying the `problem` -- the scenario editor's places panel outlines the area and says so before the run. The measurement is in plan: an area on a road stacked above or below is as near as in the plan (#2314). The `area_distance` card (*Distance to an area*). |
+| `MapArea(ground=AreaGround.CROSSWALK, lanelet_ids=(), attributes=(), relief_m=0.01)`, `AreaGround` | Ground on the Lanelet2 map chosen by what it is. `ground` picks the elements: lanelets by subtype (`CROSSWALK`, `WALKWAY`, `ROAD_SHOULDER`, `ROAD`), the lanes through a junction (`JUNCTION`: tagged `turn_direction`), any lanelet (`LANELET`), polygons of the map's polygon layer by type (`INTERSECTION_AREA`, `DETECTION_AREA`, `NO_STOPPING_AREA`, `NO_PARKING_AREA`, `PARKING_LOT`, or any: `POLYGON`), or the parts of the roads' surface standing at least `relief_m` (1 cm) above their design (`SURFACE_RAISED`: a speed hump, a frost heave), below it (`SURFACE_GROOVED`: ruts, a pothole) or either (`SURFACE_RELIEF`). The surface grounds are read from the ASAM OpenCRG grids the OpenDRIVE map's roads refer to (`<surface><CRG purpose="elevation">` in `attached` or `attached0` mode, ASCII `LRFI`/`LDFI`, as roadgen's `export_opendrive(crg=True)` writes them) by `maps.opencrg.relief_regions`, and placed in CARLA's world through each road's reference line: never through the Lanelet2 map. A grid that cannot be read is said and passed over. A region is outlined along each cross section from its first cell to its last. They take no picked lanelets and no attributes. `lanelet_ids` narrows a ground of lanelets to those picked (each must be of the ground: a road picked for a crosswalk is an error, as is one the map lacks); `attributes` are `(key, value)` tags every element must have (`("turn_direction", "left")`; an empty value asks only for the key). `describe()` says it in words. `conditions.map_area.area_shapes(lanelet_map, area)` reads its outlines off any Lanelet2 map: the run's, and the scenario editor's preview. |
 | `PlaceClearCondition(position, length, width, margin=0.3, *, label)` | Passes while no vehicle's or walker's bounding box comes within `margin` of a `length` x `width` rectangle at `position` (a `Lanelet2Pose`, facing along the lane turned by its `heading`; or any position a trajectory vertex takes -- a route pose is placed on the scenario's route when the place is first looked at). A place written against an entity -- a `RelativeLanePose` against its `entity_ref`, a route pose without an `anchor` against the ego -- moves with it and is placed afresh every tick, facing along the lane it is placed on where it has no `yaw`; while that entity is absent or parked under the map the condition does not hold. `EntityPositionDistanceCondition` places such a position the same way. Actors parked under the map do not count; one put there on this tick does, and neither does one on another level of road (a bridge over the place, or an underpass beneath it). The `place_clear` card; typically guards where an entity appears. |
 | `TrafficSignalCondition` | Traffic-light state check: fires while every matching light shows the expected state, and is pending otherwise. |
 | `RouteProgressCondition` | An entity's (default: the ego's) distance along the scenario's route, from an anchor (`junction:0:entry`, ...), compared with a rule; robust to lane changes. See [Logical Scenarios from Routes](logical_scenarios.md). |
@@ -121,11 +124,20 @@ and composite conditions reset their children.
 
 ### Composition conditions (`autoware_carla_scenario.conditions.composition`)
 
-These build on `CompositionCondition`, which composes a child condition
-tree internally:
+These build on `CompositionCondition`, which guards each on its entity
+(the condition does not hold while the entity is absent or parked under the
+map) and, for `StandstillCondition` and `TemporaryStopCondition`, composes a
+child condition tree internally:
 
 - `EntityLanePositionCondition`
+- `EntityLaneOfCondition` -- the entity is on the lane of a position, beside it, or on its road
+- `EntityDistanceCondition`, `RelativeDistanceType`, `DistanceCoordinateSystem`
+- `EntityPositionDistanceCondition` -- the distance from an entity to a place on the map
+- `EntityAreaDistanceCondition` -- the distance from an entity's body to an area of the map, and the closest it came
+- `TimeToCollisionCondition`, `TimeHeadwayCondition`
+- `RelativeSpeedCondition`
 - `SpeedCondition`, `SpeedDirection`, `SpeedCoordinateSystem`
+- `AccelerationCondition`, `AccelerationDirection` -- a walker's acceleration is differentiated from its measured velocity (`WalkerVelocities`), since CARLA reports 0 for a walker on its controller
 - `StandstillCondition`
 - `TurnIndicatorCondition`, `TurnIndicatorState` -- the turn indicators a vehicle shows (OFF / LEFT / RIGHT / HAZARD), read off its CARLA light state
 - `TemporaryStopCondition`
@@ -137,14 +149,23 @@ tree internally:
 |--------|-------------|
 | `BaseAction` | Abstract base. Owns a trigger `BaseCondition`, a `TickTiming`, and an `execute(world)` side effect. |
 | `TickTiming` | Enum: `PRE_TICK` / `POST_TICK`. |
-| `TurnAction`, `TurnDirection` | Steer the ego through left / right turns via the CARLA TrafficManager route hints. |
+| `TurnAction`, `TurnDirection` | Have a vehicle (any, not only the ego) take the left, right or straight path through the next junction, through the run's traffic backend (`BackendDriven.turn_at_junction`; the TrafficManager backend sets the path through the junction as the vehicle's path). |
 | `TurnIndicatorAction` | Light a vehicle's turn indicators (`TurnIndicatorState`: `OFF` / `LEFT` / `RIGHT` / `HAZARD`), its other lights as they are; they stay so until set again. |
-| `PerceptionFaultInjectionAction`, `PerceivedCategory` | Report one road user to the ego's driver policy as another category, with another box size, or not at all (`visible=False`), from the tick it fires on; whatever is left at its default (`PerceivedCategory.ACTUAL`, a size of 0) stays as it is, and every other road user is reported as it is. Only what the policy is told changes: the world, the trajectory log, the T4 dataset, the metrics and the conditions keep CARLA's ground truth. Not implemented yet for an ego that perceives the road users itself (Autoware, ROS 2, HILS): it raises `NotImplementedError` as it fires. See [Perception faults](driver_interface.md#perception-faults). |
+| `PerceptionFaultInjectionAction`, `PerceivedCategory` | (`PerceivedCategory` lives in `autoware_carla_scenario.perception_fault`, and the top-level package, not `actions`.) Report one road user to the ego's driver policy as another category, with another box size, or not at all (`visible=False`), from the tick it fires on; whatever is left at its default (`PerceivedCategory.ACTUAL`, a size of 0) stays as it is, and every other road user is reported as it is. Only what the policy is told changes: the world, the trajectory log, the T4 dataset, the metrics and the conditions keep CARLA's ground truth. Not implemented yet for an ego that perceives the road users itself (Autoware, ROS 2, HILS): it raises `NotImplementedError` as it fires. See [Perception faults](driver_interface.md#perception-faults). |
 | `EmergencyAction` | Put an `EmergencyVehicleEntity` on a call (`active=True`, the default: siren lights on, driven as an emergency vehicle by the traffic backend) or off duty (`active=False`); it stays so until set again. A vehicle that is not an emergency vehicle is left as it is, with a warning. |
 | `CommunicationLossAction` | Stop data between the HILS bridge and an ECU under test (`ego.entity=hils`) while the action runs (until `until` fires or `duration` passes, else to the scenario's end): `messages` by name (a CAN frame, a LiDAR's `scan`) or everything of a `device` (or of every device), `to_ecu` / `from_ecu` / `both`; no effect on any other ego. See [HILS](hils.md#communication-loss). |
 | `LaneChangeAction`, `LaneChangeDirection` | Ask a vehicle's traffic backend for a lane change (TrafficManager `force_lane_change`, SUMO `changeLane`); an ego driven by its own stack refuses. `start_after_m` and `lane_change_length_m` ask for where and over how much driving it crosses; it then also slows for what is ahead between it and the lane it goes to. |
-| `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states (e.g. all RED, all GREEN, or a specific actor). |
+| `TrafficSignalAction`, `TrafficLightTarget` | Set traffic-light states: of the lights of the given Lanelet2 traffic-light regulatory element ids, of every light (`TrafficLightTarget.ALL`), or of a path through a junction of the scenario's route (`TrafficLightTarget.ROUTE`). |
 | `RoutingAction`, `RoutingMode` | Send the ego, a vehicle or a pedestrian to a goal through waypoints (a goal with Lanelet2 waypoints, or a `trajectory`); `mode` is `DRIVER` (its own driver, Lanelet2 legs, paced by speed to the waypoints' times), `FOLLOW` or `POSITION` (straight legs, as OpenSCENARIO follows a trajectory); `speed` paces the segments no time does; `held_vertex` names the vertex a waypoint condition is holding it at; it routes an entity in the scene (bring a hidden one in with `SpawnAction`), starting where it stands. See [Trajectories and Recorded-Scene Replay](trajectory.md). |
+| `SetSpeedAction` | Command a vehicle (any, not only the ego) to a target speed, through what drives it (`BackendDriven.set_desired_speed`): at once, or stepped at `rate_kmh_s` each tick. The target is a target: the vehicle gets there under its own acceleration limits. |
+| `EnvironmentAction` | Change the weather and the sun (OpenSCENARIO's `EnvironmentAction`): every field is optional and leaves what it is not given as it is; the run's conditions (`rainfall_rate_mm_h`, `visibility_m`, ...) are recorded for the ODD, and the vehicles' grip follows the water on the road. Runs where it is registered: in `init` to set the weather once, on the tick loop to change it during a run. See [ODD](odd.md). |
+| `TrafficParametersAction` | Override the run's traffic parameters (`vehicles`, `pedestrians`, `bicycles`), or one vehicle's (`entity_name`), from the tick it fires on. See [Traffic backends](traffic_backends.md#changing-the-parameters-during-a-run). |
+| `TrafficSourceAction`, `TrafficSinkAction` | Add background vehicles on the vehicle lanelets sweep constraints match (some at once, then at a rate, up to a cap), and remove the background vehicles on the lanelets others match. See [Traffic backends](traffic_backends.md#background-traffic). |
+| `TrafficSignalControllerAction` | Jump a junction's controller (declared under `map.traffic_signal_controllers`) to one of its phases, which puts every signal it drives into a known state at once. See [Architecture](architecture.md#traffic-signals-one-light-or-a-junctions-cycle). |
+| `SpawnAction`, `DespawnAction` | Bring a hidden vehicle or pedestrian, or a prop, into the scene mid-run, and remove one (never the ego, under any of its names). See `SpawnAction` under adversarial actions below. |
+| `WalkStraightAction` | Walk a pedestrian forward along its heading (`scenario_simulator_v2`'s command of that name), at `speed_ms` (zero stops it); it may turn back when a vehicle comes too close. See [Pedestrian motions](pedestrian_motion.md). |
+| `PlayMotionAction` | Play a SOMA motion (`.npz`: a wave, a beckon) on a pedestrian's skeleton, frame by frame in simulated time. See [Pedestrian motions](pedestrian_motion.md). |
+| `SmartPedestrianControllerAction`, `TimedPrompt`, `WalkWaypoint` | Move a pedestrian as a motion generator (ARDY) has it move, conditioned by text (`TimedPrompt`s: each prompt from its time on), waypoints (`WalkWaypoint`s) or keyframes. See [Pedestrian motions](pedestrian_motion.md#smartpedestriancontrolleraction-ardy). |
 
 ### Adversarial actions (`autoware_carla_scenario.actions.adversarial`)
 
@@ -173,8 +194,8 @@ trigger is asked on that tick: when it does not hold, nothing is done.
 | `StopCrossingAction` | Stand a pedestrian on a crosswalk still for N(2 s, 0.5 s), then walk it a crosswalk's length on along its heading (`STOP_CROSSING`); `seed` seeds the wait. |
 | `SpawnAction`, `clear_props` | Put something into the scene mid-run (`autoware_carla_scenario.actions.spawn`, the counterpart of `DespawnAction`): a vehicle or pedestrian spawned hidden, brought in at `position` (any trajectory-vertex frame; `None`: where it was declared -- `declare_spawn(pose, lane=None)` says where, which a declarative scenario does for every entity, through the same clearance check and `shift_max` along `lane`; declared as `None`, no spawn of its own, the action refuses with a warning; not declared, right above where it waits under the map; one with no heading faces along its lane; one placed against an entity reads it where another `SpawnAction` or a `position`-mode trajectory last put it on the same frame, else where it stands; one against an entity that is not in the scene, parked under the map included, is not resolved: where it was declared, or no prop) moving at `speed`, or with `name` a prop (`blueprint`, `on_ground`; PropAction until 1.0); `shift_max` takes the nearest clear place that far on along its lane when its own is taken. `DespawnAction(name=...)` removes a prop; the runner clears every prop between runs (`clear_props`). |
 | `StalledObjectAction`, `collision_objects` | TeraSim's scheduled static adversities (`autoware_carla_scenario.actions.stalled_object`): a vehicle the scenario spawned (out of the world, `spawn.hidden`, best) stands still at a pose -- a `Lanelet2Pose`, or an xy+yaw `MapPose` / `CarlaWorldPose` -- from `start_time` to `end_time` (scenario seconds; `None`: never removed), and is out of the world before and after. A trajectory run (the engine of `RoutingAction`'s `position` mode) of a held pose with `hidden_outside_trajectory`. `collision_objects` is two of them, for a collision's aftermath. |
-| `ConstructionZoneAction`, `ConstructionSettings`, `URBAN_CONSTRUCTION` | TeraSim's construction zone (`autoware_carla_scenario.actions.construction_zone`): warning signs, an entry taper of cones, a buffer, the work zone, an exit taper and termination signs along a lane from `start_s` to `end_s`, as CARLA props from `start_time` to `end_time`; background traffic in it is taken off the road and the lane closed to the backend (SUMO). `layout="urban"` (preset: `URBAN_CONSTRUCTION`) lays out TeraSim's urban variant on an intersection approach instead: a short warning zone, cones along the curb and a merge taper that shuts the lane before the intersection. See [Adversarial Actions and NADE](adversity.md#construction-zones). |
-| `AdversarialTrafficAction`, `NadeAdversity`, `NadeSettings` | TeraSim's NADE as an environment action that runs for the whole run. Each tick, the NPC or pedestrian near the ego whose adversity (the first of `adversities` whose trigger fires) would challenge the ego carries it out, with the importance-sampling probability `q = clip(p x magnitude, 0, max_is_probability)`, or a fixed one. One adversity at a time, then a cooldown. An adversity no victim can brake out of is unavoidable: its `p` is cut by 3e-4 and its magnitude multiplied by 40 (`adversity.avoidance`). With `challenge_npcs`, an NPC victim avoids it (emergency brake) or accepts it, with its own IS weight. `weight` keeps the run's likelihood ratio. It drives the registered entities and, with `drive_background` (default), the traffic backend's background vehicles (`TrafficBackend.background_actors`: TrafficManager background traffic, SUMO's ambient vehicles), each taken over while it carries out an adversity or responds to one and handed back after (#417). |
+| `ConstructionZoneAction`, `ConstructionSettings`, `URBAN_CONSTRUCTION` | TeraSim's construction zone (`autoware_carla_scenario.actions.construction_zone`; `URBAN_CONSTRUCTION` in `autoware_carla_scenario.adversity.construction`): warning signs, an entry taper of cones, a buffer, the work zone, an exit taper and termination signs along a lane from `start_s` to `end_s`, as CARLA props from `start_time` to `end_time`; background traffic in it is taken off the road and the lane closed to the backend (SUMO). `layout="urban"` (preset: `URBAN_CONSTRUCTION`) lays out TeraSim's urban variant on an intersection approach instead: a short warning zone, cones along the curb and a merge taper that shuts the lane before the intersection. See [Adversarial Actions and NADE](adversity.md#construction-zones). |
+| `AdversarialTrafficAction`, `NadeAdversity`, `NadeSettings` | TeraSim's NADE (`AdversarialTrafficAction` in `autoware_carla_scenario.actions.adversarial_traffic`, `NadeAdversity` and `NadeSettings` in `autoware_carla_scenario.adversity.nade`; all three exported from the top-level package) as an environment action that runs for the whole run. Each tick, the NPC or pedestrian near the ego whose adversity (the first of `adversities` whose trigger fires) would challenge the ego carries it out, with the importance-sampling probability `q = clip(p x magnitude, 0, max_is_probability)`, or a fixed one. One adversity at a time, then a cooldown. An adversity no victim can brake out of is unavoidable: its `p` is cut by 3e-4 and its magnitude multiplied by 40 (`adversity.avoidance`). With `challenge_npcs`, an NPC victim avoids it (emergency brake) or accepts it, with its own IS weight. `weight` keeps the run's likelihood ratio. It drives the registered entities and, with `drive_background` (default), the traffic backend's background vehicles (`TrafficBackend.background_actors`: TrafficManager background traffic, SUMO's ambient vehicles), each taken over while it carries out an adversity or responds to one and handed back after (#417). |
 | `AdversityFeasibleCondition`, `AdversityKind`, `AdversityLocation` | Holds when the entity may carry out a `kind` adversity at `location` (`autoware_carla_scenario.conditions.adversity_feasible`). |
 
 ## Trajectories (`autoware_carla_scenario.trajectory`)
@@ -183,8 +204,8 @@ See [Trajectories and Recorded-Scene Replay](trajectory.md).
 
 | Symbol | Description |
 |--------|-------------|
-| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and the condition the entity departs it on (`advance`) -- a time, `TrajectoryTimeCondition(t)` (read back as `vertex.time`), or any other condition ([waypoint conditions](trajectory.md#waypoint-conditions); `Trajectory.is_gated`, `Trajectory.gated({index: condition})`). |
-| `TrajectoryTimeCondition` | A vertex's time: depart when the trajectory's clock reaches it. |
+| `Trajectory`, `TrajectoryVertex` | A named polyline and its vertices: a position and the condition the entity departs it on (`advance`) -- a time, `TrajectoryTimeCondition(time)` (read back as `vertex.time`), or any other condition ([waypoint conditions](trajectory.md#waypoint-conditions); `Trajectory.is_gated`, `Trajectory.gated({index: condition})`). |
+| `TrajectoryTimeCondition` | A vertex's time: depart when the trajectory's clock reaches it. Lives in `autoware_carla_scenario.conditions` (and the top-level package). |
 | `MapPose` | An absolute pose in Autoware's `map` frame, as a recording states it. |
 | `RelativeLanePose` | A pose relative to an entity in lane coordinates (`ds`, `offset`, `d_lane`, `yaw`, `entity_ref`; OpenSCENARIO `RelativeLanePosition`), placed when the action starts. |
 | `RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`, `RouteCrosswalkPose`, `RouteRoadsidePose` | Poses placed against the scenario's route (a [logical scenario](logical_scenarios.md)) when the action starts: along the route and across lanes, on the opposite road, on a lanelet entering a route junction from the left / right / opposite, on a junction's crosswalk, at the roadside. |
@@ -214,7 +235,7 @@ Connects the ego to a driving policy served over alpasim's
 | `ControlConfig`, `TrajectoryFollower`, `VehicleCommand` | Pure pursuit plus a port of Autoware's `autoware_pid_longitudinal_controller` (or the `time_indexed` tracker), turning a plan into `carla.VehicleControl`. |
 | `Pose`, `Trajectory` | Rigid-transform primitives with protobuf conversions (right-handed frame). |
 | `EgoObservation`, `DriveOutcome` | The state sent to the policy and the plan it returns. |
-| `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, pedestrians and props, speed limit) into the `renderer_data` extension payload. |
+| `RendererDataBuilder` | Collects CARLA ground truth (governing traffic light, other vehicles, pedestrians and props, speed limit) into the `renderer_data` extension payload (`driver.renderer`). |
 | `driver.stop_lines.StopLines` | Which traffic light governs the ego (the lane graph walked ahead to the next junction) and the distance along its heading to where it stops for it (the stop waypoint walked to its junction's mouth); `RendererDataBuilder` reports both. |
 
 ## Traffic backends (`autoware_carla_scenario.traffic`)
@@ -241,14 +262,24 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `MapManager` | Singleton owning the loaded `LaneletMap`, `pyxodr` road network, MGRS offset, and z offset. |
 | `to_carla_world`, `to_carla_location`, `to_lanelet2`, `to_opendrive` | Pose conversion entry points (overload by input frame). |
 | `project_onto_road` | Project a `CarlaWorldPose` onto a specified OpenDRIVE road. |
+| `project_onto_lanelet` | Project a `CarlaWorldPose` onto a specified lanelet's centerline: a `Lanelet2Pose` whose `s` and `t` are read in that lanelet's own frame (the Lanelet2 counterpart of `project_onto_road`). |
+| `to_map_frame` | Convert any pose to a 6-DoF `BridgePose` in Autoware's `map` frame (the Lanelet2 file read with its `map_projector_info.yaml` projector), as Autoware's initial pose or goal. |
+| `route_road_ids(lanelet_ids)` | The OpenDRIVE roads a route of lanelets runs on, each once, in order (a junction's lanelets left out). |
 | `road_traffic_rule` | An OpenDRIVE road's traffic rule, `"RHT"` or `"LHT"` (its `rule` attribute, `"RHT"` where unset). |
 | `snap_to_carla_road` | Ray-cast a pose onto the rendered CARLA ground surface. |
 | `GroundProjectionConfig` | Ray-cast tuning for `snap_to_carla_road`; refuses (`ValueError`) a negative or non-finite distance, or a ray of no length. |
 | `lanelets_ahead` | A lanelet and the lanelets that follow it in the routing graph (no lane changes, every branch), up to a distance: the lanes a vehicle keeps to without changing lanes. |
 | `lanes_ahead_before_junction` | `lanelets_ahead` cut at the first junction lanelet (one with a `turn_direction` tag): the lane a vehicle is on until the next intersection. |
 | `lane_beside` | The lanelet a lane change to the `"left"` or `"right"` ends on: the routing graph's `left` / `right`, else its `adjacentLeft` / `adjacentRight`; `None` where there is none. |
+| `lanelets_beside` | The lanelets beside a lanelet on either side, a lane change allowed across the line or not: its routing graph `left`, `right`, `adjacentLeft` and `adjacentRight`, those it has. |
 | `lane_change_target_lanelets` | `lane_beside` and the lanes ahead of it before the junction, less any the lanelet's own lane reaches too: where a lane change from a lanelet ends, read in the Lanelet2 frame (`entity_lane_of` beside a lanelet). Empty with no lane beside. |
 | `get_stop_line_poses`, `get_stop_line_poses_with_following` | Resolve stop-line `Lanelet2Pose`s for a lanelet (optionally including following lanelets, up to `depth` steps on: `0` or more, `0` searching the lanelet alone; a negative `depth` raises `ValueError`, and the search ends early at a dead end). |
+| `find_nearest_traffic_light(world, location, max_distance=150.0)` | Find the nearest CARLA traffic-light actor to a pose or location, and its distance. |
+| `lanelet2_traffic_light_id_to_opendrive_controller_id(lanelet2_tl_id)` | ID translation between Lanelet2 traffic-light regulatory elements and OpenDRIVE controllers, on the loaded maps. |
+| `get_signal_ids_for_controller(controller_id)` | Map an OpenDRIVE controller id to its signal ids, on the loaded map. |
+| `get_stop_line_linestrings(lanelet_id)` | Collect Lanelet2 stop-line `LineString3d` objects for a lanelet, on the loaded map. |
+| `get_stop_line_linestrings_with_following(lanelet_id, depth=1)` | `get_stop_line_linestrings` as `(lanelet_id, linestring)` pairs: the lanelet's own, or where it has none, those of its successors up to `depth` steps on; a negative `depth` raises `ValueError`. |
+| `find_traffic_lights_for_lanelet2_id(world, lanelet2_tl_id)` | The CARLA traffic-light actors a Lanelet2 traffic-light regulatory element names: through its OpenDRIVE controller, or by its lanes where no controller is named after it. |
 
 ## Entities (`autoware_carla_scenario.entity`)
 
@@ -274,7 +305,7 @@ Frame-aware velocity / acceleration types with affine-space arithmetic
 
 | Symbol | Description |
 |--------|-------------|
-| `Vector3` | Frame-tagged 3-vector. |
+| `Vector3` | Immutable 3-vector (x, y, z); it carries no frame: the velocity and acceleration types hold one beside it. |
 | `CoordinateFrame`, `FrameMismatchError`, `frame_of` | Re-exported from `coordinate.frames`. |
 | `AbsoluteVelocity`, `RelativeVelocity`, `FrenetVelocity` | Velocity types. |
 | `AbsoluteAcceleration`, `RelativeAcceleration`, `FrenetAcceleration` | Acceleration types. |
@@ -347,9 +378,9 @@ compiled and exported anywhere.
 | Symbol | Description |
 |--------|-------------|
 | `ScenarioDocument` | The Scenario IR: entities, actions, assertions, an optional `route` search (a [logical scenario](logical_scenarios.md)), and a `ui` block that is presentation only. |
-| `RouteSearch`, `LaneSegment`, `JunctionSegment`, `LengthRange`, `CountRange` | The route search as the IR states it; `RouteSearch.to_sweep_dict()` is what the route search reads. |
+| `RouteSearch`, `LaneSegment`, `JunctionSegment`, `LengthRange`, `CountRange` | The route search as the IR states it; `RouteSearch.to_sweep_dict()` is what the route search reads. Imported from `authoring.models`. |
 | `Entity`, `SpawnSpec`, `SValue`, `BindingRef`, `GoalSpec`, `EgoDriver` | Actors, how they spawn (fixed lanelet, or a constraint search with an optionally derived offset), and — for the ego alone — which stack drives it and where it is sent. |
-| `LaneletChoice`, `LaneletSlot`, `ScenarioDocument.lanelet_slots` | Fixed or searched, and one view over every place a document names a lanelet — a spawn, a goal, an action's or a condition's `lanelet` parameter — so the picker, the validator and the Hydra config read one answer. |
+| `LaneletChoice`, `LaneletSlot`, `ScenarioDocument.lanelet_slots` | Fixed or searched, and one view over every place a document names a lanelet — a spawn, a goal, an action's or a condition's `lanelet` parameter — so the picker, the validator and the Hydra config read one answer. `LaneletChoice` and `LaneletSlot` are imported from `authoring.models`. |
 | `ActionNode`, `ConditionNode`, `ConstraintNode` | Recursive IR nodes; a node's meaning comes from its registry spec, not from a `type` switch. |
 | `ActionSpec`, `ConditionSpec`, `ConstraintSpec`, `BindingSpec`, `FieldSpec`, `ConditionVisual` | Metadata describing how a primitive is presented, edited and built. |
 | `register_action_spec`, `register_condition_spec`, `register_constraint_spec`, `register_binding_spec` | Add a primitive; the GUI, validation and the compiler pick it up with no template change. |
@@ -386,12 +417,15 @@ imports the other.
 
 ## Utilities (`autoware_carla_scenario.utils`)
 
+Pure helpers, imported by module path: nothing is re-exported from
+`autoware_carla_scenario.utils` itself. Each takes the map it reads as its first
+argument; the forms above, in `autoware_carla_scenario.coordinate`, read the
+loaded maps from `MapManager` instead.
+
 | Symbol | Description |
 |--------|-------------|
-| `find_nearest_traffic_light` | Find the nearest CARLA traffic-light actor for a Lanelet2 traffic-light id. |
-| `get_signal_ids_for_controller` | Map an OpenDRIVE controller id to its signal ids. |
-| `lanelet2_traffic_light_id_to_opendrive_controller_id` | ID translation between Lanelet2 regulatory elements and OpenDRIVE controllers. |
-| `get_stop_line_linestrings` | Collect Lanelet2 stop-line `LineString3d` objects for a lanelet. |
+| `utils.traffic_light`: `lanelet2_traffic_light_id_to_opendrive_controller_id(road_network, lanelet2_tl_id)`, `get_signal_ids_for_controller(road_network, controller_id)` | The traffic-light ID translations, on a given OpenDRIVE road network. |
+| `utils.stop_line`: `get_stop_line_linestrings(lanelet_map, lanelet_id)` | A lanelet's stop lines, on a given Lanelet2 map. |
 
 ## CLI entry points
 
@@ -411,6 +445,7 @@ Defined in `pyproject.toml`'s `[project.scripts]`, in that order:
 | `detect-no-3d-model` | `autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main` | Detect lanelets without a matching 3D ground model in CARLA. See [Usage](usage.md#detect-no-3d-model-3d-model-detection). |
 | `viewer` | `autoware_carla_scenario.ui:main` | Scenario Result Viewer: a web UI for browsing scenario results and starting runs. See [Usage](usage.md#viewer-scenario-result-viewer). |
 | `scenario-editor` | `autoware_carla_scenario.editor:main` | Scenario Editor: a web UI for authoring scenarios and exporting them as packages; a separate application from `viewer`. See [Scenario Editor](scenario_editor.md). |
+| `scenario-agent` | `autoware_carla_scenario.agent.cli:main` | Install the scenario-writing skills into Claude Code or Codex, in the Git repository holding the working directory, and start the agent; needs the `agent` extra. See [Writing Scenarios with a Coding Agent](coding_agents.md). |
 | `scenario-hils` | `autoware_carla_scenario.hils.cli:main` | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra. See [HILS Bridge](hils.md). |
 | `scenario-t4scene` | `autoware_carla_scenario.t4_scene.__main__:main` | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit. See [T4 Scene](t4_scene.md). |
 | `scenario-wosac` | `autoware_carla_scenario.wosac.__main__:main` | Write runs' trajectory logs as Waymo Open Sim Agents Challenge rollouts, and pack them by scenario as a submission. See [WOSAC Rollouts](wosac.md). |
@@ -420,7 +455,7 @@ packages, in `autoware_carla_scenario.examples.run` unless noted:
 
 | Symbol | Description |
 |--------|-------------|
-| `register_scenario(name, scenario_cls, config_cls)` | Register a built-in-style scenario class under a Hydra `scenario.name`. |
+| `register_scenario(name, scenario_cls, config_cls)` | Register a built-in-style scenario class under a Hydra `scenario.name`. Lives in `autoware_carla_scenario.registry` (and the top-level package), not `examples.run`. |
 | `register_scenario_builder(name, builder)` | Register a custom builder when the constructor signature differs. Lives in `autoware_carla_scenario.registry` (and the top-level package), not `examples.run`. |
 | `register_scenario_document(name, loader)` / `get_scenario_document(name)` | Register (after its builder) how to load the Scenario IR document a declarative scenario runs, and load it; a run checks its map against the document's before anything starts. Live in `autoware_carla_scenario.registry` (and the top-level package), not `examples.run`. |
 | `get_scenario_registry()` | Return a copy of the registry. |

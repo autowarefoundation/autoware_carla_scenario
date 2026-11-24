@@ -9,24 +9,35 @@ import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
+    Response,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.convertors import Convertor, register_url_convertor
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
 from . import cases, recordings, results, runner, scanner, slurm_launch
-from .case_paths import INDEX_DIGITS, is_index, session_order
+from .case_paths import (
+    INDEX_DIGITS,
+    batch_session_url,
+    is_index,
+    own_file,
+    session_order,
+)
+from .comparison import batch_scenarios
 from .models import RunProgress, SessionSummary
 
 # Whether a body is sent as JSON, a session's reference and the ODD attribute a
@@ -34,6 +45,7 @@ from .models import RunProgress, SessionSummary
 from .request_values import _attribute as _attribute
 from .request_values import _is_json_type as _is_json_type
 from .request_values import _session_ref as _session_ref
+from .request_values import wants_page
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +111,51 @@ app.add_middleware(RequestGuard, hosts=HOSTS)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
+
+def _wants_page(request: Request) -> bool:
+    """Whether an error is answered with a page: a request that accepts HTML
+    (a browser's navigation) and is not one of the API's, whose clients read
+    its JSON error (``{"detail": ...}``): the checked
+    :func:`.request_values.wants_page` (#2354), of the request's path and
+    ``Accept`` header."""
+    return wants_page(request.url.path, request.headers.get("accept", ""))
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: Exception) -> Response:
+    """A missing session or case (or any other HTTP error) as a page with a
+    way back to the sessions list, for a browser (#2344); JSON, as FastAPI
+    answers it, for ``/api/*`` and for a client that does not accept HTML."""
+    if not isinstance(exc, StarletteHTTPException) or not _wants_page(request):
+        return await http_exception_handler(request, exc)  # type: ignore[arg-type]
+    try:
+        phrase = HTTPStatus(exc.status_code).phrase
+    except ValueError:
+        phrase = "Error"
+    # A detail of its own, not the status's phrase (starlette's default).
+    detail = exc.detail if isinstance(exc.detail, str) and exc.detail != phrase else ""
+    if exc.status_code == 404 and not detail:
+        # Only a session's page is a session or case: any other path (a
+        # mistyped URL, /static/...) is a page that is not there.
+        detail = (
+            "There is no such session or case here."
+            if request.url.path.startswith("/session/")
+            else "There is no such page here."
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context={
+            "heading": "Not found" if exc.status_code == 404 else phrase,
+            "message": detail,
+            "status_code": exc.status_code,
+            "page": "error",
+        },
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
+
+
 # Base path for multirun/ and outputs/ directories.
 # Resolved at startup; can be overridden via environment variable.
 BASE_PATH = Path.cwd()
@@ -112,9 +169,11 @@ def _base_path() -> Path:
 def _session_dir_or_404(session_type: str, date: str, time: str) -> Path:
     """The session's directory, or 404 when the URL's names do not make one
     under the base (:func:`cases.session_dir`: an unknown type, ``..``, a
-    separator, or a path that resolves outside ``multirun/`` / ``outputs/``)."""
+    separator, or a path that resolves outside ``multirun/`` / ``outputs/``)
+    or there is no such directory: a session that does not exist has no page,
+    rather than an empty one."""
     directory = cases.session_dir(_base_path(), session_type, date, time)
-    if directory is None:
+    if directory is None or not directory.is_dir():
         raise HTTPException(status_code=404)
     return directory
 
@@ -165,17 +224,21 @@ async def _json_object(request: Request) -> dict[str, Any]:
     The body must be sent as ``application/json``: any other type -- the
     ``text/plain`` a page on another site can send without a CORS preflight
     above all (#1844) -- is refused with 415, as is a body sent with no type.
-    An empty body with no type is no body, and keeps the defaults.  A JSON
-    body that does not parse keeps the defaults, as before; one that is JSON
-    but not an object (``[1]``, ``"x"``, ``null``) is refused.
+    An empty body (with no type, or as ``application/json``) is no body, and
+    keeps the defaults; ``/api/run`` refuses it, since it names no scenario
+    (:func:`run_scenarios`).  A body that is not JSON -- cut off, garbled, not
+    UTF-8 -- is refused, as is one that is JSON but not an object (``[1]``,
+    ``"x"``, ``null``): read as no body, a truncated run request would run
+    every scenario, and a resubmission drop its flags.
 
     Raises:
         HTTPException: 415, the body is not sent as ``application/json``.
-        BodyError: The body is JSON but not an object.
+        BodyError: The body is not JSON, or is JSON but not an object.
     """
     content_type = request.headers.get("content-type")
+    raw = await request.body()
     if content_type is None:
-        if await request.body():
+        if raw:
             raise HTTPException(
                 status_code=415, detail="the request body must be application/json"
             )
@@ -184,10 +247,14 @@ async def _json_object(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=415, detail="the request body must be application/json"
         )
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 -- no body (or not JSON): the defaults
+    if not raw.strip():
         return {}
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:  # json.JSONDecodeError, UnicodeDecodeError
+        raise BodyError("the request body is not valid JSON") from exc
+    except RecursionError as exc:  # nested deeper than the parser goes
+        raise BodyError("the request body is not valid JSON") from exc
     if not isinstance(body, dict):
         raise BodyError("the request body must be a JSON object")
     return body
@@ -328,8 +395,10 @@ async def session_detail(
     items = scanner.load_session(_base_path(), session_type, date, time)
     passed_count = sum(1 for it in items if it.passed is True)
     total_count = len(items)
-    # A SLURM batch's cases without an outcome yet.
-    pending_count = sum(1 for it in items if it.passed is None)
+    # The cases without a result to read (a SLURM batch's not collected, a
+    # job's missing or unreadable result), counted as the session list
+    # counts them (#2285); one without a verdict counts as failed.
+    pending_count = sum(1 for it in items if it.pending)
     return templates.TemplateResponse(
         request=request,
         name="session.html",
@@ -356,11 +425,22 @@ async def session_detail(
 async def scenario_detail(
     request: Request, session_type: str, date: str, time: str, index: int
 ) -> HTMLResponse:
-    """Individual scenario detail page with condition tree."""
+    """Individual scenario detail page with condition tree.
+
+    404 for a case the session does not have (#2344): a multirun session's
+    job that is not there, an index past a batch's cases, any but 0 of a
+    single run.  A case that is there but has no result yet (a job still
+    running, a batch's pending case) is served, saying so.
+    """
     _session_dir_or_404(session_type, date, time)
-    result = scanner.load_scenario(_base_path(), session_type, date, time, index)
     # Also load session items for navigation context
     items = scanner.load_session(_base_path(), session_type, date, time)
+    # A single run is its directory, listed only once its result is there.
+    if not any(it.index == index for it in items) and not (
+        session_type == "single" and index == 0
+    ):
+        raise HTTPException(status_code=404, detail="This session has no such case.")
+    result = scanner.load_scenario(_base_path(), session_type, date, time, index)
     scenario_name = ""
     for it in items:
         if it.index == index:
@@ -392,14 +472,14 @@ def _recording_context(
     """What the scenario page shows of the case's Rerun recording, or
     ``None`` when the case has no trajectory log."""
     files = cases.case_files(_base_path(), session_type, date, time, index)
-    if files is None or not files.trajectory.is_file():
+    if files is None or not own_file(files.trajectory):
         return None
     made = recordings.recording_path(files.trajectory)
     case = _case_path(session_type, date, time, index)
     converter = recordings.converter_available()
     return {
         "trajectory": str(files.trajectory.resolve()),
-        "rrd": str(made.resolve()) if made.is_file() else None,
+        "rrd": str(made.resolve()) if own_file(made) else None,
         "converter": converter,
         # Whether ``rrd_url`` and ``make_url`` can answer with a file: one is
         # made already (and no older than the log, beside it or in the cache),
@@ -525,9 +605,19 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     is a request that cannot run: a pattern refused or matching nothing, a
     sweep that fails to expand, a SLURM option value that is not valid
     (#1964).
+
+    The body must name the scenarios (``scenario``): an empty body, or one
+    without the field, is refused rather than run as ``*/*`` -- every
+    scenario is run only when asked for by name.  The Run panel always sends
+    it.
     """
     try:
-        body = await _run_body(request)
+        raw = await _json_object(request)
+        if "scenario" not in raw:
+            raise BodyError(
+                "scenario is required: name the scenarios to run ('*/*' for all)"
+            )
+        body = parse_run_body(raw)
     except BodyError as exc:
         return _run_body_error(exc)
 
@@ -643,7 +733,8 @@ async def run_progress(request: Request) -> StreamingResponse:
 
 def _trajectory_of(session_type: str, date: str, time: str, index: int) -> Path:
     files = cases.case_files(_base_path(), session_type, date, time, index)
-    if files is None or not files.trajectory.is_file():
+    # A symbolic link may name a log outside the viewer's base (own_file()).
+    if files is None or not own_file(files.trajectory):
         raise HTTPException(status_code=404, detail="This case has no trajectory log.")
     return files.trajectory
 
@@ -770,7 +861,7 @@ def _scenarios(summary: SessionSummary) -> set[str]:
     file's stem) does not give, so they are read from its overrides
     (:func:`results.session_scenarios`)."""
     if summary.session_type == "batch":
-        return {n.strip().split("#", 1)[0] for n in summary.scenario_name.split(",")}
+        return batch_scenarios(summary.scenario_name)
     return results.session_scenarios(
         _base_path(), summary.session_type, summary.date, summary.time
     )
@@ -1023,12 +1114,7 @@ def _session_of(batch_dir: str | None) -> str | None:
     """``/session/batch/<date>/<time>`` of a batch directory under the base."""
     if not batch_dir:
         return None
-    try:
-        rel = Path(batch_dir).resolve().relative_to(_base_path().resolve() / "outputs")
-    except ValueError:
-        return None
-    parts = rel.parts
-    return f"/session/batch/{parts[0]}/{parts[1]}" if len(parts) == 2 else None
+    return batch_session_url(batch_dir, _base_path())
 
 
 @app.get("/api/slurm/submission")

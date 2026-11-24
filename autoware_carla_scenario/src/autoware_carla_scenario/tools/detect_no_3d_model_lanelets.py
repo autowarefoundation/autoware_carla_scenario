@@ -100,6 +100,22 @@ from autoware_carla_scenario.tools.file_writes import (
     _write_in_place as _write_in_place,
 )
 
+# The YAML text it writes is the checked tools.yaml_text's (#2364); the names
+# it had here stay importable from here.
+from autoware_carla_scenario.tools.yaml_text import NO_3D_MODEL_KEY as NO_3D_MODEL_KEY
+from autoware_carla_scenario.tools.yaml_text import (
+    comment_start as _comment_start,
+)
+from autoware_carla_scenario.tools.yaml_text import (
+    format_value as _format_value,
+)
+from autoware_carla_scenario.tools.yaml_text import (
+    insert_after_line as _insert_after_line,
+)
+from autoware_carla_scenario.tools.yaml_text import (
+    key_line_tail as _key_line_tail_at,
+)
+
 logger = logging.getLogger(__name__)
 
 #: The runner's ground-projection search range, so a lanelet is flagged only
@@ -259,9 +275,6 @@ def detect_no_3d_model_lanelets(
 # YAML update
 # ---------------------------------------------------------------------------
 
-#: The key the detected lanelet IDs are written to.
-NO_3D_MODEL_KEY = "no_3d_model_lanelet_ids"
-
 
 class YamlUpdateError(ValueError):
     """The map configuration YAML cannot be updated safely as text."""
@@ -305,16 +318,25 @@ def _content_end(node: yaml.Node, text: str) -> int:
     return end
 
 
-def _format_value(
-    lanelet_ids: Sequence[int], indent: str, newline: str, *, flow: bool
-) -> str:
-    """Render ``no_3d_model_lanelet_ids: <ids>`` starting at the key."""
-    if not lanelet_ids or flow:
-        items = ", ".join(str(int(lid)) for lid in lanelet_ids)
-        return f"{NO_3D_MODEL_KEY}: [{items}]"
-    lines = [f"{NO_3D_MODEL_KEY}:"]
-    lines.extend(f"{indent}  - {int(lid)}" for lid in lanelet_ids)
-    return newline.join(lines)
+def _content_start(node: yaml.Node) -> int:
+    """Return the index of the first character of *node*'s content.
+
+    A node's ``start_mark`` lies at its anchor or tag, if it has one, so for a
+    block collection the start of its first child is used instead.
+    """
+    if isinstance(node, yaml.CollectionNode) and not node.flow_style and node.value:
+        first = node.value[0]
+        return _content_start(first[0] if isinstance(node, yaml.MappingNode) else first)
+    return int(node.start_mark.index)
+
+
+def _key_line_tail(text: str, key_node: yaml.Node, value_node: yaml.Node) -> str:
+    """Return the text after the key's ``:`` up to the end of its line when
+    the value's content starts on a later line, ``""`` otherwise: the checked
+    :func:`.yaml_text.key_line_tail`, at the nodes' indices."""
+    return _key_line_tail_at(
+        text, int(key_node.end_mark.index), _content_start(value_node)
+    )
 
 
 def _target_path(data: dict[Any, Any]) -> tuple[str, ...]:
@@ -401,18 +423,28 @@ def update_no_3d_model_lanelet_ids_text(text: str, lanelet_ids: Sequence[int]) -
             and value_node.flow_style
             and value_node.value
         )
-        replacement = _format_value(ids, indent, newline, flow=flow)
+        tail = _key_line_tail(text, key_node, value_node)
+        if not tail and ids and not flow:
+            # The value starts on the key's line (``key: []  # c``), so a
+            # comment after it is on the key's line too: it stays there rather
+            # than following the block list's last item.
+            line_end = len(text)
+            for line_break in ("\n", "\r"):
+                found_at = text.find(line_break, end)
+                if found_at != -1:
+                    line_end = min(line_end, found_at)
+            rest = text[end:line_end]
+            comment = rest[_comment_start(rest) :]
+            if comment:
+                tail = comment
+                end = line_end
+        replacement = _format_value(ids, indent, newline, flow=flow, tail=tail)
         result = text[:start] + replacement + text[end:]
     else:
         # After the line holding the section's last value.
         last_end = _content_end(section.value[-1][1], text)
-        line_end = text.find("\n", last_end)
         entry = indent + _format_value(ids, indent, newline, flow=False) + newline
-        if line_end == -1:
-            prefix = text if text.endswith(("\n", "\r")) else text + newline
-            result = prefix + entry
-        else:
-            result = text[: line_end + 1] + entry + text[line_end + 1 :]
+        result = _insert_after_line(text, last_end, entry, newline)
 
     expected = copy.deepcopy(original)
     target = expected
@@ -704,7 +736,18 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """CLI entry point for detecting lanelets without a CARLA 3D model."""
+    """CLI entry point for detecting lanelets without a CARLA 3D model.
+
+    Ctrl-C prints one line, not a traceback, and exits 130 (#2333).
+    """
+    try:
+        _main(argv)
+    except KeyboardInterrupt:
+        print("detect-no-3d-model: interrupted", file=sys.stderr)  # noqa: T201
+        sys.exit(130)
+
+
+def _main(argv: Sequence[str] | None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     _check_args(parser, args)

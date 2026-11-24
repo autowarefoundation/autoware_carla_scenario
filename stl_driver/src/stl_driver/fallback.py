@@ -97,14 +97,19 @@ def emergency_brake_plan(
 
 
 def _braking_distances(speed_mps: float, decel_mps2: float, config: STLDriverConfig) -> np.ndarray:
-    """Distance covered by each plan step under a constant deceleration."""
+    """Distance covered by the end of each plan step under a constant
+    deceleration, integrated exactly: each step travels ``v t - a t^2 / 2``
+    for the ``t`` of it before the vehicle stops, so the stop is ``v^2 / 2a``
+    ahead."""
     horizon = config.horizon
+    step_s = horizon.step_s
     speed = max(0.0, float(speed_mps))
     travelled = 0.0
     distances = np.empty(horizon.n_steps, dtype=np.float64)
     for index in range(horizon.n_steps):
-        speed = max(0.0, speed - decel_mps2 * horizon.step_s)
-        travelled += speed * horizon.step_s
+        moving_s = min(step_s, speed / decel_mps2) if decel_mps2 > 0.0 else step_s
+        travelled += speed * moving_s - 0.5 * decel_mps2 * moving_s * moving_s
+        speed = max(0.0, speed - decel_mps2 * step_s)
         distances[index] = travelled
     return distances
 

@@ -4,8 +4,8 @@ A run's ODD is named by a string (the ``odd`` key of the CLI config, or
 ``ScenarioQueue(odd=...)``):
 
 * ``"default"`` (or nothing): :func:`default_odd`, openodd's bundled default
-  ODD -- every attribute the framework can measure and no modules, so every
-  condition is inside it;
+  ODD -- the scenery, conditions and traffic around the ego the framework
+  measures, and no modules, so every condition is inside it;
 * a name registered with :func:`register_odd`, in code or by a package through
   the ``autoware_carla_scenario.odds`` entry point group (the entry point
   names a function that takes nothing and calls :func:`register_odd`, as the
@@ -60,16 +60,26 @@ _registry.add_entry_point_group(ENTRY_POINT_GROUP)
 def default_odd() -> OddDefinition:
     """The built-in ODD: openodd's bundled ``default``, measured in CARLA.
 
-    Every attribute the framework measures, after ISO 34503, and no modules,
-    under tier4/taxonomy's ids where it has them: scenery (road type,
-    drivable area type, speed limit, lane count; the junction and the
+    Attributes after ISO 34503, and no modules, under tier4/taxonomy's ids
+    where it has them: scenery (road type, drivable area type, speed limit,
+    lane count, the junction type, the road surface condition and the
     Lanelet2 ``location`` tag), environmental conditions (the rainfall rate
-    and rain intensity, the visibility through the fog and fog level, the
-    time of day) and dynamic elements (ego speed, the vehicles and
-    pedestrians nearby). What a scenario sets up -- the vehicle ahead, a
-    pedestrian crossing -- is no attribute: the rules draw it. Its files
-    ship with openodd, so its revision changes only when they do. See
-    ``docs/odd.md``.
+    and rain intensity, the wind speed and wind intensity, the visibility
+    through the fog and fog level, the time of day and the cloud cover) and
+    dynamic elements (ego speed, the vehicles and pedestrians nearby).
+
+    It is a choice of what the framework measures, not all of it: probes
+    such as ``in_junction``, ``tire_friction``, ``visibility``, CARLA's own
+    intensities (``rain``, ``fog``, ...), ``traffic_density`` and the
+    traffic parameters' spread measure an ODD that names them
+    (``docs/odd.md``, "Built-in probes").  It also declares the
+    temperature, the snowfall rate and the snow intensity, which CARLA
+    cannot bring about, so it measures none of them
+    (:meth:`~openodd.OddDefinition.unmeasured`).
+
+    What a scenario sets up -- the vehicle ahead, a pedestrian crossing --
+    is no attribute: the rules draw it. Its files ship with openodd, so its
+    revision changes only when they do. See ``docs/odd.md``.
     """
     from openodd import bundled_odd  # noqa: PLC0415
 

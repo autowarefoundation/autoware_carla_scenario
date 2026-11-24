@@ -251,9 +251,12 @@ class TestFactories:
 
     def test_a_place_reads_what_float_and_int_read_as_before(self) -> None:
         # The editor's fields may arrive as text: read as int() and float() do.
-        fields: dict[str, Any] = {"lanelet_id": "7", "s": "2.5", "t": True}
+        fields: dict[str, Any] = {"lanelet_id": "7", "s": "2.5", "t": 1}
         place = authored_place(heading=None, **fields)
         assert place == Lanelet2Pose(7, 2.5, 1.0, 0.0)
+        # A boolean is no number, though float() read true as 1.0 (#2398).
+        with pytest.raises(ValueError, match=r"^t must be a number, got True$"):
+            authored_place(t=True)
 
     def test_timing(self) -> None:
         assert authored_timing("none") is None
@@ -783,3 +786,57 @@ class TestRelativeEditor:
         assert card.params["reference_entity"] is None
         assert card.params["relative_vertices"] == _RELATIVE_ROWS
         assert _messages(document) == []
+
+
+# ---------------------------------------------------------------------------
+# A waypoint condition on a vertex the card does not have (#2261)
+# ---------------------------------------------------------------------------
+
+
+class TestAdvanceOnAMissingVertex:
+    @pytest.mark.parametrize("index", [3, 5, -1])
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"path_source": "vertices", "vertices": _ROWS},
+            {"path_source": "relative_lane", "relative_vertices": _RELATIVE_ROWS},
+        ],
+    )
+    def test_it_is_refused_rather_than_dropped(
+        self, source: dict[str, Any], index: int
+    ) -> None:
+        """As Trajectory.gated() refuses it: it was silently ignored."""
+        with pytest.raises(
+            ValueError, match=rf"^trajectory: no vertex {index} \(it has 3\)$"
+        ):
+            authored_trajectory(**source, advance={index: TrajectoryTimeCondition(1.0)})
+
+    def test_a_document_is_told_by_the_validator_first(self) -> None:
+        document = _document({"path_source": "vertices", "vertices": _ROWS})
+        document.actions[0].advance_conditions = [
+            VertexCondition(
+                vertex=5,
+                condition=ConditionNode(type="trajectory_time", params={"time": 1.0}),
+            )
+        ]
+        assert "There is no vertex 5: the trajectory has 3." in _messages(document)
+
+    def test_a_numpy_integer_index_still_gates_its_vertex(self) -> None:
+        """A numpy integer key looked up its vertex before the check (#2261)."""
+        import numpy as np
+
+        conditions = [TrajectoryTimeCondition(float(i)) for i in range(3)]
+        advance: dict[Any, TrajectoryTimeCondition] = {
+            np.int64(i): c for i, c in enumerate(conditions)
+        }
+        trajectory = authored_trajectory("vertices", vertices=_ROWS, advance=advance)
+        assert [v.advance for v in trajectory.vertices] == conditions
+
+    @pytest.mark.parametrize("index", [True, "1", 1.5])
+    def test_an_index_that_is_no_integer_is_refused(self, index: Any) -> None:
+        with pytest.raises(ValueError, match=r"^trajectory: no vertex "):
+            authored_trajectory(
+                "vertices",
+                vertices=_ROWS,
+                advance={index: TrajectoryTimeCondition(1.0)},
+            )

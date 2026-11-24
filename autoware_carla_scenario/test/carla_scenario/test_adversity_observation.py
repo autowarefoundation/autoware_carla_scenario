@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import random
+from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.adversity import AgentFootprint
+from autoware_carla_scenario.adversity import AgentFootprint, observation
 from autoware_carla_scenario.adversity.observation import (
     DEFAULT_DESIRED_SPEED,
     AgentSnapshot,
@@ -320,3 +322,136 @@ def test_without_an_elevation_a_pedestrian_looks_around_in_plan_view(
     assert int(seen.crosswalk.id) == rm.STREET_CROSSWALK
     assert seen.nearest_road is not None
     assert int(seen.nearest_road.lanelet.id) in (rm.STREET, rm.DECK)
+
+
+# -- the chain prefilter (#2336) ---------------------------------------------
+
+
+def _random_cars(features: MapFeatures, seed: int, count: int) -> list[AgentSnapshot]:
+    """Cars all over the crossroads, most on its lanes -- some at the edge
+    of the lateral limit off a lane's centre, some turned against it --
+    and some off them, or on another level."""
+    rng = random.Random(seed)
+    roads = [
+        [(float(p.x), float(p.y)) for p in lanelet.centerline]
+        for lanelet in features.map.laneletLayer
+        if MapFeatures.is_road(lanelet)
+    ]
+    cars = []
+    for i in range(count):
+        if rng.random() < 0.15:
+            x, y = rng.uniform(-130.0, 130.0), rng.uniform(-130.0, 130.0)
+            yaw = rng.uniform(-math.pi, math.pi)
+        else:
+            points = rng.choice(roads)
+            k = rng.randrange(len(points) - 1)
+            (x0, y0), (x1, y1) = points[k], points[k + 1]
+            f = rng.random()
+            heading = math.atan2(y1 - y0, x1 - x0)
+            off = rng.choice([0.0, 0.0, 2.5, -2.5, rng.uniform(-3.0, 3.0)])
+            x = x0 + f * (x1 - x0) - off * math.sin(heading)
+            y = y0 + f * (y1 - y0) + off * math.cos(heading)
+            yaw = heading + rng.choice([0.0, 0.0, 0.0, math.pi]) + rng.gauss(0, 0.3)
+        z = rng.choice([None, None, None, 0.0, 8.0])
+        cars.append(AgentSnapshot(f"car{i}", x, y, yaw, 10.0, 0.0, CAR, z=z))
+    return cars
+
+
+def _summary(seen: Any) -> tuple:
+    def neighbour(found: Any) -> Any:
+        return None if found is None else (found.name, found.gap)
+
+    def side(lane: Any) -> Any:
+        if lane is None:
+            return None
+        return (
+            int(lane.lanelet.id),
+            lane.s,
+            neighbour(lane.leader),
+            neighbour(lane.follower),
+        )
+
+    lane = None if seen.lane is None else (int(seen.lane.lanelet.id), seen.lane.s)
+    return (
+        lane,
+        neighbour(seen.leader),
+        neighbour(seen.follower),
+        side(seen.left),
+        side(seen.right),
+    )
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_chain_prefilter_changes_no_observation(
+    features: MapFeatures, monkeypatch: pytest.MonkeyPatch, seed: int
+) -> None:
+    """Every vehicle's observation is the same as with every vehicle
+    located: the prefilter only skips those that cannot be on the chain."""
+    cars = _random_cars(features, seed, 80)
+    filtered = Scene(features, cars, {})
+    seen = {car.name: _summary(filtered.vehicle(car.name)) for car in cars}
+    monkeypatch.setattr(observation, "_CHAIN_BOX_MARGIN_M", math.inf)
+    unfiltered = Scene(features, cars, {})
+    for car in cars:
+        assert seen[car.name] == _summary(unfiltered.vehicle(car.name)), car
+
+
+def test_the_chain_prefilter_keeps_every_vehicle_located_on_the_chain(
+    features: MapFeatures,
+) -> None:
+    """Against locating every vehicle, on chains about every lanelet, with
+    vehicles right at the bound: :data:`_MAX_LATERAL_M` off each corner of
+    a chain lanelet's box, and just past it."""
+    lanelets = list(features.map.laneletLayer)
+    reach = observation._MAX_LATERAL_M
+    rng = random.Random(2336)
+    for lanelet in lanelets:
+        if not MapFeatures.is_road(lanelet):
+            continue
+        chain = features.lane_chain(lanelet, 0.0, 40.0, 40.0)
+        cars = _random_cars(features, rng.randrange(1 << 30), 40)
+        for key, span in chain.items():
+            points = [(float(p.x), float(p.y)) for p in span.lanelet.centerline]
+            west = min(x for x, _y in points)
+            east = max(x for x, _y in points)
+            south = min(y for _x, y in points)
+            north = max(y for _x, y in points)
+            for n, (x, y, yaw) in enumerate(
+                [
+                    (points[0][0], points[0][1] - reach, 0.0),
+                    (points[-1][0], points[-1][1] + reach, 0.0),
+                    (west - reach, points[0][1], 0.0),
+                    (east + reach, points[-1][1], math.pi),
+                    (west - reach - 1e-3, south, 0.0),
+                    (east + reach + 1e-3, north, math.pi),
+                ]
+            ):
+                cars.append(AgentSnapshot(f"edge{key}_{n}", x, y, yaw, 1.0, 0.0, CAR))
+        scene = Scene(features, cars, {})
+        expected: dict[int, list[str]] = {}
+        for car in cars:
+            lane = scene.lane_of(car.name)
+            if lane is not None and int(lane.lanelet.id) in chain:
+                expected.setdefault(int(lane.lanelet.id), []).append(car.name)
+        assert Scene(features, cars, {})._on_chain(chain) == expected
+
+
+def test_far_vehicles_are_not_located(
+    features: MapFeatures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The map matching, the costly part, is done only for those near the
+    observed vehicle's lanes."""
+    located: list[float] = []
+    original = observation.reference_lane_pose
+
+    def counting(*args: Any) -> Any:
+        located.append(args[1])
+        return original(*args)
+
+    monkeypatch.setattr(observation, "reference_lane_pose", counting)
+    far = [_car(f"far{i}", 60.0 + i, -INNER, yaw=math.pi) for i in range(40)]
+    scene = Scene(features, [_car("ego", -40.0), _car("ahead", -25.0), *far], {})
+    seen = scene.vehicle("ego")
+    assert seen.leader is not None and seen.leader.name == "ahead"
+    # The ego and the one ahead; none of the 40 on the far arm.
+    assert len(located) == 2

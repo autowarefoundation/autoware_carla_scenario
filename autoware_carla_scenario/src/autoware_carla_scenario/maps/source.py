@@ -408,7 +408,9 @@ class MapSource:
             other value must be a name ``git check-ref-format`` accepts and
             must not begin with ``-`` (see :func:`_ref_problem`).
         path: POSIX path of the map directory inside the repository.  Empty
-            means the repository root.
+            means the repository root.  It may not contain a control
+            character (a newline, a tab), nor an empty, ``.`` or ``..``
+            component.
     """
 
     repo_url: str
@@ -433,6 +435,31 @@ class MapSource:
                 raise MapSourceError(
                     f"{self.ref!r} is not a usable git ref: {problem}."
                 )
+        # The path becomes a line of `git sparse-checkout set --stdin`
+        # (maps/cache.py), where a newline would add a pattern of its own
+        # (`/*`, the whole repository), and a file name nowhere (#2233).
+        for character in self.path:
+            code = ord(character)
+            if code < 0x20 or code == 0x7F:
+                raise MapSourceError(
+                    f"{self.path!r} is not a usable map path: it contains a "
+                    "control character."
+                )
+        # The path is joined onto the checkout, the map root and the derived
+        # directory, and it is a sparse-checkout pattern (`/<path>/`), which
+        # git matches literally: `./maps/T` or `maps//T` checks nothing out
+        # on a fresh cache, yet resolves once `maps/T` is checked out, and is
+        # recorded as an entry of its own.  A `..` reaches out of all three
+        # directories.  So a path is spelled one way, without them (#2269).
+        if self.path:
+            for part in self.path.split("/"):
+                if part in ("", ".", ".."):
+                    what = "an empty" if not part else f"a {part!r}"
+                    raise MapSourceError(
+                        f"{self.path!r} is not a usable map path: it has "
+                        f"{what} component; write the directory as "
+                        "DIR/SUBDIR, relative to the repository root."
+                    )
 
     # -- parsing --------------------------------------------------------
 
@@ -441,12 +468,30 @@ class MapSource:
         """Return the source *uri* names.
 
         Raises:
-            MapSourceError: If *uri* is empty, names no repository, or its
-                ref is not one git accepts (see :func:`_ref_problem`).
+            MapSourceError: If *uri* is empty, is not a URL at all (an
+                unclosed ``[``), names no repository, its ref is not one git
+                accepts (see :func:`_ref_problem`), or its path has a control
+                character or an empty, ``.`` or ``..`` component.
         """
         text = (uri or "").strip()
         if not text:
             raise MapSourceError("A map source needs a repository URL.")
+        try:
+            return cls._parse_text(uri, text)
+        except MapSourceError:
+            raise
+        except ValueError as exc:
+            # urlsplit's own complaint (an unclosed IPv6 '['), which this
+            # method's callers -- catching MapSourceError, as documented --
+            # would otherwise let escape as a bare ValueError (#2279).
+            raise MapSourceError(
+                f"{redacted_url(uri)!r} is not a URL a repository can be "
+                f"cloned from: {exc}"
+            ) from exc
+
+    @classmethod
+    def _parse_text(cls, uri: str, text: str) -> "MapSource":
+        """:meth:`parse` past its empty check; *text* is *uri* stripped."""
         written_as_source = text.startswith("git+")
         if written_as_source:
             text = text[len("git+") :]
@@ -530,8 +575,12 @@ class MapSource:
 
     @property
     def repo_name(self) -> str:
-        """The repository's own name, without any owner or ``.git`` suffix."""
-        tail = self.repo_url.rstrip("/").rsplit("/", 1)[-1]
+        """The repository's own name, without any host, owner or ``.git``
+        suffix."""
+        # An scp-like URL's `user@host:` is no part of the name, even with no
+        # '/' after it (`git@example.com:maps.git`, #2269).
+        path = _SCP_HOST.sub("", self.repo_url, count=1)
+        tail = path.rstrip("/").rsplit("/", 1)[-1]
         return tail[:-4] if tail.endswith(".git") else tail
 
     @property

@@ -40,12 +40,12 @@ from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBacken
 # ---------------------------------------------------------------------------
 
 
-def _kept_kmh(seen: float, actor_id: int) -> float:
+def _kept_kmh(backend: TrafficManagerBackend, seen: float, actor_id: int) -> float:
     """The speed, km/h, vehicle *actor_id*'s driver keeps in *seen* metres:
-    the weather rules' sight_speed at the driver's own quantile."""
-    from autoware_carla_scenario.visibility import driver_quantile, sight_speed_at
+    the weather rules' sight_speed at the quantile *backend* gave its driver."""
+    from autoware_carla_scenario.visibility import sight_speed_at
 
-    return sight_speed_at(seen, driver_quantile(str(actor_id))) * 3.6
+    return sight_speed_at(seen, backend._quantiles[actor_id]) * 3.6
 
 
 class _Actor:
@@ -374,8 +374,10 @@ class TestTrafficManagerBackgroundVehicles:
         live.is_alive, gone.is_alive = True, False  # type: ignore[attr-defined]
         backend = TrafficManagerBackend(client=_Client())
         backend._background = {"background1": live, "background2": gone}  # type: ignore[dict-item]
-        # The dead one is no agent of the scene, so never chosen.
-        assert backend.background_actors(_World()) == backend._background
+        # The dead one is no agent of the scene, so never chosen, and is
+        # forgotten (#2245).
+        assert backend.background_actors(_World()) == {"background1": live}
+        assert backend._background == {"background1": live}
         assert NullTrafficBackend().background_actors(_World()) == {}
 
     def test_a_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:
@@ -544,7 +546,7 @@ class TestTrafficManagerVisibility:
             TM_DEFAULT_SPEED_DIFFERENCE_PCT,
         )
 
-        town = _Actor(1, speed_limit=50.0)
+        town = _Actor(1, speed_limit=40.0)
         highway = _Actor(2, speed_limit=120.0)
         backend, world, tm = self._following(town, highway)
         backend.tick(world, 0.05)
@@ -552,9 +554,9 @@ class TestTrafficManagerVisibility:
 
         set_world_visibility(4, 50.0)
         backend.tick(world, 0.10)
-        limit = _kept_kmh(50.0, 2)
-        # About 53 km/h, each driver's own (the weather rules' sight_speed at
-        # its quantile): the town's 50 is under it, kept at the
+        limit = _kept_kmh(backend, 50.0, 2)
+        # About 46-62 km/h, each driver's own (the weather rules' sight_speed
+        # at its quantile): the town's 40 is under it, kept at the
         # TrafficManager's own percentage; the highway's 120 is held to it.
         assert 1 not in tm.speed_differences
         assert tm.speed_differences[2] == [pytest.approx(100 * (1 - limit / 120.0))]
@@ -639,7 +641,7 @@ class TestTrafficManagerVisibility:
         assert tm.target_kmh(road) == pytest.approx(80.0)
         set_world_visibility(4, 50.0)
         backend.tick(world, 0.05)
-        limit = _kept_kmh(50.0, 2)
+        limit = _kept_kmh(backend, 50.0, 2)
         assert tm.target_kmh(road) == pytest.approx(limit)
         forget_visibility()
         backend.tick(world, 0.10)
@@ -658,7 +660,7 @@ class TestTrafficManagerVisibility:
         assert tm.target_kmh(highway) == pytest.approx(108.0)
         set_world_visibility(4, 50.0)
         backend.tick(world, 0.05)
-        limit = _kept_kmh(50.0, 2)
+        limit = _kept_kmh(backend, 50.0, 2)
         assert tm.target_kmh(highway) == pytest.approx(limit)
         forget_visibility()
         backend.tick(world, 0.10)
@@ -683,7 +685,7 @@ class TestTrafficManagerVisibility:
         backend.set_desired_speed(entity, world, own_kmh)
         set_world_visibility(4, 20.0)  # about 29 km/h kept
         backend.tick(world, 0.05)
-        limit = _kept_kmh(20.0, 2)
+        limit = _kept_kmh(backend, 20.0, 2)
         assert tm.target_kmh(car) == pytest.approx(min(own_kmh, limit))
         assert 2 not in tm.speed_differences
         assert max(tm.desired_speeds[2]) == own_kmh  # never raised
@@ -705,7 +707,7 @@ class TestTrafficManagerVisibility:
         backend.set_desired_speed(entity, world, 40.0)
         set_world_visibility(4, 20.0)
         backend.tick(world, 0.05)
-        limit = _kept_kmh(20.0, 2)
+        limit = _kept_kmh(backend, 20.0, 2)
         assert tm.target_kmh(car) == pytest.approx(limit)
         backend.set_desired_speed(entity, world, 0.0)  # a stop: it wins
         assert tm.target_kmh(car) == 0.0
@@ -731,7 +733,7 @@ class TestTrafficManagerVisibility:
         entity: Any = SimpleNamespace(actor=car, role_name="car")
         set_world_visibility(4, 20.0)
         backend.tick(world, 0.05)
-        limit = _kept_kmh(20.0, 2)
+        limit = _kept_kmh(backend, 20.0, 2)
         assert tm.target_kmh(car) == pytest.approx(limit)
         backend.release(entity, world)
         backend.set_desired_speed(entity, world, 60.0)  # the scenario's to drive
@@ -761,7 +763,7 @@ class TestTrafficManagerVisibility:
         backend.set_desired_speed(entity, world, 40.0)
         set_world_visibility(4, 20.0)
         backend.tick(world, 0.05)
-        limit = _kept_kmh(20.0, 2)
+        limit = _kept_kmh(backend, 20.0, 2)
         backend.override_entity_parameters(
             world, VehicleParameters(speed_factor=Spread(0.9)), entity
         )
@@ -770,6 +772,60 @@ class TestTrafficManagerVisibility:
         backend.tick(world, 0.10)
         assert tm.target_kmh(car) == pytest.approx(45.0)
         backend.close()
+
+    def _drivers(
+        self, first_id: int, gap: int, shuffle: int
+    ) -> List[Tuple[float, List[float]]]:
+        """Run four vehicles, spawned in one order, with ids from *first_id*
+        *gap* apart (sensors, a spectator or an ego spawned between them),
+        listed by the world in an order *shuffle* scrambles: what each, in
+        spawn order, is held to by sight, and every speed difference it was
+        given (its draws, its holds, its redraw)."""
+        import random
+
+        from autoware_carla_scenario.traffic.parameters import (
+            Spread,
+            VehicleParameters,
+        )
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        spawned = [_Actor(first_id + i * gap, speed_limit=120.0) for i in range(4)]
+        listed = list(spawned)
+        random.Random(shuffle).shuffle(listed)
+        backend, world, tm = self._following(*listed)
+        backend.override_vehicle_parameters(
+            world, VehicleParameters(speed_factor=Spread(0.8, 0.1))
+        )
+        set_world_visibility(4, 30.0)
+        backend.tick(world, 0.05)
+        out = [
+            (backend._sight_limit_kmh(a.id), list(tm.speed_differences[a.id]))
+            for a in spawned
+        ]
+        backend.close()
+        return out
+
+    def test_a_run_repeats_whatever_the_actor_ids_and_their_order(self) -> None:
+        """The same vehicles, spawned in the same order, get the same sight
+        speeds and draws on a fresh server and on one that has handed out
+        thousands of ids, whatever order LibCarla lists them in (#2384)."""
+        fresh = self._drivers(100, 1, shuffle=0)
+        assert len({limit for limit, _ in fresh}) == 4  # each driver its own
+        assert all(limit > 0.0 for limit, _ in fresh)
+        assert self._drivers(5000, 7, shuffle=1) == fresh
+        assert self._drivers(100, 3, shuffle=2) == fresh
+
+    def test_a_vehicle_off_autopilot_has_no_sight_speed(self) -> None:
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        car = _Actor(2, speed_limit=120.0)
+        backend, world, tm = self._following(car)
+        set_world_visibility(4, 30.0)
+        backend.tick(world, 0.05)
+        assert backend._sight_limit_kmh(2) > 0.0
+        assert backend._sight_limit_kmh(3) == -1.0  # never put on autopilot
+        backend.close()
+        assert backend._quantiles == {}
 
     def test_a_world_with_no_visibility_logs_nothing(
         self, caplog: pytest.LogCaptureFixture
@@ -791,6 +847,7 @@ class _BackgroundActor:
     def __init__(self) -> None:
         self.id = 100
         self.destroyed = 0
+        self.is_alive = True
 
     def set_target_velocity(self, velocity: Any) -> None:
         pass
@@ -855,6 +912,68 @@ class TestTrafficManagerBackground:
         backend.remove_background(world, handle)
         assert world.spawned[0].destroyed == 1
         assert backend.background_vehicles(world) == {}
+
+    def test_a_vehicle_destroyed_elsewhere_is_no_ghost_at_the_origin(self) -> None:
+        """Another handle to a vehicle the TrafficManager or the server
+        destroyed raises nothing and reads (0, 0, 0); only ``is_alive`` says
+        it is gone.  It is forgotten, not counted at the origin (#2245)."""
+        world: Any = _BackgroundWorld([_Blueprint()])
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.spawned[0]
+        backend._exact_kmh[actor.id] = 30.0
+        backend._held[actor.id] = 20.0
+        actor.is_alive = False
+        actor.get_location = lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0)
+        assert backend.background_vehicles(world) == {}
+        assert backend._background == {}
+        assert actor.id not in backend._exact_kmh
+        assert actor.id not in backend._held
+        assert backend.background_actors(world) == {}
+        assert actor.destroyed == 0  # gone already: not destroyed again
+
+    def test_a_vehicle_spawned_on_this_frame_is_no_ghost_either(self) -> None:
+        """Until the world ticks a client reads a new actor as not alive and
+        at the origin: a second source, a sink or an adversity on the same
+        phase sees it where it was put, and does not forget it."""
+        world: Any = _BackgroundWorld([_Blueprint()])
+        world.frame = 7
+        world.get_snapshot = lambda: SimpleNamespace(frame=world.frame)
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.spawned[0]
+        actor.is_alive = False
+        actor.get_location = lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0)
+        assert backend.background_vehicles(world) == {handle: (1.0, 2.0, 0.5)}
+        assert backend.background_actors(world) == {handle: actor}
+        # The world ticked: alive, it is read where it is ...
+        world.frame = 8
+        actor.is_alive = True
+        actor.get_location = lambda: SimpleNamespace(x=3.0, y=4.0, z=0.0)
+        assert backend.background_vehicles(world) == {handle: (3.0, 4.0, 0.0)}
+        # ... and not alive after a tick, it is gone.
+        actor.is_alive = False
+        assert backend.background_vehicles(world) == {}
+        assert backend._background == {}
+        assert backend._unticked == {}
+
+    def test_a_vehicle_that_raises_is_forgotten_as_well(self) -> None:
+        world: Any = _BackgroundWorld([_Blueprint()])
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.spawned[0]
+        backend._exact_kmh[actor.id] = 30.0
+
+        def raises() -> Any:
+            raise RuntimeError("trying to operate on a destroyed actor")
+
+        actor.get_location = raises
+        assert backend.background_vehicles(world) == {}
+        assert backend._background == {}
+        assert actor.id not in backend._exact_kmh
 
 
 # ---------------------------------------------------------------------------
@@ -1033,6 +1152,19 @@ class TestTheTrafficManagerKeepsScenarioVehicles:
         backend, _ = _on_autopilot(npc)
         npc.is_alive = False
         _stand(backend, 1.0)
+        assert backend._kept == {}
+
+    def test_a_destroyed_vehicle_is_forgotten_between_its_checks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Held, or not due a check, it is forgotten all the same: read at the
+        origin, its path would be followed from there (#2245)."""
+        _road(monkeypatch, 1000.0, dead=False)
+        npc = _Actor(2)
+        backend, _ = _on_autopilot(npc)
+        backend._kept[2].held = True
+        npc.is_alive = False
+        backend.tick(_World(), 0.0)
         assert backend._kept == {}
 
     def test_a_vehicle_standing_where_the_road_went_on_is_not_walked_again(

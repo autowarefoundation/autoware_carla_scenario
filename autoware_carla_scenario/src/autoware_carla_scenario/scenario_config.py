@@ -223,11 +223,12 @@ class EntityConfig:
     #: Search range (m) below the estimated z for the ground projection ray.
     ground_projection_ray_distance_lower: float = 10.0
 
-    #: Maximum number of upward-shift retries when the initial spawn fails.
+    #: Maximum number of shifted retries when the initial spawn fails.
     #: 0 disables retries.
     spawn_retry_max_count: int = 10
 
-    #: Upward shift (metres) per retry attempt when the initial spawn fails.
+    #: Lateral shift (metres) per retry attempt when the initial spawn fails:
+    #: across the spawn heading, on both sides.
     spawn_retry_t_step: float = 0.1
 
     #: Vertical shift (metres) per retry attempt.
@@ -479,19 +480,25 @@ class DriverControlSpec:
     Mirrors :class:`~autoware_carla_scenario.driver.control.ControlConfig`; see that
     class for the meaning of each field (the ``pid`` longitudinal controller's carry
     the names of Autoware's ``autoware_pid_longitudinal_controller`` parameters).
-    ``max_steer_angle_deg`` and ``yaw_rate_trim_limit_deg`` are expressed in degrees
-    here for readability and converted on the way in.
+    The angles are set in degrees (``max_steer_angle_deg``,
+    ``yaw_rate_trim_limit_deg``), which read better, or in radians
+    (``max_steer_angle_rad``, ``yaw_rate_trim_limit_rad``), not both: one
+    angle set both ways is refused.  Each is ``None`` here, the controller's
+    default (56 and 25 degrees), so that an override of either one works
+    (#2241).
     """
 
     lookahead_gain_s: float = 0.6
     min_lookahead_m: float = 4.0
     max_lookahead_m: float = 20.0
     wheelbase_m: float = 2.8
-    max_steer_angle_deg: float = 56.0
+    max_steer_angle_deg: Optional[float] = None
+    max_steer_angle_rad: Optional[float] = None
     steer_exponent: float = 2.0
     max_steer_rate: float = 4.0
     yaw_rate_ki: float = 3.0
-    yaw_rate_trim_limit_deg: float = 25.0
+    yaw_rate_trim_limit_deg: Optional[float] = None
+    yaw_rate_trim_limit_rad: Optional[float] = None
     yaw_rate_min_speed_mps: float = 1.0
     longitudinal_controller: str = "pid"
     velocity_smoothing_window: int = 8
@@ -733,8 +740,8 @@ class SweepConfig:
     #: this duration (e.g. CARLA hangs), it is forcefully interrupted and
     #: the sweep continues with the next lanelet.  0 disables the timeout;
     #: ``null`` means the default (120).  Whole seconds, at most 2**31 - 1: a
-    #: fraction, a negative value, NaN, infinity or a larger value is refused
-    #: (exit 2) before any case runs.
+    #: fraction, a negative value, NaN, infinity, a larger value or text
+    #: (``'900'``) is refused (exit 2) before any case runs.
     job_timeout_seconds: int = 120
 
     #: 1-indexed job number to resume from.  Jobs before this index are

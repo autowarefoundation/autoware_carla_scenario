@@ -475,3 +475,36 @@ def test_snapshot_actor_on_a_fresh_world_wrapper_keeps_the_walkers() -> None:
         walker.at[0] += 0.14
         assert snapshot.snapshot_actor(walker, "p").speed == pytest.approx(1.4)
         assert _speeds(world)["p"] == pytest.approx(1.4)
+
+
+# -- role names read once an actor (#2336) ------------------------------------
+
+
+@pytest.mark.usefixtures("plain_map")
+def test_each_actor_s_role_name_is_read_once_a_world(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario import entity_role
+
+    reads: list[int] = []
+    original = entity_role._role_name
+
+    def counting(actor: Any) -> Any:
+        reads.append(int(actor.id))
+        return original(actor)
+
+    monkeypatch.setattr(entity_role, "_role_name", counting)
+    world = _Clocked([])
+    world.actors.append(_placed("vehicle.audi.tt", 3, "npc1", world, _vector(0, 0)))
+    world.actors.append(_walker(world, 4))
+    for _tick in range(3):
+        assert [agent.name for agent in snapshot.snapshot_world(world)] == [
+            "npc1",
+            "p",
+        ]
+        world.tick()
+    assert sorted(reads) == [3, 4]
+    # The same id in another world -- the next run's -- is read afresh.
+    other = _Clocked([])
+    other.actors.append(_placed("vehicle.audi.tt", 3, "npc7", other, _vector(0, 0)))
+    assert [agent.name for agent in snapshot.snapshot_world(other)] == ["npc7"]

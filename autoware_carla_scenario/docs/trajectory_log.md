@@ -61,25 +61,26 @@ lines, and last a `condition` line for each condition that changed. A run judged
 {"type":"run","seed":0,"scenario_hash":"3f1c...e9"}
 {"type":"warmup","ticks":66,"start_frame":34,"end_frame":100}
 {"type":"actor","id":1,"type_id":"vehicle.lincoln.mkz","role":"ego","extent":[2.45,1.07,0.77],"center":[0.0,0.0,0.7]}
+{"type":"rear_axle","id":1,"offset":-1.4}
 {"type":"tick","frame":100,"t":0.0,"actors":[[1,0.0,1.0,0.0,0.0,0.0,90.0,0.0,0.0,0.0]],"control":{"1":[0.5,0.0,0.0,1]},"lights":{"9":"Red"}}
 {"type":"markers","frame":100,"t":0.0,"actor":1,"polylines":[{"points":[[0.0,1.0,0.3],[5.0,1.0,0.3]],"color":[0,255,0],"thickness":0.1,"point_size":0.1}]}
 {"type":"plan","frame":100,"t":0.0,"actor":1,"step":1,"planned_at_us":3050000,"policy":"resworld","inference_seconds":0.031,"turn_indicator":1,"debug_scalars":{},"points":[[0.1,0.0,1.0,0.0,90.0],[0.2,5.0,1.0,0.0,90.0]]}
 {"type":"action","frame":101,"t":0.05,"phase":"post_tick","index":0,"label":"cut_in","action_type":"LaneChangeAction","state":"startTransition"}
 {"type":"condition","frame":101,"t":0.05,"role":"pass","index":0,"label":"arrived","satisfied":false}
 {"type":"actor_gone","id":3,"frame":180,"t":4.0}
-{"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"ReachPositionCondition","satisfied":true,"message":"..."}]}
+{"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"EntityPositionDistanceCondition","satisfied":true,"message":"..."}]}
 ```
 
 | Record | Written | Fields |
 |---|---|---|
-| `world` | once, first | `map` (CARLA map name), `episode` (`world.id`) |
+| `world` | once, first | `schema_version` (the format's version, `2`; absent in version 1), `map` (CARLA map name), `episode` (`world.id`) |
 | `traffic_light` | once per light, when recording starts | `id`, `opendrive_id`, `location` `[x,y,z]`, `boxes` `[[x,y,z,ex,ey,ez,yaw]]` (one per light head), `stops` `[[x,y,z,yaw]]` (stop-line waypoints) |
 | `actor` | before the first tick a vehicle/walker appears in | `id`, `type_id` (blueprint), `role` (`role_name`), `extent` (bounding box half size), `center` (box centre offset from the actor origin, actor frame) |
 | `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `angular_velocity` `{id: [wx,wy,wz]}` (egos only, deg/s in CARLA's world axes; (2), absent before it was recorded), `lights` `{id: state}` (changes only) |
-| `map` (2) | once, after `world` | `name` (short map name), `source` (`map.directory`, else `map.source`, else null: the one the map was read from, as `map.directory` wins), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
+| `map` (2) | once, after `world` | `name` (short map name), `source` (`map.directory`, else `carla-pack:OWNER/REPO/PACK@VERSION` for a map read from a content pack (`map.pack`, named with the version it resolved to), else `map.source`, else null: the one the map was read from, in the order the run resolves them, a directory before a pack before a source), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
 | `run` (2) | once, after the traffic lights | `seed` (the run's seed, `BaseScenario.random_seed`), `scenario_hash` (the SHA-256 of the concrete scenario the run's config describes, its seed aside: `autoware_carla_scenario.scenario_hash`, which [WOSAC Rollouts](wosac.md#scenarios-and-rollouts) tells a scenario's rollouts by; null for a scenario not built by the `scenario` command) |
 | `warmup` (2) | once, before the first tick | `ticks` (frames of the CARLA recording before the scenario clock started: the warm-up), `start_frame` (the frame the recorder started at, null without a recording), `end_frame` (the frame of the first tick, t = 0) |
-| `rear_axle` (2) | right after an ego's `actor` line | `id`, `offset` (where its rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: where the ego put its `base_link` for the run -- a driver policy's entity's rig origin (`driver.rear_axle_offset_m`), a ROS 2 ego's odometry (`rear_axle_offset_m`), an Autoware ego's `base_link` (`AutowareBridgeConfig.base_link_offset_m`) -- else from its wheels, else half its box's half-length behind (`-0.5 * extent.x`, a quarter of its length)) |
+| `rear_axle` (2) | right after an ego's `actor` line | `id`, `offset` (where its rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: where the ego put its `base_link` for the run -- a driver policy's entity's rig origin (`driver.rear_axle_offset_m`), a ROS 2 ego's odometry (`rear_axle_offset_m`), an Autoware ego's `base_link` (`AutowareBridgeConfig.base_link_offset_m`) -- else, beside a [T4 dataset](t4_dataset.md), its `driver.rear_axle_offset_m`, else from its wheels, else half its box's half-length behind (`-0.5 * extent.x`, a quarter of its length); the T4 dataset's rule, `t4.ego_rear_axle()`) |
 | `actor_gone` (2) | before the first tick a vehicle/walker is missing from | `id`, and the `frame` and `t` of that tick |
 | `turn_indicators` (2) | after a tick on which a recorded vehicle's turn indicators changed (every vehicle's on the first tick it is in) | `frame`, `t`, `states` `{id: state}`, each `off`, `left`, `right` or `hazard` (only the vehicles whose indicators changed; the blinker bits of their CARLA light state, both being `hazard`); a vehicle's hold until the next line that names it |
 | `markers` (2) | after a tick on which the ego's debug markers changed | `frame`, `t`, `actor` (the ego, or null), `polylines` `[{points [[x,y,z]], color [r,g,b], thickness, point_size}]`; they hold until the next `markers` line, and none (`[]`) clears them |
@@ -104,9 +105,11 @@ generated types keep them as tuples where the target language has them.
   y south, z up; see [Coordinate frames](driver_interface.md#coordinate-frames)). Positions are in metres, angles in degrees, and velocities
   are world-frame m/s (an angular velocity, world-frame deg/s, a pseudovector:
 into a right-handed frame its `x` and `z` flip, not its `y`). Every float is
-rounded to 3 decimals, but for the values of a `metric` record, written as
-they were computed (an importance-sampling weight is far smaller than a
-thousandth); its `t` is rounded as every other.
+rounded to 3 decimals, but for the values of a `metric` record and the
+`probability`, `is_probability` and `weight` of an `adversity` record, written
+as they were computed (an importance-sampling weight, or the probability of a
+rare adversity, is far smaller than a thousandth); their `t` is rounded as
+every other.
 - A walker's velocity is measured from where it stood the tick before: one
   walking on CARLA's walker controller reports 0. Every other actor's is the
   one CARLA reports.

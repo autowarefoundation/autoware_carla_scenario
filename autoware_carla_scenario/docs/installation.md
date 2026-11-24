@@ -48,7 +48,9 @@ The framework targets CARLA UE5 (`0.10.0` and `ue5-dev`). CARLA 0.9.x (UE4)
 is not supported. `uv run scenario-setup` downloads CARLA's nightly Linux
 build into `~/.autoware_carla_scenario/bin/carla`, and the runner launches it
 from there (see the [Quick Start](quickstart.md)). A CARLA installed any other
-way is used through `CARLA_EXECUTABLE`.
+way is used through `CARLA_EXECUTABLE`. Ctrl-C during the download or the
+unpack prints `scenario-setup: interrupted` and exits 130, leaving no partial
+install behind.
 
 The runner launches CARLA only for a **local** `server.host`: `localhost`
 (or a `*.localhost` name), a loopback address (`127.0.0.0/8`, `::1`), this
@@ -143,19 +145,41 @@ converter separately when you need to generate a map.
     toolchain on any host, and the CARLA client's prebuilt CPython package
     means no `cc` either.
 
+### From a Wheel
+
+A wheel installed outside a checkout (`pip install`, `uv pip install`) does
+not carry the built-in Nishishinjuku map's files. Its `map` config falls back
+to `data/nishishinjuku.osm` and `data/nishishinjuku_carla.xodr`, resolved
+against the current directory, so they are found only from the repository
+root. Anywhere else, point at the files with `NISHISHINJUKU_LANELET2_PATH` and
+`NISHISHINJUKU_XODR_PATH` (see [Environment Configuration](#environment-configuration)),
+or pass `map.lanelet2_path=` and `map.xodr_path=` on the command line.
+
+The editor's new scenarios name the same relative files, never the variables'
+values: a scenario document is exported into packages that run on other
+machines. A run on the built-in map still reads the variables, because the
+`map` group, composed after the scenario, wins over the paths a document names.
+
 ## Environment Configuration
 
 Configure your environment by exporting the variables consumed by the
 package, or by loading a `.env` file (the package depends on
-`python-dotenv`). The most common variables:
+`python-dotenv`): the first `.env` found from the working directory up
+is loaded when `autoware_carla_scenario.server` is imported, wherever the
+package is installed, and an exported variable wins over the file. In a
+checkout of this repository that is a `.env` at its root (copy
+`autoware_carla_scenario/.env.example` there), found from anywhere inside it.
+Since the file can set `CARLA_EXECUTABLE`, the program the runner launches,
+run the framework only from a directory whose `.env` (and its parents') you
+trust. The most common variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither. |
+| `CARLA_EXECUTABLE` | optional | Path to `CarlaUnreal.sh`, for a CARLA that `scenario-setup` did not install. Unset, the installed one is launched; pytest's CARLA tests skip when there is neither and no server answers at their host. |
 | `AUTOWARE_CARLA_SCENARIO_HOME` | optional | Moves `~/.autoware_carla_scenario`, where `scenario-setup` installs CARLA (`bin/carla`). |
 | `NISHISHINJUKU_MAP_PATH` | when overwriting the built-in `.xodr` | Path inside the CARLA install where the original `.xodr` lives. |
-| `NISHISHINJUKU_XODR_PATH` | optional | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
-| `NISHISHINJUKU_LANELET2_PATH` | optional | Override the default Lanelet2 `.osm` path. |
+| `NISHISHINJUKU_XODR_PATH` | outside a checkout | Override the default OpenDRIVE file resolved in `conf/map/nishishinjuku.yaml`. |
+| `NISHISHINJUKU_LANELET2_PATH` | outside a checkout | Override the default Lanelet2 `.osm` path (`data/nishishinjuku.osm`, relative to the current directory). |
 | `VIEWER_BASE_PATH`, `VIEWER_HOST`, `VIEWER_PORT`, `VIEWER_CACHE_DIR`, `VIEWER_RERUN_WEB_VIEWER`, `VIEWER_RERUN_MAP_DIR` | optional | `viewer` web-app overrides (`viewer --help` for the flags that win over them). |
 
 See the [Usage Guide](usage.md) and [Architecture](architecture.md) for
@@ -178,7 +202,9 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `typesafe-carla>=0.8.1,<0.9` (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
-- `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)
+- `lxml>=5.0` — the XML elements pyxodr's roads hold, which the road
+  network cache (`maps/road_network_cache.py`) stores by position
+- `opencv-python-headless>=4.8` — JPEG (and PNG) encoding of the camera frames sent to a driver policy and to HILS devices (headless: the package makes no GUI calls)
 - `numpy>=1.21`
 - `pytest>=9.0.1`
 - `mypy>=1.19.0` — the static check's None check (`scenario-check`)
@@ -187,17 +213,19 @@ The package's runtime dependencies (declared in `pyproject.toml`):
   regulatory-element extensions, as a single wheel
 - `tqdm>=4.67.1`
 - `hydra-core>=1.3.2`, `omegaconf>=2.3.0`
-- `fastapi>=0.115.0`, `uvicorn[standard]>=0.34.0`, `jinja2>=3.1.0` —
-  result viewer
+- `fastapi>=0.115.0`, `starlette>=0.37.2`, `uvicorn[standard]>=0.34.0`,
+  `jinja2>=3.1.0` — result viewer and Scenario Editor
 - `python-multipart>=0.0.9` — reads the Scenario Editor's form posts
 - `pyyaml>=6.0`, `pydantic>=2.0.0`
-- `openodd-py>=0.47.0` — ASAM OpenODD: the ODD model, the sampler and
+- `openodd-py>=0.47.1` — ASAM OpenODD: the ODD model, the sampler and
   coverage; this package is its CARLA backend
 - `packaging>=23.0`, `tomli>=1.1.0` (Python < 3.11) — read a scenario
   package's `requires-python` for its wheelhouse
 - `carla-driver-interface>=2.4.2,<3`, `grpcio>=1.60`,
   `protobuf>=4.25.0,<8` — the gRPC contract to an external driver policy
 - `orjson>=3.13.0` — serialises the trajectory log
+- `sentry-sdk>=2.20` — builds the [crash reports](crash_reports.md), written
+  to files; nothing is sent unless `SCENARIO_CRASH_REPORT_DSN` is set
 
 ## Troubleshooting
 

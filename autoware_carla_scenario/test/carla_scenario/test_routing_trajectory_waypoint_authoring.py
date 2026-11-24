@@ -47,6 +47,7 @@ from autoware_carla_scenario.authoring.persistence import (
 )
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.editor.app import create_app
+from autoware_carla_scenario.editor.routes import CLIENT_HEADER, REVISION_FIELD
 from autoware_carla_scenario.editor.service import EditorService
 
 _ROWS = [[100.0, 200.0, None], [110.0, 200.0, None], [120.0, 200.0, None]]
@@ -544,6 +545,51 @@ class TestEditor:
             f"/draft/{draft_id}/action/{card_id}/advance/0", data={"vertex": "4"}
         )
         assert gates() == [3, 4]
+
+    def test_a_quick_second_move_does_not_take_the_next_gate(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """#2348: the gates are kept in vertex order, so a move renumbers them;
+        the form names its gate by the vertex it was rendered on."""
+        draft_id, card_id, store = _card(client, tmp_path)
+        for vertex in ("2", "4"):
+            _add(client, draft_id, card_id, vertex)
+        draft = store.get(draft_id)
+        assert draft is not None
+        shown = str(draft.revision)
+        tab = {CLIENT_HEADER: "tab-a"}
+        url = f"/draft/{draft_id}/action/{card_id}/advance/0"
+        inspector = client.get(f"/draft/{draft_id}/inspector/{card_id}").text
+        assert 'name="row" value="2"' in inspector
+
+        def gates() -> list[int]:
+            card = _stored(store, draft_id).action(card_id)
+            assert card is not None
+            return [g.vertex for g in card.advance_conditions]
+
+        form = {"vertex": "5", "row": "2", REVISION_FIELD: shown}
+        assert client.post(url, data=form, headers=tab).status_code == 200
+        assert gates() == [4, 5]
+        # The same form, edited again before the answer renumbered it: index 0
+        # is now the gate on vertex 4.
+        again = {**form, "vertex": "6"}
+        assert client.post(url, data=again, headers=tab).status_code == 409
+        assert gates() == [4, 5]
+        # Where that gate is now, the form's own move still names it.
+        moved = f"/draft/{draft_id}/action/{card_id}/advance/1"
+        assert client.post(moved, data=form, headers=tab).status_code == 200
+        assert gates() == [4, 5]
+
+    def test_the_picker_leaves_a_metric_out(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """#2316: a vertex waits on its condition every tick, where one judged
+        once the run is over reads nothing."""
+        draft_id, card_id, _ = _card(client, tmp_path)
+        inspector = client.get(f"/draft/{draft_id}/inspector/{card_id}").text
+        assert f'name="slot" value="advance:{card_id}"' in inspector
+        assert 'value="elapsed_time"' in inspector
+        assert 'value="metric"' not in inspector
 
     def test_the_last_vertex_ends_the_run_when_its_condition_holds(
         self, client: TestClient, tmp_path: Path

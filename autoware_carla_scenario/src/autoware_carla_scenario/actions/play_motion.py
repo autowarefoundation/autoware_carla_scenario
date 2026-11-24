@@ -16,7 +16,7 @@ from ..control_domain import ControlDomain, movement_of
 from ..entity.registry import find_pedestrian_entity
 from ..entity_role import EntityRole
 from ..kinematics.vector import Vector3
-from ..kinematics.walker_motion import WalkerVelocities
+from ..kinematics.walker_motion import WalkerVelocities, world_seconds
 from ..utils.clearance import HIDDEN_BELOW_M
 from ..pedestrian.poser import WalkerPoser
 from ..pedestrian.soma import SomaMotion, load_soma_motion
@@ -200,7 +200,7 @@ class PlayMotionAction(BaseAction):
                 self._entity_name,
             )
             return
-        self._started_at = _now(world)
+        self._started_at = world_seconds(world)
         self._playing = True
         logger.info(
             "PlayMotionAction: '%s' plays %s (%d frames at %.1f fps)",
@@ -214,7 +214,7 @@ class PlayMotionAction(BaseAction):
     def _step(self, world: carla.World) -> None:
         if not self._playing:
             return
-        elapsed = _now(world) - self._started_at
+        elapsed = world_seconds(world) - self._started_at
         # The tolerance absorbs the clock's summing error: 20 ticks of 0.05 s
         # can read 0.9999999999999998 s (ElapsedTimeCondition).
         if self._duration_s is not None and elapsed >= self._duration_s - 1e-9:
@@ -243,11 +243,6 @@ class PlayMotionAction(BaseAction):
         self._playing = False
         if self._poser.end():
             logger.info("PlayMotionAction: '%s' finished its motion", self._entity_name)
-
-
-def _now(world: carla.World) -> float:
-    """The simulated time, in seconds."""
-    return float(world.get_snapshot().timestamp.elapsed_seconds)
 
 
 class _MotionPlayed(BaseCondition):

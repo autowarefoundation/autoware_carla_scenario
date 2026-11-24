@@ -41,7 +41,33 @@ def _mapping(path: Path, what: str) -> dict[str, Any]:
     return data
 
 
+def _check_counts(
+    parser: argparse.ArgumentParser, counts: tuple[tuple[str, Optional[int], int], ...]
+) -> None:
+    """Refuse each ``(flag, value, minimum)`` of *counts* whose value is
+    below its minimum (``None``, not given, is let through), naming the
+    flag: the functions behind them refuse it too, but naming their
+    parameters, and ``export`` once per log (#2265)."""
+    for flag, value, minimum in counts:
+        if value is not None and value < minimum:
+            parser.error(f"{flag} must be a whole number >= {minimum}, not {value!r}")
+
+
 def _export(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    _check_counts(
+        parser,
+        (
+            ("--current-index", args.current_index, 0),
+            ("--steps", None if args.all_steps else args.steps, 1),
+        ),
+    )
+    if args.scenario_id is not None and not args.scenario_id:
+        # Stored as none, which pack would refuse later (#2265).
+        parser.error("--scenario-id must not be empty")
+    missing = next((path for path in args.paths if not path.exists()), None)
+    if missing is not None:
+        # A usage error, as a directory holding no log is (#2333).
+        parser.error(f"{missing}: no such file or directory")
     logs = trajectory_logs(args.paths)
     if not logs:
         parser.error("no trajectory log found")
@@ -87,6 +113,9 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     ):
         if not math.isfinite(value) or value < 0:
             parser.error(f"{flag} must be a finite number >= 0, not {value!r}")
+    _check_counts(
+        parser, (("--rollouts", args.rollouts, 1), ("--shards", args.shards, 1))
+    )
     files = rollout_files(args.paths)
     if not files:
         parser.error("no rollout (*.wosac.pb) found")
@@ -137,6 +166,15 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """Ctrl-C prints one line, not a traceback, and exits 130 (#2333)."""
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        print("scenario-wosac: interrupted", file=sys.stderr)  # noqa: T201
+        return 130
+
+
+def _main(argv: Optional[list[str]]) -> int:
     parser = argparse.ArgumentParser(prog="scenario-wosac", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 

@@ -37,19 +37,21 @@ runs:
             # What the self-tests read beyond the package's own modules: the
             # checker (its Python, the Codon model and the shims), the locked
             # dependencies it runs on (Codon, mypy, typesafe-carla) and their
-            # configuration, the page they compare the model with, the
-            # scenario package template, the tests themselves and what pytest
-            # loads before them, and how CI runs them.
+            # configuration, the page they compare the model with, the tests
+            # themselves and what pytest loads before them, and how CI runs
+            # them. Not the scenario package template: no self-test reads it,
+            # and its compile check (test_typecheck_codon_package.py) runs on
+            # every pull request.
             while IFS= read -r path; do
               case "${path}" in
                 autoware_carla_scenario/src/autoware_carla_scenario/typecheck/* | \
                 uv.lock | pyproject.toml | autoware_carla_scenario/pyproject.toml | \
                 autoware_carla_scenario/docs/typecheck.md | \
-                examples/scenario_package_template/* | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_codon.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_codon_route.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_call_diagnostics.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_threading.py | \
+                autoware_carla_scenario/test/carla_scenario/test_typecheck_argparse.py | \
                 autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py | \
                 autoware_carla_scenario/test/*conftest.py | \
                 .github/workflows/ci.yml | .github/actions/*)

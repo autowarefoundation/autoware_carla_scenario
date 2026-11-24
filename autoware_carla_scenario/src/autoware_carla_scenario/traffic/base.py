@@ -1184,6 +1184,22 @@ def _entity_name(entity: DrivenEntity) -> str:
     return type(entity).__name__
 
 
+def actor_destroyed(actor: "carla.Actor") -> bool:
+    """Whether *actor* has been destroyed, by whatever destroyed it.
+
+    Read off ``is_alive``, not a ``RuntimeError``: in LibCarla only the
+    handle whose ``destroy()`` was called raises one.  Another handle to an
+    actor the TrafficManager (a vehicle it removes after it stood too long)
+    or the server destroyed reads a default snapshot -- at the origin,
+    standing -- and only ``is_alive`` says it is gone (#2245).  A handle that
+    raises reading it is gone too.
+    """
+    try:
+        return not actor.is_alive
+    except RuntimeError:
+        return True
+
+
 class NullTrafficBackend(TrafficBackend):
     """A run with no traffic model at all.
 

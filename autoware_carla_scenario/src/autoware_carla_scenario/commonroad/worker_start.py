@@ -8,7 +8,9 @@ The command is, in order:
    commonroad-metrics-worker``, which builds the environment the first time.
 
 It needs neither ``select`` nor the worker's JSON: :mod:`.worker`, which
-starts the worker and speaks to it, re-exports it.
+starts the worker and speaks to it, re-exports it.  So are the checks of what
+a started worker answers (:func:`unknown_measures_problem`,
+:func:`answer_problem`, #2386), which :mod:`.session` raises with.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ __all__ = [
     "WORKER_ENV",
     "WORKER_SCRIPT",
     "CommonRoadWorkerError",
+    "answer_problem",
+    "unknown_measures_problem",
     "worker_command",
 ]
 
@@ -90,4 +94,51 @@ def worker_command() -> list[str]:
         f"the CommonRoad metrics need their worker ({WORKER_SCRIPT}): install the "
         f"commonroad_metrics project (Python 3.10 or 3.11) and put it on the PATH, "
         f"or name the command in ${WORKER_ENV}"
+    )
+
+
+#: The error the worker gives a measure it does not know.
+_UNKNOWN_MEASURE = "unknown measure"
+
+
+def unknown_measures_problem(
+    command_text: str, keys: list[str], known: list[str]
+) -> Optional[str]:
+    """Why the worker started by *command_text* cannot evaluate *keys*,
+    knowing only *known* (its ``init`` answer): an older worker than the
+    framework, found on the ``PATH``, would read nothing in every frame;
+    ``None`` when it knows each."""
+    unknown = [key for key in keys if key not in known]
+    if not unknown:
+        return None
+    return (
+        f"the CommonRoad worker {command_text} does not know the metrics "
+        f"{', '.join(unknown)} (it knows {', '.join(known) or 'none'}): "
+        "update the commonroad_metrics project it runs, or name another "
+        f"command in ${WORKER_ENV}"
+    )
+
+
+def answer_problem(
+    command_text: str,
+    keys: list[str],
+    got: dict[str, Optional[float]],
+    errors: dict[str, str],
+) -> Optional[str]:
+    """Why the answer of the worker started by *command_text* to a frame
+    asked *keys* is out of protocol: it leaves one out (neither a value in
+    *got* nor an error in *errors*) or calls it unknown; ``None`` when it
+    is not."""
+    missing = [key for key in keys if key not in got and key not in errors]
+    unknown = [key for key in keys if errors.get(key) == _UNKNOWN_MEASURE]
+    if not missing and not unknown:
+        return None
+    parts: list[str] = []
+    if missing:
+        parts.append(f"no value nor error for {', '.join(missing)}")
+    if unknown:
+        parts.append(f"{', '.join(unknown)} unknown")
+    return (
+        f"the CommonRoad worker {command_text} answered 'evaluate' out "
+        "of protocol: " + "; ".join(parts)
     )

@@ -20,9 +20,9 @@ import random
 from typing import TYPE_CHECKING, Any, ClassVar, Collection, List, Optional, Tuple
 
 from ..constants import (
-    FIXED_DELTA_SECONDS,
     LANE_CHANGE_CENTER_TOLERANCE_M,
     LANE_CHANGE_HEADING_TOLERANCE_DEG,
+    tick_seconds_or_fixed,
 )
 from ..coordinate.map_manager import run_carla_map
 from ..kinematics.angle import normalize_angle_deg
@@ -35,6 +35,7 @@ from .base import (
     TrafficContext,
     TurnDirection,
     _entity_name,
+    actor_destroyed,
     check_background_speed,
 )
 from .config import TrafficManagerBackendConfig
@@ -380,6 +381,7 @@ class TrafficManagerBackend(TrafficBackend):
     _random_seed: Optional[int]
     _closed: bool
     _background: dict[str, "carla.Actor"]
+    _unticked: dict[str, tuple[int, float, float, float]]
     _background_count: int
     _started: bool
     _released: set[int]
@@ -389,6 +391,8 @@ class TrafficManagerBackend(TrafficBackend):
     _visibility: Optional[float]
     _draws: Optional[random.Random]
     _drawn: set[int]
+    _quantiles: dict[int, float]
+    _sighted: int
     _entity_overrides: dict[int, VehicleParameters]
     _emergencies: set[int]
     _own_ignores: dict[int, tuple[float, float]]
@@ -435,6 +439,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._closed = False
         #: Handle -> actor of every background vehicle spawned this run.
         self._background = {}
+        #: Handle -> the frame a background vehicle was spawned on and where
+        #: (x, y, z): until the world ticks, a client reads a new actor as
+        #: not alive and at the origin (actor_destroyed).
+        self._unticked = {}
         self._background_count = 0
         self._started = False
         #: Actors taken back with :meth:`release`, never handed to autopilot.
@@ -475,6 +483,11 @@ class TrafficManagerBackend(TrafficBackend):
         #: that have theirs.
         self._draws = None
         self._drawn = set()
+        #: Actor id -> its driver's quantile of the sight speed
+        #: (:meth:`_sight_limit_kmh`), given with its first draw; how many
+        #: vehicles were given one this run.
+        self._quantiles = {}
+        self._sighted = 0
         #: Actor id -> what the entity overrides of its vehicle
         #: (:meth:`override_entity_parameters`) set, layered in order: its
         #: draws take these over the run's parameters, whenever they are made.
@@ -560,7 +573,9 @@ class TrafficManagerBackend(TrafficBackend):
         self._skipped = skip
         enabled = 0
         background = {actor.id for actor in self._background.values()}
-        for actor in world.get_actors().filter("vehicle.*"):
+        # In the order they were spawned (CARLA hands ids out in that order),
+        # not LibCarla's list order: each draws what it drew the run before.
+        for actor in sorted(world.get_actors().filter("vehicle.*"), key=_actor_id):
             if actor.id in skip or actor.id in self._released:
                 continue
             self._autopilot(actor, keep=actor.id not in background)
@@ -639,12 +654,29 @@ class TrafficManagerBackend(TrafficBackend):
     def _sight_limit_kmh(self, actor_id: int) -> float:
         """The speed, km/h, vehicle *actor_id*'s driver keeps in the
         visibility it is held to: the weather rules' ``sight_speed`` at the
-        driver's own quantile (:func:`~autoware_carla_scenario.visibility.driver_quantile`),
-        for SUMO's default car; negative when nothing holds it."""
+        driver's own quantile (:meth:`_give_quantile`), for SUMO's default
+        car; negative when nothing holds it, or it is not on autopilot."""
         seen = self._visibility
         if self._sight_kmh < 0.0 or seen is None:
             return -1.0
-        return sight_speed_at(seen, driver_quantile(str(actor_id))) * 3.6
+        if actor_id not in self._quantiles:
+            return -1.0
+        return sight_speed_at(seen, self._quantiles[actor_id]) * 3.6
+
+    def _give_quantile(self, actor_id: int) -> None:
+        """Give vehicle *actor_id*'s driver its quantile of the sight speed,
+        with its first draw: :func:`~autoware_carla_scenario.visibility.driver_quantile`
+        of the run's seed and how many vehicles were given one before it.
+
+        Not of its actor id, which climbs for the life of the server and
+        shifts with every actor spawned before it, nor from the parameter
+        draws, which would then each shift: the same seed, the same drivers,
+        in the order the vehicles are put on autopilot, whatever ran on the
+        server before."""
+        self._quantiles[actor_id] = driver_quantile(
+            f"{self._random_seed}:sight:{self._sighted}"
+        )
+        self._sighted += 1
 
     def _hold_to_sight(
         self, tm: "carla.TrafficManager", actor: "carla.Actor", limit_kmh: float
@@ -726,6 +758,7 @@ class TrafficManagerBackend(TrafficBackend):
             except RuntimeError:
                 pass
         self._background = {}
+        self._unticked = {}
         self._background_count = 0
         self._started = False
         self._released = set()
@@ -738,6 +771,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._sight_kmh = -1.0
         self._sight_due = 0.0
         self._drawn = set()
+        self._quantiles = {}
+        self._sighted = 0
         # Actor ids are reused across runs: none keeps a finished run's.
         self._entity_overrides = {}
         self._emergencies = set()
@@ -852,6 +887,14 @@ class TrafficManagerBackend(TrafficBackend):
         if actor is None:
             return None  # The spot is taken; the caller tries elsewhere.
         self._background[handle] = actor
+        frame = _frame_of(world)
+        if frame >= 0:
+            self._unticked[handle] = (
+                frame,
+                float(lifted.location.x),
+                float(lifted.location.y),
+                float(lifted.location.z),
+            )
         forward = lifted.get_forward_vector()
         actor.set_target_velocity(
             carla.Vector3D(forward.x * start_mps, forward.y * start_mps, 0.0)
@@ -870,11 +913,25 @@ class TrafficManagerBackend(TrafficBackend):
     ) -> dict[str, tuple[float, float, Optional[float]]]:
         """Every background vehicle still in the world, at its ``(x, y, z)``."""
         out: dict[str, tuple[float, float, Optional[float]]] = {}
+        frame = _frame_of(world)
         for handle, actor in list(self._background.items()):
+            spawned = self._spawned_at(handle, frame)
+            if spawned is not None:
+                # Spawned on this frame: where it was put, not the origin a
+                # client reads it at until the world ticks.
+                z_spawned: Optional[float] = spawned[2]  # for Codon
+                out[handle] = (spawned[0], spawned[1], z_spawned)
+                continue
+            # Not by a RuntimeError alone: only the handle whose destroy() was
+            # called raises one, and a vehicle the TrafficManager or the server
+            # destroyed would stay counted, standing at the origin (#2245).
+            if actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
             try:
                 location = actor.get_location()
             except RuntimeError:
-                self._background.pop(handle)  # Destroyed by something else.
+                self._drop_background(handle)  # Destroyed under us.
                 continue
             z: Optional[float] = location.z  # the dict's type, for Codon
             out[handle] = (location.x, location.y, z)
@@ -883,13 +940,50 @@ class TrafficManagerBackend(TrafficBackend):
     def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
         """Every background vehicle, by its handle, which is its ``role_name``;
         a destroyed one is no agent of the scene, so never chosen."""
-        return dict(self._background)
+        out: dict[str, "carla.Actor"] = {}
+        frame = _frame_of(world)
+        for handle, actor in list(self._background.items()):
+            if self._spawned_at(handle, frame) is None and actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
+            out[handle] = actor
+        return out
+
+    def _spawned_at(
+        self, handle: str, frame: int
+    ) -> Optional[tuple[float, float, float]]:
+        """Where background vehicle *handle* was spawned, if that was on
+        *frame*, the world's frame now; ``None`` once the world has ticked
+        since (the record is dropped then), or where no frame was read.
+
+        Until the world ticks a client has no snapshot of a new actor: it
+        reads it as not alive, at the origin, so it is not taken for one
+        destroyed elsewhere (:func:`.base.actor_destroyed`) -- a second
+        source, a sink or an adversity on the same phase as the spawn."""
+        if handle not in self._unticked:
+            return None
+        record = self._unticked[handle]
+        if frame >= 0 and record[0] == frame:
+            return (record[1], record[2], record[3])
+        del self._unticked[handle]
+        return None
+
+    def _drop_background(self, handle: str) -> None:
+        """Forget background vehicle *handle*, destroyed by something else
+        (the TrafficManager, after it stood too long, or the server): its
+        id may be another vehicle's next."""
+        actor = self._background.pop(handle)
+        if handle in self._unticked:
+            del self._unticked[handle]
+        self._forget_actor(int(actor.id))
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Destroy the background vehicle *handle*."""
         if handle not in self._background:
             return
         actor = self._background.pop(handle)
+        if handle in self._unticked:
+            del self._unticked[handle]
         self._forget_actor(int(actor.id))
         try:
             actor.destroy()
@@ -1659,6 +1753,7 @@ class TrafficManagerBackend(TrafficBackend):
                 self._kept[actor.id] = kept
         if actor.id not in self._drawn:
             self._drawn.add(actor.id)
+            self._give_quantile(int(actor.id))
             self._draw_for(actor, self._parameters_of(actor), first=True)
         if self._sight_kmh >= 0.0:
             # Held to sight at once, not at the next update: one resumed after
@@ -1695,6 +1790,8 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._entity_overrides:
             del self._entity_overrides[actor_id]
         self._drawn.discard(actor_id)
+        if actor_id in self._quantiles:
+            del self._quantiles[actor_id]
         self._route_locked.discard(actor_id)
         self._crossing_locked.discard(actor_id)
         if actor_id in self._paused:
@@ -1826,12 +1923,16 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             self._follow_progress(paused)
         for actor_id, kept in list(self._kept.items()):
+            if actor_destroyed(kept.actor):
+                # Before its progress: a destroyed one reads at the origin.
+                del self._kept[actor_id]  # Destroyed by something else.
+                continue
             self._follow_progress(kept)
             approach = kept.approach
             if approach is not None:
                 driving: FinalApproach = approach
                 try:
-                    driving.step(_tick_seconds(world), elapsed)
+                    driving.step(tick_seconds_or_fixed(world), elapsed)
                 except RuntimeError as error:
                     if not kept.actor.is_alive:
                         del self._kept[actor_id]  # Destroyed under us.
@@ -2100,7 +2201,8 @@ class TrafficManagerBackend(TrafficBackend):
                 self._entity_overrides[actor_id] = own.restricted_to(kept)
             else:
                 del self._entity_overrides[actor_id]
-        for driven in world.get_actors().filter("vehicle.*"):
+        for driven in sorted(world.get_actors().filter("vehicle.*"), key=_actor_id):
+            # In the order they were spawned, as start() draws them.
             # The ones that drew already: a vehicle not yet on autopilot draws
             # from the new parameters when it is put on it.
             if driven.id in self._drawn:
@@ -2240,6 +2342,11 @@ def _vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor
 
 
+def _actor_id(actor: "carla.Actor") -> int:
+    """*actor*'s id: CARLA hands them out in the order actors are spawned."""
+    return int(actor.id)
+
+
 def _actor_name(actor: "carla.Actor") -> str:
     """*actor*'s role name, for the logs; its id when it has none."""
     attributes = actor.attributes
@@ -2323,13 +2430,12 @@ def _clear_of_junctions(
     return clear
 
 
-def _tick_seconds(world: "carla.World") -> float:
-    """How much simulated time the last tick covered (the run's fixed step
-    when the world cannot say)."""
+def _frame_of(world: "carla.World") -> int:
+    """The world's frame now, or ``-1`` where it cannot be read."""
     try:
-        return float(world.get_snapshot().timestamp.delta_seconds)
-    except (AttributeError, RuntimeError):
-        return FIXED_DELTA_SECONDS
+        return int(world.get_snapshot().frame)
+    except (AttributeError, RuntimeError, TypeError):
+        return -1
 
 
 def _from_here(

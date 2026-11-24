@@ -4,7 +4,8 @@ Whether a request body's ``Content-Type`` names JSON (:func:`_is_json_type`),
 the reference of a session in the viewer's links
 (``<session_type>/<date>/<time>``, :func:`_session_ref`), and the ODD
 attribute a query or a default names, if the view has it
-(:func:`_attribute`).
+(:func:`_attribute`), and whether an error is answered with a page rather
+than JSON (:func:`wants_page`).
 
 Split out of ``ui.app``, which re-exports every name moved here and keeps
 what serves the requests (fastapi, starlette) and reads a session off disk
@@ -28,3 +29,13 @@ def _session_ref(session_type: str, date: str, time: str) -> str:
 
 def _attribute(value: str | None, attributes: list[str]) -> str | None:
     return value if value and value in attributes else None
+
+
+def wants_page(path: str, accept: str) -> bool:
+    """Whether an error is answered with a page: a request for *path* whose
+    ``Accept`` header (*accept*, empty when it sends none) accepts HTML (a
+    browser's navigation) and that is not one of the API's, whose clients read
+    its JSON error (``{"detail": ...}``)."""
+    if path == "/api" or path.startswith("/api/"):
+        return False
+    return "text/html" in accept.lower()

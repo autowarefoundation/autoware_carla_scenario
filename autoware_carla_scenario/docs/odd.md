@@ -246,7 +246,8 @@ These live in `autoware_carla_scenario.odd`:
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing, except `in_junction`, `junction_type` and
-`lane_count`, which then read the CARLA waypoint.
+`lane_count`, which then read the CARLA waypoint, and `speed_limit_kph`,
+which then reads CARLA's `get_speed_limit()` for the ego.
 
 The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
@@ -949,7 +950,15 @@ or a mapping, an unknown field, a missing or unknown `key` (it must be a key
 of the composed config), a `target` that is neither `setting` nor `measure`,
 `scale`/`offset`/`integer`/`values` under `target: measure`, a `range` or
 `limits` that is not `[low, high]` with `low <= high`, a `quantity` that is
-not a name.
+not a name, an `integer` that is not `true` or `false` (`"false"` and `0`
+are refused, not read as true and false), `values` that are not a mapping,
+a `scale` or `offset` that is not a number. A field given `null` is one not
+given: its default.
+
+The knobs of `sweep.odd_sample.knobs` are checked the same way, before the
+ODD is resolved, each problem naming its full path
+(`sweep.odd_sample.knobs.<attribute>.<field>: ...`) in a `ValueError`; so
+are the shares of an inline `weights` (#2226).
 
 A measure name that is not a built-in one is only a **warning**
 (`controls.vehicle_ahead_gap: not a built-in measure (did you mean
@@ -1725,7 +1734,10 @@ sweep:
       scenario: CutInScenario      # learn from this scenario's runs only (all, when left out)
 ```
 
-`flaky: true` takes the defaults. Its other fields are `FlakySearch`'s:
+`flaky: true` takes the defaults; `false`, null or leaving it out is no
+flaky search. A switch is read as `tire_friction`'s is, so `"true"`, `1`,
+`"false"` and `0` mean what they say, and anything else that is not a
+mapping is refused. The mapping's other fields are `FlakySearch`'s:
 `pool`, `coverage_depth`, `threshold`, `epsilon`, `perturbations`, `draws`
 and `directions`. The space holds every parameter of a case: the attributes
 drawn, the weather effects' quantiles, and where in its range the grip and
@@ -1833,7 +1845,9 @@ attribute that **no planned route reaches**, leaving out buckets outside the
 ODD (they are not targets). An attribute the map decides in general but left
 undecided on some lanelet of a route (metres in `<undecided>`) is reported as
 **undetermined** instead: the run may reach any of its buckets there, so none
-is called unreached.
+is called unreached. When no route could be planned at all, the report calls
+no bucket unreached (with `--json`, `unreached` is empty and `not_planned`
+gives each scenario's reason).
 
 The exit status is 0 when no route leaves the ODD, 1 when one does, and 2
 when a route could not be planned (no goal, no path, a lanelet the map does

@@ -18,6 +18,7 @@ import pytest
 
 from autoware_carla_scenario.authoring.models import RouteSearch
 from autoware_carla_scenario.route.model import (
+    DEFAULT_MAX_MATCHES,
     JunctionSegmentSpec,
     LaneSegmentSpec,
     Range,
@@ -222,6 +223,25 @@ class TestParsing:
         # The authoring model refuses what the run would.
         with pytest.raises(ValueError, match=field):
             RouteSearch.model_validate(search)
+
+    @pytest.mark.parametrize("field", ["match_index", "max_matches", "seed"])
+    @pytest.mark.parametrize("blank", ["", "  "])
+    def test_a_blank_count_is_refused_not_read_as_the_default(
+        self, field: str, blank: str
+    ) -> None:
+        """#2266: a blank was read as the default, so a Hydra override such as
+        ``sweep.route.max_matches=`` silently did nothing; only null is."""
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": [_lane()], field: blank})
+        assert str(error.value) == f"{field} must be a whole number, got {blank!r}"
+        with pytest.raises(ValueError, match=field):
+            RouteSearch.model_validate({"segments": [_lane()], field: blank})
+        spec = parse_route_search({"segments": [_lane()], field: None})
+        assert (spec.match_index, spec.max_matches, spec.seed) == (
+            0,
+            DEFAULT_MAX_MATCHES,
+            None,
+        )
 
     def test_whole_floats_are_counts(self) -> None:
         """YAML or Hydra may hand a count over as ``2.0``; both readers take it."""
@@ -709,6 +729,60 @@ class TestTheMatchAsConfig:
         read as 0 or iterated."""
         with pytest.raises(ValueError, match=rf"^scenario\.route\.{key}: {message}$"):
             RouteMatch.from_config(self._config(**{key: value}))
+
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            (
+                {"segment_kinds": ["lane", "Junction"]},
+                r"segment_kinds\[1\]: 'Junction' is not 'lane' or 'junction'",
+            ),
+            (
+                {"segment_kinds": ["", "lane"]},
+                r"segment_kinds\[0\]: '' is not 'lane' or 'junction'",
+            ),
+            (
+                {"segment_kinds": ["lane", 1]},
+                r"segment_kinds\[1\]: 1 is not 'lane' or 'junction'",
+            ),
+            (
+                {"segment_ends": [30.0, 20.0]},
+                r"segment_ends\[1\]: 20\.0 is below the segment's start, 30\.0",
+            ),
+            (
+                {"segment_ends": [-1.0, 10.0]},
+                r"segment_ends\[0\]: -1\.0 is below the segment's start, 0\.0",
+            ),
+        ],
+    )
+    def test_an_unknown_kind_or_a_decreasing_end_is_refused_by_its_key(
+        self, overrides: dict[str, Any], message: str
+    ) -> None:
+        """#2266: ``Junction`` left the route with no junctions, and
+        ``[30, 20]`` made a segment of -10 m."""
+        config = self._config(
+            segment_kinds=["lane", "lane"],
+            segment_ends=[5.0, 10.0],
+            segment_lanelet_counts=[1, 1],
+        )
+        config.update(overrides)
+        with pytest.raises(ValueError, match=rf"^scenario\.route\.{message}$"):
+            RouteMatch.from_config(config)
+
+    def test_a_segment_of_no_length_is_taken(self) -> None:
+        match = RouteMatch.from_config(
+            self._config(
+                segment_kinds=["lane", "junction"],
+                segment_ends=[5.0, 5.0],
+                segment_lanelet_counts=[1, 1],
+                junction_turns=["straight"],
+            )
+        )
+        assert match is not None
+        assert [(m.kind, m.start, m.end) for m in match.segments] == [
+            ("lane", 0.0, 5.0),
+            ("junction", 5.0, 5.0),
+        ]
 
     def test_only_an_absent_or_null_key_is_its_default(self) -> None:
         absent = self._config()

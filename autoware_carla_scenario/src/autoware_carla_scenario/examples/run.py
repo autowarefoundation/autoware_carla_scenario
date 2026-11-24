@@ -44,7 +44,7 @@ import signal
 import sys
 import threading
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -86,6 +86,7 @@ from autoware_carla_scenario.batch_resume import (
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.config_flags import check_flag
+from autoware_carla_scenario import crash_report
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.gate.errored import (
     remove_case_errored,
@@ -95,6 +96,7 @@ from autoware_carla_scenario.gate.errored import (
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.maps.pack import MapPack, packs_dir
 from autoware_carla_scenario.maps.config import map_setting
+from autoware_carla_scenario.number_settings import check_port, number_setting
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
     ODD_CASE_KEY,
@@ -111,8 +113,11 @@ from autoware_carla_scenario.rerun import (
     RerunUnavailableError,
 )
 from autoware_carla_scenario.rerun import report as rerun_report
+from autoware_carla_scenario.rerun_report import rerun_errors as _rerun_errors
 from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.run_dirs import (
+    _batch_output_dir_refusal as _batch_output_dir_refusal,
+    _remove_if_empty as _remove_if_empty,
     asks_for_no_job,
     is_multirun_mode_override as _is_multirun_mode_override,
     lanelet_sweeper_requested_in_argv as _lanelet_sweeper_requested_in_argv,
@@ -122,16 +127,21 @@ from autoware_carla_scenario.run_dirs import (
 )
 
 # _lanelet_sweeper_requested_in_argv() and _result_json_line() are
-# run_dirs' and run_outputs', which the library check compiles; RESULT_SUFFIX
-# stays importable from here, as it was.
+# run_dirs' and run_outputs', which the library check compiles, as are
+# _batch_output_dir_refusal() and _remove_if_empty() (#2306); RESULT_SUFFIX
+# and those two stay importable from here, as they were.
 from autoware_carla_scenario.run_outputs import (
     RESULT_SUFFIX,  # noqa: F401
     remove_run_outputs,
     result_json_line as _result_json_line,
 )
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
-from autoware_carla_scenario.scenario_config import EntityConfig
-from autoware_carla_scenario.scenario_hash import SCENARIO_SECTIONS, scenario_hash
+from autoware_carla_scenario.scenario_config import EgoVehicleConfig, EntityConfig
+from autoware_carla_scenario.scenario_hash import (
+    SCENARIO_SECTIONS,
+    SCENARIO_SETTINGS,
+    scenario_hash,
+)
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
@@ -168,13 +178,20 @@ from autoware_carla_scenario.slurm.stems import sequential_stems
 from autoware_carla_scenario.value_text import shown
 
 from .argv import (
+    _RUN_DIR_KEY,
+    _SWEEP_DIR_KEY,
     BatchCase,
     _arena_max_set_by_user,
+    _batch_dir_text,
     _case_labels,
+    _errored_case,
     _extract_resume_from,
     _extract_resume_into,
     _extract_scenario_override,
     _is_glob_pattern,
+    _plain_overrides,
+    _split_batch_output_dir,
+    _sweep_failed_lines,
 )
 from .configs import (
     IntersectionPassingConfig,
@@ -294,28 +311,20 @@ def _cap_malloc_arenas() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _config_float(key: str, value: Any) -> float:
-    """``float(value)`` of the config's *key*; for a value ``float()`` cannot
-    read -- not a number, or an int too big for a float (``10**400``) -- a
-    ``ValueError`` naming the key (#1660).  What ``float()`` reads, a boolean
-    or a numeric string included, is read as before.
-    """
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{key} must be a number, got {shown(value)}") from None
-    except OverflowError:
-        raise ValueError(f"{key} must be finite, got {shown(value)}") from None
-
-
 def _config_finite(key: str, value: Any, *, minimum: float | None = None) -> float:
-    """:func:`_config_float` of the config's *key*, refused unless finite and,
-    with *minimum*, at least *minimum* -- a ``ValueError`` naming the key
-    (#1809).  A NaN, an infinity or a negative speed would otherwise reach the
-    run: an ego that starts still with no error, an actor whose physics an
-    infinite velocity breaks, a pose that fails far from the key behind it.
+    """The config's *key* as a finite float, and, with *minimum*, at least
+    *minimum* -- a ``ValueError`` naming the key (#1809).  A NaN, an infinity
+    or a negative speed would otherwise reach the run: an ego that starts
+    still with no error, an actor whose physics an infinite velocity breaks,
+    a pose that fails far from the key behind it.
+
+    Read by :func:`~autoware_carla_scenario.number_settings.number_setting`,
+    the one check of a number setting (#2398): a boolean is refused, not
+    read as 1 or 0; an int too big for a float (``10**400``) is refused as
+    not finite (#1660); and a quoted number (``ego.spawn_t='1.5'``) is read
+    as the number it spells, as these settings always were.
     """
-    number = _config_float(key, value)
+    number = number_setting(key, value, text=True)
     if minimum is None:
         if not math.isfinite(number):
             raise ValueError(f"{key} must be finite, got {shown(value)}")
@@ -357,8 +366,9 @@ def _check_ego_numbers(cfg: DictConfig) -> None:
     0 or more (:func:`_spawn_retry_max_count`), as building the ego would
     (:func:`build_ego_and_spawn`), so a batch refuses them before CARLA
     starts (#1809, #1984).  A key that is absent or null is left to the
-    build, which reads it as its default (:func:`_given`; a pose's 0,
-    #2143, #2161) or, for one with none, refuses it.
+    build, which reads it as its default (:func:`_given`): a pose's 0
+    (#2143, #2161), ``EgoVehicleConfig``'s speed and ``EntityConfig``'s
+    retry settings (#2294).
 
     Raises:
         ValueError: naming the key of the value refused.
@@ -377,6 +387,41 @@ def _check_ego_numbers(cfg: DictConfig) -> None:
         count = entity.get("spawn_retry_max_count")
         if count is not None:
             _spawn_retry_max_count(count)
+
+
+#: The config key of the ego's blueprint (:func:`_ego_vehicle_type`).
+_EGO_VEHICLE_TYPE_KEY = "ego.vehicle_type"
+
+
+def _ego_vehicle_type(ego_cfg: Any) -> str:
+    """``ego.vehicle_type`` of the ``ego`` group *ego_cfg*: the CARLA
+    blueprint the ego is spawned as, ``EgoVehicleConfig``'s when absent or
+    null.
+
+    Raises:
+        ValueError: naming the key, for a value that is not text or is blank
+            (``''``, ``false``), which would otherwise reach CARLA as is
+            (#2294).
+    """
+    value = _given(ego_cfg, "vehicle_type", EgoVehicleConfig.vehicle_type)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{_EGO_VEHICLE_TYPE_KEY} must be a CARLA blueprint id "
+            f"(non-empty text), got {value!r}"
+        )
+    return value
+
+
+def _check_ego_vehicle_type(cfg: DictConfig) -> None:
+    """Refuse ``ego.vehicle_type`` as building the ego would
+    (:func:`_ego_vehicle_type`), so a batch refuses it before CARLA starts.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    ego_cfg = cfg.get("ego")
+    if isinstance(ego_cfg, (DictConfig, Mapping)):
+        _ego_vehicle_type(ego_cfg)
 
 
 #: The config key of the ego's spawn retries (:func:`_spawn_retry_max_count`).
@@ -419,20 +464,29 @@ def build_ego_and_spawn(
     an ego that still has nowhere to go.
     """
     ground_projection = build_ground_projection(cfg)
+    # Each absent or null is its default, EgoVehicleConfig's or
+    # EntityConfig's (#2294), as _check_ego_numbers leaves it.
+    ego_cfg = cfg.get("ego") or {}
+    entity = cfg.get("entity") or {}
     ego = EgoConfig(
         spawn_location=SpawnTransform(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
         ),
-        vehicle_type=cfg.ego.vehicle_type,
+        vehicle_type=_ego_vehicle_type(ego_cfg),
         initial_speed_kmh=_ego_number(
-            "ego.initial_speed_kmh", cfg.ego.initial_speed_kmh
+            "ego.initial_speed_kmh",
+            _given(ego_cfg, "initial_speed_kmh", EgoVehicleConfig.initial_speed_kmh),
         ),
-        spawn_retry_max_count=_spawn_retry_max_count(cfg.entity.spawn_retry_max_count),
+        spawn_retry_max_count=_spawn_retry_max_count(
+            _given(entity, "spawn_retry_max_count", EntityConfig.spawn_retry_max_count)
+        ),
         spawn_retry_t_step=_ego_number(
-            "entity.spawn_retry_t_step", cfg.entity.spawn_retry_t_step
+            "entity.spawn_retry_t_step",
+            _given(entity, "spawn_retry_t_step", EntityConfig.spawn_retry_t_step),
         ),
         spawn_retry_z_step=_ego_number(
-            "entity.spawn_retry_z_step", cfg.entity.spawn_retry_z_step
+            "entity.spawn_retry_z_step",
+            _given(entity, "spawn_retry_z_step", EntityConfig.spawn_retry_z_step),
         ),
         goal_pose=build_goal_pose(cfg),
         waypoint_poses=build_waypoint_poses(cfg),
@@ -616,15 +670,9 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
     is not known before the run: the route then has no goal.
     """
     ego_cfg = cfg.get("ego") or {}
-    spawn_lanelet_id = ego_cfg.get("spawn_lanelet_id")
-    if spawn_lanelet_id is None:
+    if ego_cfg.get("spawn_lanelet_id") is None:
         raise RouteError("no ego.spawn_lanelet_id: the route has no start")
-    start = Lanelet2Pose(
-        lanelet_id=_lanelet_id("ego.spawn_lanelet_id", spawn_lanelet_id),
-        s=_ego_number("ego.spawn_s", _given(ego_cfg, "spawn_s", 0.0)),
-        t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
-        heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
-    )
+    start = build_spawn_pose(cfg)
     goal = build_goal_pose(cfg)
     scenario_cfg = cfg.get("scenario") or {}
     expected = scenario_cfg.get("expected_route_lanelet_ids") or []
@@ -953,8 +1001,9 @@ def _launcher_bridge_parameters(settings: dict[str, Any]) -> dict[str, Any]:
 
     Raises:
         ValueError: naming the key, for a value that is no mapping, or a
-            parameter the node would refuse as it starts (a fraction for an
-            integer one, :func:`~autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args`).
+            parameter the node would refuse or misbehave with as it starts (a
+            fraction for an integer one, a string for a number, a timeout that
+            is not positive, :func:`~autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args`).
     """
     from autoware_carla_scenario.autoware_stack.bridge_node import (  # noqa: PLC0415
         bridge_ros_args,
@@ -1102,9 +1151,12 @@ def _ego_entity_setting(cfg: Any) -> Any:
     unknown entity ``'None'``.  Every reader of the key -- a run's, a batch's
     check and a Slurm task's -- reads it through this; :func:`ego_entity_name`
     checks it.
+
+    Raises:
+        ValueError: naming ``ego``, for a block that is not a mapping
+            (:func:`_block`, #2298).
     """
-    ego_cfg = cfg.get("ego") or {}
-    value = ego_cfg.get("entity")
+    value = _block(cfg, "ego").get("entity")
     return "autopilot" if value is None else value
 
 
@@ -1700,19 +1752,40 @@ def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:
     )
 
 
+def _block(cfg: DictConfig, name: str) -> Any:
+    """*cfg*'s ``name`` block: an empty mapping when it is absent or null
+    (the default, nothing set), the block itself when it is a mapping.
+
+    One that is not a mapping (``rerun: true``, ``false``, ``0``, ``''``) is
+    refused, as ``metrics`` is (:func:`metrics_heavy`), rather than read as
+    unset -- ``false`` turned the block's switches off without a word -- or
+    crash on ``.get`` (``rerun: true``, #2298).
+
+    Raises:
+        ValueError: naming the block, for a value that is not a mapping.
+    """
+    value = cfg.get(name)
+    if value is None:
+        return {}
+    if not isinstance(value, (DictConfig, Mapping)):
+        raise ValueError(f"{name} must be a mapping, got {shown(value)}")
+    return value
+
+
 def _switch(cfg: DictConfig, block: str, key: str) -> bool:
     """The true/false switch ``<block>.<key>`` of *cfg*, off when absent or
-    null (#2188).
+    null (#2188), as is every switch of a block that is absent or null.
 
     A boolean or its spelling (``"false"``, ``"yes"``, ``0``: what an
     ``${oc.env:VAR,false}`` or a quoted override gives), not its truthiness:
     ``bool("false")`` was true, and so was a typo (#1753).
 
     Raises:
-        ValueError: naming the key, for a value that spells neither
+        ValueError: naming the block, for a block that is not a mapping
+            (:func:`_block`), or the key, for a value that spells neither
             (:func:`~autoware_carla_scenario.config_flags.check_flag`).
     """
-    settings = cfg.get(block) or {}
+    settings = _block(cfg, block)
     return check_flag(f"{block}.{key}", _given(settings, key, False))
 
 
@@ -1733,9 +1806,10 @@ def _rerun_draw_radius(cfg: DictConfig) -> float | None:
     than the ``OverflowError`` of ``math.isfinite()`` (#1928).
 
     Raises:
-        ValueError: It is not a finite distance.
+        ValueError: It is not a finite distance, or ``rerun`` is not a
+            mapping (:func:`_block`).
     """
-    settings = cfg.get("rerun") or {}
+    settings = _block(cfg, "rerun")
     value = settings.get("draw_radius_m", None)
     if value is None:
         return None
@@ -1746,23 +1820,28 @@ def _rerun_draw_radius(cfg: DictConfig) -> float | None:
     return float(value)
 
 
+#: ``rerun.lidar_max_points`` when it is absent or null: the default the
+#: shipped config sets and docs/usage.md documents.
+_DEFAULT_LIDAR_MAX_POINTS = 65536
+
+
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise.
 
-    0 (or ``null``, or no value) keeps every point of a sweep.  An integral
-    float (``1e5`` in YAML) or a string of an integer (what ``${oc.env:...}``
-    gives) counts as that integer, as ``int()`` read them before (#1226).
+    Absent or null is the default, :data:`_DEFAULT_LIDAR_MAX_POINTS` (65536);
+    an explicit 0 keeps every point of a sweep (#2298: null kept every point).
+    An integral float (``1e5`` in YAML) or a string of an integer (what
+    ``${oc.env:...}`` gives) counts as that integer, as ``int()`` read them
+    before (#1226).
 
     Raises:
-        ValueError: It is not a non-negative integer (a bool is not one), or
-            ``rerun.lidar`` is not true or false (:func:`_switch`).
+        ValueError: It is not a non-negative integer (a bool is not one),
+            ``rerun.lidar`` is not true or false (:func:`_switch`), or
+            ``rerun`` is not a mapping (:func:`_block`).
     """
     if not _switch(cfg, "rerun", "lidar"):
         return None
-    rerun_cfg = cfg.get("rerun") or {}
-    value = rerun_cfg.get("lidar_max_points", 0)
-    if value is None:
-        return 0
+    value = _given(_block(cfg, "rerun"), "lidar_max_points", _DEFAULT_LIDAR_MAX_POINTS)
     points: int | None = None
     if isinstance(value, bool):
         points = None
@@ -1955,11 +2034,20 @@ def metrics_heavy(cfg: DictConfig) -> bool | None:
     off, a typo refused, #1761); ``None`` when it is unset or null, which
     leaves the decision to ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS``.
 
+    A ``metrics`` block that is absent or null is the default (nothing
+    set); one that is not a mapping (``false``, ``0``, ``''``, a list) is
+    refused rather than read as unset.
+
     Raises:
-        ValueError: naming ``metrics.heavy``, for a value that is not a
-            switch.
+        ValueError: naming ``metrics``, for a block that is not a mapping, or
+            ``metrics.heavy``, for a value that is not a switch.
     """
-    value = (cfg.get("metrics") or {}).get("heavy")
+    block = cfg.get("metrics")
+    if block is None:
+        return None
+    if not isinstance(block, (DictConfig, Mapping)):
+        raise ValueError(f"metrics must be a mapping, got {shown(block)}")
+    value = block.get("heavy")
     if value is None:
         return None
     return check_flag("metrics.heavy", value)
@@ -2056,14 +2144,9 @@ def rerun_errors(
     the cases whose ``rerun_recording`` is among the failed *conversions*.
 
     A recording converted more than once (a retried case, which writes under
-    the stem of the attempt it replaces) goes by its last conversion."""
-    latest = {str(c.recording): c.error for c in conversions}
-    failed = {path: error for path, error in latest.items() if error is not None}
-    return {
-        i: failed[result.rerun_recording]
-        for i, result in enumerate(results)
-        if result.rerun_recording is not None and result.rerun_recording in failed
-    }
+    the stem of the attempt it replaces) goes by its last conversion: the
+    checked :func:`.rerun_report.rerun_errors`, over the cases' recordings."""
+    return _rerun_errors([result.rerun_recording for result in results], conversions)
 
 
 def _finish_rerun(rerun: RerunConverter | None) -> list[RerunConversion]:
@@ -2201,12 +2284,45 @@ def _compose_config(scenario_name: str, overrides: list[str]) -> DictConfig:
     return cfg
 
 
+def _compose_case(name: str, overrides: list[str]) -> DictConfig:
+    """:func:`_compose_config` of a batch's scenario *name*; a command line
+    that does not compose (a misspelled key, a value of the wrong type) is
+    reported as one ``Error: <name>: ...`` message, with the closest key, and
+    exits 2, as ``scenario-check`` and ``scenario-expand`` report it (#2294).
+    ``HYDRA_FULL_ERROR=1`` raises it instead.
+    """
+    from .compose_errors import compose_or_report  # noqa: PLC0415
+
+    cfg = compose_or_report(name, overrides, named=True)
+    if cfg is None:
+        sys.exit(2)
+    return cfg  # type: ignore[no-any-return]
+
+
 def _has_sweep(cfg: DictConfig) -> bool:
-    """Whether *cfg* is a logical scenario: one with a sweep to expand."""
+    """Whether *cfg* is a logical scenario: one with a sweep to expand.
+
+    Raises:
+        ValueError: If its ``sweep`` is neither null nor a mapping
+            (:func:`~autoware_carla_scenario.sweeper.expand.check_sweep_shape`),
+            which :func:`check_batch_configs` refuses before anything runs
+            (#2279).
+    """
+    from ..sweeper.expand import check_sweep_shape  # noqa: PLC0415 -- loads Lanelet2
+
     sweep = OmegaConf.select(cfg, "sweep")
-    return sweep is not None and any(
-        OmegaConf.select(sweep, key) for key in ("constraints", "route", "odd_sample")
-    )
+    # Its shape only: an interpolation inside it, which only expanding the
+    # sweep reads, is left unresolved, as a run that does not expand it
+    # always left it.
+    check_sweep_shape(sweep)
+    if sweep is None:
+        return False
+    if isinstance(sweep, DictConfig):
+        return any(
+            OmegaConf.select(sweep, key)
+            for key in ("constraints", "route", "odd_sample")
+        )
+    return any(sweep.get(key) for key in ("constraints", "route", "odd_sample"))
 
 
 def _expand_batch(
@@ -2250,7 +2366,7 @@ def _expand_batch(
     errors: list[str] = []
     for name in scenario_names:
         # Composed outside the try: a ValueError there is no sweep's.
-        cfg = _compose_config(name, overrides)
+        cfg = _compose_case(name, overrides)
         try:
             # Before the sweep resolves, fetches or searches any map, as the
             # lanelet sweeper checks its config before it expands it: one
@@ -2321,11 +2437,13 @@ def _log_batch_plan(
         logger.info("  server      : %s:%s", cfg.server.host, cfg.server.port)
         logger.info("  TM port     : %s", _traffic_manager_port_text(cfg))
         goal_pose = build_goal_pose(cfg)
+        # Each as the config gives it (%s): a null is its default, as the
+        # build reads it, and a quoted id is shown, not a logging error.
         logger.info(
-            "  ego         : %s (%.1f km/h) spawn=lanelet:%d s:%.1f goal=%s",
-            cfg.ego.vehicle_type,
-            cfg.ego.initial_speed_kmh,
-            cfg.ego.spawn_lanelet_id,
+            "  ego         : %s (%s km/h) spawn=lanelet:%s s:%s goal=%s",
+            _given(cfg.ego, "vehicle_type", EgoVehicleConfig.vehicle_type),
+            _given(cfg.ego, "initial_speed_kmh", EgoVehicleConfig.initial_speed_kmh),
+            cfg.ego.get("spawn_lanelet_id"),
             _given(cfg.ego, "spawn_s", 0.0),
             (
                 f"lanelet:{goal_pose.lanelet_id} s:{goal_pose.s:.1f}"
@@ -2404,15 +2522,6 @@ def _reserve_hydra_output_dir(argv: list[str]) -> tuple[list[str], Path | None]:
     return [*argv, f"{key}={reserved.as_posix()}"], reserved
 
 
-def _remove_if_empty(directory: Path) -> None:
-    """Remove *directory* when nothing was written in it (Hydra refused the
-    overrides before its job started); keep it otherwise."""
-    try:
-        directory.rmdir()
-    except OSError:
-        pass
-
-
 def _batch_queue(
     first_cfg: DictConfig,
     map_paths: Any,
@@ -2457,6 +2566,9 @@ def _batch_queue(
         t4scene=build_t4scene_exporter(first_cfg),
         backends=build_backend_pool(first_cfg),
         map_pack=build_map_pack(first_cfg, map_paths),
+        # The tasks of a SLURM batch write into one directory, each counting
+        # its stacks from 0: a case's stem tells their logs apart (#2247).
+        stack_logs_by_stem=True,
     )
 
 
@@ -2489,7 +2601,9 @@ def _check_port_setting(
     :func:`_traffic_manager_port`).  ``server.port`` has no default to fall
     back on, so null is refused there (``null_is_default=False``, #2089).
     Without this a port of 0, 70000, ``true`` or null reaches the CARLA
-    client and is refused only once a server is up.
+    client and is refused only once a server is up.  The check is
+    :func:`~autoware_carla_scenario.number_settings.check_port`, the one
+    every port setting takes (#2398).
 
     Raises:
         ValueError: naming the key.
@@ -2497,15 +2611,10 @@ def _check_port_setting(
     node = cfg.get(section)
     if not isinstance(node, (DictConfig, Mapping)) or "port" not in node:
         return
-    port = node.get("port")
-    if port is None:
-        if null_is_default:
-            return
-        raise ValueError(f"{section}.port must be an integer within 1-65535 (got None)")
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        raise ValueError(
-            f"{section}.port must be an integer within 1-65535 (got {port!r})"
-        )
+    port: Any = node.get("port")
+    if port is None and null_is_default:
+        return
+    check_port(f"{section}.port", port)
 
 
 def _traffic_manager_port(cfg: DictConfig) -> int:
@@ -2743,7 +2852,8 @@ def check_batch_configs(
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
     reads them (:func:`_check_batch_writer_settings`); each case's timeout,
     ``typecheck`` mode (:func:`~autoware_carla_scenario.typecheck.mode.typecheck_mode`),
-    ``ego.entity`` (:func:`ego_entity_name`), seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
+    ``ego.entity`` (:func:`ego_entity_name`), seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``)
+    and the shape of ``sweep`` (a mapping or null),
     ``background_traffic`` (:func:`background_traffic_settings`),
     ``environment`` (:func:`environment_settings`) and the form of its
     ``rules`` (:func:`_check_weather_rules`), ``driver`` settings of an
@@ -2754,7 +2864,8 @@ def check_batch_configs(
     class refuses (:func:`_check_scenario_config`), the ego's and entities'
     numbers (``ego.initial_speed_kmh``, the spawn and goal poses,
     ``entity.spawn_retry_*_step`` and ``entity.spawn_retry_max_count``:
-    :func:`_check_ego_numbers`), lanelet ids (``ego.spawn_lanelet_id``,
+    :func:`_check_ego_numbers`), ``ego.vehicle_type``
+    (:func:`_ego_vehicle_type`), lanelet ids (``ego.spawn_lanelet_id``,
     ``ego.goal_lanelet_id``, ``ego.waypoint_lanelet_ids``:
     :func:`_check_ego_lanelet_ids`), ``ego.native_autoware_interface``
     (:func:`_native_autoware_interface`), ``odd_case``,
@@ -2807,6 +2918,7 @@ def check_batch_configs(
             _odd_case(cfg)
             build_ground_projection(cfg)
             _check_ego_numbers(cfg)
+            _check_ego_vehicle_type(cfg)
             _check_ego_lanelet_ids(cfg)
             _native_autoware_interface(cfg)
             # Each case's alone: that the cases name one is run_batch's.
@@ -2900,6 +3012,7 @@ def run_batch(
     build_scenario_fn: BuildScenarioFn | None = None,
     wait: bool | None = None,
     resume_into: Path | None = None,
+    output_dir: Path | None = None,
 ) -> None:
     """Compose configs, build scenarios, and run them in a single queue.
 
@@ -2925,6 +3038,16 @@ def run_batch(
     With ``launcher=slurm`` the cases run as SLURM array tasks instead
     (docs/slurm.md); *wait* overrides ``launcher.wait`` (``--no-wait``).
 
+    With *output_dir* (``hydra.run.dir=``, or ``hydra.sweep.dir=`` with
+    ``--multirun``) the batch writes there, created once its cases are built,
+    rather than in a new ``outputs/<date>/<time>``: a directory that is not
+    empty, or one given with *resume_into*, is refused (exit 2) before
+    anything is composed (:func:`_batch_output_dir_refusal`, #2294).
+
+    A command line that does not compose (a misspelled key) is reported as
+    one ``Error:`` line naming the scenario, and exits 2
+    (:func:`~autoware_carla_scenario.examples.compose_errors.compose_or_report`).
+
     Raises:
         RunConfigError: a config value a case would refuse
             (:func:`check_batch_configs`), before any scenario is built or the
@@ -2936,6 +3059,11 @@ def run_batch(
         require_sbatch,
     )
 
+    if output_dir is not None:
+        refusal = _batch_output_dir_refusal(output_dir, resume_into)
+        if refusal is not None:
+            print(f"Error: {refusal}", file=sys.stderr)  # noqa: T201
+            sys.exit(2)
     if launcher_requested_in_argv(overrides) == "slurm":
         # Before the sweep is expanded, which can take a while.
         try:
@@ -2996,18 +3124,7 @@ def run_batch(
     if not cases:
         print("Error: no scenario case left to run", file=sys.stderr)  # noqa: T201
         sys.exit(1)
-    configs = [_compose_config(name, case) for name, case in cases]
-
-    if not expand:
-        swept = [name for name, cfg in zip(labels, configs) if _has_sweep(cfg)]
-        if swept:
-            logger.warning(
-                "%s ha%s a sweep (sweep.constraints, sweep.route or "
-                "sweep.odd_sample) that a batch runs once, as configured; add "
-                "--multirun to run every case of it",
-                ", ".join(swept),
-                "s" if len(swept) == 1 else "ve",
-            )
+    configs = [_compose_case(name, case) for name, case in cases]
 
     # Every value a case reads of its config before it starts -- that the
     # cases share a map, the queue is built on the first case's (#1241); that
@@ -3020,6 +3137,19 @@ def run_batch(
     # Raised, as RunConfigError: the CLI reports it as an ``Error:`` line,
     # headed by the case's name, and HYDRA_FULL_ERROR=1 raises it (_dispatch).
     check_batch_configs(configs, labels, documents=documents)
+
+    if not expand:
+        # After the configs are checked: a sweep that is not a mapping is
+        # refused there, naming its case (#2279).
+        swept = [name for name, cfg in zip(labels, configs) if _has_sweep(cfg)]
+        if swept:
+            logger.warning(
+                "%s ha%s a sweep (sweep.constraints, sweep.route or "
+                "sweep.odd_sample) that a batch runs once, as configured; add "
+                "--multirun to run every case of it",
+                ", ".join(swept),
+                "s" if len(swept) == 1 else "ve",
+            )
 
     # One launcher for the whole batch: the queue prepares it (and puts its
     # logs in the batch's output directory) and every ego starts its stacks
@@ -3118,9 +3248,15 @@ def run_batch(
     else:
         all_stems = sequential_stems(scenario_classes)
         all_labels, all_case_overrides = list(labels), list(case_overrides)
-        # Batch mode bypasses @hydra.main, so we create the output directory
-        # ourselves following Hydra's timestamped convention.
-        output_dir = _make_batch_output_dir()
+        if output_dir is not None:
+            # The directory the command line names (hydra.run.dir=), checked
+            # empty before anything was composed (#2294).
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = output_dir.resolve()
+        else:
+            # Batch mode bypasses @hydra.main, so we create the output
+            # directory ourselves following Hydra's timestamped convention.
+            output_dir = _make_batch_output_dir()
     run_stems = all_stems[len(kept) :]
     kept_errored = [i for i, result in enumerate(kept) if result.errored]
 
@@ -3150,6 +3286,15 @@ def run_batch(
             )
         )
 
+    # A case that raises becomes a failed result and the batch goes on: its
+    # crash report goes to the batch's directory, and runs that case again
+    # (_CaseCrashReports).
+    crash_report.set_output_dir(output_dir)
+    case_reports = _CaseCrashReports(
+        output_dir,
+        [[f"scenario={name}", *case] for name, case in cases],
+        configs,
+    )
     queue = _batch_queue(first_cfg, map_paths, output_dir, rerun=rerun)
 
     for cfg, scenario, stem in zip(configs, scenarios, run_stems):
@@ -3204,9 +3349,10 @@ def run_batch(
             # The batch goes on: its summary is written again at the end.
             logger.warning("Could not write the batch's results so far", exc_info=True)
 
-    def case_done(_index: int, result: ScenarioResult) -> None:
+    def case_done(index: int, result: ScenarioResult) -> None:
         done.append(result)
         write_done()
+        case_reports.enter(index + 1)
 
     finished = False
     try:
@@ -3245,12 +3391,14 @@ def run_batch(
                     remove_run_outputs(output_dir, stem)
             # A case that cannot run (a spawn point without ground, say) is
             # recorded as errored, and the rest of the batch still runs.
+            case_reports.enter(0)
             results = queue.run_all(
                 release=True, continue_on_error=True, on_result=case_done
             )
             errored = queue.errored_indices()
         finished = True
     finally:
+        case_reports.close()
         if not finished and len(done) > len(kept):
             # Cut short: the cases it ran, as the last case's end wrote them.
             # (One cut short before any case ended keeps the summary written
@@ -3276,6 +3424,45 @@ def run_batch(
         stems=all_stems,
     )
     sys.exit(0 if all_passed else 1)
+
+
+class _CaseCrashReports:
+    """The crash report context of each case of a local batch, as a SLURM
+    task's worker gives each of its cases (:func:`crash_report.run_context`):
+    a report of a case is in the batch's directory, and its ``repro.sh`` runs
+    that case again, with its own overrides and config.
+
+    The queue runs every case in one ``run_all()``: case *i*'s context is
+    entered before it starts (:meth:`enter`: at the start, and from the
+    queue's ``on_result`` of the case before), and left when the next is
+    entered or the batch ends (:meth:`close`).
+    """
+
+    def __init__(
+        self, output_dir: Path, overrides: list[list[str]], configs: list[Any]
+    ) -> None:
+        self._output_dir = output_dir
+        self._overrides = overrides
+        self._configs = configs
+        self._stack = ExitStack()
+
+    def enter(self, index: int) -> None:
+        """Leave the context entered last, and enter case *index*'s (none
+        past the last case)."""
+        self.close()
+        if not crash_report.installed() or index >= len(self._overrides):
+            return
+        self._stack.enter_context(
+            crash_report.run_context(
+                self._output_dir,
+                overrides=self._overrides[index],
+                config_yaml=config_yaml(self._configs[index]),
+            )
+        )
+
+    def close(self) -> None:
+        """Leave the context entered last, if any."""
+        self._stack.close()
 
 
 def config_seed(cfg: DictConfig) -> int | None:
@@ -3304,10 +3491,13 @@ def _check_seeds(cfg: DictConfig) -> None:
     ``visibility`` unless each is true or false, naming the key, as expanding
     the sweep and building the scenario would refuse them.
 
+    And the sweep itself, unless it is null or a mapping (:func:`_has_sweep`).
+
     Raises:
         ValueError: naming the key of the value refused.
     """
     config_seed(cfg)
+    _has_sweep(cfg)  # before its odd_sample is looked up in it
     odd_sample = OmegaConf.select(cfg, "sweep.odd_sample")
     if isinstance(odd_sample, DictConfig):
         check_sample_settings(odd_sample)
@@ -3592,6 +3782,12 @@ def _set_scenario_hash(cfg: DictConfig, scenario: BaseScenario) -> None:
                 if OmegaConf.is_config(node)
                 else node
             )
+    # And the few settings of the other sections that say what is simulated
+    # (server.fog_density_scale), each resolved on its own.
+    for section, key in SCENARIO_SETTINGS:
+        value = OmegaConf.select(cfg, f"{section}.{key}", default=None)
+        if value is not None:
+            config.setdefault(section, {})[key] = value
     scenario_class = type(scenario)
     scenario.scenario_hash = scenario_hash(
         config, f"{scenario_class.__module__}.{scenario_class.__qualname__}"
@@ -3651,7 +3847,8 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     runs, and each runs under its own rules, not the last case's (#1936).
 
     Raises:
-        ValueError: An ``environment.<key>`` is not a number, or is one
+        ValueError: An ``environment.<key>`` is no setting
+            (:func:`environment_settings`), is not a number, or is one
             :class:`~autoware_carla_scenario.EnvironmentAction` refuses (not
             finite, or outside the range its argument takes); the message
             names the key.
@@ -3696,8 +3893,14 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     ``night``, ``dawn``; ``clear``, ``partly_cloudy``, ``overcast``).
 
     Raises:
-        ValueError: naming the key, as :func:`add_environment` documents.
+        ValueError: naming the key, as :func:`add_environment` documents,
+            and for a key that is none of these (``environment.rain``), which
+            ``EnvironmentAction(**settings)`` would refuse only with a
+            ``TypeError`` once the scenario was built (#2265).
     """
+    import inspect  # noqa: PLC0415
+
+    from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
     from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
         _refusal,
     )
@@ -3712,8 +3915,20 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
     raw.pop("rules", None)
+    # What the action takes, but its own (when and how it runs), and what
+    # the weather rules read before it (add_environment).
+    known = {
+        name
+        for name in inspect.signature(EnvironmentAction.__init__).parameters
+        if name not in ("self", "condition", "timing", "label", "once")
+    } | {"time_of_day", "visibility_quantile"}
     settings: dict[str, Any] = {}
     for key, value in raw.items():
+        if key not in known:
+            raise ValueError(
+                f"environment.{key} is no environment setting, got {value!r}: "
+                f"the settings are rules, {', '.join(sorted(known))}"
+            )
         if value is None:
             continue
         if key in label_settings:
@@ -3765,8 +3980,12 @@ def _rules_locations(spec: Any) -> Any:
     from hydra.utils import to_absolute_path  # noqa: PLC0415
 
     def where(location: Any) -> Any:
-        if not isinstance(location, str) or location.startswith(
-            ("https://", "http://")
+        # A blank one as it is too, for check_weather_rules to refuse
+        # (to_absolute_path would make it the run's directory).
+        if (
+            not isinstance(location, str)
+            or not location.strip()
+            or location.startswith(("https://", "http://"))
         ):
             return location
         return to_absolute_path(location)
@@ -3825,7 +4044,9 @@ def _float_of_text(value: Any) -> float:
 
 def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     """The numbers of the config's ``background_traffic``, checked; ``None``
-    when it is off (``enabled`` false or the block absent), when none is read.
+    when it is off (``enabled`` false or the block absent or null), when none
+    is read.  A block that is not a mapping (``true``, ``false``, ``0``,
+    ``''``) is refused (:func:`_block`, #2298).
 
     ``seed``, ``source.initial_vehicles`` and ``source.max_vehicles`` are
     whole numbers, not negative (``2`` or ``2.0``; not ``1.9``, a boolean or
@@ -4197,6 +4418,13 @@ def _hydra_main(cfg: DictConfig) -> None:
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
     marker_dir = _case_errored_dir()
+    # Around the handlers too: what the last one captures is the run's.
+    with _crash_report_context(cfg):
+        _hydra_case(cfg, marker_dir)
+
+
+def _hydra_case(cfg: DictConfig, marker_dir: Path | None) -> None:
+    """:func:`_hydra_main`'s run of *cfg*, its verdict and its errors."""
     try:
         result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
@@ -4218,11 +4446,19 @@ def _hydra_main(cfg: DictConfig) -> None:
 
         if not os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
             _mark_case_errored(marker_dir, exc, exit_code=1)
+            if _record_basic_sweeper_error(exc):
+                return
             raise
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(2)
     except Exception as exc:
+        # Before Hydra's own report of it, which ends a single run with exit
+        # 1 and leaves main() nothing to report.  A refusal is not a crash:
+        # the clauses above take those.
+        crash_report.capture(exc)
         _mark_case_errored(marker_dir, exc, exit_code=1)
+        if _record_basic_sweeper_error(exc):
+            return
         raise
     # Ended with a verdict, passed or failed: the run wrote its result (and
     # gate record), and is judged; the marker saying it did not finish goes.
@@ -4236,6 +4472,87 @@ def _hydra_main(cfg: DictConfig) -> None:
     _multirun_ran.append(case)
     if not result.passed:
         _multirun_failed.append(case)
+
+
+@contextmanager
+def _crash_report_context(cfg: DictConfig) -> Iterator[None]:
+    """Crash reports of the ``with`` block (a native crash's too) are the
+    Hydra run's: in its output directory, with its overrides and its config
+    (:func:`crash_report.run_context`)."""
+    if not crash_report.installed():
+        yield
+        return
+    try:
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+    except Exception:  # noqa: BLE001 - the run goes on, reported elsewhere
+        logger.warning("Cannot tell the run's output directory", exc_info=True)
+        yield
+        return
+    with crash_report.run_context(
+        output_dir, overrides=_task_overrides(), config_yaml=config_yaml(cfg)
+    ):
+        yield
+
+
+def config_yaml(cfg: Any) -> str | None:
+    """*cfg* as YAML for a crash report; ``None`` when reports hold no
+    config (:func:`crash_report.wants`) or it cannot be written."""
+    if not crash_report.wants("config"):
+        return None
+    try:
+        return OmegaConf.to_yaml(cfg)
+    except Exception:  # noqa: BLE001 - reported without its config
+        return None
+
+
+#: The ``_target_`` of Hydra's basic sweeper and launcher, which run every
+#: case in this process (:func:`_record_basic_sweeper_error`).
+_BASIC_SWEEPER_TARGET = "hydra._internal.core_plugins.basic_sweeper.BasicSweeper"
+_BASIC_LAUNCHER_TARGET = "hydra._internal.core_plugins.basic_launcher.BasicLauncher"
+
+
+def _record_basic_sweeper_error(exc: BaseException) -> bool:
+    """Record *exc*, what a ``--multirun`` case of Hydra's basic sweeper
+    raised, as that case's error, with its traceback logged, and return
+    ``True``; ``False`` (the caller re-raises) outside such a case.
+
+    Hydra's basic sweeper runs every case before it re-raises the first
+    error, so a raise would only lose the others' verdicts and
+    :func:`_exit_if_multirun_failed`'s summary: the case is counted as
+    failed (errored) instead, the sweep goes on, and :func:`main` exits 1
+    with the summary naming it (#2294).  A single run raises as it always
+    has; a case the lanelet sweeper forked (``SWEEPER_OWNS_RETRIES_ENV``)
+    too, since the sweeper reads its exit status and retries it.  So does a
+    case of any other sweeper or launcher (an installed plugin's: Optuna,
+    joblib, submitit): one may run it in another process, where what is
+    recorded here never reaches :func:`main`, and only the raise reports it.
+    """
+    from ..sweeper.isolation import (  # noqa: PLC0415
+        SWEEPER_OWNS_RETRIES_ENV,
+    )
+
+    if (
+        not HydraConfig.initialized()
+        or not _is_multirun()
+        or os.environ.get(SWEEPER_OWNS_RETRIES_ENV)
+    ):
+        return False
+    hydra_cfg = HydraConfig.get()
+    if (
+        hydra_cfg.sweeper.get("_target_") != _BASIC_SWEEPER_TARGET
+        or hydra_cfg.launcher.get("_target_") != _BASIC_LAUNCHER_TARGET
+    ):
+        return False
+    case = " ".join(_task_overrides())
+    logger.error(
+        "Case %s raised %s; the sweep goes on",
+        case or "(no overrides)",
+        type(exc).__name__,
+        exc_info=exc,
+    )
+    _multirun_ran.append(case)
+    _multirun_failed.append(_errored_case(case, type(exc).__name__, str(exc)))
+    return True
 
 
 def _case_errored_dir() -> Path | None:
@@ -4330,13 +4647,8 @@ def _exit_if_multirun_failed() -> None:
     """
     if not _multirun_failed:
         return
-    print(  # noqa: T201
-        f"Sweep failed: {len(_multirun_failed)} of {len(_multirun_ran)} "
-        "case(s) failed:",
-        file=sys.stderr,
-    )
-    for case in _multirun_failed:
-        print(f"  {case}", file=sys.stderr)  # noqa: T201
+    for line in _sweep_failed_lines(_multirun_failed, len(_multirun_ran)):
+        print(line, file=sys.stderr)  # noqa: T201
     sys.exit(1)
 
 
@@ -4416,17 +4728,81 @@ def _environ_for_run(name: str, value: str | None) -> Iterator[None]:
             os.environ[name] = previous
 
 
+#: What a run raises when it refuses its configuration: the user's to fix, not
+#: a crash, and so not reported (:func:`crash_report.reporting`).
+_REFUSALS: tuple[type[BaseException], ...] = (
+    RunConfigError,
+    ScenarioTypeError,
+    RerunUnavailableError,
+    T4UnavailableError,
+)
+
+
+def _quiet_interrupt(exc: KeyboardInterrupt) -> None:
+    """Let *exc*, re-raised, end the process without a traceback (#2333).
+
+    Python still ends the process as it ends one Ctrl-C stopped: once it has
+    finalized (``atexit`` included), it kills itself with ``SIGINT``, so a
+    parent sees a death by signal (a shell's 130), not an exit status.  Only
+    *exc* is silenced: any other uncaught exception goes to the hook as it
+    did, and an embedding program that catches *exc* sees it as before.
+
+    The hook puts the one it replaced back the first time it is called, and
+    a hook an earlier call left (its caller caught that interrupt) is
+    replaced rather than wrapped: calling ``main()`` again in one process
+    neither stacks hooks nor keeps every interrupt (and its frames) alive.
+    """
+    previous = sys.excepthook
+    if isinstance(previous, _QuietInterruptHook):
+        previous = previous.previous
+    sys.excepthook = _QuietInterruptHook(exc, previous)
+
+
+class _QuietInterruptHook:
+    """``sys.excepthook`` silencing one interrupt (:func:`_quiet_interrupt`)."""
+
+    def __init__(self, exc: KeyboardInterrupt, previous: Any) -> None:
+        self.exc = exc
+        self.previous = previous
+
+    def __call__(
+        self, kind: type[BaseException], value: BaseException, tb: Any
+    ) -> None:
+        if sys.excepthook is self:
+            sys.excepthook = self.previous
+        if value is not self.exc:
+            self.previous(kind, value, tb)
+
+
 def main() -> None:
     """CLI entry point: detect glob patterns and dispatch accordingly.
 
-    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.
+    A ``SIGTERM`` stops the run as Ctrl-C does, and it exits 143.  Ctrl-C
+    prints ``scenario: interrupted`` rather than a traceback, and the process
+    still dies by ``SIGINT`` (:func:`_quiet_interrupt`), once the run has
+    stopped what it started.  What it raises or a native crash leaves a crash
+    report (:mod:`..crash_report`).
     """
+    # Before the crash reporter puts its log buffer on the root logger: with
+    # a handler there already, basicConfig() would do nothing, and a batch
+    # would log nothing to the console (#2380).  A run through Hydra
+    # replaces this with its own logging, as before.
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     try:
-        with _interrupt_on_sigterm():
+        with (
+            crash_report.reporting(list(sys.argv), ignore=_REFUSALS),
+            _interrupt_on_sigterm(),
+        ):
             _main()
     except _Terminated as exc:
         print(f"Interrupted ({exc})", file=sys.stderr)  # noqa: T201
         sys.exit(128 + exc.signum)
+    except KeyboardInterrupt as exc:
+        print("scenario: interrupted", file=sys.stderr)  # noqa: T201
+        _quiet_interrupt(exc)
+        raise
 
 
 def _main() -> None:
@@ -4452,6 +4828,103 @@ def _main() -> None:
         RESUME_FROM_ENV, str(resume_from) if resume_from > 0 else None
     ):
         _dispatch(resume_from, resume_into)
+
+
+def _extract_batch_output_dir(
+    argv: list[str], *, multirun: bool
+) -> tuple[Path | None, list[str]]:
+    """The batch output directory *argv* names, and *argv* without it.
+
+    ``hydra.run.dir=`` names it, or with ``--multirun`` (*multirun*)
+    ``hydra.sweep.dir=``, as for a run through Hydra (#2294); ``None`` when
+    it names none.  Every ``hydra.run.dir`` and ``hydra.sweep.dir`` override
+    is taken off: neither is a case's setting.  The other mode's key is
+    ignored with a warning, as Hydra ignores it.  A ``${now:...}``
+    interpolation in it is resolved, as Hydra resolves it.
+
+    Exits 2 when the value cannot be resolved or is empty.
+    """
+    wanted = _SWEEP_DIR_KEY if multirun else _RUN_DIR_KEY
+    value, kept, ignored = _split_batch_output_dir(argv, multirun=multirun)
+    for arg in ignored:
+        logger.warning(
+            "%s is ignored: a batch%s writes to %s",
+            arg,
+            " run with --multirun" if multirun else " without --multirun",
+            wanted,
+        )
+    if value is None:
+        return None, kept
+    text = _batch_dir_text(value)
+    if "${" in text:
+        from hydra.core.utils import setup_globals  # noqa: PLC0415
+
+        setup_globals()
+        try:
+            text = str(OmegaConf.create({"dir": text}).dir)
+        except Exception as exc:  # noqa: BLE001 -- reported, exit 2
+            print(  # noqa: T201
+                f"Error: {wanted}={value}: cannot resolve it for a batch ({exc})",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+    if not text:
+        print(f"Error: {wanted}= names no directory", file=sys.stderr)  # noqa: T201
+        sys.exit(2)
+    return Path(text), kept
+
+
+def _warn_if_sweep_not_expanded(scenario: str | None, overrides: list[str]) -> None:
+    """Warn when *scenario* (the default one when ``None``), composed with
+    the command line's *overrides*, has a sweep that Hydra's basic sweeper
+    does not expand, and the command line sweeps nothing of its own: such a
+    ``--multirun`` without ``hydra/sweeper=`` runs one job, the scenario as
+    configured, not its cases (#2294), where the same scenario given as a
+    glob runs every case.
+
+    A command line that sweeps a value itself (``seed=1,2``,
+    ``'seed=range(0,32)'``: the rollouts of one scenario, docs/wosac.md) asks
+    for those jobs, of the scenario as configured, and is not warned.
+    Composed without what Hydra reads itself (``hydra...``, flags); nothing
+    is said when it does not compose: the run reports that itself.
+    """
+    from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+        OverridesParser,
+    )
+
+    plain = _plain_overrides(overrides)
+    try:
+        parsed = OverridesParser.create().parse_overrides(plain)
+    except Exception:  # noqa: BLE001 -- the run reports it
+        logger.debug("Cannot parse the command line's overrides", exc_info=True)
+        return
+    if any(override.is_sweep_override() for override in parsed):
+        return
+    try:
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
+            cfg = compose(
+                config_name="config",
+                overrides=(
+                    [f"scenario={scenario}", *plain] if scenario is not None else plain
+                ),
+            )
+        swept = _has_sweep(cfg)
+    except Exception:  # noqa: BLE001 -- the run reports it
+        logger.debug("Cannot tell whether the scenario has a sweep", exc_info=True)
+        return
+    finally:
+        GlobalHydra.instance().clear()
+    if swept:
+        logger.warning(
+            "%s has a sweep (sweep.constraints, sweep.route or sweep.odd_sample) "
+            "that Hydra's basic sweeper does not expand: --multirun runs one job, "
+            "the scenario as configured; add "
+            "hydra/sweeper=lanelet_constraint, or name the scenario with a glob "
+            "(a batch runs every case of each scenario's sweep with "
+            "--multirun), to run every case of it",
+            scenario if scenario is not None else "The scenario",
+        )
 
 
 def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
@@ -4484,7 +4957,26 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
             file=sys.stderr,
         )
         sys.exit(2)
-    if scenario_value is not None and (_is_glob_pattern(scenario_value) or slurm):
+    # --help, --cfg job, ... ask Hydra for no job: @hydra.main answers them
+    # rather than a batch (#2294), for the first scenario a glob matches.
+    no_job = asks_for_no_job(sys.argv)
+    if no_job and scenario_value is not None and _is_glob_pattern(scenario_value):
+        names = _resolve_scenario_glob(scenario_value)
+        print(  # noqa: T201 -- stderr: --cfg prints the config to stdout
+            f"Note: scenario={scenario_value} matches {len(names)} scenario(s); "
+            f"this is Hydra's answer for the first, {names[0]}",
+            file=sys.stderr,
+        )
+        sys.argv = [
+            f"scenario={names[0]}" if arg == f"scenario={scenario_value}" else arg
+            for arg in sys.argv
+        ]
+        scenario_value = names[0]
+    if (
+        scenario_value is not None
+        and (_is_glob_pattern(scenario_value) or slurm)
+        and not no_job
+    ):
         # --multirun runs every case of each scenario's sweep in the batch's
         # one queue; the sweeper it would pick is the batch itself.  Read off
         # argv: no Hydra job runs here (one an earlier main() left behind
@@ -4509,12 +5001,17 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
             )
         else:
             scenario_names = [scenario_value]
+        # hydra.run.dir= (hydra.sweep.dir= with --multirun): the batch's
+        # output directory, not a case's override (#2294).
+        batch_dir, remaining = _extract_batch_output_dir(remaining, multirun=expand)
         # Each only when given.
         extra: dict[str, Any] = {}
         if no_wait:
             extra["wait"] = False
         if resume_into is not None:
             extra["resume_into"] = Path(resume_into)
+        if batch_dir is not None:
+            extra["output_dir"] = batch_dir
         try:
             run_batch(
                 scenario_names,
@@ -4567,6 +5064,12 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
         # this process (tests, an embedding runner).
         _multirun_failed.clear()
         _multirun_ran.clear()
+        if (
+            not no_job
+            and _multirun_requested_in_argv(sys.argv)
+            and not _sets_hydra_key(sys.argv, "hydra/sweeper")
+        ):
+            _warn_if_sweep_not_expanded(scenario_value, remaining)
         # This run's own output directory, reserved before Hydra creates
         # Hydra's timestamped one with exist_ok (#1359).
         sys.argv, reserved = _reserve_hydra_output_dir(sys.argv)

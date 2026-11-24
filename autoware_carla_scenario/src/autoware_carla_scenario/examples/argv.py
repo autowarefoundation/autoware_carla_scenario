@@ -6,7 +6,12 @@ The ``--resume-from N`` and ``--resume-into DIR`` flags
 (:func:`_extract_scenario_override`, :func:`_is_glob_pattern`), the name each
 case of a batch goes by in the summary (:func:`_case_labels`), and whether
 the environment already caps glibc's malloc arenas
-(:func:`_arena_max_set_by_user`).
+(:func:`_arena_max_set_by_user`), and the ``hydra.run.dir=`` or
+``hydra.sweep.dir=`` a batch writes to (:func:`_split_batch_output_dir`,
+:func:`_batch_dir_text`, #2364), and the overrides a command line composes
+a scenario with (:func:`_plain_overrides`) and the lines a ``--multirun``
+names its failed cases in (:func:`_errored_case`,
+:func:`_sweep_failed_lines`, #2386).
 
 Split out of ``examples.run``, which re-exports every name here and keeps
 what needs Hydra and omegaconf, so that the library check compiles it
@@ -23,11 +28,16 @@ from ..scenario_glob import is_scenario_glob
 __all__ = [
     "BatchCase",
     "_arena_max_set_by_user",
+    "_batch_dir_text",
     "_case_labels",
     "_extract_resume_from",
     "_extract_resume_into",
     "_extract_scenario_override",
+    "_errored_case",
     "_is_glob_pattern",
+    "_plain_overrides",
+    "_split_batch_output_dir",
+    "_sweep_failed_lines",
 ]
 
 
@@ -185,3 +195,73 @@ def _extract_resume_into(argv: list[str]) -> tuple[str | None, list[str]]:
             sys.exit(_USAGE_EXIT_CODE)
         directory = value
     return directory, remaining
+
+
+#: The Hydra keys naming a run's and a sweep's output directory, which a
+#: batch reads as its own (``examples.run._extract_batch_output_dir``).
+_RUN_DIR_KEY = "hydra.run.dir"
+_SWEEP_DIR_KEY = "hydra.sweep.dir"
+
+
+def _split_batch_output_dir(
+    argv: list[str], *, multirun: bool
+) -> tuple[str | None, list[str], list[str]]:
+    """The batch output directory *argv* names, *argv* without it, and the
+    overrides of the other mode's key, which are ignored.
+
+    ``hydra.run.dir=`` names it, or with ``--multirun`` (*multirun*)
+    ``hydra.sweep.dir=``; the last one given counts, ``None`` when none is.
+    Every ``hydra.run.dir`` and ``hydra.sweep.dir`` override (``+``, ``++``
+    and ``~`` ones too) is taken off: neither is a case's setting.  The value
+    is as given (:func:`_batch_dir_text` strips it).
+    """
+    wanted = _SWEEP_DIR_KEY if multirun else _RUN_DIR_KEY
+    value: str | None = None
+    kept: list[str] = []
+    ignored: list[str] = []
+    for arg in argv:
+        name, _, given = arg.lstrip("+~").partition("=")
+        if name != _RUN_DIR_KEY and name != _SWEEP_DIR_KEY:
+            kept.append(arg)
+            continue
+        if arg.startswith("~"):
+            continue
+        if name == wanted:
+            value = given
+        else:
+            ignored.append(arg)
+    return value, kept, ignored
+
+
+def _batch_dir_text(value: str) -> str:
+    """*value* (a ``hydra.*.dir=`` override's) without the whitespace and
+    quotes around it."""
+    return value.strip().strip("'\"")
+
+
+def _errored_case(case: str, type_name: str, message: str) -> str:
+    """How a ``--multirun`` *case* that raised an exception of *type_name*
+    with *message* is listed among the failed ones: its first line (the
+    type alone when it says nothing)."""
+    lines = message.strip().splitlines()
+    reason = f"{type_name}: {lines[0]}" if lines else type_name
+    return f"{case} (errored: {reason})"
+
+
+def _sweep_failed_lines(failed: list[str], ran: int) -> list[str]:
+    """The lines a ``--multirun`` that ran *ran* cases, of which *failed*
+    failed, ends with: a summary, then each failed case."""
+    lines = [f"Sweep failed: {len(failed)} of {ran} case(s) failed:"]
+    for case in failed:
+        lines.append(f"  {case}")
+    return lines
+
+
+def _plain_overrides(overrides: list[str]) -> list[str]:
+    """*overrides* without what Hydra reads itself: flags (``-...``) and
+    ``hydra...`` overrides (``+``, ``++`` and ``~`` ones too)."""
+    return [
+        arg
+        for arg in overrides
+        if not arg.startswith("-") and not arg.lstrip("+~").startswith("hydra")
+    ]

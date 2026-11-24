@@ -9,9 +9,10 @@ simulator-specific attributes.
 from __future__ import annotations
 
 import math
+import queue
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, TypeVar
 
 import numpy as np
 
@@ -41,12 +42,53 @@ def sensor_tick_s(interval_s: float) -> float:
     return interval_s
 
 
+def focal_length_px(width: float, fov_deg: float) -> float:
+    """The focal length, in pixels, of a pinhole camera *width* pixels wide
+    whose horizontal field of view is *fov_deg* degrees: CARLA's camera, whose
+    pixels are square, so it is the vertical one too.
+
+    The one formula behind :attr:`CameraSensorConfig.fx` (and so the T4
+    dataset's camera intrinsics) and the Rerun recording's
+    :meth:`~autoware_carla_scenario.rerun_sensor_mount.CameraMount.focal_length_px`.
+    """
+    return width / (2.0 * math.tan(math.radians(fov_deg / 2.0)))
+
+
 def sensor_interval_ticks(interval_s: float) -> int:
     """The ticks a sensor set to fire every *interval_s* seconds waits at most
     from one firing to the next (at least 1): its :func:`sensor_tick_s`, rounded
     up to whole ticks."""
     ticks = math.ceil(sensor_tick_s(interval_s) / FIXED_DELTA_SECONDS - 1e-9)
     return max(1, int(ticks))
+
+
+#: What a sensor's queue holds: a camera's frames, a LiDAR's sweeps.
+_Item = TypeVar("_Item")
+
+
+def put_dropping_oldest(items: queue.Queue[_Item], item: _Item) -> None:
+    """Queue *item* into the bounded *items*, dropping the oldest item queued
+    while it is full: a sensor's listener, on CARLA's delivery thread, never
+    blocks, and never drops the newest data."""
+    while True:
+        try:
+            items.put_nowait(item)
+            return
+        except queue.Full:
+            try:
+                items.get_nowait()
+            except queue.Empty:
+                pass
+
+
+def drain(items: queue.Queue[_Item]) -> None:
+    """Throw away everything queued in *items*, never waiting: a sensor
+    destroyed leaves none of its data for the one attached next (#2265)."""
+    while True:
+        try:
+            items.get_nowait()
+        except queue.Empty:
+            return
 
 
 @dataclass(frozen=True)
@@ -109,8 +151,9 @@ class CameraSensorConfig:
 
     @property
     def fx(self) -> float:
-        """Horizontal focal length in pixels derived from FOV and width."""
-        return self.image_width / (2.0 * math.tan(math.radians(self.fov / 2.0)))
+        """Horizontal focal length in pixels derived from FOV and width
+        (:func:`focal_length_px`)."""
+        return focal_length_px(self.image_width, self.fov)
 
     @property
     def fy(self) -> float:

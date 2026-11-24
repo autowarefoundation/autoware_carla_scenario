@@ -162,7 +162,8 @@ driver:
   control:
     lookahead_gain_s: 0.6
     wheelbase_m: 2.8
-    max_steer_angle_deg: 56.0   # CARLA 0.10: angle = 56 deg * steer**2
+    max_steer_angle_deg: null   # null: 56 deg (CARLA 0.10: angle = 56 deg * steer**2)
+    max_steer_angle_rad: null   # ... or the same in radians; set one of the two
     steer_exponent: 2.0
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     longitudinal_controller: pid  # Autoware's autoware_pid_longitudinal_controller
@@ -180,6 +181,13 @@ the seconds and metres (`timeout_s`, `policy_timestep_s`, `warmup_s`,
 `t4_scene_wheel_base_m`), for every number of a camera, its lens and a LiDAR,
 and for `image_quality`, a whole number (see below) in 1-100: `90`, or `90.0`
 kept as `90`.
+Each is refused out of its domain too, naming the key
+(`driver.route_horizon_m must be positive, got 0.0`): `warmup_s`,
+`traffic_light_sight_distance_m` and `actor_horizon_m` must not be negative
+(0 is no run-up, CARLA's own light trigger, and no road user reported);
+`route_horizon_m`, `route_resolution_m` and `t4_scene_wheel_base_m` (when not
+`null`) must be positive; `timeout_s`, `policy_timestep_s` positive as well,
+and `t4_scene_history_s` not negative.
 
 The switches `send_ground_truth`, `send_renderer_data`,
 `send_actor_ground_truth` and `t4_scene` are each `true` or `false`, or one of
@@ -189,23 +197,57 @@ other switches are ([The switches](usage.md#the-switches)). So a quoted
 `driver.t4_scene='false'` is false, not true; anything else (`ture`, `2`,
 null) is refused as the config is read, naming the key
 (`driver.send_ground_truth must be true or false, got 'ture'`).
+`driver.address` must be a non-empty string (`host:port`, or
+`unix:///path/policy.sock`): `null` is refused too, naming the key, rather
+than dialled as `None`; leave it out for the default `localhost:50051`.
+`driver.policy` and `driver.map_dir` are each a non-empty string or `null`
+(no policy served, no map written): an empty or blank string, `false` or a
+number is refused as the config is read, naming the key
+(`driver.policy must be a non-empty string, or null, got ''`).
+`driver.map_formats` is a list of format names (`[lanelet2, opendrive]`),
+each one of those [the map set](#the-map-as-files) is written in: a bare
+string (`driver.map_formats=lanelet2`, which would be read as its letters)
+and an unknown name are refused as the config is read, naming the key
+(`driver.map_formats[0] must be one of [...], got 'lanelet3'`), and so is
+`t4` without `driver.t4_scene`, which alone writes that format.
 
 The same holds for `driver.control` (and `ros2.control`): each gain and limit
 is a finite int or float (an int is read as a float), each `enable_*` switch a
 boolean and `velocity_smoothing_window` a whole number, and a `*_deg` angle
-must be a number too. What the controller divides by -- `wheelbase_m`,
+must be a number too. A `null` setting is its default, as an absent one.
+Each angle is set in degrees (`max_steer_angle_deg`,
+`yaw_rate_trim_limit_deg`) or in radians (`max_steer_angle_rad`,
+`yaw_rate_trim_limit_rad`), not both: setting both is refused, naming the two
+keys (`driver.control.max_steer_angle_deg and max_steer_angle_rad set the same
+angle, ...; set one of them to null`), since neither may silently win. `conf/driver/default.yaml` leaves both
+of the full lock's null, so `driver.control.max_steer_angle_rad=0.6` and
+`driver.control.max_steer_angle_deg=35` each work as an override.
+What the controller divides by -- `wheelbase_m`,
 `max_steer_angle_deg` (or `_rad`), `steer_exponent`, `min_lookahead_m` and
 `velocity_lookahead_time` -- must be positive, and `max_lookahead_m` at least
-`min_lookahead_m`. A value out of these bounds is refused before the run
-starts, naming its key (`driver.control.steer_exponent must be positive, got
+`min_lookahead_m`. So must `max_steer_rate` (a steering rate limit of 0 would
+not steer at all; a large one barely limits). The pedal values `stop_brake` and
+`throttle_deadband` (0: no floor) and the low-pass gains `lpf_vel_error_gain`,
+`lpf_acc_error_gain` and `accel_lowpass_gain` are in [0, 1], and
+`lookahead_gain_s` is not negative. A value out of these bounds is refused
+before the run starts, naming its key (`driver.control.steer_exponent must be positive, got
 0.0`), not once the ego first steers.
 
-Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
-are refused. Its `image_width` and `image_height` must be positive whole
+Each `driver.cameras` entry needs its own `logical_id`, a non-empty string;
+two cameras under one id are refused. Its `image_width` and `image_height` must be positive whole
 numbers, its `fps` positive and finite, its `fov` in (0, 180) degrees -- CARLA
 renders the pinhole of the horizontal `fov` -- and its mount (`position_x/y/z`,
 `roll`, `pitch`, `yaw`) finite. A camera out of these bounds is refused as the
 config is read, not when it attaches after the ego spawned.
+
+A `null` setting of a `driver.cameras` or `driver.lidars` entry is its default,
+as an absent one, the way a ROS 2 camera's is: `logical_id: null` is
+`camera_front_wide_120fov` (a LiDAR's `lidar_top`), `fov: null` 120 degrees,
+`range_m: null` 100 m; `lens: null` is CARLA's pinhole and a LiDAR's
+`noise_seed: null` the run's seed, as by default. An entry refused names
+itself by its place in the list and its logical id
+(`driver.lidars[1] ('lidar_rear'): LiDAR channels must be positive`), and
+`driver.cameras` and `driver.lidars` must each be a list of mappings.
 
 A whole number is an integral value: `960`, or `960.0` (or `9.6e2`), which is
 kept as the int `960`, so the policy's `CameraSpec` resolution (an integer
@@ -514,7 +556,7 @@ point, as a serialized `carla_driver.v0.CarlaRendererData`:
     "no other road users" rather than an error. So `send_renderer_data: false` does not
     fail loudly. It silently disables every rule that depends on the world outside the
     ego. For a specification-driven policy such as
-    [stl_driver](https://github.com/hakuturu583/stl_driver), that is `stop_on_red`,
+    [stl_driver](https://github.com/autowarefoundation/autoware_carla_scenario/tree/master/stl_driver) (in this repository), that is `stop_on_red`,
     `collision_free` and `safe_headway` — the car keeps driving and the rules simply
     stop applying.
 
@@ -546,7 +588,12 @@ a camera) that sweeps once per policy step (`policy_timestep_s`), and each polic
 sends that sweep, already converted into the rig frame. The sweep may come from an
 earlier simulation tick of the step than the one the step is sent on; it is stamped
 with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
-within a second is left out rather than replaced by an older one.
+within a second is left out rather than replaced by an older one. CARLA first sweeps
+a whole interval after the LiDAR is attached (its `sensor_tick` counts from the spawn),
+so the first read waits only for a sweep that can have been taken by then, as a
+camera's first read does: with a sweep every tick, that tick's; with a longer
+`policy_timestep_s`, none (the first step may then send no sweep, and no warning is
+logged for it) (#2228).
 
 A policy does not see that transport: the servicer records each sweep before `drive` as
 a `LidarFrame` in `session.frame_history`, beside the camera frames, and announces it
@@ -560,7 +607,7 @@ driver:
     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
 ```
 
-LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
+LiDAR logical ids must be unique non-empty strings, and every number a LiDAR takes must be finite:
 `channels` and `points_per_second` positive whole numbers (`64`, or `64.0`
 and `1.2e6`, which YAML reads as floats, kept as the ints `64` and `1200000`
 for CARLA; not `64.5`), `range_m` positive, `lower_fov_deg` below
@@ -571,7 +618,8 @@ random) from 0 to 1, `weather_noise` not negative, `noise_seed` a whole number
 
 CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (`precipitation`) and fog (`fog_density`, beyond `fog_distance`) put on it, read when the
-sweep is taken -- what the weather rules render a run's rainfall rate and fog
+sweep is first read (the frame it is first sent on, at most one sweep interval after
+the frame it was taken on: weather changed between the two is put on it) -- what the weather rules render a run's rainfall rate and fog
 visibility as, `environment.precipitation` and `environment.fog_density`, and
 an `EnvironmentAction` mid-run set it alike
 (`sensor/lidar_weather.py`):
@@ -608,7 +656,7 @@ driver:
   lidars:
     - {logical_id: lidar_top, weather_noise: 1.5}
 environment:
-  rain: 80        # heavy rain: sparser, noisier sweeps
+  precipitation: 80   # heavy rain: sparser, noisier sweeps
 server:
   fog_density_scale: 0.01   # fog the cameras and the LiDARs both see
 ```
@@ -621,7 +669,8 @@ OpenDRIVE is converted by [roadgen](https://pypi.org/project/roadgen/) at scenar
 and written to `<map_dir>/<map_id>/`, in the formats `driver.map_formats` names
 (Lanelet2 by default; `lanelet2`, `opendrive`, `osm`, `clipgt` and `commonroad`, a
 CommonRoad 2020a scenario), beside the OpenDRIVE source, roadgen's IR and its traces. `map_id`
-is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>`, so a set is written
+is `<map name>-<first 12 hex digits of the OpenDRIVE's SHA-256>` (with the SHA-256 of
+each file given rather than converted in it too: see below), so a set is written
 once per map and a changed map gets a new id. The id does not depend on the formats:
 a run asking for a format the set lacks writes it again with the formats it already
 holds and the new ones, under the same id, so a set only grows -- except by a format
@@ -658,7 +707,9 @@ driver:
 
 The file is copied into the set as `lanelet2_map.osm`, as it is (with the
 `map_projector_info.yaml` beside it, if any), and its content is part
-of `map_id`, so another file gets another set. roadgen is not needed unless
+of `map_id`, as is the projector's, so another file -- or the same file with
+another projector, say another MGRS grid -- gets another set. A file with no
+projector beside it keeps the id it had before projectors were part of it. roadgen is not needed unless
 `driver.map_formats` names other formats too. The file carries no roadgen trace (the
 manifest marks the format `"provided": true`, its trace empty), so `ctx.stop_lines()`
 finds each light on the map instead (carla-driver-interface 2.3 and later):
@@ -710,7 +761,9 @@ runtime does not know is logged and ignored.
 Because the indicators are the CARLA vehicle's own lights, a scenario checks them with
 `TurnIndicatorCondition` -- the policy signals left before it turns, say -- and sets
 another vehicle's with `TurnIndicatorAction` (a car ahead signalling that it pulls
-out). An action aimed at the policy's ego holds only until the policy's next command.
+out). An action aimed at the policy's ego holds only until the policy's next command,
+as one aimed at an Autoware (`ego.entity=autoware`) or ROS 2 (`ego.entity=ros2`) ego
+holds only until the stack commands other indicators.
 
 ```python
 from autoware_carla_scenario import (

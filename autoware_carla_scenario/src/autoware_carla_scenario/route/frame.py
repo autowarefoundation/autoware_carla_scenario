@@ -27,7 +27,7 @@ from .geometry import MapFeatures
 from .model import RouteMatch
 
 if TYPE_CHECKING:
-    from lanelet2.core import ConstLanelet, Lanelet, LaneletMap
+    from lanelet2.core import ConstLanelet, LaneletMap
     from lanelet2.routing import RoutingGraph
 
 __all__ = ["RouteFrame"]
@@ -146,7 +146,11 @@ class RouteFrame:
 
         What :meth:`point` gives, read off the line :meth:`project` searches
         rather than the lanelet's centreline: no lanelet is looked up, so it is
-        cheap enough for every tick.  Clamped to the route.
+        cheap enough for every tick.  Clamped to the reference line, not to
+        the route: the line runs over the route's whole lanelets, from the
+        first one's start (route s ``-start_s``, before route s 0) to the last
+        one's end (past :attr:`length`), and an *s* beyond it is held at its
+        nearer end.
         """
         arc = self._arc
         i = min(max(bisect.bisect_right(arc, s) - 1, 0), len(arc) - 2)
@@ -155,10 +159,6 @@ class RouteFrame:
         span = arc[i + 1] - arc[i]
         f = min(max((s - arc[i]) / span, 0.0), 1.0) if span > 0.0 else 0.0
         return x0 + f * (x1 - x0), y0 + f * (y1 - y0), math.atan2(y1 - y0, x1 - x0)
-
-    def lanelet_at(self, s: float) -> Lanelet:
-        """The lanelet route s *s* is on."""
-        return self.map.laneletLayer[self.locate(s)[0]]
 
     # -- the map to route s ----------------------------------------------------
 

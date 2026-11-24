@@ -341,8 +341,8 @@ def test_a_missing_rerun_sdk_exits_2(
         ("1.5", 1.5),
         ("'1.5'", 1.5),
         ("-2", -2.0),
-        ("false", 0.0),
-        ("true", 1.0),
+        ("false", None),
+        ("true", None),
         ("''", None),
         ("abc", None),
         ("nan", None),
@@ -355,7 +355,8 @@ def test_the_preflight_and_the_build_read_the_spawn_offset_alike(
     """``ego.spawn_t`` and ``ego.spawn_heading``: what the batch preflight
     refuses, building the ego and planning its route refuse, naming the key;
     what it lets through they read as the same number.  ``''`` was refused by
-    the one and read as 0.0 by the others (#2143)."""
+    the one and read as 0.0 by the others (#2143); a boolean was read as 1.0
+    or 0.0 by all three (#2398)."""
     from autoware_carla_scenario.examples import run
 
     cfg = _shipped([f"ego.{key}={value}"])
@@ -383,3 +384,98 @@ def test_an_absent_spawn_offset_is_zero(key: str) -> None:
     run._check_ego_numbers(cfg)
     assert getattr(run.build_spawn_pose(cfg), field) == 0.0
     assert getattr(run.build_planned_route(cfg).start, field) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# #2294: --help / --cfg with a glob, a sweep the basic sweeper ignores, and a
+# batch command line that does not compose
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["scenario=lane_change/*", "--help"],
+        ["scenario=lane_change/*", "--cfg", "job"],
+        ["scenario=lane_change/*", "launcher=slurm", "--cfg=job"],
+        ["scenario=lane_change/left", "launcher=slurm", "--info"],
+    ],
+)
+def test_a_batch_asking_for_no_job_is_answered_by_hydra(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, argv: list[str]
+) -> None:
+    code, calls = _main(monkeypatch, argv)
+    assert code is None
+    [(kind, hydra_argv)] = calls
+    assert kind == "hydra"
+    # For the first scenario the glob matches, which Hydra can compose.
+    assert "scenario=lane_change/left" in hydra_argv
+    if "*" in argv[0]:
+        assert "lane_change/left" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("argv", "warned"),
+    [
+        # The command line's own sweep: the scenario as configured, once per
+        # seed (docs/wosac.md), as asked.
+        (["--multirun", "scenario=lane_change/left", "seed=1,2"], False),
+        (["--multirun", "scenario=lane_change/left", "seed=range(0,3)"], False),
+        (["--multirun", "scenario=lane_change/left"], True),
+        (["--multirun", "scenario=lane_change/left", "seed=3"], True),
+        (
+            [
+                "--multirun",
+                "scenario=lane_change/left",
+                "hydra/sweeper=lanelet_constraint",
+            ],
+            False,
+        ),
+        (["--multirun", f"scenario={_CONCRETE}", "seed=1,2"], False),
+        (["scenario=lane_change/left"], False),
+    ],
+)
+def test_a_basic_sweep_of_a_scenario_with_a_sweep_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    argv: list[str],
+    warned: bool,
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        code, calls = _main(monkeypatch, argv)
+    assert code is None
+    assert [c[0] for c in calls] == ["hydra"]
+    warnings = [
+        r.getMessage() for r in caplog.records if "basic sweeper" in r.getMessage()
+    ]
+    if warned:
+        [message] = warnings
+        assert message.startswith("lane_change/left has a sweep")
+        assert "hydra/sweeper=lanelet_constraint" in message
+        assert "glob" in message
+    else:
+        assert warnings == []
+
+
+def test_a_batch_with_a_misspelled_key_is_one_error_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.delenv("HYDRA_FULL_ERROR", raising=False)
+    for argv in (
+        ["scenario=lane_change/*", "ego.spawn_lanelt_id=10"],
+        ["--multirun", "scenario=lane_change/*", "ego.spawn_lanelt_id=10"],
+    ):
+        code, _ = _main(monkeypatch, argv, run_batch=run.run_batch)
+        assert code == 2
+        err = capsys.readouterr().err
+        assert "Traceback" not in err, err
+        [first, *_] = [line for line in err.splitlines() if line.startswith("Error")]
+        assert first == (
+            "Error: lane_change/left: could not override 'ego.spawn_lanelt_id': "
+            "the config has no such key"
+        ), err
+        assert "did you mean 'ego.spawn_lanelet_id'?" in err, err

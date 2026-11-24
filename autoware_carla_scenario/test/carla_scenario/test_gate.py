@@ -378,6 +378,43 @@ class TestRecord:
         assert [r.path for r in records] == [tmp_path / "a_gate.json"]
         assert len(errors) == 1 and "b_gate.json" in errors[0]
 
+    @pytest.mark.parametrize(
+        ("key", "value", "named"),
+        [
+            ("case_count", True, "'case_count' must be a whole number, got True"),
+            ("case_count", 12.9, "'case_count' must be a whole number, got 12.9"),
+            ("case_count", "4", "'case_count' must be a whole number, got '4'"),
+            ("index", False, "'index' must be a whole number, got False"),
+            ("lanelet_ids", [1, True, 2], "'lanelet_ids'[1] must be a whole number"),
+            ("lanelet_ids", [1, 2.7], "'lanelet_ids'[1] must be a whole number"),
+            ("segment_lanelets", [0.5], "'segment_lanelets'[0] must be a whole"),
+        ],
+    )
+    def test_a_count_or_id_that_is_no_whole_number_is_unreadable(
+        self, tmp_path: Path, key: str, value: Any, named: str
+    ) -> None:
+        # int() read true as 1 and 12.9 as 12 (#2265).
+        _write(tmp_path, "a", _record())
+        bad = _write(tmp_path, "b", _record())
+        raw = json.loads(bad.read_text())
+        raw["case"][key] = value
+        bad.write_text(json.dumps(raw))
+        records, errors = load_gate_records(find_gate_records([tmp_path]))
+        assert [r.path for r in records] == [tmp_path / "a_gate.json"]
+        (error,) = errors
+        assert error.startswith(f"{bad}: case ") and named in error
+
+    def test_whole_floats_and_absent_counts_are_read(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "a", _record())
+        raw = json.loads(path.read_text())
+        raw["case"]["case_count"] = 4.0
+        raw["case"]["lanelet_ids"] = [1.0, 2]
+        del raw["case"]["index"]
+        path.write_text(json.dumps(raw))
+        case = read_gate_record(path).case
+        assert (case.case_count, case.lanelet_ids, case.index) == (4, (1, 2), 0)
+        assert all(type(v) is int for v in (case.case_count, *case.lanelet_ids))
+
 
 class TestSignedLateral:
     def test_left_of_the_route_is_positive(self) -> None:
@@ -546,6 +583,57 @@ class TestJudge:
         verdict = judge([_record(gate={"min_case_coverage": 0.1}, case_count=0)])
         assert verdict.criteria[-1].value is None
         assert not verdict.passed
+
+    @pytest.mark.parametrize("missing", [0, -1])
+    def test_a_record_with_no_count_fails_the_case_coverage_beside_counted_ones(
+        self, missing: int
+    ) -> None:
+        # #2231: folded with max(), the count-less record was absorbed by the
+        # counted one on its map, and the gate passed.
+        gate = {"min_case_coverage": 0.1}
+        verdict = judge(
+            [
+                _record(gate=gate, case_count=2),
+                _record(gate=gate, lanelets=(7, 8, 9), case_count=missing),
+                _record(gate=gate, lanelets=(4,), case_count=1, map_name="Other"),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value is None
+        assert not case.passed
+        assert case.detail == "the case count on Town is not known"
+        assert not verdict.passed
+        assert verdict.warnings == []
+
+    def test_differing_case_counts_on_a_map_take_the_largest_and_warn(
+        self,
+    ) -> None:
+        gate = {"min_case_coverage": 0.5}
+        verdict = judge(
+            [
+                _record(gate=gate, case_count=4),
+                _record(gate=gate, lanelets=(7, 8, 9), case_count=6),
+                _record(gate=gate, lanelets=(5,), case_count=4),
+                _record(gate=gate, lanelets=(4,), case_count=1, map_name="Other"),
+                _record(gate=gate, lanelets=(2,), case_count=3, map_name="Third"),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value == pytest.approx(5 / 10)
+        assert case.passed
+        assert case.detail == "5 of 10 case(s) on 3 map(s)"
+        assert verdict.warnings == [
+            "the runs on Town state 2 different case counts (4, 6); the case "
+            "coverage takes the largest, 6"
+        ]
+
+    def test_differing_case_counts_do_not_warn_without_the_criterion(
+        self,
+    ) -> None:
+        verdict = judge(
+            [_record(case_count=4), _record(lanelets=(7, 8, 9), case_count=6)]
+        )
+        assert verdict.warnings == []
 
     def test_trajectory_spread(self) -> None:
         gate = {"max_lateral_spread_m": 0.3, "max_speed_spread_mps": 2.0}
@@ -1216,6 +1304,26 @@ class TestUnrecordedCases:
         assert "--allow-unrecorded does not apply" in err
         assert "Run them again" not in err
 
+    @pytest.mark.parametrize(
+        "entries", [[1, None], [{"scenario": "a"}, 1], ["x"], [[]], {"a": 1}, 1]
+    )
+    @pytest.mark.parametrize("allow", [False, True])
+    def test_a_summary_that_is_no_array_of_objects_is_refused(
+        self, tmp_path: Path, capsys: Any, entries: Any, allow: bool
+    ) -> None:
+        # #2231: an entry that is no object raised AttributeError out of
+        # main(); the summary cannot be read, as batch_resume refuses it.
+        self._three_passed(tmp_path)
+        summary = tmp_path / "batch_results.json"
+        summary.write_text(json.dumps(entries))
+        argv = [str(tmp_path), *(["--allow-unrecorded"] if allow else [])]
+        assert main(argv) == EXIT_ERROR
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        (err,) = captured.err.strip().splitlines()
+        assert f"{summary}: not a batch summary (not a JSON array of objects)" in err
+        assert "--allow-unrecorded does not apply" in err
+
     def test_an_unreadable_summary_is_refused_with_allow_unrecorded(
         self, tmp_path: Path, capsys: Any
     ) -> None:
@@ -1529,6 +1637,39 @@ class TestSweepPlan:
         (line,) = batch_read_errors(tmp_path)
         assert "the sweep plan cannot be read" in line
         assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_ERROR
+
+    @pytest.mark.parametrize(
+        "schema", [None, "autoware_carla_scenario.sweep_plan/2", 1, "missing"]
+    )
+    def test_a_plan_of_another_schema_is_refused(
+        self, tmp_path: Path, schema: Any
+    ) -> None:
+        # Its jobs may not be read as this one's are, as a gate record of
+        # another schema is refused (#2265).
+        import json as json_module
+
+        from autoware_carla_scenario.gate.sweep_plan import (
+            SWEEP_PLAN_SCHEMA,
+            read_sweep_plan,
+            write_sweep_plan,
+        )
+
+        path = write_sweep_plan(tmp_path, [(tmp_path / "0", ["+case=0"])])
+        data = json_module.loads(path.read_text())
+        assert data["schema"] == SWEEP_PLAN_SCHEMA
+        if schema == "missing":
+            del data["schema"]
+            schema = None
+        else:
+            data["schema"] = schema
+        path.write_text(json_module.dumps(data))
+        with pytest.raises(ValueError, match=f"not a sweep plan \\(schema {schema!r}"):
+            read_sweep_plan(path)
+        (line,) = batch_read_errors(tmp_path)
+        assert "the sweep plan cannot be read" in line
+        # Planned again, it is replaced whole, as one that cannot be read.
+        write_sweep_plan(tmp_path, [(tmp_path / "1", [])])
+        assert [j.name for j, _ in read_sweep_plan(path)] == ["1"]
 
     def test_planning_again_keeps_the_jobs_it_does_not_run(
         self, tmp_path: Path

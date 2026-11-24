@@ -188,7 +188,29 @@ def test_the_submission_is_the_last_one_started(
     assert slurm_launch.submission() is None
     record = Submission(command=[])
     monkeypatch.setattr(slurm_launch, "_submission", record)
-    assert slurm_launch.submission() is record
+    assert slurm_launch.submission() == record
+
+
+def test_the_submission_is_a_snapshot_the_submitting_thread_does_not_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2323: the live record was read outside the lock while the submitting
+    thread filled it in."""
+    record = Submission(command=["scenario", "z"], started="s")
+    monkeypatch.setattr(slurm_launch, "_submission", record)
+    snapshot = slurm_launch.submission()
+    assert snapshot == record and snapshot is not record
+    assert snapshot is not None and snapshot.command is not record.command
+    record.state, record.batch_dir, record.output = "submitted", "/b", "out"
+    record.command.append("x")
+    assert snapshot.to_dict() == {
+        "command": "scenario z",
+        "state": "submitting",
+        "batch_dir": None,
+        "output": "",
+        "returncode": None,
+        "started": "s",
+    }
 
 
 # ── The manifests a submit wrote ───────────────────────────────────────────
@@ -541,7 +563,7 @@ def test_a_submit_runs_in_a_daemon_thread_and_one_at_a_time(
     monkeypatch.setattr(threading, "Thread", _FakeThread)
     command = ["scenario", "z"]
     record = slurm_launch.start_submit(command, Path("/base"))
-    assert slurm_launch.submission() is record
+    assert slurm_launch.submission() == record
     assert record.state == "submitting"
     assert record.command == command and record.command is not command
     [thread] = _FakeThread.made
@@ -551,11 +573,11 @@ def test_a_submit_runs_in_a_daemon_thread_and_one_at_a_time(
     assert thread.daemon is True and thread.started
     with pytest.raises(RuntimeError, match=r"^A batch is still being submitted$"):
         slurm_launch.start_submit(["other"], Path("/base"))
-    assert slurm_launch.submission() is record and len(_FakeThread.made) == 1
+    assert slurm_launch.submission() == record and len(_FakeThread.made) == 1
     for ended in ("submitted", "failed", "anything"):
         record.state = ended
         again = slurm_launch.start_submit(["again"], Path("/b2"))
-        assert again is not record and slurm_launch.submission() is again
+        assert again is not record and slurm_launch.submission() == again
         record = again
 
 

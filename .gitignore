@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Local environment (.env.example is the template)
+.env
+
 # Artifacts
 *.xodr
 # Generated with roadgen, which CI does not have -- see its generate.py.
@@ -37,3 +40,9 @@ scenario_outputs
 scenario_drafts/
 scenario_packages/
 .lycheecache
+
+# Agent skills installed by `scenario-agent` (copies of the package's
+# agent/skills/, and the installer's manifests). Their discoverability blocks
+# in CLAUDE.md and AGENTS.md are committed; the installs are per checkout.
+.claude/skills/
+.codex/

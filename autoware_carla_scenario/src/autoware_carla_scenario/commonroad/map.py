@@ -8,7 +8,8 @@ CARLA's ``(x, y)`` is that frame's ``(x, -y)``
 (:func:`~autoware_carla_scenario.commonroad.frame.to_commonroad`).
 
 A map is converted once per machine: the file is cached under a directory
-named after a hash of the OpenDRIVE and roadgen's version.
+named after a hash of the OpenDRIVE roadgen reads (sanitized, so that a
+change to the sanitizer converts the map again) and roadgen's version.
 """
 
 from __future__ import annotations
@@ -52,6 +53,19 @@ def _version(text: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def _cache_place(
+    opendrive: str, version: str, cache_dir: Optional[Path]
+) -> tuple[Path, str]:
+    """Where *opendrive* (OpenDRIVE text) converted by roadgen *version* is
+    cached: the cache's root (*cache_dir*, or :func:`default_cache_dir`) and
+    the name of the map's directory under it, a hash of the two."""
+    root = default_cache_dir()
+    if cache_dir is not None:
+        root = cache_dir
+    key = hashlib.sha256(f"roadgen={version}\0{opendrive}".encode()).hexdigest()[:16]
+    return root, key
+
+
 def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
     """The CommonRoad scenario of *opendrive* (OpenDRIVE text), converted or
     cached; its path.
@@ -64,12 +78,13 @@ def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
     except ImportError as exc:
         raise ImportError(_INSTALL) from exc
     version = str(getattr(roadgen, "__version__", "0"))
-    if _version(version) < _ROADGEN_MIN or not hasattr(
+    # Compared as lists, as tuples compare (Codon's _version() is a list).
+    if list(_version(version)) < list(_ROADGEN_MIN) or not hasattr(
         roadgen.Map, "export_commonroad"
     ):
         raise ImportError(f"roadgen {version} does not write CommonRoad: {_INSTALL}")
-    root = cache_dir if cache_dir is not None else default_cache_dir()
-    key = hashlib.sha256(f"roadgen={version}\0{opendrive}".encode()).hexdigest()[:16]
+    sanitized = sanitize_opendrive(opendrive)
+    root, key = _cache_place(sanitized, version, cache_dir)
     target = root / key
     path = target / MAP_FILE
     if path.is_file():
@@ -79,7 +94,7 @@ def commonroad_map(opendrive: str, cache_dir: Optional[Path] = None) -> Path:
     tmp = Path(tempfile.mkdtemp(prefix=f".{key}.", dir=root))
     try:
         xodr = tmp / "map.xodr"
-        xodr.write_text(sanitize_opendrive(opendrive), encoding="utf-8")
+        xodr.write_text(sanitized, encoding="utf-8")
         road_map = roadgen.read_opendrive(str(xodr))
         for warning in road_map.read_warnings():
             logger.debug("roadgen read: %s", warning)

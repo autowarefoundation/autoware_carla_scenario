@@ -6,6 +6,12 @@ name and SUMO's state from arguments instead of the light and TraCI.  A CARLA
 light switched ``Off`` and the links switched off by one (``o``, ``O``) are
 handled since (#2061), so the comparisons leave them out and the tests at the
 end cover them.
+
+The junction link matching moved here later (#2364): ``_before_match_*``
+are the pure parts of the backend's ``_match_crossings``,
+``_match_own_programs`` and ``_match_bicycle_rides`` verbatim, reading the
+controlled links, crossings and lane kinds from arguments instead of TraCI and
+sumolib.
 """
 
 from __future__ import annotations
@@ -22,9 +28,15 @@ from autoware_carla_scenario.traffic.sumo.signal_states import (
     carla_light_state,
     green_together,
     clear_state,
+    crossing_links,
+    first_lanes,
+    lane_edge,
     link_states,
     permissive_links,
+    program_state,
     ride_state,
+    unfollowed_links,
+    vehicle_links,
 )
 
 _CARLA_TO_SUMO_SIGNAL = {"Red": "r", "Yellow": "y", "Green": "G"}
@@ -299,3 +311,210 @@ def test_a_bicycle_riding_with_dark_traffic_gives_way(
     states: list[str], shown: str
 ) -> None:
     assert ride_state("with", states) == shown
+
+
+# ---------------------------------------------------------------------------
+# SUMO's own program, for the links no CARLA light switches (#2245)
+# ---------------------------------------------------------------------------
+
+_PROGRAM = [("GGrr", 10.0), ("yyrr", 3.0), ("rrGG", 10.0), ("rryy", 3.0)]
+
+
+@pytest.mark.parametrize(
+    ("now", "shown"),
+    [
+        (0.0, "GGrr"),  # the phase it was read in, until it ends at 4 s
+        (3.999, "GGrr"),
+        (4.0, "yyrr"),
+        (6.9, "yyrr"),
+        (7.0, "rrGG"),
+        (16.9, "rrGG"),
+        (17.0, "rryy"),
+        (20.0, "GGrr"),  # round again, now at its full duration
+        (29.9, "GGrr"),
+        (30.0, "yyrr"),
+        (4.0 + 26.0 * 100 + 3.5, "rrGG"),  # many cycles on
+    ],
+)
+def test_the_program_steps_through_its_phases(now: float, shown: str) -> None:
+    assert program_state(_PROGRAM, 0, 4.0, now) == shown
+
+
+def test_the_program_starts_from_the_phase_it_was_read_in() -> None:
+    assert program_state(_PROGRAM, 2, 5.0, 4.0) == "rrGG"
+    assert program_state(_PROGRAM, 2, 5.0, 5.0) == "rryy"
+    assert program_state(_PROGRAM, 3, 1.0, 1.0) == "GGrr"
+
+
+def test_a_program_of_no_duration_stays_in_its_phase() -> None:
+    assert program_state([("Gr", 0.0), ("rG", 0.0)], 1, 0.0, 50.0) == "rG"
+    assert program_state([("Gr", 0.0), ("rG", 5.0)], 0, 0.0, 2.0) == "rG"
+
+
+def test_own_states_reach_only_the_links_carla_leaves() -> None:
+    """A CARLA light's link takes its state (``Unknown`` keeps the current
+    one); a ride and a crossing are set from the vehicle links as before;
+    every other link takes the program's."""
+    carla = {0: "Red", 1: "Unknown"}
+    rides = [(2, "with", [0])]
+    crossings = [(5, [0])]
+    shown = link_states("GyGGGG", carla, set(), rides, crossings, own="GGGyrr")
+    assert shown == "ryryrG"
+    # No program: the links keep the state SUMO shows, as before.
+    assert link_states("GyGGGG", carla, set(), rides, crossings) == "ryrGGG"
+
+
+# ---------------------------------------------------------------------------
+# Junction link matching (#2364)
+# ---------------------------------------------------------------------------
+
+
+def _before_match_crossings(
+    controlled_links: list[list[tuple[str, str, str]]],
+    crossings: dict[str, frozenset[str]],
+) -> list[tuple[int, list[int]]]:
+    """The loop body of ``_match_crossings`` for one tls, before #2364."""
+    vehicles: list[tuple[int, str, str]] = []
+    walks: list[tuple[int, frozenset[str]]] = []
+    for index, controlled in enumerate(controlled_links):
+        for in_lane, out_lane, _via in controlled:
+            to_edge = out_lane.rsplit("_", 1)[0]
+            if to_edge in crossings:
+                walks.append((index, crossings[to_edge]))
+            else:
+                vehicles.append((index, in_lane.rsplit("_", 1)[0], to_edge))
+    links = [
+        (
+            index,
+            sorted({i for i, src, dst in vehicles if src in roads or dst in roads}),
+        )
+        for index, roads in walks
+    ]
+    return links
+
+
+def _before_left(
+    width: int,
+    indices: set[int],
+    rides: list[tuple[int, str, list[int]]],
+    crossing_links: list[tuple[int, list[int]]],
+) -> list[int]:
+    """The links ``_match_own_programs`` left on SUMO's program, before #2364."""
+    followed = set(indices)
+    followed.update(index for index, _f, _l in rides)
+    followed.update(index for index, _l in crossing_links)
+    left = [index for index in range(width) if index not in followed]
+    return left
+
+
+def _before_lanes_and_vehicles(
+    controlled_links: list[list[tuple[str, str, str]]],
+    lane_kind: dict[str, str],
+) -> tuple[dict[int, tuple[str, str]], dict[int, tuple[str, str]], list[int]]:
+    """The lanes, kinds and vehicles of ``_match_bicycle_rides``, before #2364."""
+    lanes: dict[int, tuple[str, str]] = {}
+    for index, controlled in enumerate(controlled_links):
+        for in_lane, out_lane, _via in controlled:
+            lanes.setdefault(index, (in_lane, out_lane))
+    kinds = {
+        index: (lane_kind.get(i, "other"), lane_kind.get(o, "other"))
+        for index, (i, o) in lanes.items()
+    }
+    vehicles = [index for index, kind in kinds.items() if kind == ("road", "road")]
+    return lanes, kinds, vehicles
+
+
+_EDGES = ["e", "a_b", "x_y_z", "-r_1", ":J0", ":J0_c0", "w", ""]
+
+
+def _lane_id(rng: random.Random) -> str:
+    edge = rng.choice(_EDGES)
+    if rng.random() < 0.1:
+        return edge  # no lane index
+    return f"{edge}_{rng.randrange(4)}"
+
+
+def _controlled(rng: random.Random) -> list[list[tuple[str, str, str]]]:
+    return [
+        [
+            (_lane_id(rng), _lane_id(rng), _lane_id(rng))
+            for _ in range(rng.choice([0, 0, 1, 1, 1, 2, 3]))
+        ]
+        for _ in range(rng.randrange(9))
+    ]
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_lane_edge_is_the_rule_the_backend_split_lanes_by(seed: int) -> None:
+    rng = random.Random(seed)
+    lane = "".join(rng.choice("ab_:-0") for _ in range(rng.randrange(8)))
+    assert lane_edge(lane) == lane.rsplit("_", 1)[0]
+    lane = _lane_id(rng)
+    assert lane_edge(lane) == lane.rsplit("_", 1)[0]
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_crossing_links_are_what_the_backend_matched(seed: int) -> None:
+    rng = random.Random(seed)
+    controlled = _controlled(rng)
+    crossings = {
+        edge: frozenset(rng.sample(_EDGES, rng.randrange(4)))
+        for edge in rng.sample(_EDGES, rng.randrange(4))
+    }
+    assert crossing_links(controlled, crossings) == _before_match_crossings(
+        controlled, crossings
+    )
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_unfollowed_links_are_what_the_backend_left(seed: int) -> None:
+    rng = random.Random(seed)
+    width = rng.randrange(10)
+    switched = set(rng.sample(range(12), rng.randrange(6)))
+    rides = [
+        (rng.randrange(12), rng.choice(["with", "clear"]), [rng.randrange(12)])
+        for _ in range(rng.randrange(4))
+    ]
+    crossings = [
+        (rng.randrange(12), [rng.randrange(12)]) for _ in range(rng.randrange(4))
+    ]
+    before = set(switched)
+    assert unfollowed_links(width, switched, rides, crossings) == _before_left(
+        width, switched, rides, crossings
+    )
+    assert switched == before
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_bicycle_lanes_and_vehicles_are_what_the_backend_chose(seed: int) -> None:
+    rng = random.Random(seed)
+    controlled = _controlled(rng)
+    lane_kind = {
+        lane: rng.choice(["road", "bicycle", "other"])
+        for links in controlled
+        for link in links
+        for lane in link
+    }
+    lanes = first_lanes(controlled)
+    kinds = {
+        index: (lane_kind.get(i, "other"), lane_kind.get(o, "other"))
+        for index, (i, o) in lanes.items()
+    }
+    before_lanes, before_kinds, before_vehicles = _before_lanes_and_vehicles(
+        controlled, lane_kind
+    )
+    assert list(lanes.items()) == list(before_lanes.items())
+    assert kinds == before_kinds
+    assert vehicle_links(kinds) == before_vehicles
+
+
+def test_crossing_links_wait_for_the_traffic_over_the_road_crossed() -> None:
+    controlled = [
+        [("a_b_0", "c_0", ":J_0_0")],  # a_b -> c
+        [("d_0", "e_1", ":J_1_0")],  # d -> e: crosses neither
+        [(":J_w0_0", ":J_c0_0", "")],  # onto the crossing over a_b
+        [],
+        [("c_0", "a_b_1", ":J_2_0"), ("w_0", ":J_c1_0", "")],
+    ]
+    crossings = {":J_c0": frozenset({"a_b"}), ":J_c1": frozenset({"c", "zz"})}
+    assert crossing_links(controlled, crossings) == [(2, [0, 4]), (4, [0, 4])]

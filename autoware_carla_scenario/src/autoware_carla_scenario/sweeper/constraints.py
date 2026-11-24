@@ -488,12 +488,14 @@ class LaneletLengthConstraint(Constraint):
         return compare(length, rule_enum, self.value)
 
 
-def _check_length(value: Any) -> None:
-    """Refuse a ``lanelet_length`` value that is no finite number of metres.
+def _real_number(value: Any) -> float:
+    """*value* as a float when it is a real number, else ``nan``.
 
     An int or a float, or another real number (numpy's ``int64`` or
-    ``float32``, say), as ``compare`` takes one; never a bool.  An int too
-    large for a float is no finite length either.
+    ``float32``, say); never a bool, which would be 1 or 0 (#1951).  An int
+    too large for a float is ``inf``: no finite number either.  What
+    :func:`_check_length` and the stop-line bindings' offset check
+    (:func:`.bindings._check_offset`) read a number of metres with.
     """
     number = math.nan
     if isinstance(value, bool):
@@ -515,7 +517,17 @@ def _check_length(value: Any) -> None:
                 number = float(value)
             except OverflowError:
                 number = math.inf
-    if not math.isfinite(number):
+    return number
+
+
+def _check_length(value: Any) -> None:
+    """Refuse a ``lanelet_length`` value that is no finite number of metres.
+
+    An int or a float, or another real number (numpy's ``int64`` or
+    ``float32``, say), as ``compare`` takes one; never a bool
+    (:func:`_real_number`).
+    """
+    if not math.isfinite(_real_number(value)):
         raise ValueError(
             f"lanelet_length.value: a finite number of metres, got {shown(value)}"
         )
@@ -797,9 +809,14 @@ class PreviousOfConstraint(Constraint):
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets previous to the inner-constraint matches."""
-        inner_matched = find_matching_lanelets(list(self.constraints), lanelet_map)
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
+        # One graph for the whole tree: the set-level children (has_adjacent,
+        # a nested previous_of / following_of) would each build their own
+        # otherwise.  find_matching_lanelets binds the children too (#2372).
+        inner_matched = find_matching_lanelets(
+            list(self.constraints), lanelet_map, routing_graph
+        )
         result: set[int] = set()
         for lid in inner_matched:
             lanelet = lanelet_map.laneletLayer[lid]
@@ -810,8 +827,8 @@ class PreviousOfConstraint(Constraint):
     def _bind_set_level(
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
     ) -> None:
+        # find_matching_ids binds the children already (find_matching_lanelets).
         _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
-        _bind_children(self, lanelet_map, routing_graph)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed previous set."""
@@ -837,9 +854,14 @@ class FollowingOfConstraint(Constraint):
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph] = None
     ) -> set[int]:
         """Return IDs of lanelets following the inner-constraint matches."""
-        inner_matched = find_matching_lanelets(list(self.constraints), lanelet_map)
         if routing_graph is None:
             routing_graph = create_routing_graph(lanelet_map)
+        # One graph for the whole tree: the set-level children (has_adjacent,
+        # a nested previous_of / following_of) would each build their own
+        # otherwise.  find_matching_lanelets binds the children too (#2372).
+        inner_matched = find_matching_lanelets(
+            list(self.constraints), lanelet_map, routing_graph
+        )
         result: set[int] = set()
         for lid in inner_matched:
             lanelet = lanelet_map.laneletLayer[lid]
@@ -850,8 +872,8 @@ class FollowingOfConstraint(Constraint):
     def _bind_set_level(
         self, lanelet_map: LaneletMap, routing_graph: Optional[RoutingGraph]
     ) -> None:
+        # find_matching_ids binds the children already (find_matching_lanelets).
         _cache_ids(self, self.find_matching_ids(lanelet_map, routing_graph))
-        _bind_children(self, lanelet_map, routing_graph)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Check membership in pre-computed following set."""

@@ -107,14 +107,18 @@
     {% endif %}
     {% if result.overrides %}
     <!-- Re-run button -->
+    {#- A batch records each case's own overrides (its sweep case), not the
+        batch's command line: a Re-run runs the scenario with these alone,
+        which is this case only if the batch was given no other overrides. #}
     <button
       onclick="rerunScenario()"
+      {% if session_type == 'batch' %}id="rerun-case-overrides" title="Runs the scenario with the overrides listed below only: a batch does not record the overrides its command line gave every case"{% endif %}
       class="ml-auto px-4 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium flex items-center gap-1.5"
     >
       <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
       </svg>
-      Re-run
+      {% if session_type == 'batch' %}Re-run with these overrides{% else %}Re-run{% endif %}
     </button>
     {% endif %}
   </div>
@@ -165,6 +169,9 @@
 {% if result.overrides %}
 <div class="mb-6">
   <h2 class="text-lg font-semibold text-gray-700 mb-2">Overrides</h2>
+  {% if session_type == 'batch' %}
+  <p class="text-sm text-gray-500 mb-2" id="batch-overrides-note">The case's own overrides, from its sweep. A batch does not record the overrides its command line gave every case, so they are not listed here, and Re-run runs without them.</p>
+  {% endif %}
   <div class="bg-white rounded-lg shadow p-4">
     <ul class="space-y-1">
       {% for override in result.overrides %}

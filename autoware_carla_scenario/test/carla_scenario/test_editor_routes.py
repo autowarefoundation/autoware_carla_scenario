@@ -1305,6 +1305,25 @@ class TestPredicateEditing:
         assert "already has its" in response.text
         assert len(_condition(store, draft_id, wrapper.id).children) == 1
 
+    def test_a_metric_is_offered_only_as_a_fail_condition(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """#2316: a condition judged once the run is over is no trigger, child
+        of a composition or pass condition, so those pickers leave it out."""
+        body = client.get(f"/draft/{draft_id}").text
+        offered: dict[str, bool] = {}
+        pickers = re.findall(
+            rf'<form hx-post="/draft/{draft_id}/condition"[^>]*>.*?</form>', body, re.S
+        )
+        for form in pickers:
+            slot = re.search(r'name="slot" value="([^"]*)"', form)
+            assert slot is not None
+            offered[slot.group(1).split(":")[0]] = 'value="metric"' in form
+        assert offered["fail"]
+        assert not offered["pass"]
+        assert not offered["trigger"]
+        assert not offered["node"]
+
     def test_pass_and_fail_conditions_can_be_added_and_edited(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -1456,8 +1475,9 @@ class TestLaneletSearches:
         config = build_scenario_config(_document(store, draft_id))
         key = f"scenario.param_overrides.{node.id}.lanelet_id"
         assert config["sweep"]["constraints"] == {key: [{"type": "is_junction"}]}
-        # And the key it writes to is declared, or Hydra's struct mode refuses it.
-        assert config["scenario"]["param_overrides"][node.id]["lanelet_id"] == 183
+        # And the key it writes to is declared, or Hydra's struct mode refuses
+        # it -- null, the document's, unless the sweeper sets it.
+        assert config["scenario"]["param_overrides"][node.id] == {"lanelet_id": None}
 
     def test_no_inspector_nests_a_form_inside_another(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -1736,6 +1756,26 @@ class TestScenarioMetadata:
         document = _document(store, draft_id)
         assert document.map.no_3d_model_lanelet_ids == [3, 4]
         assert document.title != "Renamed"
+
+    def test_a_reference_is_not_an_excluded_lanelet_list(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The map's own list cannot name itself: refused beside the field,
+        not dropped (#2235)."""
+        client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_no_3d_model_lanelet_ids": "3, 4"},
+        )
+        ref = "${map.no_3d_model_lanelet_ids}"
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"title": "Renamed", "map_no_3d_model_lanelet_ids": ref},
+        )
+        assert response.status_code == 200
+        assert f"Excluded lanelet IDs: must be whole numbers, got {ref!r}" in (
+            html.unescape(response.text)
+        )
+        assert _document(store, draft_id).map.no_3d_model_lanelet_ids == [3, 4]
 
     def test_an_invalid_identifier_is_refused(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -3282,6 +3322,125 @@ class TestScenarioMap:
         assert "getView()" in script
 
 
+class TestAreasOnTheMap:
+    """A Distance to an area card outlines its whole area on the places panel:
+    the lanelets its ground and filters match on the map, read with the
+    framework's own matcher, so the outline is the ground the run measures to."""
+
+    @pytest.fixture(autouse=True)
+    def _unloaded_map(self) -> None:
+        from autoware_carla_scenario.editor import map_preview
+
+        map_preview.clear_cache()
+
+    @staticmethod
+    def _area_card(store: DraftStore, draft_id: str, **params: Any) -> str:
+        from autoware_carla_scenario.authoring.models import ConditionNode
+
+        draft = _draft(store, draft_id)
+        node = ConditionNode(
+            type="area_distance",
+            params={"entity": "ego", "rule": "less_than", "distance": 0.5, **params},
+        )
+        draft.document.assertions.fail_conditions.append(node)
+        store.save(draft)
+        return node.id
+
+    def test_an_unloaded_map_offers_to_outline_the_area(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._area_card(store, draft_id, ground="CROSSWALK", lanelet_ids=[587])
+        body = client.get(f"/draft/{draft_id}/map-view").text
+        assert "Distance to an area" in body
+        assert "crosswalks (lanelet 587)" in body
+        assert "outlined once the map is parsed" in body
+
+    def test_the_area_is_outlined_with_the_places(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        node_id = self._area_card(store, draft_id, ground="CROSSWALK")
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        highlight = set(
+            body.split('data-highlight="', 1)[1].split('"', 1)[0].split(",")
+        )
+        # The cut-in's own places, and every crosswalk of the map besides.
+        assert {"183", "141"} <= highlight
+        assert "587" in highlight
+        assert "84 lanelets outlined" in body
+        row = body.split("data-areas", 1)[1]
+        assert f"/draft/{draft_id}/inspector/{node_id}" in row
+
+    def test_polygons_are_counted_not_drawn(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._area_card(store, draft_id, ground="DETECTION_AREA")
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        assert "2 polygons (not drawn)" in body
+
+    def test_a_picked_lanelet_of_another_ground_is_said(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # 183 is a road: the ego's spawn.
+        self._area_card(store, draft_id, ground="CROSSWALK", lanelet_ids=[183])
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        assert "lanelet 183 is not one of the crosswalks" in body
+
+    def test_an_area_the_map_lacks_is_said(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._area_card(store, draft_id, ground="PARKING_LOT")
+        body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        assert "nothing on this map is in it" in body
+
+    def test_the_road_surface_is_read_off_the_opendrive_map_unasked(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """No Lanelet2 parse is needed, so it is answered without Outline
+        areas: the fixture map has no OpenCRG grid, and says so."""
+        self._area_card(store, draft_id, ground="SURFACE_RAISED", relief_m=0.02)
+        body = client.get(f"/draft/{draft_id}/map-view").text
+        assert "raised road surface (0.02 m and more)" in body
+        assert "nothing on this map is in it" in body
+
+
+class TestAMapSourceThatIsNoURL:
+    """An unclosed ``[`` is urlsplit's ValueError, which MapSource.parse turns
+    into a MapSourceError: each route shows the reason, none is a 500, and a
+    stored draft holding such a source still opens (#2279)."""
+
+    _BAD = "https://[github.com/x/y"
+    _REASON = "is not a URL a repository can be cloned from"
+
+    def _shows_reason(self, response: Any, status: int = 200) -> None:
+        assert response.status_code == status
+        assert self._REASON in html.unescape(response.text)
+
+    def test_the_scenario_form(self, client: TestClient, draft_id: str) -> None:
+        self._shows_reason(
+            client.post(f"/draft/{draft_id}/scenario", data={"map_source": self._BAD})
+        )
+
+    def test_using_it(self, client: TestClient, draft_id: str) -> None:
+        self._shows_reason(
+            client.post(f"/draft/{draft_id}/map/use", data={"uri": self._BAD}),
+            status=422,
+        )
+
+    def test_a_new_draft_on_it(self, client: TestClient) -> None:
+        self._shows_reason(client.post("/maps/new", data={"uri": self._BAD}))
+
+    def test_browsing_it(self, client: TestClient) -> None:
+        self._shows_reason(client.get("/maps", params={"repo": self._BAD}))
+
+    def test_a_stored_draft_holding_it_opens(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        draft = _draft(store, draft_id)
+        draft.document.map.source = self._BAD
+        store.save(draft)
+        self._shows_reason(client.get(f"/draft/{draft_id}"))
+
+
 class TestJunctionCardsOfferWhatTheDocumentDeclares:
     """The two junction fields are pickers, not text boxes.
 
@@ -3627,6 +3786,33 @@ class TestTheJunctionEditor:
         )
 
         assert document.map.signal_groups[1].conflicts_with == []
+
+    @pytest.mark.parametrize("new_name", ["ns", "north_south"])
+    def test_a_self_conflict_survives_the_form(
+        self, client: TestClient, store: DraftStore, draft_id: str, new_name: str
+    ) -> None:
+        """The form has no box for the group itself, so a self-reference is
+        kept, under the new name, for the validator to report (#2279)."""
+        self._groups(client, draft_id, "ns", "ew")
+        draft = _draft(store, draft_id)
+        draft.document.map.signal_groups[0].conflicts_with = ["ns", "ew"]
+        store.save(draft)
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={
+                "name": new_name,
+                "lanelet2_regulatory_element_ids": "1330",
+                "conflicts_with": ["ew"],
+            },
+        )
+
+        document = _document(store, draft_id)
+        assert document.map.signal_groups[0].conflicts_with == ["ew", new_name]
+        messages = [issue.message for issue in validate_document(document).issues]
+        assert any(
+            f"Signal group '{new_name}' conflicts with itself" in m for m in messages
+        )
 
     def test_unticking_on_one_of_two_same_named_groups_leaves_the_references(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -5109,6 +5295,15 @@ class TestLaneletPreviewOffTheLoop:
 class TestMapCacheConcurrency:
     """The parsed-map cache is shared by worker threads (#1335)."""
 
+    @pytest.fixture(autouse=True)
+    def _maps_in_tmp_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.editor import map_preview
+
+        # The maps are in tmp_path; a parse is held to the map roots (#2412).
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(tmp_path))
+
     @staticmethod
     def _paths(tmp_path: Path, name: str) -> Any:
         from autoware_carla_scenario.maps import MapPaths
@@ -5195,6 +5390,136 @@ class TestMapCacheConcurrency:
         assert not thread.is_alive()
         assert map_preview.is_map_loaded(document, slow)
         map_preview.clear_cache()
+
+
+class TestMapRootsGuardEveryRead:
+    """A map outside SCENARIO_EDITOR_MAP_ROOTS is not parsed for a preview
+    either, as it is not drawn (#2412)."""
+
+    @staticmethod
+    def _stub_parse(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        from autoware_carla_scenario.editor import map_preview
+
+        calls: list[Any] = []
+
+        def _parse(paths: Any) -> Any:
+            calls.append(paths)
+            return map_preview._LoadedMap(
+                lanelet_map=None, routing_graph=None, lanelet_count=1
+            )
+
+        monkeypatch.setattr(map_preview, "_parse", _parse)
+        return calls
+
+    @pytest.mark.parametrize("outside", ["lanelet2", "xodr"])
+    def test_a_map_file_outside_the_roots_is_not_parsed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outside: str
+    ) -> None:
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.maps import MapPaths
+
+        roots = tmp_path / "roots"
+        elsewhere = tmp_path / "elsewhere"
+        roots.mkdir()
+        elsewhere.mkdir()
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+        calls = self._stub_parse(monkeypatch)
+        map_preview.clear_cache()
+        paths = MapPaths(
+            lanelet2_path=(elsewhere if outside == "lanelet2" else roots) / "m.osm",
+            xodr_path=(elsewhere if outside == "xodr" else roots) / "m.xodr",
+        )
+        try:
+            with pytest.raises(
+                FileNotFoundError, match="outside the editor's map roots"
+            ):
+                map_preview._load(ScenarioDocument(), paths)
+            assert calls == []
+            # Inside the roots, the same map parses.
+            monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(tmp_path))
+            assert map_preview._load(ScenarioDocument(), paths).lanelet_count == 1
+            # A parse cached before the roots narrowed is not answered either.
+            monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+            with pytest.raises(
+                FileNotFoundError, match="outside the editor's map roots"
+            ):
+                map_preview._load(ScenarioDocument(), paths)
+        finally:
+            map_preview.clear_cache()
+
+    def test_an_area_does_not_read_an_opendrive_map_outside_the_roots(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.conditions import map_area
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.maps import MapPaths
+
+        roots = tmp_path / "roots"
+        roots.mkdir()
+        xodr = tmp_path / "m.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+
+        def _never(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("read an OpenDRIVE map outside the roots")
+
+        monkeypatch.setattr(map_area, "surface_regions", _never)
+        result = map_preview.evaluate_area(
+            ScenarioDocument(),
+            {"ground": "SURFACE_RAISED"},
+            paths=MapPaths(lanelet2_path=roots / "m.osm", xodr_path=xodr),
+        )
+        assert "outside the editor's map roots" in result.error
+        assert not result.map_loaded
+
+
+class TestDerivedCachesAreLeastRecentlyUsed:
+    """A hit moves the entry to the end, as evaluate_slot's does (#2412)."""
+
+    @staticmethod
+    def _loaded(monkeypatch: pytest.MonkeyPatch) -> Any:
+        from autoware_carla_scenario.editor import map_preview
+
+        loaded = map_preview._LoadedMap(
+            lanelet_map=None, routing_graph=None, lanelet_count=1
+        )
+        monkeypatch.setattr(map_preview, "_loaded", lambda *a, **k: loaded)
+        return loaded
+
+    def test_derive_lanelet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import json
+        from types import SimpleNamespace
+
+        from autoware_carla_scenario.editor import map_preview
+
+        loaded = self._loaded(monkeypatch)
+        binding = {"type": "successor"}
+        slot: Any = SimpleNamespace(
+            key="k",
+            choice=SimpleNamespace(
+                binding=SimpleNamespace(to_sweep_dict=lambda: binding)
+            ),
+        )
+        asked = (json.dumps(binding, sort_keys=True), 1)
+        loaded.derived[asked] = 11
+        loaded.derived[("other", 2)] = 22
+        assert map_preview.derive_lanelet(ScenarioDocument(), slot, 1) == 11
+        assert list(loaded.derived) == [("other", 2), asked]
+
+    def test_resolve_spawn_offset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import json
+
+        from autoware_carla_scenario.editor import map_preview
+
+        loaded = self._loaded(monkeypatch)
+        binding = {"type": "stop_line_offset"}
+        asked = (json.dumps(["s", binding], sort_keys=True), 1)
+        offset = map_preview.SpawnOffset(lanelet_id=1, s=2.0)
+        loaded.offsets[asked] = offset
+        loaded.offsets[("other", 2)] = map_preview.SpawnOffset(lanelet_id=2)
+        found = map_preview.resolve_spawn_offset(ScenarioDocument(), "s", binding, 1)
+        assert found is offset
+        assert list(loaded.offsets) == [("other", 2), asked]
 
 
 @pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "NaN"])
@@ -5330,6 +5655,40 @@ class TestTheGate:
         gate = _document(store, draft_id).gate
         assert gate is not None
         assert [e.item for e in gate.coverage_items] == ["gap"]
+
+    @pytest.mark.parametrize("unticked", ["0", "off", "false", "no", ""])
+    def test_a_checkbox_posted_unticked_is_not_ticked(self, unticked: str) -> None:
+        """Read as every checkbox is (registry.is_checked, #2235), not by
+        truthiness: a posted "0" or "off" is not ticked."""
+        from autoware_carla_scenario.editor.service import parse_gate_form
+
+        assert parse_gate_form({"gate_enabled": unticked}) is None
+        gate = parse_gate_form(
+            {
+                "gate_enabled": "1",
+                "gate_on_min_success_rate": unticked,
+                "gate_min_success_rate": "95",
+                "gate_item_name_0": "gap",
+                "gate_item_on_0": unticked,
+                "gate_item_min_0": "80",
+            }
+        )
+        assert gate is not None
+        assert gate.min_success_rate is None
+        assert gate.coverage_items == []
+        ticked = parse_gate_form(
+            {
+                "gate_enabled": "on",
+                "gate_on_min_success_rate": "true",
+                "gate_min_success_rate": "95",
+                "gate_item_name_0": "gap",
+                "gate_item_on_0": "yes",
+                "gate_item_min_0": "80",
+            }
+        )
+        assert ticked is not None
+        assert ticked.min_success_rate == pytest.approx(0.95)
+        assert [e.item for e in ticked.coverage_items] == ["gap"]
 
     def test_every_threshold_of_the_gate_has_a_row(self) -> None:
         """A new GateSpec threshold must reach the editor, as a share in %

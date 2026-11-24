@@ -31,11 +31,17 @@ if TYPE_CHECKING:
 
 __all__ = [
     "HIDDEN_BELOW_M",
+    "KERB_SHIFT_MAX_M",
+    "KERB_SHIFT_STEP_M",
     "Obstacle",
     "actor_box_centre",
+    "actor_vertical_span",
     "box_centre",
     "claim_spot",
+    "first_box_in_way",
     "first_in_way",
+    "level_gap",
+    "off_the_kerb",
     "on_another_level",
     "overlaps",
 ]
@@ -68,7 +74,7 @@ _SAME_LEVEL_MARGIN_M = 1.0
 _MAX_GRADE = 0.10
 
 
-def _vertical_span(
+def actor_vertical_span(
     actor: "carla.Actor", transform: "carla.Transform"
 ) -> tuple[float, float]:
     """The bottom and top of *actor*'s box in the world, *transform* being
@@ -91,7 +97,7 @@ def _height_of(actor: "carla.Actor") -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _level_gap(one: tuple[float, float], other: tuple[float, float]) -> float:
+def level_gap(one: tuple[float, float], other: tuple[float, float]) -> float:
     """How far apart in height the vertical spans *one* and *other* (bottom,
     top) are, in metres, when that is more than :data:`_SAME_LEVEL_MARGIN_M`:
     a road user on a bridge over the other, or in an underpass beneath it.
@@ -107,11 +113,11 @@ def on_another_level(
     *planar_distance* metres from one whose span is *one* in the plane, is
     on another level of road than it: on a bridge over it, or in an
     underpass beneath it.  Its box clear of *one* by more than
-    :data:`_SAME_LEVEL_MARGIN_M` (:func:`_level_gap`), and their bottoms
+    :data:`_SAME_LEVEL_MARGIN_M` (:func:`level_gap`), and their bottoms
     (where each stands on its road) apart by more than a road of
     :data:`_MAX_GRADE` climbs over the distance between them -- the bottoms,
     not the gap, which a tall box shortens (#1587, #1597)."""
-    if _level_gap(one, other) <= 0.0:
+    if level_gap(one, other) <= 0.0:
         return False
     return abs(other[0] - one[0]) > _MAX_GRADE * max(planar_distance, 0.0)
 
@@ -139,6 +145,9 @@ class _Cache:
         self.frame = -1
         self.episode = -1
         self.states: list[tuple[int, float, float, float, float]] = []
+        #: The vehicles and walkers of :attr:`states`, in its order: all the
+        #: queries look at (#2336).
+        self.road_users: list[tuple[int, float, float, float, float]] = []
         self.kinds: dict[int, tuple[str, float]] = {}
         #: Each actor's heading (deg) this frame, by id.
         self.yaws: dict[int, float] = {}
@@ -196,10 +205,33 @@ def _states(world: "carla.World") -> list[tuple[int, float, float, float, float]
                     math.hypot(velocity.x, velocity.y),
                 )
             )
+        # Each actor's kind is read once an episode (_kind), as the queries
+        # read it, so this keeps exactly those a query for a vehicle or a
+        # walker would not skip: a sensor, a traffic light or the spectator
+        # is never one (#2336).  Worked out before the frame is marked read.
+        road_users = [state for state in states if _kind(world, state[0])[0] != ""]
         _CACHE.states = states
+        _CACHE.road_users = road_users
         _CACHE.yaws = yaws
         _CACHE.frame = frame
     return _CACHE.states
+
+
+def _road_users(world: "carla.World") -> list[tuple[int, float, float, float, float]]:
+    """:func:`_states` of the vehicles and walkers alone."""
+    _states(world)
+    return _CACHE.road_users
+
+
+def _of_kind(
+    world: "carla.World", kind: str
+) -> list[tuple[int, float, float, float, float]]:
+    """The actors a query for *kind* looks among: the vehicles and walkers
+    (:func:`_road_users`) for ``"vehicle"`` or ``"walker"``, which are all it
+    can find; every actor (:func:`_states`) for any other *kind*."""
+    if kind == "vehicle" or kind == "walker":
+        return _road_users(world)
+    return _states(world)
 
 
 def _kind(world: "carla.World", actor_id: int) -> tuple[str, float]:
@@ -375,7 +407,8 @@ def overlaps(
     ``None`` takes every level as one, as a plan of the road would."""
     reach = math.hypot(half_length, half_width) + margin
     mine = (x, y, math.radians(yaw_deg), half_length + margin, half_width + margin)
-    states = _states(world)
+    # Those it skips below for no kind are left out already.
+    states = _road_users(world)
     # Branched: Codon types no conditional expression of a None and a float.
     level = False
     road = 0.0
@@ -394,7 +427,7 @@ def overlaps(
             if (
                 level
                 and not math.isnan(claim_z)
-                and _level_gap(span, _span_at(world, claimant, claim_z, True)) > 0.0
+                and level_gap(span, _span_at(world, claimant, claim_z, True)) > 0.0
             ):
                 continue
             if _rectangles_meet(mine, (cx, cy, math.radians(cyaw), cl, cw)):
@@ -492,7 +525,7 @@ def first_box_in_way(
     mine = (x + cos_h * half, y + sin_h * half, heading, half, half_width)
     level, span = _looking(world, self_id, z)
     best: Optional[Obstacle] = None
-    for actor_id, ox, oy, oz, speed in _states(world):
+    for actor_id, ox, oy, oz, speed in _of_kind(world, kind):
         if actor_id == self_id or oz < HIDDEN_BELOW_M:
             continue
         dx, dy = ox - x, oy - y
@@ -542,7 +575,7 @@ def first_in_way(
     cos_h, sin_h = math.cos(heading), math.sin(heading)
     level, span = _looking(world, self_id, z)
     best: Optional[Obstacle] = None
-    for actor_id, ox, oy, oz, speed in _states(world):
+    for actor_id, ox, oy, oz, speed in _of_kind(world, kind):
         if actor_id == self_id or oz < HIDDEN_BELOW_M:
             continue
         dx, dy = ox - x, oy - y

@@ -7,6 +7,7 @@ registry itself (which has its own suite, against mock GitHub and S3).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -156,6 +157,26 @@ def test_a_pack_or_a_repository_is_a_reference(reference: str) -> None:
 def test_a_malformed_reference_is_refused(reference: str) -> None:
     with pytest.raises(ValueError, match="map.pack"):
         MapPack(reference)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["../..", "./r", "o/..", "o/r/..", "o/r/.", "o/r/p@..", "o/r/p@.", "../r/p@1"],
+)
+def test_a_dot_or_dot_dot_component_is_refused(reference: str) -> None:
+    """GitHub never allows "." or ".." as a name, and carla-pack would build
+    a path out of the packs directory from one (#2233)."""
+    with pytest.raises(
+        ValueError,
+        match=rf"^map\.pack must be OWNER/REPO/PACK\[@VERSION\] or OWNER/REPO, "
+        rf"got {re.escape(repr(reference))}$",
+    ):
+        MapPack(reference)
+
+
+@pytest.mark.parametrize("reference", ["o.x/r..y/p.z@1.0", ".o/r/p", "o/r/p@..1"])
+def test_names_with_dots_are_kept(reference: str) -> None:
+    assert MapPack(reference).reference == reference
 
 
 def test_a_malformed_sha256_is_refused() -> None:

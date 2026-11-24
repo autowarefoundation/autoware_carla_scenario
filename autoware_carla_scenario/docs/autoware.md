@@ -145,7 +145,9 @@ What happens:
     it, with the bridge's address and `autoware.launcher.bridge_parameters` --
     and `exec ros2 launch <autoware.launcher.launch>`. The stack's output,
     the node's included, goes to `autoware-<n>-<scenario>.log` in the run's
-    output directory.
+    output directory (`<n>` counting the stacks the run started from 0); in a
+    batch and a SLURM task, to `autoware-<stem>.log`, after the file stem of
+    the case it ran for, kept (and appended to) when the case is run again.
 3. **While the stack starts** (until `scenario_bridge` first reaches the
     bridge), the world ticks at about real time and the wait is measured in
     wall-clock seconds, `autoware.boot_timeout_s`. Reaching the bridge means
@@ -250,7 +252,8 @@ refused when the ego is built, with an error naming it:
 `+autoware.boot_timout_s=30` fails the run rather than leaving the default
 timeout in place. The values are checked too, naming the key and showing the
 value: a null setting is its default, as an absent one is; `address` is a
-non-empty `host:port`; `ready_timeout_ticks` a positive whole number (`1200`,
+`host:port` with a port from 0 to 65535 (`localhost:0` binds an ephemeral
+port; an IPv6 host is bracketed, `[::1]:50052`); `ready_timeout_ticks` a positive whole number (`1200`,
 or `1200.0`, kept as the int); and the seconds and `base_link_offset_m` are
 numbers, an int or a float. A boolean or a quoted number is refused rather
 than read as 0, 1 or the number: `autoware.liveness_timeout_s=false` does not
@@ -333,7 +336,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never`; `null` is the default |
 | `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep`; `null` is the default |
-| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)). For both launcher types, the mapping is merged over the default, and null or absent is the default: `{auto_engage: false}` keeps `use_sim_time: true`, which `use_sim_time: false` turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (`reroute_max_attempts: 10.0`) as the int, as the node declares them; a fraction for an integer one, or a boolean for a number, is refused |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)). For both launcher types, the mapping is merged over the default, and null or absent is the default: `{auto_engage: false}` keeps `use_sim_time: true`, which `use_sim_time: false` turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (`reroute_max_attempts: 10.0`) as the int, as the node declares them; `parent_pid`, which the launcher sets, a fraction for an integer one, a boolean or a string (`'5'`) for a number, a NaN or an infinity for a seconds parameter, and a `rpc_timeout_s`, `mission_poll_timeout_s`, `step_timeout_s` or `tick_period_s` that is not above 0 are refused, naming the parameter (`route_watch_period_s` of 0 or less turns the re-route watch off) |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
@@ -368,8 +371,9 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 `sweep.job_timeout_seconds` (120 s by default, and when `null`; `+` adds it
 to a sweep YAML that does not set it; 0 for no timeout) is a whole job's
-budget, in whole seconds -- a fraction, a negative value, NaN, infinity or a
-value above 2147483647 (what `signal.alarm` takes) is refused, with exit
+budget, in whole seconds -- a fraction, a negative value, NaN, infinity, a
+value above 2147483647 (what `signal.alarm` takes) or text (`'900'`) is
+refused, with exit
 status 2, before any job starts --
 starting Autoware, localizing, routing, engaging and the scenario itself --
 so raise it: launching Autoware alone can take most of two minutes. A job the
@@ -416,6 +420,16 @@ the node's generated code, so install a newer one over it there
 but `autoware_carla_scenario.autoware_bridge`: `{scenario_bridge}` puts a
 directory on `PYTHONPATH` that holds that package alone
 (`~/.cache/autoware_carla_scenario/ros_bridge/`).
+
+Started with `({scenario_bridge} &)`, the node is no child of the stack, so
+the `SIGTERM` above does not reach it when the run dies. Instead,
+`{scenario_bridge}` hands it the pid of the shell it runs in (`-p
+parent_pid:=$$`, which the `( ... &)` subshell expands to the `bash -c`'s pid),
+and the node shuts itself down within a second of that process being gone.
+Run it from the shell that `exec`s `ros2 launch` (or waits for it), as above,
+so that pid lives exactly as long as the stack. In the Docker launcher's
+container it watches that shell the same way, though the container's removal
+ends it anyway.
 
 ## CARLA's native Autoware interface
 

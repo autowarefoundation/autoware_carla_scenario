@@ -13,7 +13,10 @@ policy step is therefore swept once a policy step (``sweep_interval_s``), not on
 the ticks between, whose sweeps nobody would read.
 
 The sweep a caller is handed carries the world's rain and fog as they are when
-it is taken (:mod:`.lidar_weather`).
+it is first read (:mod:`.lidar_weather`): on the frame it was taken on, or up to
+one sweep interval after it, whose weather it then carries (#2265).  The
+weather is read on the caller's thread: reading it in CARLA's listener would
+be an RPC on the delivery thread, racing the next tick's weather all the same.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import queue
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Tuple, Union
@@ -29,7 +33,7 @@ import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from ..seed import check_seed, check_whole_number, resolve_seed
-from .base import sensor_tick_s
+from .base import drain, put_dropping_oldest, sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
@@ -204,6 +208,16 @@ class CarlaLidarSensor:
     #: otherwise.  While set, no sweep is waited for: a sensor that stopped
     #: delivering costs one wait, not one a read (#2018).
     _missed: int
+    #: The frame of the first :meth:`latest_sweep` since attaching; -1 before
+    #: it.  Taken as the tick after the attach, the first sweep is due an
+    #: interval after the attach, one tick less than an interval after it
+    #: (:meth:`_due`, #2228).
+    _first_read: int
+    #: Moved on by :meth:`destroy`, under :attr:`_generation_lock`: a
+    #: listener is bound to the generation it was attached in, and queues
+    #: nothing once that is not the current one (#2323).
+    _generation: int
+    _generation_lock: threading.Lock
 
     def __init__(
         self,
@@ -226,6 +240,9 @@ class CarlaLidarSensor:
             else _stream_of(sensor_id if sensor_id else _mount_key(config))
         )
         self._missed = -1
+        self._first_read = -1
+        self._generation = 0
+        self._generation_lock = threading.Lock()
 
     @property
     def sweep_interval_ticks(self) -> int:
@@ -270,7 +287,9 @@ class CarlaLidarSensor:
         )
         self._sensor = world.spawn_actor(blueprint, transform, attach_to=actor)
         self._world = world
-        self._sensor.listen(self._on_sensor_data)
+        with self._generation_lock:
+            generation = self._generation
+        self._sensor.listen(lambda data: self._on_sensor_data(data, generation))
         logger.info(
             "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s, "
             "a sweep every %d tick(s) -> %s",
@@ -282,7 +301,9 @@ class CarlaLidarSensor:
         )
 
     def _on_sensor_data(
-        self, data: Union["carla.LidarMeasurement", "carla.SensorData"]
+        self,
+        data: Union["carla.LidarMeasurement", "carla.SensorData"],
+        generation: Optional[int] = None,
     ) -> None:
         """The sensor's listener, on a CARLA thread: hands the sweep to :meth:`_receive`.
 
@@ -291,17 +312,25 @@ class CarlaLidarSensor:
         calls it with the ``carla.SensorData``, which ``as_lidar()`` turns into
         the measurement; the static check sees that branch, and Python, whose
         ``LidarMeasurement`` has no ``as_lidar``, never takes it.
+        *generation* is the listener's (:meth:`_receive`).
         """
         if hasattr(data, "as_lidar"):
-            self._receive(data.as_lidar())
+            self._receive(data.as_lidar(), generation)
         else:
-            self._receive(data)
+            self._receive(data, generation)
 
-    def _receive(self, measurement: "carla.LidarMeasurement") -> None:
+    def _receive(
+        self, measurement: "carla.LidarMeasurement", generation: Optional[int] = None
+    ) -> None:
         """Queue the raw buffer; copying it is all the callback thread does.
 
         The queue is bounded: when it is full the oldest sweep is dropped, never
-        this one, and the callback never blocks.
+        this one, and the callback never blocks.  *generation* is the one the
+        listener was attached in (``None`` for the current one): CARLA may
+        still be inside the callback when ``stop()`` returns, so a sweep of a
+        sensor :meth:`destroy` let go is dropped: the generation is checked,
+        and the sweep queued, under the lock :meth:`destroy` moves it on under
+        before draining the queue (#2323).
         """
         try:
             if TYPE_CHECKING:
@@ -311,15 +340,10 @@ class CarlaLidarSensor:
             else:
                 raw = np.frombuffer(measurement.raw_data, dtype=np.float32)
             sweep = (int(measurement.frame), raw.reshape(-1, 4).copy())
-            while True:
-                try:
-                    self._sweeps.put_nowait(sweep)
-                    break
-                except queue.Full:
-                    try:
-                        self._sweeps.get_nowait()
-                    except queue.Empty:
-                        pass
+            with self._generation_lock:
+                if generation is not None and generation != self._generation:
+                    return
+                put_dropping_oldest(self._sweeps, sweep)
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("failed to receive a LiDAR sweep")
 
@@ -330,6 +354,18 @@ class CarlaLidarSensor:
             self._sensor.destroy()
             self._sensor = None
         self._world = None
+        with self._generation_lock:
+            # A sweep the old sensor still delivers is stale from here.
+            self._generation += 1
+        # Attached again, the sensor starts over: its first read counts from
+        # the new attach, as on the first one, and no sweep of the old actor
+        # is taken for one of the new: neither the newest nor one still
+        # queued (#2265).
+        drain(self._sweeps)
+        self._newest = None
+        self._weathered_frame = -1
+        self._missed = -1
+        self._first_read = -1
 
     def latest_sweep(
         self, frame: int
@@ -337,15 +373,25 @@ class CarlaLidarSensor:
         """The newest sweep as of simulator frame *frame*: ``(its frame, raw [N, 4])``.
 
         The buffer is in the sensor frame, with the world's rain and fog on it
-        (:meth:`_weather`).  A sweep is due on *frame* when the
+        as they are when it is first read (:meth:`_weather`), on *frame*:
+        weather changed since the sweep was taken, within its interval, is
+        put on it too.  A sweep is due on *frame* when the
         newest one is a whole interval old; then this waits up to
         :data:`_SWEEP_TIMEOUT` seconds for it.  When none comes, no read waits
         again until a sweep does (one already queued is still taken).  Between
         sweeps the newest one is the answer, taken on an earlier tick of the
         interval.  ``None`` when nothing within the last interval arrived -- an
         older sweep would be a stale one, and the policy is better told nothing
-        than told the past.
+        than told the past.  The first call after attaching is taken as on
+        the tick after the attach: CARLA first sweeps an interval after the
+        attach (``sensor_tick`` counts from the spawn), so a LiDAR sweeping
+        every tick waits for that tick's sweep, and one sweeping less often
+        waits for none -- as :meth:`CarlaCameraSensor.latest_image
+        <autoware_carla_scenario.sensor.carla_camera.CarlaCameraSensor.latest_image>`
+        counts its first frame (#2228).
         """
+        if self._first_read < 0:
+            self._first_read = frame
         deadline = time.monotonic() + _SWEEP_TIMEOUT
         self._take_queued()
         while self._due(frame):
@@ -424,13 +470,15 @@ class CarlaLidarSensor:
 
     def _due(self, frame: int) -> bool:
         """Whether a sweep newer than the newest one is due by *frame*: an
-        interval after the newest, or at once before any -- unless one due
-        has not come since (:attr:`_missed`), which is not waited for again."""
+        interval after the newest, or, before any, an interval after the
+        attach, the tick before the first read (:attr:`_first_read`) -- unless
+        one due has not come since (:attr:`_missed`), which is not waited for
+        again."""
         if self._missed >= 0:
             return False
         newest = self._newest
         if newest is None:
-            return True
+            return self._first_read - 1 + self._interval_ticks <= frame
         return newest[0] + self._interval_ticks <= frame
 
     def _keep(

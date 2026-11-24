@@ -255,7 +255,11 @@
         // Load scenario list on first open
         if (!launchersLoaded) loadLaunchers();
         if (!scenarioListLoaded) {
-          fetch('/api/scenarios').then(r => r.json()).then(names => {
+          fetch('/api/scenarios').then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          }).then(names => {
+            if (!Array.isArray(names)) throw new Error('not a list of scenarios');
             const datalist = document.getElementById('scenario-list');
             ['*/*', 'intersection_passing/*', 'traffic_light_compliance/*', 'lane_change/*'].forEach(p => {
               const opt = document.createElement('option');
@@ -268,6 +272,9 @@
               datalist.appendChild(opt);
             });
             scenarioListLoaded = true;
+          }).catch(err => {
+            // Left to load again the next time the panel opens.
+            console.warn('Cannot list the scenarios:', err);
           });
         }
         updateCmdPreview();
@@ -277,25 +284,42 @@
     // Which launchers this viewer can use: SLURM only where sbatch and squeue are.
     let launchersLoaded = false;
     function loadLaunchers() {
-      fetch('/api/launchers').then(r => r.json()).then(data => {
-        launchersLoaded = true;
+      fetch('/api/launchers').then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(data => {
+        const slurm = data.slurm;
         const select = document.getElementById('run-launcher');
         const option = select.querySelector('option[value="slurm"]');
         const note = document.getElementById('slurm-unavailable');
-        option.disabled = !data.slurm.available;
-        if (!data.slurm.available) {
+        option.disabled = !slurm.available;
+        if (!slurm.available) {
           option.textContent = 'SLURM (unavailable here)';
-          note.textContent = data.slurm.reason;
+          note.textContent = slurm.reason;
           note.classList.remove('hidden');
           if (select.value === 'slurm') select.value = 'local';
+        } else {
+          note.classList.add('hidden');
         }
         const list = document.getElementById('slurm-partitions');
         list.innerHTML = '';
-        (data.slurm.partitions || []).forEach(p => {
+        (slurm.partitions || []).forEach(p => {
           const opt = document.createElement('option');
           opt.value = p;
           list.appendChild(opt);
         });
+        launchersLoaded = true;
+        showLauncherOptions();
+      }).catch(err => {
+        // SLURM stays disabled, and says why; asked again the next time the
+        // panel opens (launchersLoaded stays false).
+        const select = document.getElementById('run-launcher');
+        const option = select.querySelector('option[value="slurm"]');
+        const note = document.getElementById('slurm-unavailable');
+        option.disabled = true;
+        note.textContent = 'Cannot tell whether SLURM is available: the launcher check failed (' + err.message + ').';
+        note.classList.remove('hidden');
+        if (select.value === 'slurm') select.value = 'local';
         showLauncherOptions();
       });
     }
@@ -420,12 +444,19 @@
         .finally(() => location.reload());
     }
 
+    // The override lines of the extra-overrides text: key=value, and Hydra's
+    // delete overrides (~key, ~key=value), which have no '=' of their own.
+    function overrideLines(raw) {
+      if (!raw) return [];
+      return raw.split('\n').map(l => l.trim()).filter(l => l && (l.includes('=') || l.startsWith('~')));
+    }
+
     // Collect all run options from the panel
     function collectRunOptions() {
       const scenario = (document.getElementById('run-scenario')?.value || '*/*').trim();
       const textarea = document.getElementById('extra-overrides');
       const raw = (textarea ? textarea.value : '').trim();
-      const extra = raw ? raw.split('\n').map(l => l.trim()).filter(l => l && l.includes('=')) : [];
+      const extra = overrideLines(raw);
       const sweeper = document.getElementById('run-sweeper')?.value || '';
       const launcher = document.getElementById('run-launcher')?.value || 'local';
       const opts = { scenario: scenario, extra_overrides: extra, sweeper: sweeper, launcher: launcher };

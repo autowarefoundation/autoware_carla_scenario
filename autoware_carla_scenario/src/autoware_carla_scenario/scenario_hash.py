@@ -23,6 +23,13 @@ and is left out too; how a run is recorded or reported (``rerun``,
 (``background_traffic.seed``) is part of it: one pinned, so that every
 rollout places the same vehicles, is what the scenario is.
 
+Of the other sections, the settings in :data:`SCENARIO_SETTINGS` are part of
+it too: ``server.fog_density_scale`` scales how thick ``environment.fog_density``
+renders, to the cameras and to the LiDARs' fog alike, so it is the world's
+fog as much as the environment's own number is (#2300).  It is digested only
+when it is set: ``null``, the server's own scale, leaves the digest what it
+was before it was digested at all.
+
 This module imports nothing but the standard library.
 """
 
@@ -36,6 +43,7 @@ from typing import Any
 __all__ = [
     "OTHER_SECTIONS",
     "SCENARIO_SECTIONS",
+    "SCENARIO_SETTINGS",
     "scenario_hash",
 ]
 
@@ -79,6 +87,13 @@ OTHER_SECTIONS: tuple[str, ...] = (
     "t4scene",
 )
 
+#: The settings of :data:`OTHER_SECTIONS` that say what is simulated, as
+#: ``(section, key)``: digested when set (not ``None``), the rest of their
+#: section left out.  ``server.fog_density_scale`` is
+#: ``carla.Weather.FogDensityScale``, which scales how thick the
+#: environment's ``fog_density`` renders, LiDAR fog included.
+SCENARIO_SETTINGS: tuple[tuple[str, str], ...] = (("server", "fog_density_scale"),)
+
 #: Settings named so say where a run connects, not what it simulates.
 _ENDPOINTS = frozenset(("host", "address", "port"))
 
@@ -113,7 +128,9 @@ def scenario_hash(config: Mapping[str, Any], scenario_class: str) -> str:
         config: A run's config, resolved, as plain mappings and lists (what
             ``OmegaConf.to_container(cfg, resolve=True)`` returns).  Only its
             :data:`SCENARIO_SECTIONS` are read, without their endpoint
-            settings; ``seed`` is not one of them.
+            settings, and the :data:`SCENARIO_SETTINGS` set in it (a number
+            digested as a float: ``0.01`` and ``1e-2`` are one); ``seed`` is
+            not one of them.
         scenario_class: The scenario's class, by its qualified name
             (``module.QualName``): the code a run of the config runs.
 
@@ -126,6 +143,15 @@ def scenario_hash(config: Mapping[str, Any], scenario_class: str) -> str:
         for key in SCENARIO_SECTIONS
         if key in config
     }
+    for section, key in SCENARIO_SETTINGS:
+        settings = config.get(section)
+        value = settings.get(key) if isinstance(settings, Mapping) else None
+        if value is None:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = float(value)
+        # Dotted, so it names no section of its own.
+        sections[f"{section}.{key}"] = value
     text = json.dumps(
         {"class": scenario_class, "config": sections},
         sort_keys=True,

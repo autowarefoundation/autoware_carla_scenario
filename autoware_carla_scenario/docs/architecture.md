@@ -129,6 +129,7 @@ sequenceDiagram
     participant CSM as CarlaServerManager
     participant SR as ScenarioRunner
     participant BS as BaseScenario
+    participant EGO as Ego entity
     participant W as carla.World
     participant TB as TrafficBackend
     participant TM as TrafficManager
@@ -142,11 +143,18 @@ sequenceDiagram
     SQ->>SR: Initialize MapManager<br/>(Lanelet2 + OpenDRIVE)
 
     CLI->>SQ: run_all()
-    loop For each scenario
-        SQ->>SR: run_scenario(scenario)
+    loop For each scenario (each attempt, up to 1 + cooldown_max_retries)
+        Note over SQ: A dead server the queue owns is restarted first
+        opt The world is dirty (a run, or a failed attempt, left it)
+            SQ->>SR: reset_world(strict=True) (map reload, or soft reset)
+            Note over SQ: A reset that fails is this attempt's failure:<br/>retried (reset again), or the case errors
+        end
+        SQ->>SR: run_scenario(scenario, reset_world=False)
 
         rect rgb(240, 248, 255)
             Note over SR: Phase 1: Setup
+            SR->>W: Reload the runs' map if another client loaded a world
+            SR->>W: Destroy leftover dynamic actors
             SR->>W: apply_settings(sync=True, dt=0.05)
             SR->>TB: prepare(TrafficContext)
             TB->>TM: set_synchronous_mode(True)
@@ -157,82 +165,112 @@ sequenceDiagram
             Note over BS: Spawn NPCs, register<br/>conditions & actions
             SR->>W: Spawn ego vehicle
             SR->>BS: register_fail_condition(EntityExistence)
+            SR->>W: start_recorder(path)
         end
 
         rect rgb(255, 248, 240)
-            Note over SR: Phase 2: Warm-up (5 ticks)
-            loop 5 times
-                SR->>W: tick()
+            Note over SR: Phase 2: Warm-up and start-up
+            loop STABILIZE_TICKS times (5 by default)
+                SR->>W: hold the vehicles still, tick()
             end
+            SR->>BS: run_init (each init action once, at elapsed=0)
+            SR->>EGO: set_initial_speeds(...)
+            SR->>EGO: on_scenario_start(world)
+            SR->>EGO: _wait_for_ego (until the ego is ready)
+            Note over SR: An ego that asks to terminate here<br/>ends the run (no tick loop)
+            SR->>W: Release the vehicles' brakes
             SR->>TB: start(world, skip_actor_ids)
             TB->>W: set_autopilot(True) on the vehicles it owns
-            SR->>BS: set_initial_speed(ego)
+            SR->>BS: set_initial_speed(ego actor)
+            SR->>BS: register_fail_condition(Timeout) (unless registered)
         end
 
         rect rgb(240, 255, 240)
-            Note over SR: Phase 3: Recording & Tick Loop
-            SR->>W: start_recorder(path)
-            SR->>BS: register_fail_condition(Timeout)
-            loop Until done or condition met
+            Note over SR: Phase 3: Tick Loop
+            loop While not is_done(), until a result
                 SR->>BS: pre_tick_actions.tick(world, elapsed)
                 SR->>BS: pre_tick_callbacks(world)
                 SR->>W: tick()
+                SR->>EGO: on_tick(world, elapsed)
+                SR->>TB: tick(world, elapsed)
                 SR->>BS: post_tick_actions.tick(world, elapsed)
                 SR->>BS: post_tick_callbacks(world)
                 SR->>BS: Check pass_conditions
                 Note over SR: If any pass condition<br/>returns ScenarioResult → PASS
-                SR->>BS: Check fail_conditions
+                SR->>BS: Check fail_conditions (not MetricConditions)
                 Note over SR: If any fail condition<br/>returns ScenarioResult → FAIL
-                SR->>BS: is_done()?
-                Note over SR: If True → PASS (default)
+                SR->>EGO: termination_requested?
+                Note over SR: If True → not a pass (termination)
             end
+            Note over SR: is_done() with no result → PASS
+            SR->>BS: Judge MetricConditions on the recorded frames
         end
 
         rect rgb(255, 240, 240)
             Note over SR: Phase 4: Cleanup
+            SR->>EGO: on_scenario_end(world)
+            SR->>BS: close_conditions()
             SR->>W: Destroy ego
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
+            SR->>SR: Write coverage, gate record and result JSON
         end
 
         SR-->>SQ: ScenarioResult
-        Note over SQ: Before the next attempt (then its cooldown)
-        SQ->>SR: reset_world() (map reload, or soft reset)
+        Note over SQ: The world stays dirty until the next attempt
     end
 
     CLI->>SQ: __exit__() / stop()
+    opt Server not stopped by the queue (given, or reused) and world dirty
+        SQ->>SR: restore_world() (best-effort reset, settings restored)
+    end
     SQ->>CSM: stop() (if owned)
 ```
+
+`run_scenario` called on its own (`reset_world=True`, the default) resets
+the world at its end, best effort: a reset that fails is logged, not raised.
+The queue instead passes `reset_world=False` and resets strictly before the
+attempt that follows (`reset_world(strict=True)`), so that a world it could
+not reset fails that attempt -- retried, or erroring the case -- rather than
+being the world the next case runs on.
 
 ### Tick Loop Detail
 
 The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode. Each tick follows a strict evaluation order:
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│                     Single Tick Cycle                     │
-├───────────────────────────────────────────────────────────┤
-│  1. Pre-tick actions      → action.tick(world, elapsed)   │
-│  2. Pre-tick callbacks    → callback(world)               │
-│  3. world.tick()          → advance simulation by 0.05 s  │
-│  4. Ego entity            → ego.on_tick(world, elapsed)   │
-│  5. Traffic backend       → backend.tick(world, elapsed)  │
-│  6. Post-tick actions     → action.tick(world, elapsed)   │
-│  7. Post-tick callbacks   → callback(world)               │
-│  8. Coverage              → sample TICK / condition items │
-│  9. Periodic logging      → ego OpenDRIVE position (1/s)  │
-│  10. Pass conditions      → first satisfied → PASS & exit │
-│  11. Fail conditions      → first triggered → FAIL & exit │
-│  12. is_done() check      → True → PASS & exit            │
-└───────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Single Tick Cycle                        │
+├─────────────────────────────────────────────────────────────────┤
+│  0. is_done() check       → True → exit (PASS if no result)     │
+│  1. Pre-tick actions      → action.tick(world, elapsed)         │
+│  2. Pre-tick callbacks    → callback(world)                     │
+│  3. world.tick()          → advance simulation by 0.05 s        │
+│  4. Trajectory log        → record the new frame                │
+│  5. Ego entity            → ego.on_tick(world, elapsed)         │
+│  6. Traffic backend       → backend.tick(world, elapsed)        │
+│  7. Post-tick actions     → action.tick(world, elapsed)         │
+│  8. Post-tick callbacks   → callback(world)                     │
+│  9. Action states, NPC    → logged (collisions, falls)          │
+│     contacts                                                    │
+│ 10. Ego progress, metric  → frames kept for MetricConditions    │
+│     frames                                                      │
+│ 11. Coverage              → sample TICK / condition items       │
+│ 12. Periodic logging      → ego OpenDRIVE position (1/s)        │
+│ 13. Pass conditions       → first satisfied → PASS & exit       │
+│ 14. Fail conditions       → first triggered → FAIL & exit       │
+│ 15. Ego termination       → requested → not a pass, & exit      │
+└─────────────────────────────────────────────────────────────────┘
+After the loop: MetricConditions are judged on the recorded frames.
 ```
 
 **Evaluation semantics:**
 
 - **Pass conditions** are checked first. The **first** condition to return a non-`None` `ScenarioResult` terminates the loop with a pass.
-- **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure.
-- If the loop exits via `is_done()` returning `True` with no condition triggered, the scenario is treated as **passed**.
+- **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure. A `MetricCondition` is not checked in the loop: it is judged on the recorded frames once the run is over, and can still fail a run the loop passed.
+- An **ego termination** request (e.g. the driver policy signalled one) is checked after the conditions, so a pass or fail on the same tick still decides the outcome; on its own it is not a pass.
+- If the loop exits via `is_done()` returning `True` with no result, the scenario is treated as **passed**. Every path that reaches the tick loop records one `condition_statuses` entry per registered condition; an ego that asks to terminate before it (its stack never became ready) records none, since no condition was ever checked.
 
 ### The initialization phase
 
@@ -286,7 +324,12 @@ seconds is given sixty of *its own* however fast the host runs.
 A scenario that registers a timeout of its own has said how long it runs, and
 the runner adds no default to cut it short: a red light whose drawn red phase
 is 13.4 s, given seven seconds after the green, runs for 20.4 s even when the
-run's default is twelve. Exactly these fail conditions count as its own:
+run's default is twelve. A timeout counts whether it is a fail condition or a
+pass one: the runner ends the run on the first tick any condition reports
+anything, so a pass-side timeout ends it too, as a pass (the `lane_change`
+example expecting no lane change passes once its timeout runs out), and a
+default fail timeout could only fail such a run first. Exactly these pass or
+fail conditions count as its own:
 
 - a bare `TimeoutCondition`;
 - an `OrCondition` with a child that counts (an OR fires as soon as any child
@@ -371,15 +414,16 @@ Key features:
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
 - **Retry**: A scenario whose run raises is retried up to `cooldown_max_retries` times before raising an error; one that runs and fails is not. The lanelet sweeper follows the same rule for its forked cases.
   A retry runs the same scenario object again, and so does a second `run_all()`: before each `setup()` the runner resets what an earlier attempt registered (`BaseScenario._reset_registrations()`) -- its conditions, actions, callbacks, entities, coverage and measures -- back to what the scenario's `__init__` registered, and resets each of those (`BaseCondition.reset()`, `BaseAction.reset()`) to the state it was built in, so a condition that latched in a failed attempt cannot decide the retry, a `once` action that fired there fires again, and a closed `CollisionCondition` attaches a sensor of its own.
-- **World reset**: The queue owns every reset between runs (#1941). It runs each scenario with `run_scenario(reset_world=False)` and keeps a flag of whether the world holds what a run left; right before the next attempt -- the next scenario's first, a retry, or the first of a later `run_all()` (the SLURM worker calls `run_all()` once per case) -- it resets the world (`ScenarioRunner.reset_world()`), so the weather, frozen traffic lights and light states one run set do not carry into the next. Between scenarios the reset comes first and the cooldown after it, so the server settles after the reload before the next scenario connects; a retry waits first (its recovery wait), then resets. The reset is part of that attempt: one that raises fails that attempt, which is retried (and resets again) or, with `continue_on_error`, errors that scenario, and never changes the verdict of the scenario that ran before it, nor ends the batch. An attempt that failed before its reset (in a retry's wait, or a server restart) leaves the flag as it was. After the last scenario the world is left as it is, for the next `run_all()` to reset, unless the server is restarted (a new world) in between.
+- **World reset**: The queue owns every reset between runs (#1941). It runs each scenario with `run_scenario(reset_world=False)` and keeps a flag of whether the world holds what a run left; right before the next attempt -- the next scenario's first, a retry, or the first of a later `run_all()` (the SLURM worker calls `run_all()` once per case) -- it resets the world (`ScenarioRunner.reset_world(strict=True)`), so the weather, frozen traffic lights and light states one run set do not carry into the next. Between scenarios the reset comes first and the cooldown after it, so the server settles after the reload before the next scenario connects; a retry waits first (its recovery wait), then resets. The reset is part of that attempt, and strict: a map load that fails (a timed-out `load_world`, a server that died in it) is logged and raised rather than leaving the world as the last run left it (#2243), and the next reset loads the map. One that raises fails that attempt, which is retried (and resets again) or, with `continue_on_error`, errors that scenario, and never changes the verdict of the scenario that ran before it, nor ends the batch. An attempt that failed before its reset (in a retry's wait, or a server restart) leaves the flag as it was. After the last scenario the world is left as it is, for the next `run_all()` to reset, unless the server is restarted (a new world) in between.
   When the queue stops (`stop()`, `__exit__`, the end of an `as_fixture()` session) with the world dirty, a server it does not stop -- one it was given, or one its own manager found already running and reused -- would be left synchronous at 20 Hz with nothing ticking it, and with the last run's actors in it, frozen for every other client (#2067). So `stop()` first restores it (`ScenarioRunner.restore_world()`): it resets the world once more (`reset_world()`, which destroys the runs' actors) and applies the world settings the runner's first run found (asynchronous, no fixed time step, for a freshly loaded map; a queue that loads no map puts back whatever its first run found, synchronous settings included). It leaves the TrafficManager alone: each run's traffic backend already shut its own down at the end of the run, and asking the client for one would start a new one, or take over another client's on that port. A server that does not answer a quick ping (`CarlaServerManager.is_alive()`, a few seconds) is not restored, with a warning: each call would wait for the client's 60 s timeout, or abort the process on arm64, before the launcher is stopped. Each step is best effort: a failure is logged, the next step still runs, and `stop()` goes on to close the Autoware launcher and the backends without raising. A server the queue stops gets none of this. The single-scenario run (`run_scenario_with_queue()`), batch mode, the SLURM worker and the sweeper's jobs (which run batch mode) all stop their queue with `with queue:`, so each restores the world this way.
   A `run_all()` that raises (a scenario failing every attempt without `continue_on_error`, or Ctrl-C) leaves the world as it was too: the next `run_all()` resets it before its first scenario.
   With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), and the queue goes on with the next one, whose first attempt resets the world.
 - **Server restart**: A CARLA server that dies mid-batch cannot recover by waiting, so before every attempt -- each case's first, and every retry -- a queue that owns its server checks it (`CarlaServerManager.is_alive()`) and, when it is gone, logs it, stops it and redoes the server part of `start()`: the server is started again (on the same port and arguments, so a SLURM task keeps its port slot), a new `ScenarioRunner` connects to it, and the map is loaded and the `MapManager` built again. The backends and the Autoware launcher are not prepared again: neither talks to the CARLA server. A restart that raises is the failure of the attempt it came before, retried or errored like any other, and the next attempt restarts again. A server the queue was given (`ScenarioQueue(server=...)`), or one its own manager found already running and reused (`CarlaServerManager.reused`), is never restarted, and a server that is alive is never touched. The SLURM worker, which calls `run_all()` once per case on one queue, gets the same restart before each case.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
   A `start()` (or `__enter__`) that fails -- the runner cannot connect, the map name is unknown, the Lanelet2 map does not load -- calls `stop()` before the error propagates, so the server the queue owns is stopped and the Autoware launcher closed even though `__exit__` does not run.
+- **Server start**: `CarlaServerManager.start()` never takes another process's server for the one it launched (#2233). Before launching on a local host it tries a plain TCP connection to `host:port`: with `reuse_if_running=False` a port that accepts one is refused at once ("in use by another process"; stop that process, choose another `server.port`, or set `reuse_if_running=True` to use the server there), and with `reuse_if_running=True` a port that accepts a connection but did not answer the first ping as CARLA (a busy server can miss its 2 s deadline) is pinged again for up to `CarlaServerManager.REUSE_PING_S` (30 s) and reused once it answers, or refused -- never launched over, since a second server could not bind the port; a port that stops accepting connections during that wait (a server still shutting down, as after a queue's restart stopped it) is launched on. While a launched server starts, its own process is checked before each ping and after the one that answers: once it has exited, `start()` fails with its exit code and where CARLA's own log is (`<launcher directory>/CarlaUnreal/Saved/Logs`), even when something answers on the port.
 - **Server lifetime**: A CARLA that `CarlaServerManager` launched does not outlive the process that launched it. `stop()` (or `with`, or `atexit`) stops it on a normal exit; a SIGTERM to `scenario` raises `KeyboardInterrupt`, so the `with` blocks unwind as on Ctrl-C, and it exits 143; and CARLA is launched under a small watchdog that leads its process group and, once that process is gone (killed with SIGKILL, say, as the lanelet sweeper does a job past `sweep.job_timeout_seconds`), sends the group SIGTERM and, 10 s later, SIGKILL; the sweeper then waits until that CARLA has exited before its next attempt. The watchdog polls its parent process rather than using `PR_SET_PDEATHSIG`, which follows the thread that started it. A server that was already running and was reused is never stopped.
-- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when there is no CARLA to launch or the queue fails to `start()`. It runs the scenarios with `run_all(continue_on_error=True)`, so a scenario that raises on every attempt fails its own tests rather than skipping the session: its result is a failed one naming the error, and a `CarlaScenarioFixture` for it fails each test that uses it.
+- **pytest integration**: `as_fixture()` generates a session-scoped pytest fixture with automatic skip when the queue fails to `start()` -- among other reasons, when no server answers at its host and there is none to launch. Whether a CARLA is installed is not asked first: a remote server, or one already running, needs none. It runs the scenarios with `run_all(continue_on_error=True)`, so a scenario that raises on every attempt fails its own tests rather than skipping the session: its result is a failed one naming the error, and a `CarlaScenarioFixture` for it fails each test that uses it.
 
 ### Recordings of a run
 
@@ -448,12 +492,25 @@ classDiagram
     class EntityExistenceCondition
     class OffRoadFractionCondition
     class PlaceClearCondition
+    class EntityCountCondition
     class TrafficSignalCondition
     class TrafficSignalControllerCondition
+    class RouteProgressCondition
+    class ActionStateCondition
+    class TrajectoryTimeCondition
+    class LaneChangeSettledCondition
+    class MetricCondition
+    class AdversityFeasibleCondition
+    class AdversityActiveCondition
 
+    class CompositionCondition {
+        <<abstract>>
+        +_check(world, elapsed) ScenarioResult | None
+    }
     class EntityLanePositionCondition
     class EntityDistanceCondition
     class EntityPositionDistanceCondition
+    class EntityAreaDistanceCondition
     class TimeToCollisionCondition
     class TimeHeadwayCondition
     class RelativeSpeedCondition
@@ -461,7 +518,9 @@ classDiagram
     class AccelerationCondition
     class StandstillCondition
     class TemporaryStopCondition
+    class TurnIndicatorCondition
     class WaypointCondition
+    class EntityLaneOfCondition
 
     class AndCondition
     class OrCondition
@@ -476,19 +535,31 @@ classDiagram
     BaseCondition <|-- EntityExistenceCondition
     BaseCondition <|-- OffRoadFractionCondition
     BaseCondition <|-- PlaceClearCondition
+    BaseCondition <|-- EntityCountCondition
     BaseCondition <|-- TrafficSignalCondition
     BaseCondition <|-- TrafficSignalControllerCondition
-    BaseCondition <|-- EntityLanePositionCondition
-    BaseCondition <|-- EntityDistanceCondition
-    BaseCondition <|-- EntityPositionDistanceCondition
-    BaseCondition <|-- TimeToCollisionCondition
-    BaseCondition <|-- TimeHeadwayCondition
-    BaseCondition <|-- RelativeSpeedCondition
-    BaseCondition <|-- SpeedCondition
-    BaseCondition <|-- AccelerationCondition
-    BaseCondition <|-- StandstillCondition
-    BaseCondition <|-- TemporaryStopCondition
-    BaseCondition <|-- WaypointCondition
+    BaseCondition <|-- RouteProgressCondition
+    BaseCondition <|-- ActionStateCondition
+    BaseCondition <|-- TrajectoryTimeCondition
+    BaseCondition <|-- LaneChangeSettledCondition
+    BaseCondition <|-- MetricCondition
+    BaseCondition <|-- AdversityFeasibleCondition
+    BaseCondition <|-- AdversityActiveCondition
+    BaseCondition <|-- CompositionCondition
+    CompositionCondition <|-- EntityLanePositionCondition
+    CompositionCondition <|-- EntityDistanceCondition
+    CompositionCondition <|-- EntityPositionDistanceCondition
+    CompositionCondition <|-- EntityAreaDistanceCondition
+    CompositionCondition <|-- TimeToCollisionCondition
+    CompositionCondition <|-- TimeHeadwayCondition
+    CompositionCondition <|-- RelativeSpeedCondition
+    CompositionCondition <|-- SpeedCondition
+    CompositionCondition <|-- AccelerationCondition
+    CompositionCondition <|-- StandstillCondition
+    CompositionCondition <|-- TemporaryStopCondition
+    CompositionCondition <|-- TurnIndicatorCondition
+    CompositionCondition <|-- WaypointCondition
+    EntityLanePositionCondition <|-- EntityLaneOfCondition
     BaseCondition <|-- AndCondition
     BaseCondition <|-- OrCondition
     BaseCondition <|-- NotCondition
@@ -504,11 +575,14 @@ classDiagram
 | Category | Conditions | Description |
 |----------|-----------|-------------|
 | **Temporal** | `TimeoutCondition`, `ElapsedTimeCondition` | Time-based triggers |
-| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, and a place clear of road users |
-| **Position** | `EntityLanePositionCondition`, `WaypointCondition` | Road/lane position, waypoint crossing |
-| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity or to a place on the map (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
-| **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
+| **Safety** | `CollisionCondition`, `EntityExistenceCondition`, `OffRoadFractionCondition`, `PlaceClearCondition`, `EntityCountCondition` | Collision detection — with anything, or with a named entity or class of object — actor alive checks, leaving the driving lanes by more than a tolerance, a place clear of road users, and how many road users of a kind are where |
+| **Position** | `EntityLanePositionCondition`, `EntityLaneOfCondition`, `WaypointCondition`, `RouteProgressCondition` | Road/lane position (a named lane, or the lane of a position), no road ahead within a distance (`WaypointCheckType.IS_EMPTY`), distance along the route |
+| **Relative** | `EntityDistanceCondition`, `EntityPositionDistanceCondition`, `EntityAreaDistanceCondition`, `TimeToCollisionCondition`, `TimeHeadwayCondition`, `RelativeSpeedCondition` | Gap to another entity, to a place on the map, or from an entity's body to an area of the map chosen by its ground (along the road with `measure: lane`; `signed` there for ahead of the subject, the way it faces, positive, behind negative), time to collision, following headway and speed difference |
+| **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition`, `TurnIndicatorCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go, turn indicators |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
+| **Actions** | `ActionStateCondition`, `TrajectoryTimeCondition`, `LaneChangeSettledCondition` | Another action's lifecycle state, a trajectory's clock, a lane change settled |
+| **Adversity** | `AdversityFeasibleCondition`, `AdversityActiveCondition` | Whether an adversity can be carried out here, and whether one is in progress |
+| **Metric** | `MetricCondition` | A metric NG for longer than allowed |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
 | **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks (a persistent condition counts only passing ticks, so it never fires around a condition that only reports a failure -- the collision, off-road, existence and timeout ones -- and warns when built around one: [Usage](usage.md#output-files)) |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
@@ -627,8 +701,11 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
 1. **Standby.** The trigger `BaseCondition` is evaluated via
    `condition.check(world, elapsed)`. A non-`None` result fires the action:
    `execute(world)` runs and the action enters `startTransition`.
-2. **Running.** The trigger is not re-evaluated, so one run cannot begin on top
-   of another. Two independent questions are then asked every tick, in this
+2. **Running.** The trigger cannot fire, so one run cannot begin on top
+   of another. A repeating action (`once=False`) still checks it every tick
+   and drops the result, so a stateful trigger (`PersistentCondition`,
+   `StickyCondition`) sees every tick, as the children of `And` / `Or` do.
+   Two independent questions are then asked every tick, in this
    order:
 
    **Does `execute` repeat?** — `reissues_while_running`. This is a fact about
@@ -646,7 +723,10 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    **When does the run end?** — `until`, a `BaseCondition`. This is the same
    kind of object the trigger is written in, so the two ends of a run read
    together. No `until` means there was nothing to wait for, and the run is
-   over on the tick after the one it was commanded on.
+   over on the tick after the one it was commanded on. `until` is reset
+   (`BaseCondition.reset()`) as each run of a repeating action after its
+   first begins, before `execute`, so a run never ends on a latch or a hold
+   timed in an earlier run. (The runner resets it before the first run.)
 
    Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
    hands work to the simulator and watches for it to land — the traffic
@@ -1045,7 +1125,7 @@ base_path/
             ├── 0/                    # Job index 0
             │   ├── ScenarioName_result.json
             │   ├── ScenarioName.trajectory.jsonl
-            │   ├── raw_output.log    # Subprocess stdout/stderr
+            │   ├── raw_output.log    # Subprocess stdout/stderr (a viewer run's)
             │   └── .hydra/
             │       └── overrides.yaml
             ├── 1/                    # Job index 1
@@ -1076,7 +1156,7 @@ sequenceDiagram
     participant C as CARLA Simulator
 
     B->>A: POST /api/run {scenario, extra_overrides, sweeper, launcher, slurm}
-    opt The body is not a JSON object, or a field has the wrong type
+    opt The body is not JSON, not a JSON object, names no scenario, or a field has the wrong type
         A-->>B: 400 {"status": "error", "message": ...}
     end
 
@@ -1105,7 +1185,7 @@ sequenceDiagram
 
     loop For each job
         R->>R: _set_progress(running)
-        R->>S: subprocess.run(["uv", "run", "scenario", ...overrides])
+        R->>S: Popen(["uv", "run", "scenario", ...overrides]), output to a file
 
         rect rgb(240, 248, 255)
             Note over S,C: Isolated process — same execution<br/>pipeline as the scenario CLI command
@@ -1116,8 +1196,7 @@ sequenceDiagram
             SR->>SR: Write *_result.json + *.trajectory.jsonl
         end
 
-        S-->>R: exit code + stdout/stderr
-        R->>R: Save raw_output.log
+        S-->>R: exit code (stdout/stderr written to raw_output.log as it ran)
         R->>R: _set_progress(passed/failed)
         A-->>B: SSE event {current, total, status}
     end
@@ -1130,7 +1209,8 @@ sequenceDiagram
 
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
 - **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
-- **Checked run bodies**: `/api/run` and `/api/run/preview` read their body through one parser (`app.parse_run_body`): it must be a JSON object, `scenario` a string, `extra_overrides` a list of strings (null or absent: none), `sweeper` a string or null, `launcher` `local`, `slurm` or null, and `slurm` an object of text or number options. Anything else is answered with 400 before a run starts or a batch is submitted, so a string of overrides is never run one character per argument (#1500). So is a request the body is read from but that cannot run: a scenario pattern that is refused or matches nothing, a sweep that fails to expand, or a SLURM option value that is not valid (`/api/run/preview` too), each with the same JSON body as before; a SLURM submission is refused with 503 where SLURM is not available and 409 while another is still being made (#1964). The SLURM `resubmit` action refuses a body that is not an object, or a `failed` that is not a boolean, the same way.
+- **Job output on disk**: a job's stdout and stderr go to a file as it runs, never held in memory: `raw_output.log` in its job directory when the run is grouped as a multirun (the scenario page shows its last 256 KB), a temporary file otherwise -- an ungrouped job's directory is Hydra's, not known to the runner -- removed once the job is over. A job directory left empty (a job stopped or not launched before Hydra wrote to it) is removed too, so it is not listed as a case. A failed job's warning logs the last 4 KB.
+- **Checked run bodies**: `/api/run` and `/api/run/preview` read their body through one parser (`app.parse_run_body`): it must be JSON (a body that does not parse, cut off or garbled, is refused rather than read as no body), a JSON object, `scenario` a string, `extra_overrides` a list of strings (null or absent: none), `sweeper` a string or null, `launcher` `local`, `slurm` or null, and `slurm` an object of text or number options. `/api/run` also needs `scenario`: an empty body, or one without it, would otherwise run `*/*`. Anything else is answered with 400 before a run starts or a batch is submitted, so a string of overrides is never run one character per argument (#1500). So is a request the body is read from but that cannot run: a scenario pattern that is refused or matches nothing, a sweep that fails to expand, or a SLURM option value that is not valid (`/api/run/preview` too), each with the same JSON body as before; a SLURM submission is refused with 503 where SLURM is not available and 409 while another is still being made (#1964). The SLURM `resubmit` action refuses a body that is not JSON or not an object, or a `failed` that is not a boolean, the same way (an empty one resubmits with no flags).
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
 - **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories. The directory is the run's alone: one started in the same second as another run or a CLI sweep gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...
 
@@ -1153,7 +1233,7 @@ fail[1](default_timeout)           ← TimeoutCondition
 
 The scenario's own fail conditions come first, then the runner's
 `ego_existence`, then `default_timeout` — which is absent when the scenario
-registered a timeout of its own.
+registered a timeout of its own, as a pass or a fail condition.
 
 The `_build_condition_tree()` function in `scanner.py` recursively parses:
 
@@ -1177,13 +1257,16 @@ graph LR
     CW["CarlaWorldPose<br/>(x, y, z, yaw)"]
 
     L2 -->|"to_opendrive()"| OD
-    OD -->|"to_carla_location()"| CW
+    L2 -->|"to_carla_world()"| CW
+    OD -->|"to_carla_world()"| CW
     CW -->|"to_lanelet2()"| L2
     OD -->|"snap_to_carla_road()"| CW
     CW -->|"to_opendrive()"| OD
 ```
 
 **`MapManager`** is a singleton that holds the `LaneletMap`, `RoadNetwork`, and a precomputed z-offset (averaged from CARLA spawn points, leaving out those matched to a lanelet on another level of stacked roads). It is initialized once per `ScenarioQueue.start()` when both `xodr_path` and `lanelet2_path` are provided.
+
+`to_carla_world()` returns a `CarlaWorldPose`; `to_carla_location()` takes any of the three (or a `carla.Location`) and returns the `carla.Location` of its `CarlaWorldPose`.
 
 **`snap_to_carla_road()`** uses CARLA's ray-cast API to project an OpenDRIVE position onto the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world.
 
@@ -1425,7 +1508,7 @@ graph LR
 
 | Variable | Required | Default | Used by | Description |
 |----------|----------|---------|---------|-------------|
-| **`CARLA_EXECUTABLE`** | No | the launcher `scenario-setup` installed | `CarlaServerManager` | Absolute path to the CARLA UE5 launcher (`CarlaUnreal.sh`). Unset, the one `scenario-setup` installed under `~/.autoware_carla_scenario/bin/carla` is launched. When a server is already running and `reuse_if_running=True`, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all. |
+| **`CARLA_EXECUTABLE`** | No | the launcher `scenario-setup` installed | `CarlaServerManager` | Absolute path to the CARLA UE5 launcher (`CarlaUnreal.sh`). Unset, the one `scenario-setup` installed under `~/.autoware_carla_scenario/bin/carla` is launched. When a server is already running and `reuse_if_running=True`, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all and no server answers at their host. |
 | **`AUTOWARE_CARLA_SCENARIO_HOME`** | No | `~/.autoware_carla_scenario` | `carla_install_paths` | Where `scenario-setup` installs CARLA (`bin/carla`). |
 | **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |
@@ -1433,7 +1516,7 @@ graph LR
 | **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. `viewer --base-path` wins over it. |
 | **`VIEWER_HOST`** | No | `127.0.0.1` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. `viewer --host` wins over it; `0.0.0.0` serves every interface, with no authentication. |
 | **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. `viewer --port` wins over it. |
-| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed); set (to a whole number, `0` or empty for none), it wins over `sweep.resume_from`, and any other value is refused (exit 2). A batch (a glob, or `launcher=slurm`) reads the flag directly instead; a single run or Hydra's basic sweeper, which nothing would resume, refuses the flag (exit 2). |
+| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py` reads it; `sweeper/job_status.py`'s `resume_from_env()` checks its value) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed); set (to a whole number, `0` or empty for none), it wins over `sweep.resume_from`, and any other value is refused (exit 2). A batch (a glob, or `launcher=slurm`) reads the flag directly instead; a single run or Hydra's basic sweeper, which nothing would resume, refuses the flag (exit 2). |
 
 #### Dynamic Map Path Variables
 

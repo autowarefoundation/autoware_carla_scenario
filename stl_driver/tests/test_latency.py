@@ -30,7 +30,10 @@ from stl_driver.config import STLDriverConfig
 from stl_driver.policy import EgoPolicy
 from tests.conftest import curved_route
 
-pytestmark = [pytest.mark.slow, pytest.mark.latency]
+#: Every test here is slow (each builds or drives a policy); only those that
+#: measure wall-clock time are also ``latency``, which CI does not run.  The
+#: rest run in CI's slow job.
+pytestmark = pytest.mark.slow
 
 N_MEASUREMENTS = 40
 #: The budget a deployment holding the 100 ms step would opt into.
@@ -71,6 +74,7 @@ def measure(policy: EgoPolicy, route: np.ndarray) -> list[float]:
     return durations
 
 
+@pytest.mark.latency
 def test_a_step_fits_inside_the_policy_timestep(warm_policy):
     durations = measure(warm_policy, curved_route(radius_m=60.0))
     median_ms = statistics.median(durations) * 1000.0
@@ -81,6 +85,7 @@ def test_a_step_fits_inside_the_policy_timestep(warm_policy):
     assert p95_ms < 150.0
 
 
+@pytest.mark.latency
 def test_the_search_fits_inside_the_policy_step(warm_policy):
     """What actually has to hold: a plan every 100 ms.
 
@@ -95,6 +100,7 @@ def test_the_search_fits_inside_the_policy_step(warm_policy):
     assert result.debug_scalars["stl_solve_seconds"] < 0.100
 
 
+@pytest.mark.latency
 def test_refinement_still_runs_under_an_opt_in_budget():
     """A deployment's budget must leave room to refine, not just to sample.
 
@@ -114,6 +120,7 @@ def test_refinement_still_runs_under_an_opt_in_budget():
     assert result.debug_scalars["stl_refine_steps"] >= 2.0
 
 
+@pytest.mark.latency
 def test_the_first_step_after_a_session_starts_is_a_full_search_in_time():
     """The warm-up exists so that torch's start-up cost is already paid.
 

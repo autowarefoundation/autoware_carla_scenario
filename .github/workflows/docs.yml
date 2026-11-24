@@ -15,7 +15,8 @@
 #                      the site root) moves to it only when it is the version
 #                      master is at; an older version is published beside the
 #                      others and `latest` stays. Without a `version`, the same
-#                      as a push.
+#                      as a push, and dispatched from master only: from any
+#                      other ref it fails rather than publish that ref as `dev`.
 #
 # Pages must be set, once, to deploy from the `gh-pages` branch (Settings ->
 # Pages -> Build and deployment -> Deploy from a branch). This workflow creates
@@ -32,7 +33,9 @@ on:
       # Fills in typecheck.md's library-check counts and lists (#789).
       - "autoware_carla_scenario/mkdocs_hooks/**"
       - "autoware_carla_scenario/overrides/**"
-      # mkdocstrings renders the API reference from the sources.
+      # The typecheck_library.py hook fills typecheck.md from the sources:
+      # typecheck/library.py's entries, each module's line count and its
+      # docstring's first paragraph (typecheck/library_docs.py).
       - "autoware_carla_scenario/src/**"
       - ".github/actions/build-docs/**"
       - ".github/scripts/publish-docs.sh"
@@ -43,7 +46,7 @@ on:
         description: >
           Publish the selected ref's docs as this version (e.g. 3.1.2); it
           becomes `latest` only if it is the version master is at. Leave empty
-          to deploy master's docs as `dev`.
+          to deploy master's docs as `dev` (run from master only).
         required: false
         type: string
         default: ""
@@ -75,6 +78,15 @@ jobs:
           set -euo pipefail
           pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
           if [ -z "${REQUESTED}" ]; then
+            # `dev` is master's docs. A push runs on master only; a dispatch
+            # from a feature branch or an old tag without a `version` would
+            # overwrite the public `dev` docs with that ref's (#2302).
+            if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
+              # Not "give the version this ref carries": a feature branch
+              # carries master's version, and would then become `latest`.
+              echo "::error::Without a version this deploys master's docs as dev; run it from master, or from a release's v<version> tag with that version (${GITHUB_REF_NAME} is not master)"
+              exit 1
+            fi
             echo "version=dev" >> "$GITHUB_OUTPUT"
             echo "mode=dev" >> "$GITHUB_OUTPUT"
             echo "Deploying ${GITHUB_REF_NAME} (package ${pkg}) as dev"

@@ -18,7 +18,7 @@ import pytest
 from autoware_carla_scenario.autoware_bridge import FakeAutowareBridge
 from autoware_carla_scenario.conditions.base import find_actor_by_role_name
 from autoware_carla_scenario.conditions.entity_filter import (
-    _role_name as filter_role_name,
+    _name_of as filter_name_of,
 )
 from autoware_carla_scenario.constants import EGO_ROLE_NAME, EGO_ROLES
 from autoware_carla_scenario.entity import AutowareEgoEntity
@@ -120,7 +120,8 @@ class TestTheEgoIsFoundUnderItsNativeName:
         assert _role_name(_Actor(1, "ego")) == "Ego"  # type: ignore[arg-type]
         assert _role_name(_Actor(1, "npc1")) == "npc1"  # type: ignore[arg-type]
         assert _role_name(_Actor(1, None)) is None  # type: ignore[arg-type]
-        assert filter_role_name(_Actor(1, "hero")) == "Ego"  # type: ignore[arg-type]
+        world: Any = SimpleNamespace()
+        assert filter_name_of(world, _Actor(1, "hero")) == "Ego"  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

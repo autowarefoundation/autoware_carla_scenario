@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -12,13 +11,21 @@ from ..registry import get_conf_dirs, load_scenario_plugins
 from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
-from .case_paths import MAX_INDEX, _stat, result_path, session_order
+from .case_paths import (
+    MAX_INDEX,
+    _stat,
+    job_index,
+    own_file,
+    result_path,
+    scenario_overrides,
+    session_order,
+)
 from .cases import _hydra_overrides as _read_overrides
 from .cases import _passed as _passed
+from .cases import _read_json
 from .cases import _seconds as _seconds
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
-from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
 from .runner import _read_raw_log as _read_raw_log
 
 logger = logging.getLogger(__name__)
@@ -64,7 +71,7 @@ def _jobs_stamp(directory: Path) -> tuple[Any, ...]:
     try:
         with os.scandir(directory) as found:
             jobs = sorted(
-                (e for e in found if e.name.isascii() and e.name.isdigit()),
+                (e for e in found if job_index(e.name) is not None),
                 key=lambda e: e.name,
             )
             return (
@@ -145,11 +152,12 @@ def _read_result_json(path: Path) -> dict[str, Any] | None:
 
     ``None`` too when the file is not a JSON object: a result cut off
     mid-character (not UTF-8, a ``ValueError``) or of another type must not
-    break the scan of every other session.
+    break the scan of every other session. Read as ``ui.cases`` reads every
+    JSON document (:func:`~.cases._read_json`): a document that is JSON
+    ``null`` is one that cannot be read here.
     """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    data = _read_json(path)
+    if data is None:
         logger.warning("Failed to read result JSON: %s", path)
         return None
     if not isinstance(data, dict):
@@ -174,6 +182,31 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
     return value if isinstance(value, str) else str(value)
+
+
+def _entry_overrides(entry: dict[str, Any]) -> list[str]:
+    """The overrides a batch case ran with, as its ``batch_results.json``
+    entry (or a SLURM batch's case recorded so far) gives them: its sweep
+    case, each item as a string (as :mod:`.results` reads them).
+
+    A batch directory has no ``.hydra/overrides.yaml``: each case carries its
+    own (#2344).  An entry names no ``scenario=`` override, which the scenario
+    page's Re-run needs, so one is added from the entry's ``scenario``: the
+    batch's label for the case, less the ``#k`` it is numbered with when its
+    sweep gave the scenario more than one case
+    (``examples.argv._case_labels``).  None is added for an entry that names
+    no scenario (the checked :func:`.case_paths.scenario_overrides`, #2354).
+
+    They are not all the case ran with: a batch records no command line, so
+    the overrides it gave every case are not among them, and the scenario
+    page says so beside its Re-run.
+    """
+    value = entry.get("overrides")
+    overrides = [str(o) for o in value] if isinstance(value, list) else []
+    label = entry.get("scenario")
+    if not isinstance(label, str):
+        return overrides
+    return scenario_overrides(overrides, label)
 
 
 def _listing(directory: Path) -> list[Path] | None:
@@ -210,24 +243,28 @@ def _scan_multirun_session(
     if entries is None:
         return None
     job_dirs = sorted(
-        (d for d in entries if d.is_dir() and d.name.isascii() and d.name.isdigit()),
+        (d for d in entries if job_index(d.name) is not None and d.is_dir()),
         key=lambda d: int(d.name),
     )
     if not job_dirs:
         return None
 
     passed_count = 0
+    pending_count = 0
     total_count = len(job_dirs)
     scenario_names: set[str] = set()
 
     for job_dir in job_dirs:
         result_file = result_path(job_dir)
+        data = _read_result_json(result_file) if result_file is not None else None
         if result_file is not None:
-            data = _read_result_json(result_file)
-            if data and _passed(data.get("passed")):
-                passed_count += 1
             scenario_names.add(_extract_scenario_name(data, job_dir))
-        # Missing result counts as failed (no increment)
+        if not data:
+            # A missing or unreadable result: without a result, as the
+            # session page counts it (#2285).
+            pending_count += 1
+        elif _passed(data.get("passed")):
+            passed_count += 1
 
     scenario_label = ", ".join(sorted(scenario_names)) if scenario_names else "unknown"
 
@@ -238,6 +275,7 @@ def _scan_multirun_session(
         scenario_name=scenario_label,
         passed_count=passed_count,
         total_count=total_count,
+        pending_count=pending_count,
     )
 
 
@@ -279,6 +317,9 @@ def _scan_outputs_session(
         scenario_name=scenario_name,
         passed_count=1 if passed else 0,
         total_count=1,
+        # An unreadable result: without a result, as the session page
+        # counts it (#2285).
+        pending_count=0 if data else 1,
     )
 
 
@@ -365,9 +406,7 @@ def load_session(
             # Not cached: it is read again once it can be.
             return items
         indices = sorted(
-            int(d.name)
-            for d in entries
-            if d.is_dir() and d.name.isascii() and d.name.isdigit()
+            int(d.name) for d in entries if job_index(d.name) is not None and d.is_dir()
         )
         for index in indices:
             job = cases.job_dir(base_path, date, time, index)
@@ -398,6 +437,7 @@ def load_session(
                             elapsed_seconds=None,
                             overrides=overrides,
                             message="Failed to read result JSON",
+                            pending=True,
                         )
                     )
             else:
@@ -410,6 +450,7 @@ def load_session(
                         elapsed_seconds=None,
                         overrides=overrides,
                         message="No result file found",
+                        pending=True,
                     )
                 )
 
@@ -418,7 +459,6 @@ def load_session(
         if found is None:
             return items
         data_list, final = found
-        overrides = _read_overrides(directory)
         # An entry that is not an object is left out; the others keep their
         # position, which load_scenario and case_files index the batch by.
         for i, entry in _dict_entries(data_list):
@@ -428,8 +468,9 @@ def load_session(
                     scenario_name=_name(entry.get("scenario"), "unknown"),
                     passed=_passed(entry.get("passed")),
                     elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
-                    overrides=overrides,
+                    overrides=_entry_overrides(entry),
                     message=_text(entry.get("message")),
+                    pending=entry.get("pending") is True,
                 )
             )
 
@@ -449,6 +490,22 @@ def load_session(
                         elapsed_seconds=_seconds(data.get("elapsed_seconds")),
                         overrides=overrides,
                         message=_text(data.get("message")),
+                    )
+                )
+            else:
+                # Listed, as a multirun job's is, so that the page counts it
+                # as the session list does, never "All passed" (#2285);
+                # read again until it can be.
+                final = False
+                items.append(
+                    SessionItem(
+                        index=0,
+                        scenario_name=_extract_scenario_name(None, directory),
+                        passed=None,
+                        elapsed_seconds=None,
+                        overrides=overrides,
+                        message="Failed to read result JSON",
+                        pending=True,
                     )
                 )
 
@@ -542,6 +599,8 @@ def load_scenario(
     overrides: list[str] = []
     job_path: Path | None = None
     cacheable = True
+    # What a case without a result says (a batch's pending case says why).
+    no_result = "No result data available (scenario may have failed to start)"
 
     if session_type == "multirun":
         job = cases.job_dir(base_path, date, time, index)
@@ -555,13 +614,18 @@ def load_scenario(
 
     elif session_type == "batch":
         job_path = directory
-        overrides = _read_overrides(job_path)
         found = batch_entries(job_path)
         if found is not None:
             data_list, final = found
             entry = data_list[index] if 0 <= index < len(data_list) else None
-            if isinstance(entry, dict) and not entry.get("pending"):
-                data = entry
+            if isinstance(entry, dict):
+                # The case's own overrides: a batch directory has no
+                # .hydra/overrides.yaml (#2344).
+                overrides = _entry_overrides(entry)
+                if not entry.get("pending"):
+                    data = entry
+                elif isinstance(entry.get("message"), str) and entry["message"]:
+                    no_result = entry["message"]
             if not final:
                 cacheable = False
 
@@ -583,7 +647,7 @@ def load_scenario(
             return None
         result = ScenarioResultView(
             passed=None,
-            message="No result data available (scenario may have failed to start)",
+            message=no_result,
             elapsed_seconds=None,
             condition_statuses=[],
             overrides=overrides,
@@ -621,7 +685,7 @@ def load_scenario(
     # batch's cases share a directory, each under a stem of its own.
     trajectory_path: str | None = None
     files = case_files(base_path, session_type, date, time, index)
-    if files is not None and files.trajectory.is_file():
+    if files is not None and own_file(files.trajectory):
         trajectory_path = str(files.trajectory.resolve())
 
     result = ScenarioResultView(

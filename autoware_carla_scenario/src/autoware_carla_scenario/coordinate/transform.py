@@ -49,8 +49,10 @@ from autoware_lanelet2_extension_python.projection import MGRSProjector as _  # 
 import lanelet2.core
 import lanelet2.geometry
 
+from ..kinematics.angle import normalize_angle_rad
 from .map_manager import MapManager
 from .poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
+from .stacked import STACKED_HEIGHT_TOLERANCE_M, choose_lanelet
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +67,8 @@ _STACKED_CANDIDATES = 8
 
 #: How much farther (m) from a point's elevation than the nearest lanelet
 #: surface over or under it a lanelet's surface may be and still hold the
-#: point (:func:`on_lanelet`).  Lanelets that overlap on one level -- a
-#: junction's -- all hold it; of lanelets stacked over one another -- an
-#: overpass and the road beneath it, metres apart -- only the one at the
-#: point's level does.
-_STACKED_HEIGHT_TOLERANCE = 1.0
+#: point (:func:`on_lanelet`, :func:`.stacked.choose_lanelet`).
+_STACKED_HEIGHT_TOLERANCE = STACKED_HEIGHT_TOLERANCE_M
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +105,7 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
         lane_id=_find_lane_at_t(road, s, t),
         s=s,
         t=t,
-        heading=_normalize_angle(od_heading - heading_ref),
+        heading=normalize_angle_rad(od_heading - heading_ref),
     )
 
 
@@ -167,7 +166,7 @@ def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
         lanelet_id=lanelet_id,
         s=s,
         t=t,
-        heading=_normalize_angle(heading - heading_cl),
+        heading=normalize_angle_rad(heading - heading_cl),
     )
 
 
@@ -386,6 +385,34 @@ def lane_beside(lanelet_id: int, direction: str) -> Optional[int]:
     return int(beside.id)
 
 
+def lanelets_beside(lanelet_id: int) -> list[int]:
+    """The lanelets beside *lanelet_id*, either side, a lane change allowed
+    across the line between or not (the routing graph's neighbours).
+
+    Its ``left``, ``right``, ``adjacentLeft`` and ``adjacentRight``, in that
+    order, those it has; empty where it has none.
+
+    Requires :class:`MapManager` to be initialised.
+    """
+    mm = MapManager.get_instance()
+    graph = mm.routing_graph
+    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    found: list[int] = []
+    left = graph.left(lanelet)
+    if left is not None:
+        found.append(int(left.id))
+    right = graph.right(lanelet)
+    if right is not None:
+        found.append(int(right.id))
+    adjacent_left = graph.adjacentLeft(lanelet)
+    if adjacent_left is not None:
+        found.append(int(adjacent_left.id))
+    adjacent_right = graph.adjacentRight(lanelet)
+    if adjacent_right is not None:
+        found.append(int(adjacent_right.id))
+    return found
+
+
 #: How far ahead (m) :func:`lane_change_target_lanelets` looks for the
 #: lanelets that also count as the lane beside;
 #: :func:`lanes_ahead_before_junction` stops at the next junction well before.
@@ -425,11 +452,37 @@ def lane_change_target_lanelets(
     return targets
 
 
+def carla_xy_to_map(
+    x: float, y: float, mgrs_offset: tuple[float, float]
+) -> tuple[float, float]:
+    """CARLA world point ``(x, y)`` in the Lanelet2 map's frame.
+
+    Add the projector offset (*mgrs_offset*, :attr:`.MapManager.mgrs_offset`)
+    and flip y: CARLA's frame is the OpenDRIVE origin's and left-handed, the
+    map's MGRS and right-handed.  The inverse of :func:`map_xy_to_carla`.
+    """
+    offset_x, offset_y = mgrs_offset
+    return x + offset_x, -y + offset_y
+
+
+def map_xy_to_carla(
+    x: float, y: float, mgrs_offset: tuple[float, float]
+) -> tuple[float, float]:
+    """Lanelet2 map point ``(x, y)`` in CARLA world coordinates.
+
+    Subtract the projector offset (*mgrs_offset*,
+    :attr:`.MapManager.mgrs_offset`) and flip y.  The inverse of
+    :func:`carla_xy_to_map`.
+    """
+    offset_x, offset_y = mgrs_offset
+    return x - offset_x, -(y - offset_y)
+
+
 def _carla_to_lanelet2_frame(pose: CarlaWorldPose) -> tuple[float, float, float]:
     """A CARLA pose's ``(x, y, heading)`` in the Lanelet2 map's frame."""
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    return pose.x + offset_x, -pose.y + offset_y, -math.radians(pose.yaw)
+    x, y = carla_xy_to_map(pose.x, pose.y, mm.mgrs_offset)
+    return x, y, -math.radians(pose.yaw)
 
 
 def to_carla_location(
@@ -511,6 +564,10 @@ def to_lanelet2(pose: Union[OpenDrivePose, CarlaWorldPose]) -> Lanelet2Pose:
     is read on the nearest lanelet: ``s`` is the arc length to the foot of the
     perpendicular on its centerline (not the nearest centerline vertex), and
     ``t`` and ``heading`` are measured against the segment that foot lies on.
+    Where several lanelets are as near -- overlapping in a junction, meeting
+    at a seam, or stacked over one another -- the pose's elevation picks the
+    level and its heading the lanelet on it
+    (:func:`.stacked.choose_lanelet`).
     """
     if isinstance(pose, CarlaWorldPose):
         return _carla_to_lanelet2(pose)
@@ -554,10 +611,10 @@ def to_map_frame(
         carla_pose = pose
 
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
+    map_x, map_y = carla_xy_to_map(carla_pose.x, carla_pose.y, mm.mgrs_offset)
     return BridgePose.from_rpy(
-        x=carla_pose.x + offset_x,
-        y=-carla_pose.y + offset_y,
+        x=map_x,
+        y=map_y,
         z=carla_pose.z + mm.z_offset,
         roll=math.radians(carla_pose.roll),
         pitch=-math.radians(carla_pose.pitch),
@@ -587,11 +644,11 @@ def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
     # Lanelet2 centerline uses MGRS absolute coords; CARLA world uses
     # XODR-relative coords.  Subtract the MGRS offset for x/y, and the
     # vertical offset for z (Lanelet2 stores absolute elevation).
-    offset_x, offset_y = mm.mgrs_offset
+    carla_x, carla_y = map_xy_to_carla(x, y, mm.mgrs_offset)
     carla_yaw_deg = -math.degrees(total_heading)
     return CarlaWorldPose(
-        x=x - offset_x,
-        y=-(y - offset_y),
+        x=carla_x,
+        y=carla_y,
         z=z_cl - mm.z_offset,
         yaw=carla_yaw_deg,
     )
@@ -754,14 +811,10 @@ def _carla_to_opendrive_via_waypoint(
     od_heading = -math.radians(pose.yaw)
 
     arc_lengths = _road_arc_lengths(mm.road_network, road_id)
-    diffs = ref_line - np.array([od_x, od_y])
-    dists = np.linalg.norm(diffs, axis=1)
-    nearest_idx = int(np.argmin(dists))
-
-    s = float(arc_lengths[nearest_idx])
-    heading_ref = _heading_at_s(ref_line, arc_lengths, s)
-    t = _signed_perp_distance(od_x, od_y, ref_line, nearest_idx, heading_ref)
-    heading_diff = _normalize_angle(od_heading - heading_ref)
+    _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
+        ref_line, np.array([od_x, od_y]), arc_lengths
+    )
+    heading_diff = normalize_angle_rad(od_heading - heading_ref)
 
     return OpenDrivePose(
         road_id=road_id,
@@ -835,7 +888,7 @@ def _carla_to_opendrive_bruteforce(
         lane_id=_find_lane_at_t(road, s, t),
         s=s,
         t=t,
-        heading=_normalize_angle(-math.radians(pose.yaw) - heading_ref),
+        heading=normalize_angle_rad(-math.radians(pose.yaw) - heading_ref),
     )
 
 
@@ -918,9 +971,7 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
 
     # CARLA world uses XODR-relative coords; Lanelet2 uses MGRS absolute.
     # Add the MGRS offset for x/y, and the vertical offset for z.
-    offset_x, offset_y = mm.mgrs_offset
-    ll2_x = pose.x + offset_x
-    ll2_y = -pose.y + offset_y
+    ll2_x, ll2_y = carla_xy_to_map(pose.x, pose.y, mm.mgrs_offset)
     ll2_heading = -math.radians(pose.yaw)
 
     query = lanelet2.core.BasicPoint2d(ll2_x, ll2_y)
@@ -928,19 +979,27 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
         mm.lanelet_map.laneletLayer, query, _STACKED_CANDIDATES
     )
     # Lanelets stacked over one another -- an overpass and the road beneath
-    # it -- are all as near in plan view, so the pose's elevation picks one.
+    # it -- and lanelets overlapping on one level -- a junction's -- are all
+    # as near in plan view: the pose's elevation picks the level, and its
+    # heading the lanelet on it (stacked.choose_lanelet, #2221).
     nearest = results[0][0]
     ll2_z = pose.z + mm.z_offset
-    best: Optional[tuple[float, lanelet2.core.Lanelet, float, float, float]] = None
+    lanelets: list[lanelet2.core.Lanelet] = []
+    frenet: list[tuple[float, float, float]] = []
+    ranks: list[tuple[float, float, int]] = []
     for distance, candidate in results:
         if distance > nearest + _SEAM_TOLERANCE:
             break
         dz, s, t, heading_cl = _project_with_height(candidate, ll2_x, ll2_y, ll2_z)
-        if best is None or dz < best[0]:
-            best = (dz, candidate, s, t, heading_cl)
-    assert best is not None
-    _dz, lanelet, s, t, heading_cl = best
-    heading_diff = _normalize_angle(ll2_heading - heading_cl)
+        lanelets.append(candidate)
+        frenet.append((s, t, heading_cl))
+        ranks.append(
+            (dz, abs(normalize_angle_rad(ll2_heading - heading_cl)), int(candidate.id))
+        )
+    chosen = choose_lanelet(ranks)
+    lanelet = lanelets[chosen]
+    s, t, heading_cl = frenet[chosen]
+    heading_diff = normalize_angle_rad(ll2_heading - heading_cl)
 
     return Lanelet2Pose(lanelet_id=lanelet.id, s=s, t=t, heading=heading_diff)
 
@@ -1103,12 +1162,6 @@ def _project_to_centerline(
     return s, t, math.atan2(dy, dx)
 
 
-def _normalize_angle(angle: float) -> float:
-    """Normalize angle to [−π, π)."""
-    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
-    return -math.pi if wrapped >= math.pi else wrapped
-
-
 def _lane_width_at_ds(lane: Lane, ds: float) -> float:
     """Return the width of *lane* at offset *ds* from the lane-section start.
 
@@ -1193,16 +1246,23 @@ def _find_lane_at_t(road: Road, s: float, t: float) -> int:
     is what tells two neighbouring lanes of one road apart.
 
     *t* is measured from the reference line; the lanes stack from the lane
-    offset line, ``<laneOffset>`` to its left.
+    offset line, ``<laneOffset>`` to its left.  A point on a side with no
+    lanes -- just across the offset line of a one-sided road -- is given the
+    innermost lane of the other side, the lane it is beside, rather than the
+    centre lane 0, which no vehicle drives on.
 
-    Returns 0 if no lane sections are found.
+    Returns 0 if no lane sections are found, or neither side has a lane.
     """
     t_lane = t - _lane_offset_at_s(road, s)
     edges = _lane_edges(road, s, t_lane >= 0.0)
+    if not edges:
+        # Nothing on this side: the lane across the offset line.
+        other = _lane_edges(road, s, t_lane < 0.0)
+        return other[0][0] if other else 0
     for lane_id, outer in edges:
         if abs(t_lane) < outer:
             return lane_id
-    return edges[-1][0] if edges else 0
+    return edges[-1][0]
 
 
 def _side_width(road: Road, s: float, is_left: bool) -> float:

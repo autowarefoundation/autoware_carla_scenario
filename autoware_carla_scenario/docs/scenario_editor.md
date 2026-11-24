@@ -110,6 +110,43 @@ A label reads away from its dot, except on the right half of the map, where it
 reads back towards the middle: that edge is also where the viewer keeps its own
 zoom buttons, and a label running under them is a label nobody can read.
 
+### Areas: ground chosen by what it is
+
+A **Distance to an area** card (`area_distance`, `EntityAreaDistanceCondition`)
+measures from an entity's body to an *area*. The area is not drawn by hand. It
+is chosen by what the ground is:
+
+| Field | What it chooses |
+| --- | --- |
+| Ground | Lanelets by subtype (crosswalks, walkways, road shoulders, roads), the lanes through a junction (tagged `turn_direction`), any lanelet, polygons of the map's polygon layer by type (Autoware's intersection, detection, no-stopping and no-parking areas, parking lots, any polygon), or the raised or grooved parts of the roads' surface, from the OpenDRIVE map's OpenCRG grids |
+| Only these lanelets | Narrows lanelet ground to lanelets picked on the map, which must each be of the ground. Not for polygons |
+| Attributes | `key=value` tags every element must have, apart by commas: `turn_direction=left`, `location=urban`. A bare key asks only that the tag is there. Not for the road surface |
+| Surface counts from | For the road surface: how far above or below its design the surface has to stand to count. Empty: 0.01 m |
+
+The places panel outlines an area **whole** rather than pinning it: every
+lanelet it matches is outlined, and it is listed under the places with how many
+lanelets that is. A pin per crosswalk of a city would bury the places above.
+The viewer outlines lanelets only, so polygons of the polygon layer are counted
+and not drawn, and so are the raised and grooved parts of the road surface.
+Those come from the OpenDRIVE map, not the Lanelet2 one. They are counted on
+every render, without parsing the Lanelet2 map, and any OpenCRG grid that
+cannot be read is listed under the row. The match uses the framework's own matcher
+(`conditions.map_area.area_shapes`), so the outline is the ground the run
+measures to. Matching waits on the map being parsed, like binding a search
+pattern: **Outline areas** asks for it.
+
+Some mistakes only the map can show: a picked lanelet of another ground or
+missing from the map, or a ground the map has none of (a parking lot on a map
+with none). The panel says so on the area's row. The validator cannot see the
+map and accepts such a card. The run then says it once as a warning, and the
+condition never holds, with the problem in its details. The validator does
+refuse what no map could hold: picked lanelets for a ground of polygons, and
+an attribute written without its key or value.
+
+The run's result keeps the closest the entity came (`closest_m`, `closest_at_s`,
+and which lanelet or polygon it was nearest) in the card's details, whether or
+not the card fired.
+
 ### An abstract scenario draws one bound pattern
 
 A scenario whose lanelet is a constraint search does not name a place: it names
@@ -419,8 +456,9 @@ Two implementation notes, both of which cost an afternoon to find:
 * A **set** of lanelets works the same way, toggling on each click, and saves
   when the picker is closed -- sending the form on every toggle would re-render
   the inspector and tear the map down mid-selection.
-* Which viewer layers a click may land on is part of the field's declaration
-  (`FieldSpec.picks`). The layers overlap: a click on a road usually lands on
+* Which viewer layers a click may land on is the editor's
+  `LANELET_PICK_LAYERS` (`editor/app.py`): the renderer's layer names, not
+  part of a field's declaration. The layers overlap: a click on a road usually lands on
   the direction arrow, and a hair to the side lands on a `bound`, **which
   reports the id of a linestring, not of either lanelet it separates**. Only
   the layers whose id is the lanelet's own are accepted.
@@ -618,6 +656,20 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_heading`. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
+None of these keys copies the document: an exported package runs its document
+as it is when the run starts -- edited after the export, or another one named by
+`<PKG>_DOCUMENT_PATH` -- and only an override replaces what it says. The
+`scenario.spawn_overrides.<entity>` keys, `scenario.param_overrides.<node id>`
+and `scenario.timeout_seconds` are written as `null`, and the `ego.*` keys,
+which the runner reads before the scenario is built, as
+`${scenario_document:<scenario id>,<path>}`: the value at that path of the
+document the package registered (`ego.spawn.lanelet_id`, say), read when the
+key is. The resolver exists in every process that has loaded the scenario
+packages -- the `scenario` CLI, a SLURM task, the viewer, `scenario-check` --
+since a package's `register()` registers it with its document. Hydra saves a
+run's `.hydra/config.yaml` unresolved, so that file keeps the interpolation,
+not the value the run read: reading it elsewhere needs the package installed,
+and resolves against its document as it is then.
 A run checks what such an override sets: only `null` keeps the document's value,
 `lanelet_id` must be a whole number (`2` or `2.0`, not `2.7`, a boolean or a
 blank) and `s` a finite number (not a boolean or a blank), and an entity's or a
@@ -637,8 +689,8 @@ lanelets -- a [logical scenario](logical_scenarios.md). The scenario inspector's
 **Route search** section lists the pattern one segment per line ("lane 30-60 m,
 opposite lane: yes", "junction, turn left, traffic light: yes") with where the
 ego spawns and is sent, and edits it as the YAML the document stores (an empty
-box removes it; a malformed one is refused with the reason). A *Follow
-Trajectory* card's **Path** then offers *Along the scenario's route*, whose
+box removes it; a malformed one is refused with the reason). A *Set Goal*
+card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
 waypoint conditions. Progress is clamped to the route, so the validator warns
@@ -685,21 +737,22 @@ needs before one can start: Autoware localizes at the spawn, plans a route to
 the goal, and only then engages. The framework asks the same of a hand-written
 scenario — `BaseScenario.require_goal()`, asked by `register_route_to_goal` and
 by `ScenarioRunner` once `setup()` returns — so the editor stores the goal on the
-ego and exports it as the framework's own keys:
+ego and exports it as the framework's own keys, each reading the document
+(for a scenario `cut_in`):
 
 ```yaml
 ego:
-  spawn_lanelet_id: 183
-  spawn_s: 0.0
-  spawn_t: 0.0
-  spawn_heading: 0.0
-  entity: autoware
-  goal_lanelet_id: 265
-  goal_s: 12.5
+  spawn_lanelet_id: ${scenario_document:cut_in,ego.spawn.lanelet_id}
+  spawn_s: ${scenario_document:cut_in,ego.spawn.s.value}
+  spawn_t: ${scenario_document:cut_in,ego.spawn.t}
+  spawn_heading: ${scenario_document:cut_in,ego.spawn.heading}
+  entity: ${scenario_document:cut_in,ego.driven_by}
+  goal_lanelet_id: ${scenario_document:cut_in,ego.goal.lanelet_id}
+  goal_s: ${scenario_document:cut_in,ego.goal.s}
 ```
 
-The goal keys are written only when a goal is set, leaving the `ego` group's own
-`null` in place otherwise.
+An ego with no goal reads as `null`, the `ego` group's own; a run sets any of
+them with the usual override (`ego.goal_lanelet_id=265`).
 
 The **Set Goal** card still exists, for changing a destination mid-run or for a
 vehicle that is not the ego. One owned by the ego and left in the initialization
@@ -840,7 +893,7 @@ FieldSpec(
 ### "=" compares within a tolerance
 
 A card that measures a continuous quantity -- Speed, Acceleration, Relative
-speed, Distance, Distance to a place, TTC, TTC to a place, Time headway, Route
+speed, Distance, Distance to a place, Distance to an area, TTC, TTC to a place, Time headway, Route
 progress, Metric -- offers `=` among its predicates, and a measured value
 practically never lands exactly on a threshold. Each of these cards has an
 optional **Tolerance (=)** field, in the card's own unit: `=` holds while the
@@ -867,10 +920,75 @@ could reach the port. A path is accepted only when it resolves **inside**
 `SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache
 (`map_root()`, always added) and names a
 `.osm`, so what the route can serve is bounded by where the editor was started
-rather than by what the process can read.
+rather than by what the process can read. The previews that parse the map (a
+lanelet search, a derived lanelet, a spawn offset, an area, and the OpenDRIVE an
+area's road surface is read from) hold its files to the same roots, so a map that
+is not drawn is not parsed either.
 
 That is a bound, not authentication: the editor still has none, so it belongs on
 a network you trust.
+
+## An edit, a swap, a revision
+
+Every inspector form is posted when a field changes (200 ms after it), and the
+answer replaces the whole editor body: canvas, inspector and validation, so
+they never disagree. The tab title and the crumb in the top bar sit outside
+it and come with the answer out of band, so a rename shows there at once.
+
+Whatever the author is doing when that answer lands carries across it
+(`editor.js`): the field being typed in keeps its focus, its caret and what
+was typed, and a change made in another field in the meantime -- a lanelet
+picked on the map included -- is posted again from the new form rather than
+lost with the old one -- unless it was a choice in a list the new form no
+longer offers, when the server's value stands and nothing is posted. That needs the answer to show the same form again: a
+change still waiting its 200 ms when the author moves on to another object
+(opens another card, adds or removes one) is still lost.
+
+A form posts **all** of its fields, so one rendered from an older copy of the
+draft would put back whatever was changed since. Each draft therefore has a
+`revision`, counted up by every save and stored in its file, and each
+inspector form carries the one it was rendered from (`draft_revision`). A post
+whose revision is out of date is refused with **409 Conflict** and nothing is
+applied; the page says the draft was changed elsewhere and offers to reload.
+Two tabs' inspector forms therefore cannot undo each other's edits. One
+tab's own quick edits do not trip the check: a post sent while the answer to
+the one before is still on its way carries the revision before it, and is
+accepted as long as every save since came from the same page (`editor.js`
+names its page in an `X-Editor-Client` header). The editor remembers who made
+each of a draft's last 64 saves, for the 256 drafts saved most recently, in
+memory only, so such a post is refused like a stale one when a save it is
+behind was made before the editor restarted (or has dropped out of that
+memory); a reload puts the tab back in step.
+
+A button that names a row by its position -- remove a signal group, a
+controller or a phase, move a phase, add a phase to a controller, remove a
+waypoint condition -- or that posts a whole order (`/actors`) carries the
+revision too, and is checked **strictly**: only the draft's current revision
+passes, with no allowance for the page's own saves. Any save since the button
+was rendered may have moved the rows it points at, so a stale tab's click is
+refused rather than removing or moving the wrong row, and so is the second of
+two quick clicks in one tab, sent before the answer to the first renumbered
+the page. The refusal is the same 409 with its Reload button. Every answer
+re-renders the buttons with the revision it was rendered from, so a click
+after the swap goes through. A post without a `draft_revision` -- another
+button (add, remove by id), a script -- is not checked, so it acts on the draft
+as it is now.
+
+The forms of those rows -- a signal group's, a controller's, a phase's, the
+vertex of a waypoint condition -- post to a URL holding the row's position
+too, but are checked like any other inspector form, so a page's own quick
+edits pass. One of those edits may be the removal of a row before it, so each
+such form also names its row as it was rendered (`row`: the group's,
+controller's or phase's name, or the vertex; a phase also names its
+controller, `parent_row`), and is refused with the same 409 when the row now
+at its position is another -- unless the form is renaming its own row. A
+change pending in such a form when the answer lands is not carried across
+onto the row that took its place: it is dropped, as a change pending while
+the author moves on to another object is.
+
+**Save Draft** writes nothing when the draft is already stored as it is (every
+edit is saved as it is made), so pressing it leaves the revision, and the
+forms on the page, current.
 
 ## Save Draft vs Export Wheelhouse
 
@@ -917,7 +1035,7 @@ neither `cc` nor a build step. Only if that prebuilt package does not match
 the installation -- a `typesafe-carla-toolchain` other than the one the wheel
 was built with, say -- does the first `import typesafe_carla.carla`, the first
 scenario run, build it with the Codon compiler from the toolchain wheel (15 to
-30 minutes, about 14 GB of RAM, `cc`, but no network) into
+50 minutes, about 14 GB of RAM, `cc`, but no network) into
 `~/.cache/typesafe_carla/pycarla` (`TYPESAFE_CARLA_PYCARLA_DIR` moves it);
 `typesafe-codon pycarla` does that ahead of time, and reports that there is
 nothing to build when the prebuilt package applies.
@@ -1312,8 +1430,9 @@ machine that runs the scenario (see
 
 ## Offline
 
-Only two things in the editor come from the network, and neither is load-bearing
-for editing:
+Only two things in the editor come from the network. htmx is load-bearing --
+every control goes through it, so an editor that cannot fetch it has no working
+controls at all -- and the map viewer is not:
 
 | | |
 | --- | --- |

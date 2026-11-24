@@ -673,8 +673,11 @@ def _headway_slack(
 
     lead = inputs.lead_station_m.to(station.dtype)
     absent = ~torch.isfinite(lead)
-    # Substituted before the arithmetic, not after: `inf - station` would be
-    # `inf`, and `saturate(inf)` is `nan`, which poisons the whole signal.
+    # Substituted before the arithmetic, so that no infinity enters it. Not
+    # because `saturate(inf)` is NaN -- it is `cap`, since `tanh(inf)` is 1 --
+    # but because `inf - inf` is, one changed term away, and NaN in either
+    # branch of the `where` below poisons the gradient. The `where` then
+    # makes "no lead vehicle" read exactly `cap` whatever this branch holds.
     lead = torch.where(absent, station.detach() + cap * 2.0, lead)
     lead_speed = inputs.lead_speed_mps.to(station.dtype).clamp_min(0.0)
 

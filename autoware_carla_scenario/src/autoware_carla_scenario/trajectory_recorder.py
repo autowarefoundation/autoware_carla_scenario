@@ -14,7 +14,10 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   once, when recording starts.
 * ``{"type": "map", "name", "source", "lanelet2", "opendrive",
   "projector_info", "projector_type", "mgrs_offset", "z_offset"}`` -- once,
-  next: the map files the run read, each with its path and SHA-256.
+  next: the map files the run read, each with its path and SHA-256, and
+  ``source``, where the map came from (``map.directory``,
+  ``carla-pack:OWNER/REPO/PACK@VERSION`` for a content pack, or
+  ``map.source``).
 * ``{"type": "actor", "id", "type_id", "role", "extent": [x,y,z],
   "center": [x,y,z]}`` -- the first time a vehicle/walker is seen; ``extent`` is
   the bounding box's half size, ``center`` its offset from the actor origin.
@@ -142,23 +145,17 @@ RECORDED_KINDS = ("vehicle.", "walker.")
 
 def _rear_axle(actor: Any) -> Optional[float]:
     """Where the run takes an ego's rear axle to be, along its x axis from its
-    origin: the ``base_link`` the running ego set (``ego_base_link``: a driver
-    entity's rig origin, a ROS 2 ego's odometry, a bridged stack's
-    ``base_link``), else the rig origin a driver entity offered, else from its
-    wheels or its box (``driver.observation.rear_axle_offset``, as the T4
-    dataset takes it); ``None`` when none can be read."""
-    from .driver.observation import rear_axle_offset  # noqa: PLC0415
-    from .ego_base_link import ego_base_link  # noqa: PLC0415
-    from .t4 import offered_rear_axle  # noqa: PLC0415
+    origin, by the T4 dataset's rule (:func:`~autoware_carla_scenario.t4.ego_rear_axle`:
+    a driver entity's rig origin, else the ``base_link`` the running ego set,
+    else ``driver.rear_axle_offset_m`` of the run's T4 dataset, else from its
+    wheels or its box), so the two put ``base_link`` in one place; ``None``
+    when none can be read."""
+    # Inside: t4 imports this module (map_frame_offset, inside too), and
+    # loads its sensors and CARLA, which a log without an ego never needs.
+    from .t4 import ego_rear_axle  # noqa: PLC0415
 
-    run_offset = ego_base_link()
-    if run_offset is not None:
-        return run_offset
-    offered = offered_rear_axle()
-    if offered is not None:
-        return offered
     try:
-        return rear_axle_offset(actor)
+        return ego_rear_axle(actor)
     except Exception:  # noqa: BLE001 - the log goes on without it
         logger.debug(
             "No rear axle for actor %s", getattr(actor, "id", "?"), exc_info=True
@@ -250,31 +247,41 @@ def _file_ref(path: Optional[Path]) -> Optional[dict[str, Any]]:
 
 
 def _projector_info(lanelet2_path: Optional[Path]) -> Optional[dict[str, Any]]:
-    """The Lanelet2 map's ``map_projector_info.yaml``, as read, or None."""
+    """The Lanelet2 map's ``map_projector_info.yaml``, as read, or None.
+
+    The descriptor the run read the map with
+    (:func:`~autoware_carla_scenario.coordinate.projection.read_projector_info`):
+    one that is a link out of the map directory was ignored there, so it is
+    not recorded here either, nor is one that cannot be read or is not a
+    mapping.
+    """
     if lanelet2_path is None:
         return None
-    import yaml  # noqa: PLC0415 - read once a run, where it is needed
+    from .coordinate.projection import read_projector_info  # noqa: PLC0415
 
-    from .maps.resolver import projector_info_path  # noqa: PLC0415
-
-    # The descriptor the run read the map with: one that is a link out of the
-    # map directory was ignored there, so it is not recorded here either.
-    info_path = projector_info_path(Path(lanelet2_path).parent)
-    if info_path is None:
-        return None
-    info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
-    return info if isinstance(info, dict) else None
+    return read_projector_info(Path(lanelet2_path))
 
 
-def _map_offsets() -> tuple[Optional[list[float]], Optional[float]]:
-    """The loaded Lanelet2 map's MGRS offset and elevation offset, if any."""
+def map_frame_offset() -> Optional[tuple[float, float, float]]:
+    """The loaded Lanelet2 map's MGRS offset and elevation offset, ``(x, y,
+    z)``, which carry CARLA's frame (``y`` flipped) into the map frame;
+    ``None`` without a Lanelet2 map.  The T4 dataset's too (``t4``)."""
     mm = MapManager.get_instance()
     try:
         ox, oy = mm.mgrs_offset
         z_offset = mm.z_offset
     except RuntimeError:  # no Lanelet2 map loaded
+        return None
+    return (float(ox), float(oy), float(z_offset))
+
+
+def _map_offsets() -> tuple[Optional[list[float]], Optional[float]]:
+    """The loaded Lanelet2 map's MGRS offset and elevation offset, if any, as
+    the map record keeps them (:func:`map_frame_offset`, to the millimetre)."""
+    offset = map_frame_offset()
+    if offset is None:
         return None, None
-    return [_r(ox), _r(oy)], _r(z_offset)
+    return [_r(offset[0]), _r(offset[1])], _r(offset[2])
 
 
 def _metadata(what: str, read: Any, default: Any = None) -> Any:
@@ -310,7 +317,8 @@ class TrajectoryRecorder:
     Args:
         path: The ``.jsonl`` file to write.
         map_source: Where the map came from (the run's ``map.directory``,
-            else its ``map.source``), for
+            else ``carla-pack:OWNER/REPO/PACK@VERSION`` for a map read from
+            a content pack, ``map.pack``, else its ``map.source``), for
             the ``map`` record, which holds it with any credentials in it
             redacted (:func:`~.maps.source.redacted_url`).
         lanelet2_path: The Lanelet2 map the run read.
@@ -790,7 +798,9 @@ class TrajectoryRecorder:
         try:
             self._emit(record)
         except orjson.JSONEncodeError:
-            # A projector file holding what JSON has no type for (a YAML date).
+            # A projector file holding what orjson cannot write: a mapping
+            # with keys that are not strings (YAML's `1: x`), or a set (YAML's
+            # `!!set`).  orjson writes a YAML date, as an ISO 8601 string.
             logger.warning(
                 "Trajectory recording: map_projector_info.yaml of %s is not "
                 "JSON; the map record leaves it out",
@@ -969,4 +979,5 @@ __all__ = [
     "SCHEMA_PATH",
     "SCHEMA_VERSION",
     "TrajectoryRecorder",
+    "map_frame_offset",
 ]

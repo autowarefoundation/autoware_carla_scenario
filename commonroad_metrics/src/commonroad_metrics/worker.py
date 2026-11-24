@@ -15,12 +15,22 @@ and speaks to it one line at a time, each request answered by one line:
     {key: value}, "errors": {key: message}}``; a value is a number,
     ``Infinity`` (JSON as Python writes it: no conflict, TTC never comes),
     ``-Infinity`` (ALongReq when no braking avoids the collision within the
-    horizon; BTN is ``Infinity`` then) or ``null`` (nothing to measure).
+    horizon; BTN is ``Infinity`` then) or ``null`` (nothing to measure, or
+    the measure failed: its message is in ``errors``).  A road user with a NaN
+    or an infinity among its numbers is a reading gone bad in this frame, not
+    a request out of protocol: every measure asked is ``null`` and failed with
+    the message naming the field (``"vx must be finite, got nan"``), and the
+    next frame is evaluated as ever.
 
 ``{"op": "close"}``
     Answers ``{"ok": true}`` and exits.
 
-A request that cannot be served is answered ``{"ok": false, "error": "..."}``.
+A request that cannot be served is answered ``{"ok": false, "error": "..."}``:
+a line that is not UTF-8 or not JSON, an unknown ``op``, a field missing or
+of the wrong type (a road user's speed a string), settings refused (a NaN
+or an infinity among them, ``horizon_steps: 0``).
+Every request line gets its one answer, so the answers stay in step with the
+requests.  A blank line is no request and gets none.
 Logging goes to the standard error, never the output, which carries the
 answers alone: :func:`main` writes them on a duplicate of descriptor 1 and
 points descriptor 1 itself at the standard error, so that what CriMe,
@@ -35,9 +45,17 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from typing import IO, Any
 
-from .evaluator import MEASURES, Actor, Evaluator, EvaluatorSettings
+from .evaluator import (
+    MEASURES,
+    Actor,
+    Evaluator,
+    EvaluatorSettings,
+    NonFiniteError,
+    failed_frame,
+)
 
 logger = logging.getLogger("commonroad_metrics")
 
@@ -57,22 +75,37 @@ class Worker:
         if op == "evaluate":
             if self.evaluator is None:
                 return {"ok": False, "error": "evaluate before init"}
-            ego = Actor.from_mapping(request["ego"])
-            others = [Actor.from_mapping(o) for o in request.get("others", [])]
-            values, errors = self.evaluator.evaluate(ego, others, request.get("measures", []))
+            measures = request.get("measures", [])
+            try:
+                ego = Actor.from_mapping(request["ego"])
+                others = [Actor.from_mapping(o) for o in request.get("others", [])]
+            except NonFiniteError as exc:
+                # A reading gone bad in this frame, not a request out of
+                # protocol: its measures fail, and the framework reads nothing
+                # from them in this frame only (#2342).
+                logger.warning("frame not evaluated: %s", exc)
+                values, errors = failed_frame(measures, str(exc))
+            else:
+                values, errors = self.evaluator.evaluate(ego, others, measures)
             return {"ok": True, "values": values, "errors": errors}
         if op == "close":
             return {"ok": True}
         return {"ok": False, "error": f"unknown op {op!r}"}
 
 
-def serve(stdin: IO[str], stdout: IO[str]) -> None:
-    """Answer the requests on *stdin* on *stdout* until ``close`` or the end."""
+def serve(stdin: Iterable[str | bytes], stdout: IO[str]) -> None:
+    """Answer the requests on *stdin* on *stdout* until ``close`` or the end.
+
+    *stdin* is text, or bytes decoded here as UTF-8 one line at a time, inside
+    the request's ``try``: a line that is not UTF-8 is answered ``ok: false``
+    as any other bad request, rather than ending the worker.
+    """
     worker = Worker()
-    for line in stdin:
-        if not line.strip():
+    for raw in stdin:
+        if not raw.strip():
             continue
         try:
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             request = json.loads(line)
             response = worker.handle(request)
         except Exception as exc:
@@ -104,7 +137,9 @@ def main(argv: list[str] | None = None) -> int:
     stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        serve(sys.stdin, answers)
+        # Bytes, so that serve decodes each line itself (strictly, inside its
+        # try): a text stdin decodes as it iterates, outside it.
+        serve(sys.stdin.buffer, answers)
     finally:
         sys.stdout = stdout
         answers.close()

@@ -36,7 +36,7 @@ from autoware_carla_scenario.metrics import (
     _FAILURE_CATEGORIES,
     OFFROAD_OR_COLLISION,
     STEERING_REVERSALS,
-    _Motion,
+    _Progress,
     _track_progress,
 )
 
@@ -141,7 +141,7 @@ class TestProgressDetail:
         assert progress_detail(moved, still_s) == detail
 
     def test_the_motion_notes_a_move_and_since_when_the_ego_stands(self) -> None:
-        motion = _Motion()
+        motion = _Progress()
         _track_progress(motion, 0.4, 1.0, 1.0)  # creeping: not still
         assert (motion.moved, motion.still_since) == (False, None)
         _track_progress(motion, 0.4, 2.0, 1.0)  # a creep of 0.8 m, then 1.2 m

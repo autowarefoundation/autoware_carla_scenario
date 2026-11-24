@@ -23,13 +23,19 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | **Fail** | Changing: the timeout. Refusing: the ego reaches that lane. |
 
 The lane is checked in the Lanelet2 frame: the lanelet beside the spawn
-lanelet on that side -- the routing graph's `left` / `right`, the lane
-`has_adjacent` asks about -- and the lanelets ahead of it up to the next
-junction, less any that the spawn lanelet's own lane also reaches before its
-junction (a lane beside that merges into the ego's). The ego has changed lane
-once its centre is on one of them. Where there is no lanelet beside on that
-side -- every refused change -- the check never holds, so a refused change
-passes on its timeout.
+lanelet on that side (`coordinate.lane_beside`) and the lanelets ahead of it
+up to the next junction, less any that the spawn lanelet's own lane also
+reaches before its junction (a lane beside that merges into the ego's). The
+ego has changed lane once its centre is on one of them.
+
+The lanelet beside is the routing graph's `left` / `right` -- the lane a
+lane change is allowed into, which `has_adjacent` asks about -- and, failing
+that, its `adjacentLeft` / `adjacentRight`: a lane beside in the same
+direction behind a line a lane change may not cross. So a refused change
+whose search found no `left` / `right` can still have a lane beside: there,
+the ego crossing into it fails the run. Only where there is no lanelet beside
+on that side at all -- neither kind -- does the check never hold, and the
+refused change passes on its timeout whatever the ego does.
 
 ## Variants
 

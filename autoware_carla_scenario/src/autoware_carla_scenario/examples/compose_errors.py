@@ -21,18 +21,6 @@ __all__ = ["compose_error", "compose_or_report", "resolve_scenarios", "suggest"]
 _OVERRIDE_KEY = re.compile(r"Could not (?:override|delete) '([^']+)'")
 
 
-def _flatten(node: Any, prefix: str = "") -> list[str]:
-    """The dotted keys of the nested mapping *node*."""
-    if not isinstance(node, dict):
-        return []
-    keys: list[str] = []
-    for key, value in node.items():
-        path = f"{prefix}.{key}" if prefix else str(key)
-        keys.append(path)
-        keys += _flatten(value, path)
-    return keys
-
-
 def suggest(word: str, known: list[str]) -> str:
     """``did you mean '<closest>'? ``, the entry of *known* closest to *word*, or ``''``."""
     close = difflib.get_close_matches(word, known, n=1, cutoff=0.6)
@@ -41,6 +29,7 @@ def suggest(word: str, known: list[str]) -> str:
 
 def compose_error(exc: Exception, name: str, overrides: list[str]) -> str:
     """One message for the composition error *exc* of config *name*."""
+    from ..odd.controls import config_keys  # noqa: PLC0415 - imports measures
     from . import run  # noqa: PLC0415 - imports the CARLA client
 
     text = str(exc).strip()
@@ -49,7 +38,7 @@ def compose_error(exc: Exception, name: str, overrides: list[str]) -> str:
         return f"Error: {text.splitlines()[0] if text else type(exc).__name__}"
     key = found.group(1)
     try:
-        known = _flatten(run._to_dict(run._compose_config(name, [])), "")
+        known = config_keys(run._to_dict(run._compose_config(name, [])), "")
     except Exception:  # noqa: BLE001 - the suggestion is a courtesy
         known = []
     value = next(

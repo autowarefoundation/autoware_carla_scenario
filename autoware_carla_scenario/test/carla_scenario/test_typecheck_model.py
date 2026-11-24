@@ -49,6 +49,7 @@ from autoware_carla_scenario import (
     kinematics,
     measures,
     metrics,
+    number_settings,
     odd,
     ros2,
     trajectory_recorder,
@@ -965,11 +966,17 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         trajectory_recorder,
         ("EGO_ROLES", "RECORDED_KINDS", "SCHEMA_VERSION", "TrajectoryRecorder"),
     ),
-    # What the checked scenario_runner and scenario_queue hold of it, and the
-    # log suffix the checked t4_scene.grid reads.
+    # What the checked scenario_runner and scenario_queue hold of it (and
+    # the records RerunConverter.wait() returns), and the log suffix the
+    # checked t4_scene.grid reads.
     "rerun": (
         rerun_module,
-        ("RerunConverter", "TRAJECTORY_SUFFIX", "recording_path"),
+        (
+            "RerunConversion",
+            "RerunConverter",
+            "TRAJECTORY_SUFFIX",
+            "recording_path",
+        ),
     ),
     # What the checked scenario_runner and scenario_queue hold of it.
     "t4": (t4_module, ("T4Recorder", "T4Recording")),
@@ -1054,6 +1061,10 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What a scenario imports of the checked failure: every name of its
     # __all__ (FailureCategory, to register a fail condition with).
     "failure": (failure, tuple(failure.__all__)),
+    # What the example scenarios' configs (examples.configs) import of the
+    # checked number_settings, the one check of a number setting (#2398):
+    # every name of its __all__.
+    "number_settings": (number_settings, tuple(number_settings.__all__)),
     # What a scenario or a Python ODD imports of the checked measures: every
     # name of its __all__, the values compared below.
     "measures": (measures, tuple(measures.__all__)),
@@ -1895,6 +1906,9 @@ def test_the_undecided_model_is_openodd_s_sentinel() -> None:
             getattr(odd.UNDECIDED, method)()
         ], method
     assert odd_model.Undecided is type(odd.UNDECIDED)
+    # Re-exported where the model declares it, so a scenario that imports it
+    # from odd runs as it compiles (#2269).
+    assert odd.Undecided is odd_model.Undecided
     with pytest.raises(TypeError):
         odd_model.Undecided()
 
@@ -1910,6 +1924,17 @@ def test_the_odd_case_models_are_stand_ins() -> None:
     assert [ast.unparse(c.func) for c in calls if isinstance(c, ast.Call)] == [
         "compile_error"
     ]
+    # ParameterSpace, the case's other half, alike: openodd's flaky search
+    # builds it, and the package re-exports openodd's class (#2269).
+    space = _definitions("odd")["ParameterSpace"][0]
+    assert isinstance(space, ast.ClassDef)
+    init = _methods(space)["__init__"]
+    assert _model_params(init, drop_first=True) == []
+    calls = [s.value for s in init.body if isinstance(s, ast.Expr)]
+    assert [ast.unparse(c.func) for c in calls if isinstance(c, ast.Call)] == [
+        "compile_error"
+    ]
+    assert odd.ParameterSpace is typing.get_args(odd.OddCase)[1]
     case = _definitions("odd")["OddCase"][0]
     assert isinstance(case, ast.ClassDef)
     assert [ast.unparse(d) for d in case.decorator_list] == ["tuple"]
@@ -2056,8 +2081,14 @@ def _public(definitions: dict[str, list[ast.stmt]]) -> list[str]:
     return sorted(name for name in definitions if not name.startswith("_"))
 
 
-def test_the_dotenv_model_is_load_dotenv_as_in_the_package() -> None:
-    assert _public(_definitions("__init__", _DOTENV_MODEL)) == ["load_dotenv"]
+def test_the_dotenv_model_is_find_and_load_dotenv_as_in_the_package() -> None:
+    assert _public(_definitions("__init__", _DOTENV_MODEL)) == [
+        "find_dotenv",
+        "load_dotenv",
+    ]
+    _assert_declared_as_in_python(
+        "find_dotenv", "__init__", dotenv.find_dotenv, root=_DOTENV_MODEL
+    )
     _assert_declared_as_in_python(
         "load_dotenv", "__init__", dotenv.load_dotenv, root=_DOTENV_MODEL
     )
@@ -2090,13 +2121,17 @@ def test_the_packaging_model_is_version_and_invalid_version_as_in_the_package() 
     python_local = inspect.getattr_static(packaging.version.Version, "local")
     assert isinstance(python_local, property) and python_local.fget is not None
     assert typing.get_type_hints(python_local.fget)["return"] == typing.Optional[str]
-    # InvalidVersion is a ValueError, built from nothing or one message.
+    # InvalidVersion is a ValueError, built from nothing or one message, by
+    # position only (#2376).
     invalid = _definitions("version", _PACKAGING_MODEL)["InvalidVersion"][0]
     assert isinstance(invalid, ast.ClassDef)
     assert [ast.unparse(b) for b in invalid.bases] == ["Static[ValueError]"]
+    assert ast.unparse(_methods(invalid)["__init__"].args) == "self, *args"
     assert packaging.version.InvalidVersion.__bases__ == (ValueError,)
     assert str(packaging.version.InvalidVersion()) == ""
     assert str(packaging.version.InvalidVersion("x")) == "x"
+    with pytest.raises(TypeError, match="keyword"):
+        packaging.version.InvalidVersion(message="x")  # type: ignore[call-arg]
 
 
 #: The model of the eclipse-sumo package's `sumo` module: what the checked
@@ -2114,6 +2149,119 @@ def test_the_sumo_model_is_the_packages_sumo_home() -> None:
     sumo = pytest.importorskip("sumo", reason="eclipse-sumo (the sumo extra)")
     assert isinstance(sumo.SUMO_HOME, str)
     assert isinstance(sumo.__file__, str)
+
+
+#: The model of roadgen (the `map` and `sumo` extras): what the checked
+#: commonroad.map and traffic.sumo.network convert the map with (#2312).
+_ROADGEN_MODEL = model_dir() / "roadgen"
+
+#: What the model declares, by its name in the package: compared with the
+#: installed roadgen's signatures and with its stubs (`_roadgen.pyi`).
+_ROADGEN_NAMES = (
+    "read_opendrive",
+    "Map.read_warnings",
+    "Map.write_read_trace",
+    "Map.export_ir",
+    "Map.commonroad_warnings",
+    "Map.export_commonroad",
+    "Map.export_sumo",
+    "Map.sumo_warnings",
+    "Trace.load",
+)
+
+#: roadgen's stub annotation -> the model's, where the two are spelt apart.
+#: A light cycle (a str, a bool or a list of pairs) is left untyped, and the
+#: model refuses anything but None for it.
+_ROADGEN_ANNOTATIONS = {
+    "list[str]": "List[str]",
+    "float | None": "Optional[float]",
+    "Optional[Point]": "Optional[Tuple[float, float, float]]",
+    "Union[str, bool, Sequence[tuple[str, float]], None]": None,
+    "'Trace'": "Trace",
+}
+
+
+def _roadgen_model_function(name: str) -> ast.FunctionDef:
+    *owner, function = name.split(".")
+    definitions = _definitions("__init__", _ROADGEN_MODEL)
+    if not owner:
+        node = definitions[function][0]
+    else:
+        cls = definitions[owner[0]][0]
+        assert isinstance(cls, ast.ClassDef)
+        node = _methods(cls)[function]
+    assert isinstance(node, ast.FunctionDef), name
+    return node
+
+
+def _annotation(node: ast.expr | None) -> str | None:
+    return None if node is None else ast.unparse(node)
+
+
+def test_the_roadgen_model_declares_only_what_the_package_uses() -> None:
+    definitions = _definitions("__init__", _ROADGEN_MODEL)
+    assert _public(definitions) == ["Map", "Trace", "read_opendrive"]
+    declared = ["read_opendrive"]
+    for cls_name in ("Map", "Trace"):
+        cls = definitions[cls_name][0]
+        assert isinstance(cls, ast.ClassDef)
+        assert not _model_fields(cls), f"{cls_name} has fields in the model only"
+        declared += [f"{cls_name}.{method}" for method in _methods(cls)]
+    assert sorted(declared) == sorted(_ROADGEN_NAMES)
+    assert "staticmethod" in _decorators(_roadgen_model_function("Trace.load"))
+    version = definitions["__version__"][0]
+    assert isinstance(version, ast.AnnAssign)
+    assert ast.unparse(version.annotation) == "str"
+    roadgen = pytest.importorskip("roadgen", reason="roadgen (the map extra)")
+    assert isinstance(roadgen.__version__, str)
+    assert isinstance(inspect.getattr_static(roadgen.Trace, "load"), staticmethod)
+
+
+@pytest.mark.parametrize("name", _ROADGEN_NAMES)
+def test_the_roadgen_model_is_declared_as_in_the_package(name: str) -> None:
+    roadgen = pytest.importorskip("roadgen", reason="roadgen (the map extra)")
+    node = _roadgen_model_function(name)
+    python: Any = roadgen
+    for part in name.split("."):
+        python = getattr(python, part)
+    method = name.startswith("Map.")
+    assert _model_params(node, drop_first=method) == _python_params(
+        python, drop_first=method
+    ), name
+    _assert_defaults_as_in_python(
+        name, _model_defaults(node), python, "__init__", _ROADGEN_MODEL
+    )
+
+    # The types, from the package's stubs (it is a compiled extension).
+    stub_module = _parse(Path(roadgen.__file__).parent / "_roadgen.pyi")
+    *owner, function = name.split(".")
+    scope: list[ast.stmt] = stub_module.body
+    if owner:
+        (cls,) = (
+            n for n in scope if isinstance(n, ast.ClassDef) and n.name == owner[0]
+        )
+        scope = cls.body
+    (stub,) = (
+        n for n in scope if isinstance(n, ast.FunctionDef) and n.name == function
+    )
+
+    def spelt(annotation: str | None) -> str | None:
+        return _ROADGEN_ANNOTATIONS.get(annotation, annotation) if annotation else None
+
+    def params(fn: ast.FunctionDef) -> list[ast.arg]:
+        args = fn.args
+        out = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        if args.vararg is not None:
+            out.append(args.vararg)
+        return [a for a in out if a.arg != "self"]
+
+    model_types = {a.arg: _annotation(a.annotation) for a in params(node)}
+    stub_types = {a.arg: spelt(_annotation(a.annotation)) for a in params(stub)}
+    if node.args.vararg is not None:
+        # Codon's *args is a tuple of any types: the model refuses a non-str.
+        model_types[node.args.vararg.arg] = stub_types[node.args.vararg.arg]
+    assert model_types == stub_types, name
+    assert _annotation(node.returns) == spelt(_annotation(stub.returns)), name
 
 
 # ---------------------------------------------------------------------------
@@ -2239,6 +2387,12 @@ def test_the_advice_for_an_unmodelled_module_runs_in_python(module: str) -> None
 _COMPARED_APART = {
     "AutowareLauncher": "test_the_launcher_model_is_the_protocol_s_methods",
     "TrafficBackendFactory": "test_the_traffic_backend_factory_model_is_a_stand_in",
+    # The class of openodd's sentinel, which odd re-exports from odd.model
+    # (#2269): a Rust extension's class, with no signature to compare.
+    "Undecided": "test_the_undecided_model_is_openodd_s_sentinel",
+    # openodd.flaky's space, which odd re-exports (#2269): an opaque class the
+    # flaky search builds, as OddSample is the sampler's.
+    "ParameterSpace": "test_the_odd_case_models_are_stand_ins",
 }
 
 
@@ -2604,6 +2758,156 @@ def test_a_listed_member_is_still_public_and_unmodelled() -> None:
         for members in NOT_MODELLED_MEMBERS.values()
         for reason in members.values()
     ), "a reason for each member"
+
+
+# ---------------------------------------------------------------------------
+# The kinematics operators: each one Python defines, with the same results
+# (#2259)
+# ---------------------------------------------------------------------------
+
+#: The kinematics classes, whose arithmetic a scenario uses (`ego_v - npc_v`).
+_KINEMATICS_CLASSES = (
+    "Vector3",
+    "AbsoluteVelocity",
+    "RelativeVelocity",
+    "FrenetVelocity",
+    "AbsoluteAcceleration",
+    "RelativeAcceleration",
+    "FrenetAcceleration",
+)
+
+#: Every arithmetic dunder: those Python defines on a kinematics class are
+#: what the model must declare (the member comparison above skips dunders).
+_ARITHMETIC_DUNDERS = frozenset(
+    f"__{prefix}{op}__"
+    for op in (
+        "add",
+        "sub",
+        "mul",
+        "matmul",
+        "truediv",
+        "floordiv",
+        "mod",
+        "divmod",
+        "pow",
+        "lshift",
+        "rshift",
+        "and",
+        "xor",
+        "or",
+    )
+    for prefix in ("", "r", "i")
+) | {"__neg__", "__pos__", "__abs__", "__invert__"}
+
+
+def _kinematics_model_class(name: str) -> ast.ClassDef:
+    # By its module: _COMPARED_CLASSES' "Vector3" is the bridge's.
+    node = _definitions("kinematics")[name][0]
+    assert isinstance(node, ast.ClassDef), name
+    return node
+
+
+#: What one operator returns for each operand type: ``{operand: result}``,
+#: the operand ``None`` for a unary one.
+_Results = dict[str | None, str]
+
+
+def _python_operator_results(python: type, dunder: str) -> _Results:
+    """What *python*'s *dunder* returns, by operand type, from its source:
+    each `@overload` stub's annotations where it has them (`Abs - Abs ->
+    Relative`, `Abs - Relative -> Abs`), the definition's otherwise."""
+    node = ast.parse(textwrap.dedent(inspect.getsource(python))).body[0]
+    assert isinstance(node, ast.ClassDef), python
+    defs = [s for s in node.body if isinstance(s, ast.FunctionDef) and s.name == dunder]
+    stubs = [d for d in defs if "overload" in _decorators(d)]
+    out: _Results = {}
+    for fn in stubs or defs:
+        params = fn.args.args[1:]
+        operand = params[0].annotation if params else None
+        assert fn.returns is not None, (python, dunder)
+        out[None if operand is None else ast.unparse(operand)] = ast.unparse(fn.returns)
+    return out
+
+
+def _model_operator_results(cls: ast.ClassDef, dunder: str) -> _Results:
+    """What the model's *dunder* returns, by operand type: a typed
+    definition's annotations, and for one that takes its operand untyped
+    (it names a class defined further down) each `isinstance(other, X)`
+    branch's constructor call."""
+    out: _Results = {}
+    for fn in (s for s in cls.body if isinstance(s, ast.FunctionDef)):
+        if fn.name != dunder:
+            continue
+        params = fn.args.args[1:]
+        if not params:
+            assert fn.returns is not None, (cls.name, dunder)
+            out[None] = ast.unparse(fn.returns)
+            continue
+        if params[0].annotation is not None:
+            assert fn.returns is not None, (cls.name, dunder)
+            out[ast.unparse(params[0].annotation)] = ast.unparse(fn.returns)
+            continue
+        branch: ast.stmt | None = fn.body[0]
+        while isinstance(branch, ast.If):
+            test = branch.test
+            assert (
+                isinstance(test, ast.Call)
+                and ast.unparse(test.func) == "isinstance"
+                and isinstance(test.args[0], ast.Name)
+                and test.args[0].id == params[0].arg
+            ), ast.unparse(test)
+            returned = branch.body[-1]
+            assert isinstance(returned, ast.Return), ast.unparse(branch)
+            assert isinstance(returned.value, ast.Call), ast.unparse(returned)
+            out[ast.unparse(test.args[1])] = ast.unparse(returned.value.func)
+            branch = branch.orelse[0] if branch.orelse else None
+        # What no branch takes is refused, as Python's NotImplemented is.
+        assert branch is not None and "compile_error" in ast.unparse(branch), (
+            cls.name,
+            dunder,
+        )
+    return out
+
+
+@pytest.mark.parametrize("name", _KINEMATICS_CLASSES)
+def test_a_kinematics_class_declares_the_arithmetic_python_defines(name: str) -> None:
+    # Python -> model: a scenario writing `ego_v - npc_v` or `v * 2` was
+    # refused because the model declared no operator at all (#2259).
+    python = getattr(kinematics, name)
+    defined = {d for d in _ARITHMETIC_DUNDERS if d in vars(python)}
+    assert {"__add__", "__sub__", "__mul__", "__neg__"} <= defined, name
+    cls = _kinematics_model_class(name)
+    declared = {s.name for s in cls.body if isinstance(s, ast.FunctionDef)}
+    assert defined == declared & _ARITHMETIC_DUNDERS, name
+    for dunder in sorted(defined):
+        assert _model_operator_results(cls, dunder) == _python_operator_results(
+            python, dunder
+        ), f"{name}.{dunder}"
+
+
+def test_the_operator_results_are_read_from_both_spellings() -> None:
+    # A typed overload pair (RelativeVelocity's `+`), an operator that
+    # dispatches on its untyped operand (AbsoluteVelocity's `-`), a unary one.
+    assert _model_operator_results(
+        _kinematics_model_class("RelativeVelocity"), "__add__"
+    ) == {
+        "RelativeVelocity": "RelativeVelocity",
+        "AbsoluteVelocity": "AbsoluteVelocity",
+    }
+    assert _model_operator_results(
+        _kinematics_model_class("AbsoluteVelocity"), "__sub__"
+    ) == {
+        "AbsoluteVelocity": "RelativeVelocity",
+        "RelativeVelocity": "AbsoluteVelocity",
+    }
+    assert _python_operator_results(acs.AbsoluteVelocity, "__sub__") == {
+        "AbsoluteVelocity": "RelativeVelocity",
+        "RelativeVelocity": "AbsoluteVelocity",
+    }
+    assert _python_operator_results(acs.Vector3, "__neg__") == {None: "Vector3"}
+    assert _python_operator_results(acs.FrenetVelocity, "__rmul__") == {
+        "float": "FrenetVelocity"
+    }
 
 
 # ---------------------------------------------------------------------------

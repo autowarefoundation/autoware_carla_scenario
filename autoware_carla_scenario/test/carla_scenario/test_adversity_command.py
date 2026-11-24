@@ -7,6 +7,7 @@ its right, and the straight junction lanelet leads on to E_OUT1 (x 10..60).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from types import SimpleNamespace
 from typing import Any
@@ -21,8 +22,14 @@ from autoware_carla_scenario.adversity import (
     CommandKind,
     PredictedState,
     plan_command,
+    predict_command,
 )
+from autoware_carla_scenario.adversity.command import _LaneWalk, _times
 from autoware_carla_scenario.adversity.observation import AgentSnapshot, Scene
+from autoware_carla_scenario.adversity.prediction import (
+    lane_change_longitudinal_speed,
+    predict_distance_velocity,
+)
 from autoware_carla_scenario.route.geometry import MapFeatures
 from autoware_carla_scenario.trajectory.model import MapPose, TrajectoryFollowingMode
 
@@ -137,6 +144,152 @@ def test_a_given_path_is_retimed_from_zero(features: MapFeatures) -> None:
     )
     assert [p.t for p in path] == [0.0, 1.0]
     assert [p.x for p in path] == [0.0, 1.0]
+
+
+# -- planning from the agent's offset (#2382) -------------------------------------
+
+#: Two straight lanes along x 0..100, side by side: the agent's at y = 0, the
+#: one on its left at y = 3.5.
+TWO_LANES_RIGHT, TWO_LANES_LEFT = 1, 2
+
+
+@pytest.fixture(scope="module")
+def two_lanes() -> MapFeatures:
+    builder = rm._Builder()
+    builder.lanelet(TWO_LANES_RIGHT, rm._line((0.0, 0.0), (100.0, 0.0)))
+    builder.lanelet(TWO_LANES_LEFT, rm._line((0.0, 3.5), (100.0, 3.5)))
+    return MapFeatures(builder.map, rm.routing_graph(builder.map))
+
+
+def _off_centre(features: MapFeatures) -> Any:
+    """The agent at (50, 1): 1 m left of its lane's centreline."""
+    seen = _seen(features, 50.0, 1.0)
+    assert seen.lane is not None and int(seen.lane.lanelet.id) == TWO_LANES_RIGHT
+    assert seen.lane.t == pytest.approx(1.0)
+    assert seen.left is not None and int(seen.left.lanelet.id) == TWO_LANES_LEFT
+    return seen
+
+
+def test_an_acceleration_holds_the_agent_s_offset(two_lanes: MapFeatures) -> None:
+    path = plan_command(
+        two_lanes, _off_centre(two_lanes), AdversarialCommand.accelerate(1.0, 2.0)
+    )
+    # It starts where the agent is, not on the centreline below it.
+    assert (path[0].x, path[0].y) == pytest.approx((50.0, 1.0))
+    assert all(p.y == pytest.approx(1.0) for p in path)
+    # 10 m/s at 1 m/s² for 2 s: 22 m on.
+    assert path[-1].x == pytest.approx(72.0)
+
+
+def test_a_lane_change_starts_from_the_agent_s_offset(two_lanes: MapFeatures) -> None:
+    path = plan_command(
+        two_lanes, _off_centre(two_lanes), AdversarialCommand.change_lane("left")
+    )
+    assert (path[0].x, path[0].y) == pytest.approx((50.0, 1.0))
+    # It ends on the new lane's centreline, and the 2.5 m it actually crosses
+    # in 1 s, not the lanes' 3.5 m, is what comes out of the 10 m/s.
+    forward = math.sqrt(10.0**2 - 2.5**2)
+    assert (path[-1].x, path[-1].y) == pytest.approx((50.0 + forward, 3.5))
+    assert path[5].y == pytest.approx(2.25)
+
+
+def test_a_lane_change_prediction_starts_from_the_agent_s_offset(
+    two_lanes: MapFeatures,
+) -> None:
+    # NADE's predictions: the same geometry, kept to the new lane once across.
+    path = predict_command(
+        two_lanes,
+        _off_centre(two_lanes),
+        AdversarialCommand.change_lane("left"),
+        0.1,
+        3.0,
+    )
+    assert (path[0].x, path[0].y) == pytest.approx((50.0, 1.0))
+    assert all(p.y == pytest.approx(3.5) for p in path if p.t >= 1.0 - 1e-9)
+    held = predict_command(
+        two_lanes,
+        _off_centre(two_lanes),
+        AdversarialCommand.accelerate(0.0, 1.0),
+        0.1,
+        3.0,
+    )
+    assert all(p.y == pytest.approx(1.0) for p in held)
+
+
+def _old_accelerate(
+    features: MapFeatures, seen: Any, command: AdversarialCommand
+) -> list[PredictedState]:
+    """ACCELERATION as it was planned before the offset was applied."""
+    lane = seen.lane
+    times = _times(command.duration, 0.1)
+    distances, speeds = predict_distance_velocity(
+        seen.agent.speed,
+        command.acceleration,
+        times,
+        max(seen.desired_speed, seen.agent.speed),
+    )
+    walk = _LaneWalk(features, lane.lanelet, lane.s)
+    return [
+        PredictedState(*walk.at(d), v, t) for t, d, v in zip(times, distances, speeds)
+    ]
+
+
+def _old_change_lane(
+    features: MapFeatures, seen: Any, side: Any, command: AdversarialCommand
+) -> list[PredictedState]:
+    """LANE_CHANGE as it was planned before the offset was applied."""
+    lane = seen.lane
+    own = _LaneWalk(features, lane.lanelet, lane.s)
+    beside = _LaneWalk(features, side.lanelet, side.s)
+    times = _times(command.duration, 0.1)
+    xs: list[float] = []
+    ys: list[float] = []
+    speed = seen.agent.speed
+    for i, t in enumerate(times):
+        ox, oy, _o = own.at(speed * t)
+        nx, ny, _n = beside.at(speed * t)
+        if i == 0:
+            speed = lane_change_longitudinal_speed(
+                seen.agent.speed, math.hypot(nx - ox, ny - oy), command.duration
+            )
+        f = min(t / command.duration, 1.0)
+        xs.append(ox + (nx - ox) * f)
+        ys.append(oy + (ny - oy) * f)
+    last = len(times) - 1
+    return [
+        PredictedState(
+            xs[i],
+            ys[i],
+            math.atan2(
+                ys[min(i + 1, last)] - ys[max(i - 1, 0)],
+                xs[min(i + 1, last)] - xs[max(i - 1, 0)],
+            ),
+            seen.agent.speed,
+            t,
+        )
+        for i, t in enumerate(times)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("x", "y", "side"),
+    [(-40.0, INNER, "right"), (-15.0, INNER, "right"), (-12.0, OUTER, "left")],
+)
+def test_on_the_centreline_the_paths_are_unchanged(
+    features: MapFeatures, x: float, y: float, side: str
+) -> None:
+    """With ``t = 0`` the paths are bit for bit what they were."""
+    seen = _seen(features, x, y)
+    seen = dataclasses.replace(seen, lane=dataclasses.replace(seen.lane, t=0.0))
+    accelerate = AdversarialCommand.accelerate(1.5, 3.0)
+    assert plan_command(features, seen, accelerate) == _old_accelerate(
+        features, seen, accelerate
+    )
+    change = AdversarialCommand.change_lane(side)
+    beside = seen.left if side == "left" else seen.right
+    assert plan_command(features, seen, change) == _old_change_lane(
+        features, seen, beside, change
+    )
 
 
 # -- driving --------------------------------------------------------------------

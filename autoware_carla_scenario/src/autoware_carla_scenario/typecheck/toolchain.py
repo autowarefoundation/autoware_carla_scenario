@@ -31,6 +31,7 @@ __all__ = [
     "SUPPORTED_CODON_SERIES",
     "Toolchain",
     "ToolchainError",
+    "VERSION_TIMEOUT_S",
     "codon_environment",
     "codon_path_dir",
     "find_codon",
@@ -52,6 +53,12 @@ _NOT_INSTALLED = (
 )
 
 
+#: How long ``codon --version`` may take before the executable counts as no
+#: Codon at all (#2249): it runs before every check, and before every
+#: ``scenario`` run under ``typecheck: auto``.
+VERSION_TIMEOUT_S = 60.0
+
+
 class ToolchainError(RuntimeError):
     pass
 
@@ -63,12 +70,31 @@ class Toolchain:
     source: str  # how it was found
 
     def version(self) -> str:
-        out = subprocess.run(
-            [str(self.executable), "--version"],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        """What ``codon --version`` prints.
+
+        Raises:
+            ToolchainError: The executable cannot be run (not executable,
+                gone) or does not answer within :data:`VERSION_TIMEOUT_S`:
+                no Codon, as the check treats any other lookup failure.
+        """
+        try:
+            out = subprocess.run(  # noqa: S603 - the compiler the lookup found
+                [str(self.executable), "--version"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=VERSION_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ToolchainError(
+                f"{self.source}: {self.executable} --version did not answer "
+                f"within {VERSION_TIMEOUT_S:g}s"
+            ) from exc
+        except OSError as exc:
+            raise ToolchainError(
+                f"{self.source}: {self.executable} cannot be run: {exc}"
+            ) from exc
         return out.stdout.strip() or out.stderr.strip()
 
     def library_dirs(self) -> list[Path]:

@@ -10,6 +10,8 @@ the ego's planned route against it on the Lanelet2 map alone.  See
 ``docs/odd.md``.
 """
 
+from openodd.flaky import ParameterSpace
+
 from . import backend, probes
 from .openodd import OpenOddError, load_odd_binding, load_odd_file, load_openodd
 from .sources import GitSource, GitSourceError
@@ -20,6 +22,7 @@ from .model import (
     OddModule,
     OddVerdict,
     UNDECIDED,
+    Undecided,
     all_of,
     any_of,
     module_holds,
@@ -122,12 +125,14 @@ __all__ = [
     "OddSample",
     "OddSampler",
     "OddVerdict",
+    "ParameterSpace",
     "PlannedRoute",
     "RouteCoverage",
     "RouteCoverageSummary",
     "RouteError",
     "RouteLanelet",
     "UNDECIDED",
+    "Undecided",
     "combine_route_coverage",
     "plan_route",
     "plan_route_coverage",

@@ -42,6 +42,7 @@ class TurnAction(BaseAction):
         direction: :class:`TurnDirection` — ``LEFT``, ``RIGHT`` or ``STRAIGHT``.
         condition: Trigger condition (see :class:`BaseCondition`).
         timing: Tick phase (``PRE_TICK`` or ``POST_TICK``).
+        label: Human-readable identifier.
         once: If ``True`` (default) the action fires at most once.
         overrides: Take over a control domain of the entity another action
             holds (:attr:`~BaseAction.overrides`).
@@ -49,6 +50,11 @@ class TurnAction(BaseAction):
         waypoint_step: Sampling distance (m) between waypoints.
         post_junction_distance: How far (m) past the junction exit to extend
             the route for a stable heading measurement.
+
+    Raises:
+        ValueError: *search_distance*, *waypoint_step* or
+            *post_junction_distance* is a boolean, not positive or not
+            finite.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -73,16 +79,29 @@ class TurnAction(BaseAction):
         post_junction_distance: float = 20.0,
     ) -> None:
         # #2077: a step of 0 (or less) failed mid-run in the waypoint walk,
-        # and a NaN search distance silently set no turn.
-        if not math.isfinite(search_distance) or search_distance <= 0.0:
+        # and a NaN search distance silently set no turn.  A boolean would
+        # read as 0 or 1 m (#2273).
+        if (
+            isinstance(search_distance, bool)
+            or not math.isfinite(search_distance)
+            or search_distance <= 0.0
+        ):
             raise ValueError(
                 f"search_distance must be finite and positive, not {search_distance!r}"
             )
-        if not math.isfinite(waypoint_step) or waypoint_step <= 0.0:
+        if (
+            isinstance(waypoint_step, bool)
+            or not math.isfinite(waypoint_step)
+            or waypoint_step <= 0.0
+        ):
             raise ValueError(
                 f"waypoint_step must be finite and positive, not {waypoint_step!r}"
             )
-        if not math.isfinite(post_junction_distance) or post_junction_distance <= 0.0:
+        if (
+            isinstance(post_junction_distance, bool)
+            or not math.isfinite(post_junction_distance)
+            or post_junction_distance <= 0.0
+        ):
             raise ValueError(
                 "post_junction_distance must be finite and positive, "
                 f"not {post_junction_distance!r}"

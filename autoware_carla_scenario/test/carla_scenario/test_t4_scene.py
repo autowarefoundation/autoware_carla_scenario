@@ -642,8 +642,56 @@ def test_an_entity_is_on_the_scene_from_its_spawn_to_its_despawn(
         },
     )
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
-    # Parked out of sight up to its spawn frame (102), gone from its despawn's.
-    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == [0, 0, 1, 0]
+    # Off the scene before its spawn frame (102) and after its despawn's (106);
+    # on it on both, whose ticks show it on its place (#2352).
+    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == [0, 1, 1, 1]
+
+
+@pytest.mark.parametrize("spawn_phase", ["pre_tick", "post_tick"])
+def test_the_ticks_of_a_spawn_and_a_despawn_hold_the_rows_they_show(
+    tmp_path: Path, spawn_phase: str
+) -> None:
+    """A spawn and a despawn are logged on the tick logged last when they ran
+    (#2352).  A pre-tick spawn moved the entity before its tick, which shows
+    it on its place: a box.  A post-tick one moved it after: its tick shows it
+    still parked under the map, no box.  A post-tick despawn destroyed it
+    after its tick, which shows it there: a box; it is in no tick after."""
+    placed_from = 102 if spawn_phase == "pre_tick" else 103
+
+    def npc(frame: int) -> list[float]:
+        state = _state(2, 5.0, 0.0)
+        if frame < placed_from:
+            state[3] = -499.5
+        return state
+
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        *[_tick(frame, _state(1, 0.0, 0.0), npc(frame)) for frame in range(100, 107)],
+        {
+            "type": "spawn",
+            "frame": 102,
+            "t": 0.1,
+            "label": "s",
+            "entity": "npc",
+            "id": 2,
+        },
+        {
+            "type": "despawn",
+            "frame": 106,
+            "t": 0.3,
+            "label": "d",
+            "entity": "npc",
+            "id": 2,
+            "reason": "action",
+        },
+        *[_tick(frame, _state(1, 0.0, 0.0)) for frame in range(107, 109)],
+    )
+    scene = trajectory_log_to_t4_scene(log, with_map=False).scene
+    # Rows 100, 102, 104, 106, 108.
+    expected = [0, 1, 1, 1, 0] if spawn_phase == "pre_tick" else [0, 0, 1, 1, 0]
+    assert list(np.diff(_numeric(scene.annotations.box_offsets))) == expected
 
 
 def test_an_entity_parked_under_the_map_is_off_the_scene(tmp_path: Path) -> None:
@@ -1050,6 +1098,45 @@ def test_write_names_the_files_after_the_run(tmp_path: Path) -> None:
     assert scene_path.read_bytes() == first
 
 
+def test_an_export_without_a_map_removes_the_stale_map(tmp_path: Path) -> None:
+    """A map an earlier export wrote is not the new scene's: it goes, rather
+    than sit beside a scene that does not name it (#2237)."""
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))
+    )
+    stale = tmp_path / "out" / f"Run{MAP_SUFFIX}"
+    stale.parent.mkdir()
+    stale.write_bytes(b"an earlier export's map")
+    scene_path, map_path = write_t4_scene(log, tmp_path / "out", with_map=False)
+    assert map_path is None
+    assert not stale.exists()
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [scene_path.name]
+
+
+def test_a_scene_killed_mid_write_leaves_no_scene(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each file goes in one rename, the scene's after its map's, and an
+    earlier export's scene is removed first: a killed export leaves no
+    truncated scene (which would often still parse), nor an old one beside
+    a new map (#2237)."""
+    from autoware_carla_scenario import atomic_file
+
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))
+    )
+    scene_path, _ = write_t4_scene(log, tmp_path / "out", with_map=False)
+
+    def killed(src: str, dst: str) -> None:
+        raise OSError("killed before the rename")
+
+    monkeypatch.setattr(atomic_file.os, "replace", killed)
+    with pytest.raises(OSError, match="killed"):
+        write_t4_scene(log, tmp_path / "out", with_map=False)
+    assert list((tmp_path / "out").iterdir()) == []
+    assert not scene_path.exists()
+
+
 def test_cli_converts_every_log_under_a_directory(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1141,8 +1228,8 @@ def test_cli_takes_a_log_as_named_and_every_log_under_a_directory_sorted(
     (runs / "d" / "dir.trajectory.jsonl").mkdir(parents=True)
     (runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl").write_text("")
     given = tmp_path / "any-name.txt"  # a file is taken as it is named
-    missing = tmp_path / "missing.trajectory.jsonl"  # and so is a missing one
-    code = main([str(given), str(runs), str(missing), str(given), "--no-map"])
+    given.write_text("")
+    code = main([str(given), str(runs), str(given), "--no-map"])
     assert code == 0
     assert [log for log, _ in calls] == [
         given,
@@ -1153,8 +1240,6 @@ def test_cli_takes_a_log_as_named_and_every_log_under_a_directory_sorted(
         runs / "d" / "dir.trajectory.jsonl",
         runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl",
         runs / "Ä" / "V.trajectory.jsonl",
-        missing,
-        given,
     ]
     assert all(output is None for _, output in calls)
     out = capsys.readouterr().out
@@ -1198,6 +1283,38 @@ def test_cli_refuses_an_empty_directory_byte_for_byte(
     line = _cli_error(capsys, [str(tmp_path / "empty"), "--no-map"])
     assert line == "scenario-t4scene: error: no trajectory log found\n"
     assert calls == []
+
+
+def test_cli_refuses_a_path_that_does_not_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A usage error, as an empty directory is, not [Errno 2] and exit 1 (#2333).
+    calls = _recording_cli(monkeypatch)
+    log = tmp_path / "Run.trajectory.jsonl"
+    log.write_text("")
+    missing = tmp_path / "missing.trajectory.jsonl"
+    line = _cli_error(capsys, [str(log), str(missing), "--no-map"])
+    assert line == f"scenario-t4scene: error: {missing}: no such file or directory\n"
+    assert calls == []
+
+
+def test_cli_ctrl_c_prints_one_line_and_exits_130(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import autoware_carla_scenario.t4_scene.__main__ as cli
+
+    def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "write_t4_scene", interrupted)
+    (tmp_path / "Run.trajectory.jsonl").write_text("")
+    assert main([str(tmp_path), "--no-map"]) == 130
+    captured = capsys.readouterr()
+    assert captured.err == "scenario-t4scene: interrupted\n"
 
 
 @pytest.mark.parametrize(
@@ -1251,19 +1368,26 @@ def test_cli_refuses_two_logs_of_one_stem_byte_for_byte(
     assert [log for log, _ in calls] == paths
 
 
-def test_cli_refuses_one_log_named_twice_into_one_directory(
+@pytest.mark.parametrize("output", [None, "rel"], ids=["beside", "-o"])
+def test_cli_converts_one_log_named_twice_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    output: Optional[str],
 ) -> None:
-    _recording_cli(monkeypatch)
+    # Named itself and under its directory, or by two spellings: refused
+    # with -o as two logs of one stem, converted twice without (#2283).
+    calls = _recording_cli(monkeypatch)
+    monkeypatch.chdir(tmp_path)
     log = tmp_path / "Run.trajectory.jsonl"
     log.write_text("")
-    line = _cli_error(capsys, [str(log), str(tmp_path), "-o", "rel"])
-    assert line == (
-        f"scenario-t4scene: error: {log} and {log} would both be written to "
-        "rel/Run.*; convert them without -o\n"
-    )
+    other = tmp_path / "Other.trajectory.jsonl"
+    other.write_text("")
+    argv = [str(log), str(tmp_path), "./Run.trajectory.jsonl", str(log)]
+    if output is not None:
+        argv += ["-o", output]
+    assert main(argv) == 0
+    expected = None if output is None else Path(output)
+    assert calls == [(log, expected), (other, expected)]
 
 
 def test_the_grid_finds_the_logs_and_the_stems_that_collide(tmp_path: Path) -> None:
@@ -1283,6 +1407,12 @@ def test_the_grid_finds_the_logs_and_the_stems_that_collide(tmp_path: Path) -> N
         tmp_path / "b" / f"Run{LOG_SUFFIX}",
     ]
     assert trajectory_logs([]) == []
+    # A log named twice, as itself and under a directory or by another
+    # spelling of its path, is one log, where it is first named (#2283).
+    assert trajectory_logs(
+        [logs[2], tmp_path / "a", tmp_path / "a" / ".." / "a" / f"Run{LOG_SUFFIX}"]
+    ) == [logs[2], logs[1]]
+    assert trajectory_logs([tmp_path, logs[3]]) == logs[1:]
     assert stem_collision(logs[:3], tmp_path) is None
     assert stem_collision(logs, Path("out")) == (
         f"{logs[2]} and {logs[3]} would both be written to out/Run.*; "

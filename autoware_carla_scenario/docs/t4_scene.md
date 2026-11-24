@@ -80,7 +80,10 @@ after the few the ego has just passed -- and the goal (`t4_scene_goal`). A polic
 reading scenes is thus shown what one reading the egodriver observations is. Its map is written once into the map set as the `t4`
 format (`<map_dir>/<map_id>/t4_map.pb`, a `MapResource`), which the scene
 references. Every other observation is sent as before: a policy that does not
-read scenes is unchanged.
+read scenes is unchanged. The scenes are built by a trajectory recorder of
+their own: if it fails (logged), the history stops there, and the policy is
+sent no scene from then on -- as before the first tick -- rather than the
+frozen history as now; that is logged once, and the run goes on.
 
 ## After a run
 
@@ -90,6 +93,10 @@ uv run scenario-t4scene outputs/2026-10-29/10-00-00
 # One log, somewhere else, at 20 Hz, with every road user however far
 uv run scenario-t4scene outputs/.../CutInScenario.trajectory.jsonl -o scenes/ --step 0.05 --all-objects
 ```
+
+A path that does not exist, or a directory with no log under it, is a usage
+error (exit 2) before anything is written. Ctrl-C prints
+`scenario-t4scene: interrupted` and exits 130.
 
 A log whose last line is cut off -- a run killed while it wrote its last
 tick -- is converted without that line, with a warning; a line that is not
@@ -114,7 +121,15 @@ write_t4_scene("CutInScenario.trajectory.jsonl")  # -> the two paths
 
 The contract carries no map bytes in a scene, so the map is a file of its
 own; a scene without one (`--no-map`, or a log whose map is not on this
-machine any more) has no `map` and no `traffic_lights`.
+machine any more) has no `map` and no `traffic_lights`, and writing it
+removes the `{stem}.t4scene.map.pb` an earlier export left, which it does not
+name.
+
+Each file is written in one rename (a scratch file beside it, renamed over
+it), so a run killed while it writes leaves no truncated message -- one that
+would often still parse, as a shorter scene. The scene goes last, after its
+map, and an earlier export's scene is removed first: a `.t4scene.pb` on disk
+always has the map it names beside it.
 
 ## What goes where
 
@@ -148,7 +163,9 @@ What the log does not hold is left out, never made up:
   drove, without the lanelets beside it that a planned route also holds.
 - **No goal.**
 - **An entity spawned hidden** is on the scene from its `spawn` record to its
-  `despawn` record, not while it is parked out of sight.
+  `despawn` record, both ticks included where they show it (a pre-tick spawn
+  moved it before its tick, a post-tick despawn destroyed it after), not
+  while it is parked out of sight.
 
 ## Frames
 

@@ -581,13 +581,19 @@ def _stand_in_run(
     reset_error: BaseException | None = None,
     setup: Any = None,
     runner_out: list[ScenarioRunner] | None = None,
+    scenario_out: list[Any] | None = None,
+    timeout_seconds: float | None = None,
+    output_dir: Path | None = None,
 ) -> tuple[ScenarioRunner, MagicMock, MagicMock, Any]:
     """Run a scenario of one tick through run_scenario on stand-ins, with
     ``reset_world`` replaced by a mock: the runner, its world, the scenario's
     result writer, and the result.  An error of the run propagates: the runner
-    is then in *runner_out*."""
+    is then in *runner_out*.  The runner writes to *output_dir*, *tmp_path* by
+    default."""
     with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
-        runner = ScenarioRunner(MagicMock(), output_dir=tmp_path)
+        runner = ScenarioRunner(
+            MagicMock(), output_dir=tmp_path if output_dir is None else output_dir
+        )
     world = MagicMock()
     frame = {"n": 0}
     world.tick.side_effect = lambda: frame.__setitem__("n", frame["n"] + 1)
@@ -617,6 +623,8 @@ def _stand_in_run(
         scenario.setup.side_effect = setup
     scenario.is_done.side_effect = [False, True]
     scenario.create_ego.return_value = ego or _Ego()
+    if scenario_out is not None:
+        scenario_out.append(scenario)
     write_result = MagicMock()
     with (
         patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
@@ -636,8 +644,79 @@ def _stand_in_run(
         ),
     ):
         clock.return_value.simulated = 0.05
-        result = runner.run_scenario(scenario, reset_world=reset_world)
+        result = runner.run_scenario(
+            scenario, timeout_seconds=timeout_seconds, reset_world=reset_world
+        )
     return runner, world, write_result, result
+
+
+def test_the_recorder_is_handed_an_absolute_path_for_a_relative_output_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CARLA server takes a relative path from its own directory, so the
+    recorder log would land outside a relative ``output_dir`` (#2382)."""
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    monkeypatch.chdir(tmp_path)
+    runner, _world, _write, result = _stand_in_run(
+        tmp_path,
+        pass_conditions=[AlwaysTrueCondition(label="done")],
+        output_dir=Path("outputs"),
+    )
+    assert result is not None and result.passed
+    client = runner._client
+    client.start_recorder.assert_called_once()  # type: ignore[attr-defined]
+    (handed,) = client.start_recorder.call_args.args  # type: ignore[attr-defined]
+    assert Path(handed).is_absolute()
+    assert Path(handed).parent == tmp_path.resolve() / "outputs"
+    assert Path(handed).suffix == ".log"
+
+
+def test_the_recorder_keeps_a_symlinked_output_dir_as_given(tmp_path: Path) -> None:
+    """An absolute ``output_dir`` reaches the recorder as it was spelled, its
+    symlinks not resolved: a CARLA server in another mount namespace may see
+    the link's path but not its target."""
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    (tmp_path / "real").mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real", target_is_directory=True)
+    runner, _world, _write, result = _stand_in_run(
+        tmp_path,
+        pass_conditions=[AlwaysTrueCondition(label="done")],
+        output_dir=link,
+    )
+    assert result is not None and result.passed
+    client = runner._client
+    (handed,) = client.start_recorder.call_args.args  # type: ignore[attr-defined]
+    assert Path(handed).parent == link
+
+
+@pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+def test_a_default_timeout_that_never_fires_is_refused_before_the_run_starts(
+    tmp_path: Path, seconds: float
+) -> None:
+    # Not once the ego is up and the world has ticked through its warm-up,
+    # where the default timeout is registered (#2287).
+    runners: list[ScenarioRunner] = []
+    scenarios: list[Any] = []
+    ego = _Ego()
+    with pytest.raises(
+        ValueError, match=r"^timeout_seconds must be positive and finite"
+    ):
+        _stand_in_run(
+            tmp_path,
+            ego=ego,
+            timeout_seconds=seconds,
+            runner_out=runners,
+            scenario_out=scenarios,
+        )
+    world = runners[0]._world
+    world.apply_settings.assert_not_called()  # type: ignore[union-attr]
+    world.tick.assert_not_called()  # type: ignore[union-attr]
+    scenarios[0].setup.assert_not_called()
+    ego.spawn.assert_not_called()
+    runners[0].reset_world.assert_not_called()  # type: ignore[attr-defined]
 
 
 def test_an_ego_that_gives_up_waiting_fails_the_run_before_it_begins(
@@ -751,6 +830,29 @@ def test_a_run_that_ends_normally_is_reset_once(tmp_path: Path) -> None:
     runner, _world, _write, result = _stand_in_run(tmp_path)
     assert result.passed
     runner.reset_world.assert_called_once_with("MagicMock")  # type: ignore[attr-defined]
+
+
+def test_a_run_ended_by_is_done_records_each_conditions_status(
+    tmp_path: Path,
+) -> None:
+    # One entry per registered condition, as the pass, fail and termination
+    # paths record (docs/usage.md), not an empty list (#2243).
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    class _Never(AlwaysTrueCondition):
+        def check(self, world: Any, elapsed: float) -> Any:
+            return None
+
+    never = _Never(label="never")
+    _runner, _world, _write, result = _stand_in_run(
+        tmp_path, pass_conditions=[never], reset_world=False
+    )
+    assert result.passed
+    assert result.message == "Scenario completed successfully"
+    assert [
+        (s.role, s.condition_type, s.satisfied) for s in result.condition_statuses
+    ] == [("pass", "_Never", False)]
+    assert result.condition_statuses[0].message == "not yet satisfied"
 
 
 def _driven_walker(walker_id: int) -> MagicMock:

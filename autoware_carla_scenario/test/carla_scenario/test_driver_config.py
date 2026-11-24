@@ -8,6 +8,7 @@ rather than at the start of a simulation run.
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -153,7 +154,6 @@ def test_control_spec_mirrors_the_control_config() -> None:
         # Bools and strings (#1662): read as 1, or failing mid-run.
         ({"wheelbase_m": True}, r"^wheelbase_m must be a number, got True$"),
         ({"kp": "0.5"}, r"^kp must be a number, got '0\.5'$"),
-        ({"kp": None}, r"^kp must be a number, got None$"),
         ({"kp": [1.0]}, r"^kp must be a number, got \[1\.0\]$"),
         # Not finite, an int too large for a float included.
         ({"kp": math.inf}, r"^kp must be finite, got inf$"),
@@ -201,6 +201,88 @@ def test_control_mapping_refuses_a_bad_value_by_its_key(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         ControlConfig.from_mapping(mapping)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "kp",
+        "longitudinal_controller",
+        "velocity_smoothing_window",
+        "enable_smooth_stop",
+        "max_steer_angle_rad",
+        "max_steer_angle_deg",
+    ],
+)
+def test_a_null_control_setting_is_its_default(key: str) -> None:
+    """Null is the default, as an absent key is, for a field as for an
+    alias (#2241)."""
+    assert ControlConfig.from_mapping({key: None}) == ControlConfig()
+
+
+@pytest.mark.parametrize("angle", ["max_steer_angle", "yaw_rate_trim_limit"])
+def test_an_angle_set_in_degrees_and_in_radians_is_refused(angle: str) -> None:
+    """Neither may silently win (#2241): the degrees used to override the
+    radians."""
+    with pytest.raises(
+        ValueError,
+        match=rf"^{angle}_deg and {angle}_rad set the same angle, .*"
+        r"set one of them to null, got 30\.0 and 0\.1$",
+    ):
+        ControlConfig.from_mapping({f"{angle}_deg": 30.0, f"{angle}_rad": 0.1})
+    # One of them null is the other's.
+    control = ControlConfig.from_mapping({f"{angle}_deg": None, f"{angle}_rad": 0.1})
+    assert getattr(control, f"{angle}_rad") == pytest.approx(0.1)
+    control = ControlConfig.from_mapping({f"{angle}_deg": 30.0, f"{angle}_rad": None})
+    assert getattr(control, f"{angle}_rad") == pytest.approx(math.radians(30.0))
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        ("driver.control.max_steer_angle_rad=0.6", 0.6),
+        ("driver.control.max_steer_angle_deg=30", math.radians(30.0)),
+    ],
+)
+def test_a_steer_angle_override_is_read_with_the_shipped_config(
+    override: str, expected: float
+) -> None:
+    """driver/default.yaml leaves both of the full lock's keys null, so an
+    override of either one is the angle the run steers with (#2241)."""
+    from autoware_carla_scenario.examples import run
+
+    cfg = _composed(["ego.entity=carla_driver", override])
+    control = run._control_config(cfg.driver, "driver")
+    assert control.max_steer_angle_rad == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("section", ["driver", "ros2"])
+def test_the_run_heads_the_angle_conflict_with_its_section(section: str) -> None:
+    """from_mapping alone refuses the conflict; the run heads it with the
+    section, as every other control error (#2241)."""
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^{section}\.control\.max_steer_angle_deg and "
+        r"max_steer_angle_rad set the same angle, .*"
+        r"set one of them to null, got 30\.0 and 0\.6$",
+    ):
+        run._control_config(
+            {"control": {"max_steer_angle_deg": 30.0, "max_steer_angle_rad": 0.6}},
+            section,
+        )
+    cfg = _composed(
+        [
+            "ego.entity=carla_driver",
+            "driver.control.max_steer_angle_deg=30",
+            "driver.control.max_steer_angle_rad=0.6",
+        ]
+    )
+    with pytest.raises(
+        run.RunConfigError, match=r"^driver\.control\.max_steer_angle_deg and "
+    ):
+        run.check_run_config(cfg)
 
 
 def test_control_mapping_reads_an_int_as_a_float() -> None:
@@ -382,19 +464,28 @@ def test_camera_keeps_a_whole_number_size_as_an_int(key: str, value: Any) -> Non
 @pytest.mark.parametrize("value", [960.5, True, "960", None])
 def test_camera_refuses_a_size_that_is_no_whole_number(key: str, value: Any) -> None:
     """Not truncated to 960 or 1, as the config is read (#1472)."""
-    match = rf"^camera 'front': {key} must be a whole number"
-    with pytest.raises(ValueError, match=match):
+    match = rf"camera 'front': {key} must be a whole number"
+    with pytest.raises(ValueError, match=f"^{match}"):
         DriverCameraConfig(logical_id="front", **{key: value})
-    with pytest.raises(ValueError, match=match):
-        DriverClientConfig.from_mapping(
-            {"cameras": [{"logical_id": "front", key: value}]}
-        )
+    entry = {"cameras": [{"logical_id": "front", key: value}]}
+    if value is None:
+        # From a mapping, null is the default (#2228).
+        camera = DriverClientConfig.from_mapping(entry).cameras[0]
+        assert getattr(camera, key) == getattr(DriverCameraConfig(), key)
+        return
+    with pytest.raises(
+        ValueError, match=rf"^driver\.cameras\[0\] \('front'\): {match}"
+    ):
+        DriverClientConfig.from_mapping(entry)
 
 
 @pytest.mark.parametrize("key", ["image_width", "image_height"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf")])
 def test_camera_refuses_a_size_that_is_not_finite(key: str, value: Any) -> None:
-    with pytest.raises(ValueError, match=rf"^camera 'front': {key} must be finite"):
+    with pytest.raises(
+        ValueError,
+        match=rf"^driver\.cameras\[0\] \('front'\): camera 'front': {key} must be finite",
+    ):
         DriverClientConfig.from_mapping(
             {"cameras": [{"logical_id": "front", key: value}]}
         )
@@ -530,7 +621,11 @@ def test_a_whole_random_seed_is_kept(seed: Any, expected: Any) -> None:
     from autoware_carla_scenario.seed import resolve_seed
 
     config = DriverClientConfig.from_mapping({"random_seed": seed})
-    if expected is not None:
+    if expected is None:
+        # No seed stays no seed, so the session draws the run's seed.
+        assert config.random_seed is None
+    else:
+        assert config.random_seed is not None
         assert resolve_seed(config.random_seed) == expected
 
 
@@ -656,6 +751,117 @@ def test_a_lens_number_that_is_no_number_is_refused(key: str) -> None:
         DriverCameraLens(**lens)
 
 
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "principal_point",
+        "pixeldist_to_angle_poly",
+        "angle_to_pixeldist_poly",
+        "linear_cde",
+        "max_angle",
+    ],
+)
+def test_a_lens_number_that_is_not_finite_is_refused(key: str, value: float) -> None:
+    """A NaN or an infinity in a lens is refused naming lens.<key> (#2277)."""
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    lens: dict[str, Any] = {
+        "principal_point": [480.0, 302.0],
+        "pixeldist_to_angle_poly": [0.0, 0.002],
+        "angle_to_pixeldist_poly": [0.0, 500.0],
+        "max_angle": 1.5,
+        "linear_cde": [1.0, 0.0, 0.0],
+    }
+    if key == "max_angle":
+        lens[key] = value
+    else:
+        lens[key] = [*lens[key][:-1], value]
+    with pytest.raises(ValueError, match=rf"^lens\.{key} must be finite, got "):
+        DriverCameraLens.from_mapping(lens)
+    with pytest.raises(ValueError, match=r"^driver\.cameras\[0\] .*lens\."):
+        DriverClientConfig.from_mapping({"cameras": [{"lens": lens}]})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("warmup_s", -3.0, "must not be negative, got -3.0"),
+        ("traffic_light_sight_distance_m", -1.0, "must not be negative, got -1.0"),
+        ("actor_horizon_m", -1.0, "must not be negative, got -1.0"),
+        ("actor_horizon_m", -math.inf, "must not be negative, got -inf"),
+        ("route_horizon_m", 0.0, "must be positive, got 0.0"),
+        ("route_horizon_m", -5.0, "must be positive, got -5.0"),
+        ("route_resolution_m", 0.0, "must be positive, got 0.0"),
+        ("route_resolution_m", -2, "must be positive, got -2"),
+        ("t4_scene_wheel_base_m", -2.0, "must be positive, or null"),
+        ("t4_scene_wheel_base_m", 0.0, "must be positive, or null"),
+    ],
+)
+def test_a_driver_distance_or_duration_out_of_its_domain_is_refused(
+    key: str, value: float, message: str
+) -> None:
+    """Each length and duration is refused out of its domain, naming the key
+    (#2277), as t4_scene_history_s is."""
+    with pytest.raises(ValueError, match=rf"^driver\.{key} {re.escape(message)}"):
+        DriverClientConfig.from_mapping({key: value})
+
+
+def test_a_driver_distance_at_its_documented_zero_is_kept() -> None:
+    """0 keeps its meaning where it has one: no run-up, CARLA's own light
+    trigger, no road user reported; an infinite horizon is every one."""
+    config = DriverClientConfig.from_mapping(
+        {
+            "warmup_s": 0.0,
+            "traffic_light_sight_distance_m": 0.0,
+            "actor_horizon_m": 0,
+            "t4_scene_wheel_base_m": 2.7,
+        }
+    )
+    assert config.warmup_s == 0.0 and config.actor_horizon_m == 0
+    assert config.traffic_light_sight_distance_m == 0.0
+    assert DriverClientConfig(actor_horizon_m=math.inf).actor_horizon_m == math.inf
+    assert DriverClientConfig() == DriverClientConfig.from_mapping({})
+
+
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        ({"stop_brake": 2.0}, r"^stop_brake must be in \[0, 1\], got 2\.0$"),
+        ({"stop_brake": -0.5}, r"^stop_brake must be in \[0, 1\], got -0\.5$"),
+        ({"throttle_deadband": 1.5}, r"^throttle_deadband must be in \[0, 1\]"),
+        ({"throttle_deadband": -0.1}, r"^throttle_deadband must be in \[0, 1\]"),
+        ({"accel_lowpass_gain": 1.5}, r"^accel_lowpass_gain must be in \[0, 1\]"),
+        ({"lpf_vel_error_gain": -0.1}, r"^lpf_vel_error_gain must be in \[0, 1\]"),
+        ({"lpf_acc_error_gain": 2}, r"^lpf_acc_error_gain must be in \[0, 1\]"),
+        ({"max_steer_rate": 0.0}, r"^max_steer_rate must be positive, got 0\.0$"),
+        ({"max_steer_rate": -1.0}, r"^max_steer_rate must be positive"),
+        ({"lookahead_gain_s": -1.0}, r"^lookahead_gain_s must not be negative"),
+    ],
+)
+def test_control_mapping_refuses_pedals_gains_and_rates_out_of_range(
+    mapping: dict, message: str
+) -> None:
+    """A brake of 2 or -0.5, a throttle floor above full throttle, a gain past
+    1 and a steering rate limit of 0 are refused (#2277)."""
+    with pytest.raises(ValueError, match=message):
+        ControlConfig.from_mapping(mapping)
+
+
+def test_control_mapping_keeps_the_ends_of_the_pedal_and_gain_ranges() -> None:
+    config = ControlConfig.from_mapping(
+        {
+            "stop_brake": 1.0,
+            "throttle_deadband": 0.0,
+            "accel_lowpass_gain": 0.0,
+            "lpf_vel_error_gain": 1,
+            "lookahead_gain_s": 0.0,
+        }
+    )
+    assert config.stop_brake == 1.0 and config.throttle_deadband == 0.0
+    assert config.lpf_vel_error_gain == 1.0
+
+
 @pytest.mark.parametrize(
     "override", ["driver.policy_timestep_s=true", "driver.image_quality=true"]
 )
@@ -692,7 +898,10 @@ def test_a_carla_driver_run_checks_the_lidar_dropoff_rate(
     lidars = f"driver.lidars=[{{logical_id:top,dropoff_general_rate:{rate}}}]"
     cfg = _shipped(["ego.entity=carla_driver", lidars])
     if refused:
-        match = r"^LiDAR dropoff_general_rate must be in \[0, 1\], got "
+        match = (
+            r"^driver\.lidars\[0\] \('top'\): "
+            r"LiDAR dropoff_general_rate must be in \[0, 1\], got "
+        )
         with pytest.raises(run.RunConfigError, match=match):
             run.check_run_config(cfg)
     else:
@@ -768,3 +977,184 @@ def test_send_renderer_data_spelled_false_is_seen_by_the_t4_scene_check() -> Non
         DriverClientConfig.from_mapping(
             {"t4_scene": "true", "map_dir": "/maps", "send_renderer_data": "false"}
         )
+
+
+# ---------------------------------------------------------------------------
+# Null settings and logical ids of driver.cameras[] / driver.lidars[] (#2228)
+# ---------------------------------------------------------------------------
+
+
+def test_a_null_camera_setting_is_its_default() -> None:
+    camera = DriverCameraConfig.from_mapping(
+        {"logical_id": None, "fov": None, "image_width": None, "lens": None}
+    )
+    assert camera == DriverCameraConfig()
+
+
+def test_a_null_lidar_setting_is_its_default() -> None:
+    from autoware_carla_scenario.driver.base import DriverLidarConfig
+
+    lidar = DriverLidarConfig.from_mapping(
+        {"logical_id": None, "range_m": None, "channels": None, "noise_seed": None}
+    )
+    assert lidar == DriverLidarConfig()
+    assert lidar.logical_id == "lidar_top"
+
+
+def test_a_null_sensor_logical_id_in_the_driver_is_the_default() -> None:
+    """The policy was offered sensors addressed by None, which it never found."""
+    config = DriverClientConfig.from_mapping(
+        {"cameras": [{"logical_id": None}], "lidars": [{"logical_id": None}]}
+    )
+    assert config.cameras[0].logical_id == "camera_front_wide_120fov"
+    assert config.lidars[0].logical_id == "lidar_top"
+
+
+@pytest.mark.parametrize("logical_id", ["", 3, True, ["a"]])
+def test_a_camera_logical_id_that_is_no_name_is_refused(logical_id: Any) -> None:
+    with pytest.raises(ValueError, match="camera logical_id must be a non-empty"):
+        DriverCameraConfig(logical_id=logical_id)
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.cameras\[1\] \(.*\): camera logical_id must be a non-empty",
+    ):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front"}, {"logical_id": logical_id}]}
+        )
+
+
+@pytest.mark.parametrize("logical_id", ["", 3, True])
+def test_a_lidar_logical_id_that_is_no_name_is_refused(logical_id: Any) -> None:
+    from autoware_carla_scenario.driver.base import DriverLidarConfig
+
+    with pytest.raises(ValueError, match="LiDAR logical_id must be a non-empty"):
+        DriverLidarConfig(logical_id=logical_id)
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.lidars\[0\] \(.*\): LiDAR logical_id must be a non-empty",
+    ):
+        DriverClientConfig.from_mapping({"lidars": [{"logical_id": logical_id}]})
+
+
+def test_a_lidar_error_names_its_entry_and_logical_id() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.lidars\[1\] \('rear'\): LiDAR channels must be positive",
+    ):
+        DriverClientConfig.from_mapping(
+            {"lidars": [{"logical_id": "top"}, {"logical_id": "rear", "channels": 0}]}
+        )
+    # Given no id, the entry is named by the default it takes.
+    with pytest.raises(
+        ValueError, match=r"^driver\.lidars\[0\] \('lidar_top'\): LiDAR range_m"
+    ):
+        DriverClientConfig.from_mapping({"lidars": [{"range_m": -1.0}]})
+    with pytest.raises(
+        ValueError, match=r"^driver\.lidars\[0\] \('top'\): Unknown DriverLidarConfig"
+    ):
+        DriverClientConfig.from_mapping({"lidars": [{"logical_id": "top", "rang": 1}]})
+
+
+def test_a_camera_error_names_its_entry() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^driver\.cameras\[0\] \('front'\): camera 'front': fov must be",
+    ):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front", "fov": 180.0}]}
+        )
+
+
+@pytest.mark.parametrize("key", ["cameras", "lidars"])
+@pytest.mark.parametrize("value", [False, "lidar_top", [3]])
+def test_a_sensor_list_that_is_no_list_of_mappings_is_refused(
+    key: str, value: Any
+) -> None:
+    with pytest.raises(ValueError, match=rf"^driver\.{key}(\[0\])? must be a"):
+        DriverClientConfig.from_mapping({key: value})
+
+
+@pytest.mark.parametrize("address", [None, "", 50051])
+def test_a_driver_address_that_is_no_address_is_refused(address: Any) -> None:
+    """driver.address: null used to be taken as None, dialled as nothing."""
+    with pytest.raises(ValueError, match="^driver.address must be a non-empty string"):
+        DriverClientConfig.from_mapping({"address": address})
+
+
+# ---------------------------------------------------------------------------
+# policy, map_dir and map_formats, checked as they are read (#2241)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", ["policy", "map_dir"])
+@pytest.mark.parametrize(
+    ("value", "shown"), [("", "''"), ("  ", "'  '"), (False, "False"), (0, "0")]
+)
+def test_a_policy_or_map_dir_that_is_no_name_is_refused(
+    key: str, value: Any, shown: str
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"^driver\.{key} must be a non-empty string, or null, got {shown}$",
+    ):
+        DriverClientConfig.from_mapping({key: value})
+
+
+@pytest.mark.parametrize("key", ["policy", "map_dir"])
+def test_a_null_policy_or_map_dir_keeps_its_meaning(key: str) -> None:
+    assert getattr(DriverClientConfig.from_mapping({key: None}), key) is None
+
+
+@pytest.mark.parametrize(
+    ("formats", "message"),
+    [
+        # A bare string would be read as its letters.
+        ("lanelet2", r"^driver\.map_formats must be a list, not str 'lanelet2'"),
+        (
+            ["lanelet3"],
+            r"^driver\.map_formats\[0\] must be one of \[.*\], got 'lanelet3'$",
+        ),
+        (
+            ["lanelet2", "osm2"],
+            r"^driver\.map_formats\[1\] must be one of \[.*\], got 'osm2'$",
+        ),
+        ([None], r"^driver\.map_formats\[0\] must be a string or a number"),
+        (
+            ["lanelet2", "t4"],
+            r"^driver\.map_formats names t4, .* set driver\.t4_scene=true, or "
+            r"leave t4 out, got \['lanelet2', 't4'\]$",
+        ),
+    ],
+)
+def test_map_formats_the_map_set_cannot_hold_are_refused(
+    formats: Any, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DriverClientConfig.from_mapping(
+            {"map_dir": "/tmp/maps", "map_formats": formats}
+        )
+
+
+def test_map_formats_are_kept_as_a_tuple() -> None:
+    config = DriverClientConfig.from_mapping(
+        {"map_dir": "/tmp/maps", "map_formats": ["lanelet2", "opendrive"]}
+    )
+    assert config.map_formats == ("lanelet2", "opendrive")
+    assert DriverClientConfig.from_mapping({"map_formats": None}).map_formats == (
+        "lanelet2",
+    )
+    # t4 with the scenes that write it.
+    config = DriverClientConfig.from_mapping(
+        {"map_dir": "/tmp/maps", "t4_scene": True, "map_formats": ["t4"]}
+    )
+    assert config.map_formats == ("t4",)
+
+
+def test_a_carla_driver_run_refuses_bare_map_formats_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _composed(["ego.entity=carla_driver", "driver.map_formats=lanelet2"])
+    with pytest.raises(
+        run.RunConfigError, match=r"^driver\.map_formats must be a list"
+    ):
+        run.check_run_config(cfg)

@@ -20,7 +20,7 @@ from ..entity.registry import (
     find_vehicle_entity,
     unregister_entity,
 )
-from ..entity_role import EntityRole
+from ..entity_role import EntityRole, canonical_role_name
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -55,7 +55,8 @@ class DespawnAction(BaseAction):
         name: The name of a prop to take away.
 
     Raises:
-        ValueError: For the ego, which a run is measured on; for neither or
+        ValueError: For the ego (``"Ego"``, or ``"ego"`` or ``"hero"`` in any
+            case), which a run is measured on; for neither or
             both of *entity_name* and *name* (a blank *name* is none).
     """
 
@@ -83,7 +84,11 @@ class DespawnAction(BaseAction):
             raise ValueError(
                 f"{label}: despawn an entity or a prop (a name), one of the two"
             )
-        if entity_name is not None and str(entity_name) == str(EGO_ROLE_NAME):
+        # As the lookups read it: "ego" and "hero", in any case, are the ego
+        # too (#2271).
+        if entity_name is not None and canonical_role_name(str(entity_name)) == str(
+            EGO_ROLE_NAME
+        ):
             raise ValueError(f"{label}: the ego cannot be despawned")
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = "" if entity_name is None else str(entity_name)

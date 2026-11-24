@@ -155,6 +155,11 @@ def fake_slurm(
     monkeypatch.setattr(run, "resolve_map_paths", fake_world.fake_map_paths)
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
     monkeypatch.setattr(run, "use_canvas", fake_world.fake_use_canvas)
+    # As fake_world.install does in the tasks: what a batch decides is under
+    # test, not whether the installed converter could convert strictly.
+    monkeypatch.setattr(
+        "autoware_carla_scenario.rerun.check_strict_coverage", lambda _converter: None
+    )
     monkeypatch.setattr(
         run,
         "_compose_config",
@@ -542,48 +547,67 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
 
     local_status, local = _run_batch(fake_slurm, "local", list(_SWEEP))
     capsys.readouterr()
+    # Six cases, two tasks in parallel: task 0 runs cases 0, 1 and 2, task 1
+    # cases 3, 4 and 5, each in order in one process.
+    tasks = [range(0, 3), range(3, 6)]
+    # A worker dies on a case the fake world does not error: it crashes on a
+    # digest, and only such a case records one (stems.jsonl).  Best its
+    # task's middle one -- what the task finished before it must survive the
+    # crash, and what comes after it must be left missing, never started --
+    # else its last.  Never its first: something must survive.  _SWEEP's seed
+    # fixes the cases (a digest is a SHA-256 of their config), so the same
+    # case is crashed on every run.
+    local_results = json.loads((local / "batch_results.json").read_text())
+    clean = [i for i in range(6) if not local_results[i].get("error")]
+    preferred = [task[1] for task in tasks] + [task[-1] for task in tasks]
+    crashed = next((i for i in preferred if i in clean), None)
+    assert (
+        crashed is not None
+    ), f"only a task's first case runs in the fake world: {clean}"
+    task_index, task = next((k, t) for k, t in enumerate(tasks) if crashed in t)
+    # stems.jsonl lists the cases that did not error, in the batch's order.
     ran = [json.loads(line) for line in (fake_slurm.record / "stems.jsonl").open()]
-    # The worker of the first task dies on the batch's second case (stem -1).
-    second = next(
-        (entry["digest"] for entry in ran if entry["stem"].endswith("Scenario-1")), None
-    )
-    if second is None:
-        pytest.skip("the second case errored in the fake world")
-    fake_slurm.monkeypatch.setenv("FAKE_CRASH_DIGESTS", second[:16])
+    entry = ran[clean.index(crashed)]
+    assert entry["stem"].endswith(f"Scenario-{crashed}")
+    fake_slurm.monkeypatch.setenv("FAKE_CRASH_DIGESTS", entry["digest"][:16])
+    # The crashed case and those after it in its task never ran.
+    missing = list(range(crashed, task.stop))
 
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm))
     out = capsys.readouterr().out
     assert status == 1
+    assert (fake_slurm.record / f"crashed-{entry['digest'][:16]}").exists()
     layout = BatchLayout(batch)
-    assert layout.read_result(0) is not None
-    assert layout.read_result(1) is None and layout.read_result(2) is None
+    for i in range(6):
+        assert (layout.read_result(i) is None) == (i in missing), i
     assert "No result: the case did not finish under SLURM" in out
     assert "scenario-slurm resubmit" in out
     results = json.loads((batch / "batch_results.json").read_text())
-    assert results[1]["error"] is True and results[2]["error"] is True
+    assert all(results[i]["error"] is True for i in missing)
     # The job script stopped the CARLA the dead worker left running.
-    task0 = layout.read_task(0, 0)
-    assert task0 is not None
-    port = task0.get("ports")["rpc"]
+    dead = layout.read_task(0, task_index)
+    assert dead is not None
+    port = dead.get("ports")["rpc"]
     _wait_for(
         lambda: fake_carlas(fake_slurm.record, port) == [], 20, "the orphaned CARLA"
     )
-    _wait_for(lambda: not layout.task_port(0, 0).exists(), 20, "the port file")
+    _wait_for(lambda: not layout.task_port(0, task_index).exists(), 20, "the port file")
 
-    # Resubmitted: the two cases with no result, and those that errored (the
+    # Resubmitted: the cases with no result, and those that errored (the
     # fake world's errored cases raise again, as a case without ground would).
     errored = [
         i
         for i in range(6)
         if (record := layout.read_result(i)) is not None and record.errored
     ]
-    assert missing_cases(layout) == [1, 2]
+    assert missing_cases(layout) == missing
     code = cli.main(["resubmit", str(batch), "--dry-run"])
     assert code == 0
-    assert f"Resubmitting {2 + len(errored)} case(s)" in capsys.readouterr().out
+    resubmitted = sorted([*missing, *errored])
+    assert f"Resubmitting {len(resubmitted)} case(s)" in capsys.readouterr().out
     code = cli.main(["resubmit", str(batch), "--wait"])
     assert code == local_status
-    assert _record_json(layout, 1)["cases"] == sorted([1, 2, *errored])
+    assert _record_json(layout, 1)["cases"] == resubmitted
     assert _outputs(batch) == _outputs(local)
     assert (batch / "batch_results.json").read_bytes() == (
         local / "batch_results.json"
@@ -1775,7 +1799,7 @@ def test_queue_names_a_case_by_the_stem_it_is_given(tmp_path: Path) -> None:
             seen.append(kwargs.get("file_stem"))
             return ScenarioResult(passed=True, message="ok", elapsed_seconds=0.0)
 
-        def reset_world(self, scenario_name: str = "") -> None:
+        def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
             pass
 
     queue = ScenarioQueue(server=MagicMock())
@@ -3559,8 +3583,71 @@ def test_sbatch_that_prints_no_job_id_is_a_runtime_error(
     for stdout in ("", "\n \n", ";cluster\n"):
         with pytest.raises(RuntimeError, match="sbatch printed no job id"):
             queue._run_sbatch(["sbatch", "--parsable", "job.sh"])
-    stdout = "warning: something\n4242;cluster\n"
+    stdout = "warning: something\n4242\n"
     assert queue._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
+    stdout = "warning: something\n4242;\n"
+    assert queue._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
+
+
+@pytest.mark.parametrize("stdout", ["4242;other\n", "warning\n 4242 ; other \n"])
+def test_sbatch_that_names_another_cluster_is_refused(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    """#2247: a job submitted to another cluster (SBATCH_CLUSTERS) is one
+    squeue, scancel and the collect job's dependency would not find: an
+    error naming the job to cancel, not a job id followed on the default
+    cluster."""
+    from autoware_carla_scenario.slurm import queue
+
+    monkeypatch.setattr(queue, "require_sbatch", lambda: "sbatch")
+
+    def run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(queue.subprocess, "run", run)
+    with pytest.raises(RuntimeError) as caught:
+        queue._run_sbatch(["sbatch", "--parsable", "job.sh"])
+    message = str(caught.value)
+    assert "job 4242 to cluster 'other'" in message
+    assert "scancel -M other 4242" in message
+
+
+def test_active_states_classify_every_squeue_state() -> None:
+    """#2247: every state of squeue's JOB STATE CODES (man squeue) is either
+    one SLURM is not done with or a final one; SPECIAL_EXIT and RESV_DEL_HOLD
+    are held tasks that run again, so active."""
+    from autoware_carla_scenario.slurm.queue import ACTIVE_STATES
+
+    final = {
+        "BOOT_FAIL",
+        "CANCELLED",
+        "COMPLETED",
+        "DEADLINE",
+        "FAILED",
+        "NODE_FAIL",
+        "OUT_OF_MEMORY",
+        "PREEMPTED",
+        "REVOKED",
+        "TIMEOUT",
+    }
+    active = {
+        "CONFIGURING",
+        "COMPLETING",
+        "PENDING",
+        "RUNNING",
+        "RESV_DEL_HOLD",
+        "REQUEUE_FED",
+        "REQUEUE_HOLD",
+        "REQUEUED",
+        "RESIZING",
+        "SIGNALING",
+        "SPECIAL_EXIT",
+        "STAGE_OUT",
+        "STOPPED",
+        "SUSPENDED",
+    }
+    assert set(ACTIVE_STATES) == active
+    assert not active & final
 
 
 def _hanging_tool(bin_dir: Path, name: str) -> Path:
@@ -3914,8 +4001,10 @@ def test_port_locks_go_to_a_node_wide_directory(
     lock_dir = ports.default_lock_dir(shm)
     assert lock_dir == shm / f"acs-slurm-ports-{os.getuid()}"
     assert lock_dir.is_dir() and (lock_dir.stat().st_mode & 0o777) == 0o700
-    # Where /dev/shm cannot be used, /tmp.
-    assert ports.default_lock_dir(tmp_path / "missing") == ports.LOCK_DIR
+    # Where /dev/shm cannot be used, a directory of the user's own in /tmp.
+    assert ports.default_lock_dir(tmp_path / "missing", tmp_path) == (
+        tmp_path / f"acs-slurm-ports-{os.getuid()}"
+    )
     # A slot taken without a lock directory locks there.
     monkeypatch.setattr(ports, "default_lock_dir", lambda: lock_dir)
     slot = acquire_slot(port_base, RANGE_SLOTS, start=0)
@@ -5113,6 +5202,48 @@ def test_resubmit_with_nothing_to_resubmit_collects_only_without_dry_run(
     else:
         assert code == 1
         assert collected == [tmp_path]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_resubmit_refuses_an_out_of_range_option_with_nothing_to_resubmit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    dry_run: bool,
+) -> None:
+    """#2285: the options were checked only after "Nothing to resubmit", so
+    with every case done ``--array-parallelism 0`` (``--dry-run`` too)
+    exited 0; it exits 1 naming the setting, and collects nothing."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSION
+
+    tmp_path = tmp_path.resolve()
+    layout = BatchLayout(tmp_path)
+    layout.manifest.parent.mkdir(parents=True)
+    layout.manifest.write_text(
+        json.dumps({"version": MANIFEST_VERSION, "cases": [], "launcher": {}})
+    )
+    collected: list[Path] = []
+
+    def fake_collect(target: BatchLayout, **_: Any) -> int:
+        collected.append(target.batch_dir)
+        return 0
+
+    monkeypatch.setattr(cli, "collect", fake_collect)
+    argv = [
+        "resubmit",
+        str(tmp_path),
+        "--array-parallelism",
+        "0",
+        "--wait",
+        *(["--dry-run"] if dry_run else []),
+    ]
+    assert cli.main(argv) == 1
+    captured = capsys.readouterr()
+    assert captured.err.startswith("Error: ")
+    assert "launcher.array_parallelism" in captured.err
+    assert "Nothing to resubmit" not in captured.out
+    assert collected == []
 
 
 @pytest.mark.parametrize(

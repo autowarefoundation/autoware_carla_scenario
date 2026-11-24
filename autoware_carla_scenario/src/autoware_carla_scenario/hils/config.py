@@ -62,6 +62,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import canonical_role_name
+from ..number_settings import is_port
 from ..value_text import huge_integer
 from .measurements import CAMERA_ENCODINGS
 from .protocol import (
@@ -83,6 +84,7 @@ from .sensor_spec import (
     checked_signal,
 )
 from .sensor_spec import _attribute_number as _attribute_number  # noqa: F401 - re-exported
+from .sensor_spec import _decimal as _decimal
 from .signals import SIGNALS as SIGNALS  # noqa: F401 - re-exported
 from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
 from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
@@ -271,7 +273,12 @@ class StepSpec:
     def describe(self) -> str:
         if self.kind == "sleep":
             return f"sleep {self.seconds} s"
-        what = self.name if self.name is not None else f"frame {self.frame_id}"
+        if self.name is not None:
+            what = self.name
+        elif self.frame_id is not None:
+            what = f"frame {self.frame_id}"
+        else:
+            what = "a raw frame"
         if self.kind == "wait":
             return f"wait for {what} from {self.device} (up to {self.seconds} s)"
         return f"send {what} to {self.device}"
@@ -411,17 +418,6 @@ def _key_text(key: Any, where: str) -> str:
     return str(key)
 
 
-def _decimal(value: int, where: str) -> str:
-    """The decimal text of the integer *value*, or a :class:`HilsConfigError`
-    naming *where* when it has too many digits for ``str()``."""
-    try:
-        return str(value)
-    except ValueError:
-        raise HilsConfigError(
-            f"{where}: expected an integer of fewer digits, got {_huge(value)}"
-        ) from None
-
-
 def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
     """*section* with its keys checked to be strings (:func:`_text`)."""
     for key in section:
@@ -461,10 +457,12 @@ def _seconds(value: Any, where: str, *, zero: bool = False) -> float:
 
 
 def _port(value: Any, where: str) -> int:
-    """A TCP port: an integer (not a bool) in 1..65535."""
+    """A TCP port: an integer (not a bool) in 1..65535, the rule of every
+    port setting (:func:`~autoware_carla_scenario.number_settings.is_port`,
+    #2398), worded as the rest of the configuration's errors are."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise HilsConfigError(f"{where}: expected an integer port, got {_shown(value)}")
-    if not 1 <= value <= 65535:
+    if not is_port(value):
         raise HilsConfigError(f"{where}: must be within 1-65535, got {_shown(value)}")
     return value
 
@@ -589,9 +587,26 @@ def _attributes(value: Any, where: str) -> Dict[str, str]:
 
 
 def _codec(value: Any, base: Path, where: str) -> str:
+    """The codec *value* names, as hilspy.open() takes it: ``NAME`` or
+    ``NAME:ARGUMENT`` (``dbc:vehicle.dbc``, ``lidar:vlp16``), a relative
+    file argument made relative to *base*.
+
+    An empty codec, an empty name and ``NAME:`` without its argument are
+    refused here, naming *where*, rather than reaching hilspy.open() (#2241).
+    """
     codec = _text(value, where)
     name, sep, argument = codec.partition(":")
-    if sep and argument:
+    if not name.strip():
+        raise HilsConfigError(
+            f"{where}: expected a codec name (raw, nmea, dbc:FILE, ...), "
+            f"got {_shown(codec)}"
+        )
+    if sep and not argument.strip():
+        raise HilsConfigError(
+            f"{where}: expected an argument after the colon "
+            f"(dbc:vehicle.dbc, lidar:vlp16), got {_shown(codec)}"
+        )
+    if sep:
         return f"{name}:{_relative_file(argument, base)}"
     return codec
 
@@ -778,8 +793,13 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
     where = f"devices.{name}"
     section = _mapping(value, where)
     _only(section, ("url", "codec", "options", "messages", "sensor", "inputs"), where)
-    if not section.get("url"):
-        raise HilsConfigError(f"{where}: a device has a url")
+    # Text, not blank: a number or false gave a message naming neither the
+    # key nor the value, and a blank url reached hilspy.open() (#2241).
+    if section.get("url") is None:
+        raise HilsConfigError(f"{where}.url: a device has a url")
+    url = _text(section["url"], f"{where}.url")
+    if not url.strip():
+        raise HilsConfigError(f"{where}.url: a device has a url, got {_shown(url)}")
     codec = _codec(_get(section, "codec", "raw"), base, f"{where}.codec")
     options = {
         _key_text(k, f"{where}.options"): _relative_file(v, base)
@@ -824,7 +844,7 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
         )
     return DeviceSpec(
         name=name,
-        url=_text(section["url"], f"{where}.url"),
+        url=url,
         codec=codec,
         options=options,
         messages=messages,

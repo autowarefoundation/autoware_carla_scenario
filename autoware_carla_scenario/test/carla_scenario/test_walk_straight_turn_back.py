@@ -9,6 +9,7 @@ fixture road around its reference line.
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 from typing import Any, Iterator, Optional
 from unittest.mock import MagicMock
@@ -422,3 +423,160 @@ def test_the_band_carla_s_point_query_misses_is_on_the_road_not_the_kerb(
     assert action._on_road(world, location)
     assert action._mark_kerb(world, location)
     assert not action._has_kerb
+
+
+# -- road_threat's work done once a call (#2336) ------------------------------
+
+
+def _old_road_threat(
+    world: Any,
+    location: Any,
+    walking_x: float,
+    walking_y: float,
+    distance_m: Optional[float],
+    ttc_s: Optional[float],
+) -> Optional[str]:
+    """road_threat as it was, on the public measures, a vehicle at a time."""
+    from autoware_carla_scenario.coordinate.lane_distance import (
+        lane_closing_speed,
+        lane_separation,
+    )
+
+    if distance_m is None and ttc_s is None:
+        return None
+    target = CarlaWorldPose(x=location.x, y=location.y, z=location.z, yaw=0.0)
+    for vehicle in world.get_actors().filter("vehicle.*"):
+        at = vehicle.get_location()
+        if at.z < -100.0:
+            continue
+        source = CarlaWorldPose(x=at.x, y=at.y, z=at.z, yaw=0.0)
+        separation = lane_separation(source, target)
+        if separation is None:
+            continue
+        if distance_m is not None and separation <= distance_m:
+            return f"vehicle {vehicle.id} {separation:.1f} m away along the road"
+        if ttc_s is None or separation < 1e-6:
+            continue
+        driving = vehicle.get_velocity()
+        closing = lane_closing_speed(
+            source, driving.x, driving.y, target, walking_x, walking_y
+        )
+        if closing is None or closing < 1e-6:
+            continue
+        ttc = separation / closing
+        if ttc <= ttc_s:
+            return f"vehicle {vehicle.id} {ttc:.1f} s away along the road"
+    return None
+
+
+class _Placed:
+    """A vehicle anywhere, driving at any velocity."""
+
+    def __init__(self, actor_id: int, at: CarlaWorldPose, vx: float, vy: float) -> None:
+        self.id = actor_id
+        self._at = carla.Location(x=at.x, y=at.y, z=at.z)
+        self._v = carla.Vector3D(vx, vy, 0.0)
+
+    def get_location(self) -> carla.Location:
+        return self._at
+
+    def get_velocity(self) -> carla.Vector3D:
+        return self._v
+
+
+def _random_traffic(rng: Any, count: int) -> list[_Placed]:
+    vehicles = []
+    for i in range(count):
+        if rng.random() < 0.7:
+            at = _world_at(rng.uniform(0.0, 120.0), rng.uniform(-6.0, 6.0))
+        else:
+            near = _world_at(CROSSING_S, 0.0)
+            at = CarlaWorldPose(
+                x=near.x + rng.uniform(-150.0, 150.0),
+                y=near.y + rng.uniform(-150.0, 150.0),
+                z=near.z,
+                yaw=0.0,
+            )
+        if rng.random() < 0.05:
+            at = CarlaWorldPose(x=at.x, y=at.y, z=at.z - 500.0, yaw=0.0)  # parked
+        speed = rng.choice([0.0, 0.0, rng.uniform(0.0, 20.0)])
+        angle = rng.uniform(-math.pi, math.pi)
+        vehicles.append(
+            _Placed(100 + i, at, speed * math.cos(angle), speed * math.sin(angle))
+        )
+    return vehicles
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_road_threat_answers_as_measuring_each_vehicle_afresh(
+    loaded_map: MapManager, seed: int
+) -> None:
+    """Against the public lane measures, a vehicle at a time, with the
+    thresholds right at a vehicle's own separation and time to collision."""
+    from autoware_carla_scenario.actions._road_threat import road_threat
+    from autoware_carla_scenario.coordinate.lane_distance import lane_separation
+
+    rng = random.Random(seed)
+    world = MagicMock()
+    for _trial in range(5):
+        vehicles = _random_traffic(rng, rng.randrange(0, 8))
+        world.get_actors.return_value.filter.side_effect = (
+            lambda pattern, v=vehicles: list(v) if pattern == "vehicle.*" else []
+        )
+        at = _world_at(CROSSING_S + rng.uniform(-5.0, 5.0), rng.uniform(-5.0, -1.0))
+        location = carla.Location(x=at.x, y=at.y, z=at.z)
+        walking = rng.choice([(0.0, 0.0), (rng.uniform(-2, 2), rng.uniform(-2, 2))])
+        # Thresholds at the bound: one vehicle's separation exactly.
+        separations = [
+            lane_separation(
+                CarlaWorldPose(x=v._at.x, y=v._at.y, z=v._at.z, yaw=0.0),
+                CarlaWorldPose(x=at.x, y=at.y, z=at.z, yaw=0.0),
+            )
+            for v in vehicles
+        ]
+        known = [s for s in separations if s is not None]
+        for distance_m in (None, 5.0, rng.choice(known) if known else 1.0):
+            for ttc_s in (None, 3.0, 10.0):
+                expected = _old_road_threat(
+                    world, location, *walking, distance_m, ttc_s
+                )
+                got = road_threat(world, location, *walking, distance_m, ttc_s)
+                assert got == expected, (distance_m, ttc_s)
+
+
+def test_road_threat_projects_the_pedestrian_once(
+    loaded_map: MapManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pedestrian is projected once a call, each vehicle once."""
+    from autoware_carla_scenario.actions._road_threat import road_threat
+    from autoware_carla_scenario.coordinate import lane_distance
+
+    projected: list[Any] = []
+    original = lane_distance.to_opendrive
+
+    def counting(pose: Any) -> Any:
+        projected.append(pose)
+        return original(pose)
+
+    monkeypatch.setattr(lane_distance, "to_opendrive", counting)
+    # Ten vehicles standing far along the road, none a threat.
+    vehicles = [_Placed(i, _world_at(110.0 + i, 0.0), 0.0, 0.0) for i in range(10)]
+    world = MagicMock()
+    world.get_actors.return_value.filter.side_effect = (
+        lambda pattern: list(vehicles) if pattern == "vehicle.*" else []
+    )
+    at = _world_at(CROSSING_S, KERB_T + 0.5)
+    location = carla.Location(x=at.x, y=at.y, z=at.z)
+    assert road_threat(world, location, 0.0, 1.0, 5.0, 2.0) is None
+    # The pedestrian once, each vehicle once (standing, it needs no second
+    # projection for which way it drives), and the pedestrian's way along
+    # the road once.
+    assert len(projected) == 1 + len(vehicles) + 1
+    projected.clear()
+    assert _old_road_threat(world, location, 0.0, 1.0, 5.0, 2.0) is None
+    assert len(projected) > 3 * len(vehicles)
+    # Standing, with no vehicle moving and no distance asked for, nothing
+    # can close on it: nothing is projected.
+    projected.clear()
+    assert road_threat(world, location, 0.0, 0.0, None, 2.0) is None
+    assert projected == []

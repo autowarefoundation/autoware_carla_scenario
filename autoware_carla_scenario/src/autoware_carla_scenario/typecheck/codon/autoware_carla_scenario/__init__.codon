@@ -31,6 +31,7 @@ from .conditions import (AccelerationCondition, AccelerationDirection, ActionSta
                          EntityExistenceCondition, EntityFilter,
                          EntityLaneOfCondition, EntityLanePositionCondition,
                          EntityPositionDistanceCondition,
+                         EntityAreaDistanceCondition, AreaGround, MapArea,
                          NotCondition, OffRoadFractionCondition, OrCondition,
                          PersistentCondition, PlaceClearCondition, RelativeDistanceType,
                          RoadUserKind, SelectedEntity,

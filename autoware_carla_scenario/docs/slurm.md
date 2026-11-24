@@ -82,7 +82,11 @@ Each task, on its node:
 3. builds them (not checked again: the submitting process did), starts a
    CARLA on its ports and runs its cases one after another through the same
    queue a local batch uses, writing their files into the batch's directory
-   under the names a local batch gives them. What a local batch decides once
+   under the names a local batch gives them -- each Autoware stack's log
+   named after its case's stem (`autoware-<stem>.log`), as a local batch
+   names it, and a containerised backend's log after the task
+   (`backend_<name>-<array job id>_<task>.log`), so tasks never append to
+   one file (#2247). What a local batch decides once
    for all its cases, every task decides the same, however the cases are
    split into tasks (`cases_per_task`): the queue's settings (server, traffic,
    `t4`, `t4scene`, world reset, backends) are the batch's first case's,
@@ -139,6 +143,12 @@ options of the others (`scenario-slurm <command> --help` says the same):
 | `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight or its sbatch timed out less than 600 s after its record was made |
 | `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option, and on an error reading the batch |
 
+A task that raised, every failed attempt of a case and a native crash in a
+task leave a [crash report](crash_reports.md) in the batch's `crash_reports/`,
+as a local batch's do. A case's report runs the case again on its own, with
+`scenario` and without `launcher=slurm`; a failed task's status names its
+report (`crash_report`).
+
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
 saying so, and `collect` lists them, saying what to do about them, chosen from
@@ -162,8 +172,13 @@ always is readable; `rerun_recording` and `failure` may be missing. It did not
 pass, and `collect` reports it as `ERROR` naming its file; a `rerun_error` the
 task recorded for it is kept in `batch_results.json`. `status`, `wait` and the
 viewer count it as not passed: the results pages show it as an error.
-`resubmit` submits again the cases with no outcome or no verdict and those
-that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
+An outcome is stale when the last submission that gave the case was to run
+it again and its task stopped (`failed` or `cancelled`) before it reached the
+case: the task removes a case's outcome only right before it runs the case,
+so the one there names an earlier submission. `collect` reports it as `ERROR`
+saying so, and `status` and the viewer count it as without a result (#2247).
+`resubmit` submits again the cases with no outcome, no verdict or a stale
+one and those that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
 failed, `--cases a,b` names them (labels or indices; a case named twice runs
 once), and `--array-parallelism`/`--cases-per-task` change how they are
 spread. A case run again replaces its earlier files: before it runs, the task
@@ -234,7 +249,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `array_parallelism` | `null` | at most this many tasks at once (`--array=...%K`); `null`: no cap |
 | `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap), in no more tasks than the cluster's `MaxArraySize` ([Array size](#array-size)) |
 | `job_name` | `null` | `acs-<date>-<time>` of the output directory |
-| `extra_sbatch_args` | `[]` | further `sbatch` arguments |
+| `extra_sbatch_args` | `[]` | further `sbatch` arguments; `--clusters`/`--cluster`/`-M` is refused (see below) |
 | `export` | `null` | `sbatch --export`; `null`: `ALL`, or `NONE` with `remote_cwd` |
 | `env_passthrough` | `null` | variables recorded at submission and set again in the job (a matched name no shell takes, such as an exported bash function, is left out); `null`: see below, or none with `remote_cwd` |
 | `setup` | `[]` | shell lines the job runs before the worker (`module load`, `source .venv/bin/activate`); each is one command, and one ending in an unescaped backslash is refused |
@@ -250,7 +265,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `collect_mem` | `2G` | its `--mem` |
 | `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; at least 0 |
 | `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_base` at least 1024, `port_slots` at least 1, and every slot's ports within 65535 |
-| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>`, else `/tmp` ([Ports](#ports)) |
+| `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>` (per user, so slots are exclusive among your own tasks only), else `/tmp/acs-slurm-ports-<uid>`, each used only if private; users sharing nodes set one group directory ([Ports](#ports)) |
 
 Each value is checked before anything is written, and one of the wrong type is
 refused with an error naming its key (`launcher.<key>`), never quietly read
@@ -270,6 +285,13 @@ as something else:
   string) of non-blank text, without a null or blank item; `env` is a mapping
   (or null, no variables) whose values are text or a number, not null or a
   boolean (quote one: `FLAG: "true"`).
+- `extra_sbatch_args` may not send the batch to another cluster
+  (`--clusters`, `--cluster`, `-M`, in any spelling: `--clusters=x`, `-Mx`):
+  `squeue`, `scancel` and the collect job's dependency ask the default
+  cluster, so following, `resubmit`'s check that the batch is not running,
+  and `cancel` would miss it. Should `sbatch` report a cluster all the same
+  (`SBATCH_CLUSTERS` in the environment), the submission fails, naming the
+  job to `scancel -M` (#2247).
 - `0`, `false` or `[]` is a value, checked as any other, never read as
   unset; `launcher.type` is `local` only when it is missing or null (`""`,
   `false` or `0` is refused).
@@ -416,14 +438,43 @@ ports from `port_base`:
 
 The slot a task tries first is its array job id plus its task id, so the tasks
 of an array start on different slots. It takes one only when no other task
-holds it (an exclusive lock,
+using the same lock directory holds it (an exclusive lock,
 `<lock dir>/autoware_carla_scenario-port-<base>.lock`, which goes when the
 task's process does) and none of its ports is bound; else the next. The lock
 directory must be one every job on the node sees, which `/tmp` is not where
 SLURM gives each job a private one (`job_container/tmpfs`): it is
-`/dev/shm/acs-slurm-ports-<uid>` (or `/tmp` where that cannot be made), or
-`launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
+`/dev/shm/acs-slurm-ports-<uid>` (or `/tmp/acs-slurm-ports-<uid>` where that
+cannot be made), or `launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
 ephemeral ports.
+
+The default lock directory is per user, so slots and [ROS domains](#ros-domains)
+are exclusive among **your own** tasks only. Another user's
+task on the same node may take the same slot: the check that none of its ports is bound stops
+that only once the other task's CARLA has bound them, tens of seconds after
+it took the slot. Users who share nodes set `launcher.port_lock_dir` to one
+directory they all write to, for example a group's own:
+
+```bash
+mkdir -p /dev/shm/acs-slurm-ports-mygroup
+chgrp mygroup /dev/shm/acs-slurm-ports-mygroup
+chmod 2770 /dev/shm/acs-slurm-ports-mygroup   # group-only, setgid, no sticky bit
+```
+
+The lock files are created `0644` less your umask, so keep a umask that
+leaves them readable by the group (`022`, `002` or `027`). Do not use a
+world-writable directory: anyone on the node could then create or hold the
+lock files and keep your tasks off every slot. That is also why the default
+is not shared.
+
+For the same reason a default directory is used only if it is private: a
+real directory (not a symlink) that you own and that neither your group nor
+others can write to. One another user made first, or one open to writing, is
+passed over with a warning for `/tmp/acs-slurm-ports-<uid>`, checked the same
+way; if that is not private either, the task stops with an error naming both.
+Have the node's administrator remove a directory another user made (`chmod
+go-w` one of your own), or set `launcher.port_lock_dir`. A
+configured `port_lock_dir` is taken as it is, as it may be shared on purpose.
+Lock files are never opened through a symlink.
 
 The TrafficManager's port is always the slot's, whatever the config says: the traffic
 groups interpolate the backend's own (`traffic.options.port`, sumo's
@@ -474,7 +525,8 @@ The domains are not part of the port slot: a slot's index runs to
 `array_parallelism` times the domains a task uses well below that, and below
 102 on Linux (0 to 101 is what the ROS 2 documentation calls safe). The locks
 are per user (the lock directory is), so another user's tasks on the node
-may still pick the same domain.
+may still pick the same domain, and nothing checks whether a domain is in
+use: users who share nodes share a lock directory ([Ports](#ports)).
 
 ### Autoware stacks
 

@@ -89,11 +89,24 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
     """Return the map's descriptor as a mapping, empty when there is none.
 
     Both things read out of it -- the projection and the origin -- come through
-    here, so "is there a descriptor, and is it usable" is decided once.
+    here, so "is there a descriptor, and is it usable" is decided once
+    (:func:`read_projector_info`).
+    """
+    info = read_projector_info(lanelet2_path)
+    return {} if info is None else info
+
+
+def read_projector_info(lanelet2_path: Path) -> Optional[dict[str, Any]]:
+    """Return the map's descriptor as read, or ``None`` when there is none.
+
+    A descriptor that cannot be read, or whose root is not a mapping, counts
+    as none, with a warning.  The trajectory log records what this returns
+    (trajectory_recorder), so it records the descriptor the run read the map
+    with.
 
     yaml is imported here, the one place that reads it: the check
-    (docs/typecheck.md) compiles neither this nor the two readers, which
-    hand out YAML values of any type.
+    (docs/typecheck.md) compiles neither this nor its readers, which hand out
+    YAML values of any type.
     """
     import yaml  # type: ignore[import-untyped]
 
@@ -105,7 +118,7 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
     # let a repository have a file elsewhere on the host read as its projection.
     found = projector_info_path(Path(lanelet2_path).parent)
     if found is None:
-        return {}
+        return None
     info_path: Path = found
     try:
         info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
@@ -113,7 +126,7 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
         # UnicodeDecodeError is a ValueError, not an OSError: a descriptor
         # with one legacy Shift-JIS or Latin-1 comment is unreadable too.
         logger.warning("Could not read %s; falling back", info_path, exc_info=True)
-        return {}
+        return None
     if not isinstance(info, dict):
         # yaml.safe_load is happy with a list or a bare scalar at the root, and
         # .get() on either is an AttributeError rather than the fallback.
@@ -122,7 +135,7 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
             info_path,
             type(info).__name__,
         )
-        return {}
+        return None
     return info
 
 
@@ -197,6 +210,13 @@ def read_map_origin(lanelet2_path: Path) -> Optional[tuple[float, float, float]]
         return None
 
 
+#: A number in a PROJ string, as one regex group: an optional sign, digits
+#: with an optional fraction (or a bare fraction) and an optional exponent.
+#: Python writes a float below 1e-4 with an exponent (`5e-05`), and PROJ
+#: accepts a leading `+` (`+lon_0=+141`) (#2296).
+_PROJ_NUMBER = r"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)"
+
+
 def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     """Extract (lat, lon, alt) from the geoReference PROJ string in an XODR file.
 
@@ -235,8 +255,8 @@ def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     # of a group (`Optional[str]`) that is then used as a str.
     proj_string = str(geo_ref_match.group(1))
 
-    lat_match = re.search(r"\+lat_0=([-\d.]+)", proj_string)
-    lon_match = re.search(r"\+lon_0=([-\d.]+)", proj_string)
+    lat_match = re.search(r"\+lat_0=" + _PROJ_NUMBER, proj_string)
+    lon_match = re.search(r"\+lon_0=" + _PROJ_NUMBER, proj_string)
 
     if lat_match is None:
         raise ValueError(f"Could not find +lat_0 in geoReference: {proj_string!r}")
@@ -246,16 +266,16 @@ def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     lat = float(lat_match.group(1))
     lon = float(lon_match.group(1))
 
-    alt_match = re.search(r"\+h_0=([-\d.]+)", proj_string)
+    alt_match = re.search(r"\+h_0=" + _PROJ_NUMBER, proj_string)
     alt = float(alt_match.group(1)) if alt_match else 0.0
 
     # A false origin moves the frame's (0, 0) away from (lat_0, lon_0): the
     # converter writes `+lat_0=0 +lon_0=141 +x_0=... +y_0=...` for an MGRS map.
     if "+proj=tmerc" in proj_string:
-        false_easting = _proj_float(proj_string, r"\+x_0=([-\d.]+)", 0.0)
-        false_northing = _proj_float(proj_string, r"\+y_0=([-\d.]+)", 0.0)
+        false_easting = _proj_float(proj_string, r"\+x_0=" + _PROJ_NUMBER, 0.0)
+        false_northing = _proj_float(proj_string, r"\+y_0=" + _PROJ_NUMBER, 0.0)
         if false_easting != 0.0 or false_northing != 0.0:
-            scale = _proj_float(proj_string, r"\+k(?:_0)?=([-\d.]+)", 1.0)
+            scale = _proj_float(proj_string, r"\+k(?:_0)?=" + _PROJ_NUMBER, 1.0)
             lat, lon = _tmerc_frame_origin(
                 lat, lon, scale, false_easting, false_northing
             )
@@ -323,6 +343,58 @@ def _tmerc_frame_origin(
         lat += delta[j - 1] * math.sin(2.0 * j * chi)
     lon = math.radians(lon_0) + math.atan2(math.sinh(eta_p), math.cos(xi_p))
     return math.degrees(lat), math.degrees(lon)
+
+
+#: The built-in ``map`` groups, whose ``${oc.env:VAR,default}`` paths
+#: :func:`missing_map_file` reads.
+_MAP_CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf" / "map"
+
+
+def _env_fallback_variable(path: Path) -> str:
+    """Return the variable a built-in map group reads *path* from, or ``""``.
+
+    A group names its files ``${oc.env:VAR,default}``; *path* matching a
+    ``default`` means the run fell back to it because ``VAR`` is unset.
+    """
+    marker = "${oc.env:"
+    for conf in sorted(_MAP_CONF_DIR.glob("*.yaml")):
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            start = line.find(marker)
+            end = line.find("}", start)
+            if start < 0 or end < 0:
+                continue
+            variable, _, default = line[start + len(marker) : end].partition(",")
+            if default.strip() and Path(default.strip()) == path:
+                return variable.strip()
+    return ""
+
+
+def missing_map_file(kind: str, path: Path, setting: str) -> str:
+    """Return the error for a map file *path* that does not exist.
+
+    A relative path is resolved against the current directory, which is why
+    the built-in maps' defaults (``data/...``) are found only from the
+    repository root (#2340); the message says so, and names the variable and
+    the ``map.<setting>=`` override that point at the file instead.
+
+    Args:
+        kind: What the file is, e.g. ``"Lanelet2"``.
+        path: The path that was looked for.
+        setting: The ``map`` setting that names it, e.g. ``"lanelet2_path"``.
+    """
+    message = f"{kind} file not found: {path}"
+    if path.is_absolute():
+        return message
+    message += (
+        f" (a relative path, resolved against the current directory {Path.cwd()})"
+    )
+    variable = _env_fallback_variable(path)
+    if variable:
+        message += (
+            f"; it is the default the map config falls back to: set {variable}"
+            f" or pass map.{setting}=<path> to point at the file"
+        )
+    return message
 
 
 def map_origin(

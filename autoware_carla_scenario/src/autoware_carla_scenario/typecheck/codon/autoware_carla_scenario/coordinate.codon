@@ -180,6 +180,10 @@ def lane_beside(lanelet_id: int, direction: str) -> Optional[int]:
     raise NotImplementedError()
 
 
+def lanelets_beside(lanelet_id: int) -> List[int]:
+    raise NotImplementedError()
+
+
 def lane_change_target_lanelets(lanelet_id: int, direction: str,
                                 distance_m: float = 1000.0) -> List[int]:
     raise NotImplementedError()
@@ -374,11 +378,17 @@ class MapManager:
     def road_network(self) -> RoadNetwork:
         raise NotImplementedError()
 
+    # The OpenDRIVE file it was initialised with.
+    @property
+    def xodr_path(self) -> Path:
+        raise NotImplementedError()
+
     @property
     def mgrs_offset(self) -> Tuple[float, float]:
         raise NotImplementedError()
 
-    # The (lat, lon, alt) origin of the OpenDRIVE map's geoReference.
+    # The (lat, lon, alt) origin the map is anchored at: map_projector_info.yaml's
+    # where it gives one, else the OpenDRIVE geoReference's.
     @property
     def geo_origin(self) -> Tuple[float, float, float]:
         raise NotImplementedError()

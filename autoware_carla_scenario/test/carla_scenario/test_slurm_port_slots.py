@@ -4,6 +4,10 @@ and that ``slurm.ports`` keeps its public API over it."""
 from __future__ import annotations
 
 import dataclasses
+import errno
+import fcntl
+import logging
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -112,6 +116,91 @@ def test_acquire_slot_takes_the_slots_in_order(tmp_path: Path) -> None:
             second.release()
         finally:
             first.release()
+
+
+_FLOCK = fcntl.flock
+
+
+def _nfs_flock(fd: int, operation: int) -> None:
+    """``fcntl.flock`` as Linux emulates it on NFS: an exclusive lock on a
+    descriptor not open for writing fails with EBADF."""
+    if fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY:
+        raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+    _FLOCK(fd, operation)
+
+
+def test_a_slot_lock_is_taken_where_flock_needs_a_writable_descriptor(
+    tmp_path: Path,
+) -> None:
+    """#2323: opened read-only, every lock failed with EBADF on NFS, and every
+    slot and ROS domain looked held by another task."""
+    with mock.patch.object(ports.fcntl, "flock", _nfs_flock):
+        stream = ports._try_lock(tmp_path / "a.lock")
+        assert stream is not None
+        try:
+            assert ports._try_lock(tmp_path / "a.lock") is None  # held
+        finally:
+            stream.close()
+        with mock.patch.object(ports, "_port_free", return_value=True):
+            slot = ports.acquire_slot(30000, 1, start=0, lock_dir=tmp_path)
+        slot.release()
+        domains = ports.RosDomains(tmp_path, highest=3)
+        try:
+            assert domains.take(2) == 2
+        finally:
+            domains.release()
+
+
+def test_a_lock_file_that_cannot_be_written_is_locked_read_only(
+    tmp_path: Path,
+) -> None:
+    """Another user's lock file in a shared directory: read-only, as before
+    (EACCES), which a local file system locks all the same."""
+    real_open = os.open
+
+    def no_write(path: object, flags: int, *args: object) -> int:
+        if flags & os.O_RDWR:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+        return real_open(path, flags, *args)  # type: ignore[arg-type]
+
+    path = tmp_path / "theirs.lock"
+    path.touch()
+    with mock.patch.object(ports.os, "open", no_write):
+        stream = ports._try_lock(path)
+        assert stream is not None
+        try:
+            assert ports._try_lock(path) is None  # held, read-only too
+        finally:
+            stream.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "warned"),
+    [
+        (BlockingIOError(errno.EWOULDBLOCK, "held"), False),
+        (OSError(errno.EBADF, "Bad file descriptor"), True),
+        (OSError(errno.ENOLCK, "No locks available"), True),
+    ],
+)
+def test_only_a_lock_another_process_holds_counts_as_held(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error: OSError,
+    warned: bool,
+) -> None:
+    """#2323: any other failure was taken for "held by another task", without a
+    word; it is still skipped, but says why."""
+    path = tmp_path / "a.lock"
+    with (
+        mock.patch.object(ports.fcntl, "flock", side_effect=error),
+        caplog.at_level(logging.WARNING, logger=ports.__name__),
+    ):
+        assert ports._try_lock(path) is None
+    messages = [r.getMessage() for r in caplog.records]
+    if warned:
+        assert messages == [f"Cannot lock {path} ({error}): skipping it"]
+    else:
+        assert messages == []
 
 
 def test_the_watchdog_is_started_with_the_built_command_line() -> None:

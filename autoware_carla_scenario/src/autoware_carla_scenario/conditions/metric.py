@@ -95,8 +95,6 @@ class MetricCondition(BaseCondition):
             raise ValueError(
                 f"MetricCondition: {metric!r} is not a metric; known: {known}"
             )
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         if not math.isfinite(max_ng_seconds) or max_ng_seconds < 0:
             raise ValueError("max_ng_seconds must be non-negative and finite")
         self._metric = metric
@@ -133,7 +131,12 @@ class MetricCondition(BaseCondition):
             "tolerance": self._comparison.tolerance,
             "max_ng_seconds": self._max_ng_seconds,
         }
-        details.update(self._judgement)
+        # What the run found, a non-finite value (a CriMe BTN of inf, the
+        # -inf of an unbounded required deceleration) as null: the result is
+        # strict JSON, which has no Infinity (as the trajectory log writes
+        # one).
+        for key, found in self._judgement.items():
+            details[key] = found if math.isfinite(found) else None
         return details
 
     def is_ng(self, value: Optional[float]) -> bool:
@@ -158,7 +161,8 @@ class MetricCondition(BaseCondition):
         condition holds) at the time the NG time first exceeds
         :attr:`max_ng_seconds`, ``None`` when it never does.  What it found --
         the NG time, when it first went NG, the most critical value -- is in
-        :meth:`get_details` afterwards.
+        :meth:`get_details` afterwards, a value that is not finite (a
+        ``worst`` of ``inf``) as ``None``.
         """
         ng = 0.0
         first: Optional[float] = None

@@ -194,3 +194,17 @@ def test_a_converter_that_draws_metrics_is_left_to_it(tmp_path: Path) -> None:
         _log(tmp_path / "s.trajectory.jsonl"), recording, "s", converter=knows
     )
     assert recording.read_bytes() == b"untouched"
+
+
+@pytest.mark.parametrize("state", ["1", "2.5", "inf", "Green"])
+def test_a_state_string_is_never_plotted(state: str) -> None:
+    """A string names a state, even one that reads as a number (#2401)."""
+    assert rerun_metrics._finite(state) is None
+
+
+def test_a_finite_number_is_plotted_and_a_non_finite_one_is_not() -> None:
+    assert rerun_metrics._finite(1) == 1.0
+    assert rerun_metrics._finite(2.5) == 2.5
+    assert rerun_metrics._finite(float("inf")) is None
+    assert rerun_metrics._finite(float("nan")) is None
+    assert rerun_metrics._finite(None) is None

@@ -26,7 +26,7 @@ module, and Codon cannot hold a JSON document's values of mixed types beyond
 the function that parses it: the version a manifest names is checked as the
 JSON text of its value, and what creates a submission record exclusively is
 given the record's JSON text.  The readers the check leaves out
-(:mod:`.submit`, :mod:`.worker`, the gate, the viewer) read the manifest as
+(:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the viewer) read the manifest as
 they read the ``dict`` it was (:meth:`Manifest.get`, ``manifest[key]``);
 a :class:`Manifest` holds as JSON text only the members the checked readers
 read of it, so that a manifest of many cases costs little more than that
@@ -534,7 +534,8 @@ _MANIFEST_MEMBERS: tuple[str, ...] = (
 )
 
 #: The members of a case :class:`ManifestCase` holds as their JSON text: what
-#: the checked readers read of it (:mod:`.collect`).
+#: the checked readers read of it (:mod:`.collect`, and the gate's
+#: ``gate.unrecorded``).
 _CASE_MEMBERS: tuple[str, ...] = ("index", "label", "stem", "case_overrides")
 
 
@@ -576,10 +577,16 @@ def manifest_of_text(text: str) -> Manifest | None:
             for item in value:
                 case = JsonMembers()
                 shape = ""
+                scenario = "null"
                 if isinstance(item, dict):
                     for name, field in item.items():
                         if str(name) in _CASE_MEMBERS:
                             case.put(str(name), json.dumps(field, ensure_ascii=False))
+                        elif str(name) == "scenario" and TYPE_CHECKING:
+                            # For Codon alone, which cannot hold the case
+                            # (ManifestCase.name()): Python reads the
+                            # scenario from the case json.loads() read.
+                            scenario = json.dumps(field, ensure_ascii=False)
                 elif isinstance(item, list):
                     shape = "[]"
                 elif isinstance(item, str):
@@ -592,7 +599,13 @@ def manifest_of_text(text: str) -> Manifest | None:
                     shape = "0.0"
                 else:
                     shape = "null"
-                cases.append(ManifestCase(case, shape))
+                read = ManifestCase(case, shape, scenario)
+                if not TYPE_CHECKING:
+                    # The case as json.loads() read it, for name() and
+                    # case_repr(): Python alone holds it, as it holds the
+                    # manifest's.
+                    read._document = item
+                cases.append(read)
         else:
             # A number, a boolean or null: the value itself, whose truth
             # ``manifest.get("cases") or []`` reads.
@@ -630,14 +643,28 @@ class ManifestCase:
     that reading a member of it raises what CPython raises for its type
     (``'int' object is not subscriptable``; a list, a string or a number in
     its place raises alike whatever it holds).
+
+    A case :func:`manifest_of_text` read also keeps, for Python alone, the
+    case as ``json.loads()`` read it, which the gate's :meth:`name` and
+    :meth:`case_repr` read as it read the case before (Codon cannot hold a
+    value of any type, so it is set and read where Codon compiles nothing,
+    and declared nowhere).  Codon reads the case's ``scenario`` from its
+    JSON text instead (*scenario*: ``null`` when it has none), which only
+    Codon is given, so that Python writes nothing more of the case.
     """
 
     members: JsonMembers
     _shape: str
+    #: The JSON text of its ``scenario``, ``null`` when it has none: for
+    #: Codon, and for a case :func:`manifest_of_text` did not read.
+    _scenario: str
 
-    def __init__(self, members: JsonMembers, shape: str = "") -> None:
+    def __init__(
+        self, members: JsonMembers, shape: str = "", scenario: str = "null"
+    ) -> None:
         self.members = members
         self._shape = shape
+        self._scenario = scenario
 
     def _value(self, key: str) -> Any:
         """The value of the member *key*, one of ``_CASE_MEMBERS``: the
@@ -698,6 +725,63 @@ class ManifestCase:
             return str(stem)
         return ""
 
+    def string_stem(self) -> str | None:
+        """The case's file stem when it is a string, ``None`` when it has
+        none or one of another type: ``case.get("stem")`` as
+        ``gate.unrecorded._recorded_at_stem()`` reads it (where
+        :meth:`stem` reads ``str(case.get("stem") or "")``, an empty string
+        for a missing one and the text of a number) -- an
+        :class:`AttributeError` for a case that is not an object.
+
+        Read from the stem's JSON text, which starts with a quote exactly
+        when it is a string's: a value of another type is not read again,
+        so a stem nested deep raises nothing it did not."""
+        text = self.value_json("stem")
+        if not text.startswith('"'):
+            return None
+        return str(json.loads(text))
+
+    def name(self, index: int) -> str:
+        """What the gate names the case by: its ``label``, else its
+        ``scenario``, when true, else *index* (its index), as text --
+        ``str(case.get("label") or case.get("scenario") or index)`` (an
+        :class:`AttributeError` for a case that is not an object)."""
+        if TYPE_CHECKING:
+            if self._shape != "":
+                json.loads(self._shape).get("label")
+            label = json.loads(self.value_json("label"))
+            if label:
+                return str(label)
+            scenario = json.loads(self._scenario)
+            if scenario:
+                return str(scenario)
+            return str(index)
+        else:
+            if "_document" in vars(self):
+                case = self._document
+            elif self._shape != "":
+                case = json.loads(self._shape)
+            else:
+                case = {key: self.members.value(key) for key in self.members.keys()}
+                case["scenario"] = json.loads(self._scenario)
+            return str(case.get("label") or case.get("scenario") or index)
+
+    def case_repr(self) -> str:
+        """``repr(case)`` of the case as ``json.loads()`` read it, all of
+        its members (the gate's error of a case without an index names it).
+        A case :func:`manifest_of_text` did not read is shown as what it
+        holds: the value of its type, or the members it holds."""
+        if TYPE_CHECKING:
+            if self._shape != "":
+                return self._shape
+            return self.members.object_text()
+        else:
+            if "_document" in vars(self):
+                return repr(self._document)
+            if self._shape != "":
+                return repr(json.loads(self._shape))
+            return repr({key: self.members.value(key) for key in self.members.keys()})
+
     def case_overrides(self) -> list[str]:
         """The overrides that make the case, as ``list(case["case_overrides"])``
         reads them: a list's items (the strings its submitter wrote, and
@@ -729,7 +813,7 @@ class Manifest:
 
     :meth:`get`, ``manifest[key]`` and ``key in manifest`` read it as the
     ``dict`` it was read as before, for the readers the library check leaves
-    out (:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the gate, the viewer):
+    out (:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the viewer):
     the very values ``json.loads()`` read.  The typed accessors read what the
     checked readers (:mod:`.collect`, :func:`resubmit_target`) ask of it,
     which the manifest holds as JSON text: ``_MANIFEST_MEMBERS``, and

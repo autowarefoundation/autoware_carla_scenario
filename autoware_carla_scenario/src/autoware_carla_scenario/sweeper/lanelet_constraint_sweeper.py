@@ -59,7 +59,6 @@ launch, and the exit status its result reads as).
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import logging
 import os
@@ -79,15 +78,9 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
-from ..gate.errored import (
-    remove_case_errored,
-    write_case_errored,
-    write_case_unfinished,
-)
 from ..gate.sweep_plan import write_sweep_plan
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
-from ..run_outputs import remove_run_outputs, run_output_paths
 from ..run_outputs import run_output_stems as _run_output_stems
 from ..ui.case_paths import last_result_path
 from ..value_text import shown
@@ -95,11 +88,13 @@ from .expand import (
     EMPTY_SWEEP_MESSAGE,
     _config_seed,
     check_constraint_keys,
+    check_sweep_shape,
     environment_rules,
     expand_sweep,
     load_sweep_map,
     scenario_controls,
     scenario_rules,
+    sweep_section,
 )
 from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
     SWEEPER_OWNS_RETRIES_ENV,
@@ -112,14 +107,28 @@ from .job_status import (
     FAILED_VERDICT_EXIT_CODE,
     MAX_JOB_TIMEOUT,
     REFUSED_EXIT_CODE,
+    RESUME_FROM_ENV,
+    RESUME_FROM_EXPECTED,
+    owned_dirs,
+    resume_from_env,
     verdict_exit_code,
     whole_job_seconds,
 )
+
+# What a job's directory is cleared of and given (an earlier run's or a
+# failed attempt's outputs, the markers) is the checked :mod:`.job_status`'s
+# (#2306); the names they had here stay importable from here.
+from .job_status import _remove_earlier_outputs as _remove_earlier_outputs
+from .job_status import _remove_marker as _remove_marker
+from .job_status import _remove_run_stems as _remove_run_stems
+from .job_status import _write_marker as _write_marker
+from .job_status import _write_unfinished_marker as _write_unfinished_marker
 
 logger = logging.getLogger(__name__)
 
 # The case's timeout and exit statuses are the checked :mod:`.job_status`'s;
 # the old private names stay, for what imports them from here.
+_owned_dirs = owned_dirs
 _DEFAULT_JOB_TIMEOUT = DEFAULT_JOB_TIMEOUT
 _MAX_JOB_TIMEOUT = MAX_JOB_TIMEOUT
 _REFUSED_EXIT_CODE = REFUSED_EXIT_CODE
@@ -150,6 +159,8 @@ def _job_timeout_seconds(value: Any) -> int:
     NaN or infinite value is refused too, rather than silently disabling the
     timeout, and so is one above :data:`_MAX_JOB_TIMEOUT`, which
     ``signal.alarm`` cannot take, rather than failing after the first fork.
+    Only a number is one: a bool, or text (``'900'``, quoted in the YAML),
+    is refused rather than cast, as ``sweep.resume_from`` is (#2247).
 
     Raises:
         ValueError: *value* is not a whole number of seconds from 0 to
@@ -161,7 +172,7 @@ def _job_timeout_seconds(value: Any) -> int:
         "sweep.job_timeout_seconds must be a whole number of seconds from 0 "
         f"(no timeout) to {_MAX_JOB_TIMEOUT}, got {shown(value)}"
     )
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(message)
     try:
         seconds = float(value)
@@ -175,9 +186,8 @@ def _job_timeout_seconds(value: Any) -> int:
 
 
 #: The environment variable ``scenario --resume-from N`` passes the sweeper
-#: *N* in (``examples.run.RESUME_FROM_ENV``): Hydra's parser would reject the
-#: flag.
-_RESUME_FROM_ENV = "SWEEP_RESUME_FROM"
+#: *N* in: the checked :mod:`.job_status`'s.
+_RESUME_FROM_ENV = RESUME_FROM_ENV
 
 
 def _resume_from(config_value: Any, env_value: str | None) -> int:
@@ -198,10 +208,7 @@ def _resume_from(config_value: Any, env_value: str | None) -> int:
     Raises:
         ValueError: Naming the key or variable, when either is invalid.
     """
-    expected = (
-        "a whole number of at least 1 (the 1-indexed case to start at; "
-        "0 or unset for none)"
-    )
+    expected = RESUME_FROM_EXPECTED
     if config_value is None:
         from_config = 0
     elif (
@@ -214,14 +221,8 @@ def _resume_from(config_value: Any, env_value: str | None) -> int:
         raise ValueError(
             f"sweep.resume_from must be {expected}, got {shown(config_value)}"
         )
-    text = (env_value or "").strip()
-    if not text:
-        return from_config
-    if not (text.isascii() and text.isdigit()):
-        # No sign, fraction, exponent or non-ASCII digit.
-        raise ValueError(f"{_RESUME_FROM_ENV} must be {expected}, got {text!r}")
-    from_env = int(text)
-    return from_env if from_env >= 1 else from_config
+    # The variable's text is read by the checked job_status.
+    return resume_from_env(env_value, from_config)
 
 
 def _read_verdict(output_dir: Path) -> bool | None:
@@ -438,20 +439,19 @@ def _read_sweep_section(cfg: DictConfig) -> dict[str, Any]:
     """The config's ``sweep`` section, resolved, its constraint keys checked.
 
     Raises:
-        ValueError: When the config has no ``sweep`` section, or its
-            constraints name more than one key (:func:`.expand.check_constraint_keys`).
+        ValueError: When the config has no ``sweep`` section, it is not a
+            mapping (:func:`.expand.sweep_section`), or its constraints name
+            more than one key (:func:`.expand.check_constraint_keys`).
     """
-    sweep_cfg = OmegaConf.select(cfg, "sweep")
-    if sweep_cfg is None:
+    sweep_dict = sweep_section(OmegaConf.select(cfg, "sweep"))
+    if sweep_dict is None:
         raise ValueError(
             "No 'sweep' section found in config. "
             "LaneletConstraintSweeper requires sweep.constraints, sweep.route "
             "or sweep.odd_sample."
         )
-    sweep_dict = OmegaConf.to_container(sweep_cfg, resolve=True)
-    assert isinstance(sweep_dict, dict)
     check_constraint_keys(sweep_dict)
-    return {str(k): v for k, v in sweep_dict.items()}
+    return sweep_dict
 
 
 def _refuse_invalid_sweep(cfg: DictConfig, exc: ValueError) -> NoReturn:
@@ -707,6 +707,16 @@ class LaneletConstraintSweeper(Sweeper):
 
         cfg = self.config
 
+        # A `sweep` that is not a mapping is the sweep's own refusal, as in
+        # step 1, before step 0 refuses it as a config value a run refuses
+        # (exit 2, naming no scenario) (#2279).
+        # Its shape only: an interpolation in it is resolved, as before, by
+        # step 1.
+        try:
+            check_sweep_shape(OmegaConf.select(cfg, "sweep"))
+        except ValueError as exc:
+            _refuse_invalid_sweep(cfg, exc)
+
         # -- 0. Refuse at once a sweep every case of which would be refused
         # before it starts, rather than fork each to fail (and be retried):
         # a config value a run refuses (#1233), or Rerun recordings or T4
@@ -884,30 +894,13 @@ class LaneletConstraintSweeper(Sweeper):
                     # logs, appended to, stay to explain the failed attempt,
                     # and an output that cannot be removed is logged, not raised,
                     # as before the first attempt (#2070).
-                    directory, job_log = job_dir
-                    for stem in sorted(
-                        _run_output_stems(directory, job_log) - stems_before
-                    ):
-                        if _is_service_log(directory, stem):
-                            continue
-                        logger.info(
-                            "[%d/%d] Removing the outputs of the failed "
-                            "attempt %s in %s before the retry.",
-                            idx + 1,
-                            idx_offset + len(batches),
-                            stem,
-                            directory,
-                        )
-                        try:
-                            remove_run_outputs(directory, stem)
-                        except OSError as exc:
-                            logger.warning(
-                                "Cannot remove the outputs of the failed "
-                                "attempt %s in %s (%s).",
-                                stem,
-                                directory,
-                                exc,
-                            )
+                    _remove_run_stems(
+                        job_dir,
+                        f"{idx + 1}/{idx_offset + len(batches)}",
+                        "failed attempt",
+                        " before the retry.",
+                        exclude=stems_before,
+                    )
 
                 if attempt == 0 and job_dir is not None:
                     if job_dir[0] in owned_dirs:
@@ -1056,158 +1049,6 @@ class LaneletConstraintSweeper(Sweeper):
                 f"({timed_out_count} timed out)."
             )
         return all_returns
-
-
-def _marker_reason(exit_code: int | None, timeout: int | None = None) -> str:
-    """Why a job was given up, in words, from its last exit status."""
-    if exit_code is None:
-        return "timed out" if not timeout else f"timed out after {timeout}s"
-    if exit_code < 0:
-        try:
-            name = signal.Signals(-exit_code).name
-        except ValueError:
-            name = f"signal {-exit_code}"
-        return f"crashed ({name})"
-    if exit_code == _REFUSED_EXIT_CODE:
-        return f"refused (exit code {exit_code})"
-    return f"exit code {exit_code}"
-
-
-def _owned_dirs(
-    job_dirs: list[tuple[Path, str | None] | None],
-    skipped: list[tuple[Path, Path, str | None] | None],
-) -> set[Path]:
-    """The directories of *job_dirs* (the jobs a sweep runs) that no other
-    job of the sweep maps to, *skipped* (those a ``--resume-from`` skips,
-    as :meth:`LaneletConstraintSweeper._job_paths` gives them) included.
-    None at all when the directory of a job cannot be told: it may be any."""
-    counts: dict[Path, int] = {}
-    for job_dir in job_dirs:
-        if job_dir is None:
-            return set()
-        counts[job_dir[0]] = counts.get(job_dir[0], 0) + 1
-    for paths in skipped:
-        if paths is None:
-            return set()
-        counts[paths[1]] = counts.get(paths[1], 0) + 1
-    return {directory for directory, count in counts.items() if count == 1}
-
-
-#: The logs that services a run starts write into its directory under names
-#: of their own, which :func:`..run_outputs.run_output_stems` reads as the
-#: CARLA recorder log of a run (``X.log``): a containerised backend's
-#: (``backend_<name>.log``, appended to), Autoware's (``autoware-<n>-<name>.log``,
-#: ``autoware-build.log``, ``autoware-deps.log``) and the viewer runner's.
-#: An earlier sweep's are not a run of the job, and stay.
-_SERVICE_LOGS: tuple[str, ...] = (
-    "backend_*.log",
-    "autoware-*.log",
-    "raw_output.log",
-    "run.log",
-)
-
-
-def _is_service_log(directory: Path, stem: str) -> bool:
-    """Whether all a run named *stem* has in *directory* is a log one of
-    :data:`_SERVICE_LOGS` names: a service's log, not a run."""
-    found = [path for path in run_output_paths(directory, stem) if path.exists()]
-    return (
-        len(found) == 1
-        and found[0].name == f"{stem}.log"
-        and any(
-            fnmatch.fnmatchcase(found[0].name, pattern) for pattern in _SERVICE_LOGS
-        )
-    )
-
-
-def _remove_earlier_outputs(job_dir: tuple[Path, str | None], label: str) -> None:
-    """Remove the run outputs an earlier sweep left in *job_dir* (its
-    directory and Hydra's job log), before the job's first attempt in this
-    sweep: every stem :func:`..run_outputs.run_output_stems` finds there,
-    with :func:`..run_outputs.remove_run_outputs`, as a retry removes the
-    failed attempt's (#1956).  Hydra's job log, its ``.hydra`` directory, the
-    job's marker (``case_errored.json``, replaced as the attempt starts), the
-    logs of the services runs start (:data:`_SERVICE_LOGS`) and any other
-    file that is not a run's output are left alone.  Logged, never
-    raised, when one cannot be removed: the job runs anyway, under the next
-    free stem."""
-    directory, job_log = job_dir
-    for stem in sorted(_run_output_stems(directory, job_log)):
-        if _is_service_log(directory, stem):
-            continue
-        logger.info(
-            "[%s] Removing the outputs of the earlier run %s in %s: the job "
-            "runs again and replaces it.",
-            label,
-            stem,
-            directory,
-        )
-        try:
-            remove_run_outputs(directory, stem)
-        except OSError as exc:
-            logger.warning(
-                "Cannot remove the outputs of the earlier run %s in %s (%s).",
-                stem,
-                directory,
-                exc,
-            )
-
-
-def _remove_marker(directory: Path) -> None:
-    """Remove the marker (``case_errored.json``) of a job that ended with a
-    verdict from *directory*; logged, never raised, when it cannot be."""
-    try:
-        remove_case_errored(directory)
-    except OSError as exc:
-        logger.warning("Cannot remove the error marker in %s (%s).", directory, exc)
-
-
-def _write_unfinished_marker(
-    job_dir: tuple[Path, str | None] | None, batch: tuple[str, ...], attempt: int
-) -> None:
-    """Give a job the marker saying it did not finish
-    (:func:`..gate.errored.write_case_unfinished`) before its attempt
-    *attempt* (from 1); logged, never raised, when it cannot be.  Nothing
-    when its directory is not known (:meth:`LaneletConstraintSweeper._job_output_dir`
-    logged why)."""
-    if job_dir is None:
-        return
-    try:
-        write_case_unfinished(job_dir[0], overrides=list(batch), attempt=attempt)
-    except OSError as exc:
-        logger.warning(
-            "Cannot write the unfinished-job marker in %s (%s).", job_dir[0], exc
-        )
-
-
-def _write_marker(
-    job_dir: tuple[Path, str | None] | None,
-    batch: tuple[str, ...],
-    exit_code: int | None,
-    attempts: int,
-    timeout: int | None = None,
-) -> None:
-    """Leave the marker of a job given up (``case_errored.json``,
-    :mod:`..gate.errored`) in its directory; logged, never raised, when it
-    cannot be, or the directory is not known."""
-    if job_dir is None:
-        logger.warning(
-            "Cannot tell the output directory of the job given up for "
-            "overrides %s; it leaves no error marker, and scenario-gate will "
-            "not see it.",
-            batch,
-        )
-        return
-    try:
-        write_case_errored(
-            job_dir[0],
-            overrides=list(batch),
-            exit_code=exit_code,
-            attempts=attempts,
-            reason=_marker_reason(exit_code, timeout),
-        )
-    except OSError as exc:
-        logger.warning("Cannot write the error marker in %s (%s).", job_dir[0], exc)
 
 
 def _wait_with_progress(seconds: float, *, desc: str = "Waiting") -> None:

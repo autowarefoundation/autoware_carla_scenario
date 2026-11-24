@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -661,21 +662,25 @@ class TestRecordRun:
 
 
 def test_only_an_importance_sampled_run_has_an_outcome_weight() -> None:
-    from types import SimpleNamespace
-
     from autoware_carla_scenario import AdversarialTrafficAction, BaseScenario
     from autoware_carla_scenario.actions import SetSpeedAction
 
-    outcome_weight = BaseScenario.outcome_weight.fget  # type: ignore[attr-defined]
-    actions = SimpleNamespace(
-        _init_actions=[],
-        _pre_tick_actions=[SetSpeedAction("npc1", 1.0)],
-        _post_tick_actions=[],
-    )
-    assert outcome_weight(actions) is None
+    class _Actions:
+        """BaseScenario's two weights, over action lists set by hand."""
+
+        outcome_weight = BaseScenario.outcome_weight
+        importance_sampling_weight = BaseScenario.importance_sampling_weight
+
+        def __init__(self) -> None:
+            self._init_actions: list[Any] = []
+            self._pre_tick_actions: list[Any] = [SetSpeedAction("npc1", 1.0)]
+            self._post_tick_actions: list[Any] = []
+
+    actions = _Actions()
+    assert actions.outcome_weight is None  # type: ignore[misc]
     # NADE samples, even before it has sampled anything (weight 1).
     actions._post_tick_actions.append(AdversarialTrafficAction([]))
-    assert outcome_weight(actions) == 1.0
+    assert actions.outcome_weight == 1.0  # type: ignore[misc]
 
 
 def test_what_the_odds_measures_read_is_built_before_the_first_tick(
@@ -825,6 +830,63 @@ class TestTheRunsSeed:
             pytest.raises(_Stop),
         ):
             runner.run_scenario(scenario, reset_world=False)
+
+        next_world.assert_called_once()
+
+
+class TestTheRunsTimeout:
+    """The default timeout is checked when it is given -- to the runner, or to
+    run_scenario -- not once a run has spawned its ego and registers it
+    (#2287)."""
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan"), float("inf")])
+    def test_a_runner_refuses_a_timeout_that_is_not_positive_and_finite(
+        self, seconds: float
+    ) -> None:
+        with (
+            patch("autoware_carla_scenario.scenario_runner.carla.Client") as client,
+            pytest.raises(
+                ValueError, match=r"^timeout_seconds must be positive and finite"
+            ),
+        ):
+            ScenarioRunner(MagicMock(), timeout_seconds=seconds)
+        client.assert_not_called()
+
+    @pytest.mark.parametrize("seconds", [0.0, -1.0, float("nan")])
+    def test_run_scenario_refuses_one_before_the_world_is_touched(
+        self, seconds: float
+    ) -> None:
+        runner = _make_runner(None)
+        client = runner._client
+        built = list(client.mock_calls)  # type: ignore[attr-defined]
+        world = MagicMock()
+        runner._world = world
+        scenario = _mock_scenario()
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(
+                ValueError, match=r"^timeout_seconds must be positive and finite"
+            ),
+        ):
+            runner.run_scenario(scenario, timeout_seconds=seconds, reset_world=False)
+
+        next_world.assert_not_called()
+        scenario.create_ego.assert_not_called()
+        scenario.setup.assert_not_called()
+        world.apply_settings.assert_not_called()
+        assert client.mock_calls == built  # type: ignore[attr-defined]
+
+    def test_a_valid_timeout_runs_on(self) -> None:
+        runner = _make_runner(None)
+        scenario = _mock_scenario()
+        scenario.create_ego.side_effect = _Stop
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, timeout_seconds=0.5, reset_world=False)
 
         next_world.assert_called_once()
 
@@ -1111,13 +1173,15 @@ class TestTheDefaultTimeout:
     """
 
     @staticmethod
-    def _scenario(*fail_conditions):
+    def _scenario(*fail_conditions, passes=()):
         import typesafe_carla.carla as carla
 
         from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
 
         class _Scenario(BaseScenario):
             def setup(self) -> None:
+                for condition in passes:
+                    self.register_pass_condition(condition)
                 for condition in fail_conditions:
                     self.register_fail_condition(condition)
 
@@ -1168,6 +1232,59 @@ class TestTheDefaultTimeout:
         scenario = self._scenario(TimeoutCondition(5.0, label="scenario_timeout"))
         assert _register_default_timeout(scenario, 60.0, "S") is False
         assert self._timeouts(scenario) == [("scenario_timeout", 5.0)]
+
+    def test_a_pass_timeout_bounds_the_run_too(self):
+        """A run that passes when its timeout runs out ends there; a default
+        fail timeout could only fail it first (#2382)."""
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(
+            passes=[TimeoutCondition(20.0, label="scenario_timeout")]
+        )
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert scenario._fail_conditions == []
+
+    def test_a_pass_condition_that_is_no_timeout_does_not_count(self):
+        from autoware_carla_scenario import AndCondition, TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        scenario = self._scenario(
+            passes=[
+                _never("other"),
+                AndCondition([_never("other"), TimeoutCondition(20.0, label="t")]),
+            ]
+        )
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert self._timeouts(scenario) == [("default_timeout", 12.0)]
+
+    @pytest.mark.parametrize("wrapper", ["or", "sticky"])
+    def test_a_pass_timeout_inside_an_or_or_a_sticky_counts(self, wrapper):
+        from autoware_carla_scenario import (
+            OrCondition,
+            StickyCondition,
+            TimeoutCondition,
+        )
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        timeout = TimeoutCondition(20.0, label="t")
+        condition = {
+            "or": lambda: OrCondition([_never("other"), timeout]),
+            "sticky": lambda: StickyCondition(timeout),
+        }[wrapper]()
+        scenario = self._scenario(passes=[condition])
+        assert _register_default_timeout(scenario, 12.0, "S") is False
+        assert scenario._fail_conditions == []
+
+    def test_a_non_finite_pass_timeout_does_not_bound_the_run(self):
+        from autoware_carla_scenario import TimeoutCondition
+        from autoware_carla_scenario.scenario_runner import _register_default_timeout
+
+        timeout = TimeoutCondition(20.0, label="t")
+        timeout.timeout_seconds = float("inf")
+        scenario = self._scenario(passes=[timeout])
+        assert _register_default_timeout(scenario, 12.0, "S") is True
+        assert self._timeouts(scenario) == [("default_timeout", 12.0)]
 
     def test_a_timeout_inside_an_or_counts(self):
         from autoware_carla_scenario import OrCondition, TimeoutCondition

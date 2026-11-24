@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "28.1.12"
+version = "28.5.24"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,6 +36,11 @@ dependencies = [
     # Linux x86_64 and aarch64 (aarch64 from typesafe-carla 0.4.0 on).
     "typesafe-carla>=0.8.1,<0.9; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
     "pyxodr>=0.1.0",
+    # maps/road_network_cache.py imports lxml at module level: it pickles
+    # pyxodr's roads with each lxml element they hold stored by position.
+    # pyxodr depends on lxml too, but that is pyxodr's choice, not a promise
+    # to us.
+    "lxml>=5.0",
     # Headless: the only OpenCV calls in this package are imencode and
     # pointPolygonTest -- there is no imshow/namedWindow anywhere, so the GUI
     # build would add ~125 MB of GTK/GStreamer libraries (and a libGL system
@@ -55,6 +60,10 @@ dependencies = [
     "hydra-core>=1.3.2",
     "omegaconf>=2.3.0",
     "fastapi>=0.115.0",
+    # Imported directly where fastapi has no re-export (`starlette.types`,
+    # `starlette.convertors`, `starlette.exceptions`), so declared rather than
+    # left to fastapi's own requirement; the floor is fastapi 0.115.0's.
+    "starlette>=0.37.2",
     "uvicorn[standard]>=0.34.0",
     "jinja2>=3.1.0",
     # The Scenario Editor is driven entirely by HTML form posts, and Starlette
@@ -65,7 +74,7 @@ dependencies = [
     # -- collecting, merging, the COD export (a Rust core). This package is its
     # CARLA backend (odd/backend.py's CarlaBackend), whose rules -- the
     # distributions of the grip and the visibility the weather leaves
-    # (weather_rules.py) -- openodd reads: rules version 2 (conditional
+    # (weather_rules.yaml) -- openodd reads: rules version 3 (conditional
     # distributions), and 0.18 reads a part reading another quantity, as
     # weather_rules.yaml's sight_speed reads the visibility. 0.19.1 reads a
     # normal or triangular distribution right however far its range lies
@@ -75,8 +84,10 @@ dependencies = [
     # run's effects beside the ODD (`CoverageCollector(effects=...)`) for the
     # drift view; 0.46.1 draws a knob's values table as a rule, writing a
     # whole number it gives as an integer. 0.47 measures the default ODD's
-    # junction by tier4/taxonomy's junction_type (probe junction_type).
-    "openodd-py>=0.47.0",
+    # junction by tier4/taxonomy's junction_type (probe junction_type);
+    # 0.47.1's default ODD follows tier4/taxonomy's devel after v0.3.0
+    # (road_surface_condition's `gravel` is `gravel_covered`).
+    "openodd-py>=0.47.1",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",
@@ -103,6 +114,7 @@ dependencies = [
     # same floats byte for byte.
     "orjson>=3.13.0",
     "scipy>=1.10",
+    "sentry-sdk>=2.20",
 ]
 
 [project.urls]
@@ -124,7 +136,7 @@ sumo = [
     "libsumo>=1.23",
     "sumolib>=1.23",
     "traci>=1.23",
-    "roadgen>=0.42.0",
+    "roadgen>=0.45.0",
 ]
 # Map files for a driver policy (`driver.map_dir`): roadgen converts the
 # world's OpenDRIVE into Lanelet2 and friends, with the stop lines CARLA
@@ -136,7 +148,7 @@ sumo = [
 # the map the CommonRoad metrics measure on, 0.42.0); the same version as the
 # `sumo` extra's, so the two install together.
 map = [
-    "roadgen>=0.42.0",
+    "roadgen>=0.45.0",
 ]
 # An ego driven by ROS 2 nodes over DDS (`ego.entity=ros2`, docs/ros2.md):
 # Cyclone DDS's Python binding, which speaks to rmw_cyclonedds_cpp nodes with
@@ -197,6 +209,14 @@ hils-setup = [
 pack = [
     "carla-pack-registry>=0.3.2,<0.4",
 ]
+# `scenario-agent` (docs/coding_agents.md): agent-skill-installer
+# (omry/agent-skill-installer), which installs the scenario-writing skills
+# shipped in `agent/skills/` into Claude Code or Codex, each skill and its
+# discoverability block in the agent's own layout. 0.x, so the range stops at
+# the next minor.
+agent = [
+    "agent-skill-installer>=0.5.0,<0.6",
+]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.
@@ -242,6 +262,9 @@ viewer = "autoware_carla_scenario.ui:main"
 # The editor is a separate application from the viewer; running one does not
 # start the other.
 scenario-editor = "autoware_carla_scenario.editor:main"
+# Install the scenario-writing skills into Claude Code or Codex and start it
+# (the `agent` extra; docs/coding_agents.md).
+scenario-agent = "autoware_carla_scenario.agent.cli:main"
 # Stream the run's ego to ECUs under test (the `hils` extra; docs/hils.md).
 scenario-hils = "autoware_carla_scenario.hils.cli:main"
 # Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit (docs/t4_scene.md).

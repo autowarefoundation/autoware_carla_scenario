@@ -15,6 +15,7 @@ import pytest
 import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import BaseScenario, EgoConfig
+from autoware_carla_scenario.actions.base import BaseAction
 from autoware_carla_scenario.authoring.registry import (
     METRIC_OPTIONS,
     get_condition_spec,
@@ -40,6 +41,7 @@ from autoware_carla_scenario.metrics import (
     COLLISION_LATERAL,
     COLLISION_REAR,
     BUILT_IN_METRICS,
+    IMPORTANCE_SAMPLING_WEIGHT,
     LATERAL_REVERSALS,
     LATERAL_WOBBLE_M,
     MIN_DISTANCE_TO_LANE_BOUNDARY_M,
@@ -53,7 +55,9 @@ from autoware_carla_scenario.metrics import (
     is_metric,
     read_metric,
     reset_ego_motion,
+    reset_ego_progress,
     track_ego_motion,
+    track_ego_progress,
 )
 from autoware_carla_scenario.measures import BUILT_IN_MEASURES
 from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
@@ -291,6 +295,19 @@ def test_the_importance_sampling_weight_is_the_one_the_runner_publishes() -> Non
         assert read_metric("importance_sampling_weight", _world()) == 0.125  # type: ignore[arg-type]
     finally:
         set_importance_sampling_weight(None)
+
+
+def test_the_importance_sampling_weight_reads_without_an_ego() -> None:
+    # Unlike every metric of the ego, which reads nothing in a frame without
+    # one (the metrics module's docstring, docs/metrics.md; #2287).
+    from autoware_carla_scenario.metric_frames import Frame
+
+    frames = [Frame(1, 0.05, 0.25, ()), Frame(2, 0.10, 0.5, ())]
+    series = evaluate_metrics(
+        frames, _TWO_WAY, [IMPORTANCE_SAMPLING_WEIGHT, MIN_DISTANCE_TO_OBSTACLE_M]
+    )
+    assert series[IMPORTANCE_SAMPLING_WEIGHT].values == [0.25, 0.5]
+    assert series[MIN_DISTANCE_TO_OBSTACLE_M].values == [None, None]
 
 
 def test_a_metric_is_not_a_measure() -> None:
@@ -1141,19 +1158,19 @@ def test_left_to_right_and_hazard_are_changes() -> None:
 def _drive_at(speed: Any, seconds: float) -> _World:
     """Drives the ego along +x at *speed(t)* m/s for *seconds*, every tick;
     the world of the last tick."""
-    reset_ego_motion()
+    reset_ego_progress()
     world = _world()
     ego = world._actors[0]
     for i in range(round(seconds / _DT) + 1):
         t = i * _DT
         ego.velocity = _v(speed(t))
         world.frame = next(_FRAMES)
-        track_ego_motion(world, t)  # type: ignore[arg-type]
+        track_ego_progress(world, t)  # type: ignore[arg-type]
     return world
 
 
 def test_the_ego_s_progress_is_unknown_before_its_first_frame() -> None:
-    reset_ego_motion()
+    reset_ego_progress()
 
     assert metrics.ego_progress() is None
 
@@ -1166,14 +1183,14 @@ def test_a_stalled_ego_has_moved_and_stood_still_since_it_stopped() -> None:
     assert progress is not None
     assert progress[0] is True
     assert progress[1] == pytest.approx(6.0 - 1.05)
-    reset_ego_motion()
+    reset_ego_progress()
 
 
 def test_a_moving_ego_has_moved_and_never_stood_still() -> None:
     _drive_at(lambda t: 10.0, 3.0)
 
     assert metrics.ego_progress() == (True, 0.0)
-    reset_ego_motion()
+    reset_ego_progress()
 
 
 def test_a_run_out_of_time_with_the_ego_stalled_says_so() -> None:
@@ -1184,7 +1201,7 @@ def test_a_run_out_of_time_with_the_ego_stalled_says_so() -> None:
     try:
         failure = _failure("fail[0](late)", FailureCategory.PROGRESS, 6.0, "late", [])
     finally:
-        reset_ego_motion()
+        reset_ego_progress()
 
     assert failure.detail == STALLED
 
@@ -1219,14 +1236,18 @@ def test_a_tick_seen_twice_adds_nothing() -> None:
     reset_ego_motion()
 
 
-def test_the_runner_tracks_the_ego_every_tick() -> None:
+def test_the_runner_tracks_only_the_ego_s_progress_every_tick() -> None:
     import inspect
 
     from autoware_carla_scenario import scenario_runner
 
     source = inspect.getsource(scenario_runner)
-    assert "track_ego_motion(world, elapsed)" in source
-    assert source.count("reset_ego_motion()") == 2
+    assert "track_ego_progress(world, elapsed)" in source
+    assert source.count("reset_ego_progress()") == 2
+    # The weaving and the weight are read off the recorded frames: the live
+    # run neither tracks the ego's motion nor publishes its weight.
+    assert "track_ego_motion" not in source
+    assert "set_importance_sampling_weight" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -1524,6 +1545,27 @@ def test_a_metric_condition_composes_with_nothing() -> None:
         MetricCondition(OFFROAD, max_ng_seconds=-1.0, label="x")
 
 
+class _Fires(BaseAction):
+    def execute(self, world: Any) -> None:
+        del world
+
+
+def test_an_action_refuses_a_metric_condition_as_its_trigger_or_until() -> None:
+    # An action reads both every tick, where a MetricCondition reads nothing:
+    # it would stay in STANDBY, or never end (#2287).
+    condition = MetricCondition(COLLISION_ANY, label="any collision")
+    with pytest.raises(
+        ValueError,
+        match=r"^_Fires 'on metric': condition: .*judged once the run is over",
+    ):
+        _Fires("on metric", condition=condition)
+    with pytest.raises(
+        ValueError,
+        match=r"^_Fires 'until metric': until: .*judged once the run is over",
+    ):
+        _Fires("until metric", until=condition)
+
+
 def test_an_unknown_metric_is_refused() -> None:
     with pytest.raises(ValueError, match="not a metric"):
         MetricCondition("vehicle_ahead_gap_m", label="x")
@@ -1719,3 +1761,268 @@ def test_the_metrics_and_their_ng_frames_go_into_the_log() -> None:
         (2.0, "fail", 0, "hit", True),
         (0.0, "fail", 1, "wrong lane", False),
     ]
+
+
+# ---------------------------------------------------------------------------
+# The metrics audit (#2224)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rule", "values", "worst"),
+    [
+        (ComparisonRule.GREATER_THAN, [0.5, math.inf, 2.0], math.inf),
+        (ComparisonRule.LESS_THAN, [0.5, -math.inf, -2.0], -math.inf),
+    ],
+)
+def test_a_worst_value_that_is_not_finite_is_written_as_null(
+    rule: ComparisonRule, values: list[Optional[float]], worst: float
+) -> None:
+    """A CriMe BTN of inf (-inf for the required deceleration) is the most
+    critical value, written as null: strict JSON has no Infinity."""
+    import json
+
+    from autoware_carla_scenario.conditions.base import ConditionStatus
+
+    condition = MetricCondition(metrics.CRIME_BTN, rule, 1.0, label="btn")
+    verdict = condition.judge([0.0, 0.1, 0.2], values, 0.3)
+    assert verdict is not None
+    assert "worst " + f"{worst:.3f}" in verdict.message
+    details = condition.get_details()
+    assert details["worst"] is None
+    result = ScenarioResult(
+        passed=False,
+        message=verdict.message,
+        elapsed_seconds=0.1,
+        condition_statuses=[
+            ConditionStatus("fail[0](btn)", True, verdict.message, details=details)
+        ],
+    )
+
+    def refuse(constant: str) -> Any:
+        raise ValueError(constant)
+
+    parsed = json.loads(result.to_json(), parse_constant=refuse)
+    assert parsed["condition_statuses"][0]["details"]["worst"] is None
+
+
+def test_a_result_with_non_finite_values_is_written_as_strict_json() -> None:
+    """Writing a run's result never raises on an inf or a NaN, at any depth:
+    each is null, as strict JSON has none."""
+    import json
+
+    from autoware_carla_scenario.conditions.base import ConditionStatus
+    from autoware_carla_scenario.failure import Failure, FailureCategory
+
+    result = ScenarioResult(
+        passed=False,
+        message="",
+        elapsed_seconds=0.1,
+        condition_statuses=[
+            ConditionStatus(
+                "fail[0](x)",
+                True,
+                "",
+                details={
+                    "gap": math.nan,
+                    "ttc": math.inf,
+                    "nested": {
+                        "low": -math.inf,
+                        "series": [1.0, math.inf, (math.nan,)],
+                    },
+                    "ok": 2.5,
+                    "count": 3,
+                    "flag": True,
+                },
+            )
+        ],
+        failure=Failure("fail[0](x)", FailureCategory.SAFETY_MARGIN, math.nan, ""),
+    )
+
+    def refuse(constant: str) -> Any:
+        raise ValueError(constant)
+
+    parsed = json.loads(result.to_json(), parse_constant=refuse)
+    details = parsed["condition_statuses"][0]["details"]
+    assert details == {
+        "gap": None,
+        "ttc": None,
+        "nested": {"low": None, "series": [1.0, None, [None]]},
+        "ok": 2.5,
+        "count": 3,
+        "flag": True,
+    }
+    assert parsed["failure"]["at"] is None
+    # The result itself is left as it is.
+    assert math.isinf(result.condition_statuses[0].details["ttc"])
+    # Asked for, the non-finite values are written as they are.
+    assert "Infinity" in result.to_json(allow_nan=True)
+
+
+class _BrokenRoad(_Road):
+    """A map that raises when asked about a place at x >= *from_x*."""
+
+    def __init__(self, lanes: list[_Lane], from_x: float) -> None:
+        super().__init__(lanes)
+        self.from_x = from_x
+
+    def get_waypoint(
+        self, location: Any, project_to_road: bool = True, lane_type: int = 2
+    ) -> Optional[_Waypoint]:
+        if location.x >= self.from_x:
+            raise RuntimeError("map gone")
+        return super().get_waypoint(location, project_to_road, lane_type)
+
+
+def _frames_along(xs: list[float]) -> list[Any]:
+    recorder = FrameRecorder()
+    for i, x in enumerate(xs):
+        recorder.record(_world(at=(x, 0.0)), i * 0.1, None)  # type: ignore[arg-type]
+    return recorder.frames
+
+
+def test_a_world_metric_that_raises_in_every_frame_fails_the_evaluation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Rather than read nothing, and a fail condition on it pass the run."""
+    from autoware_carla_scenario.metric_batch import MetricEvaluationError
+
+    broken = _BrokenRoad(_TWO_WAY.lanes, from_x=-math.inf)
+    with pytest.raises(MetricEvaluationError) as info:
+        evaluate_metrics(_frames_along([0.0, 1.0, 2.0]), broken, [OFFROAD, WRONG_LANE])
+    message = str(info.value)
+    assert "offroad (failed: RuntimeError: map gone)" in message
+    assert "wrong_lane (failed: RuntimeError: map gone)" in message
+    assert "every frame evaluated (3)" in message
+    # The first exception of each, logged with its traceback.
+    logged = [r for r in caplog.records if "reads nothing" in r.getMessage()]
+    assert len(logged) == 2
+    assert all(r.exc_info is not None for r in logged)
+
+
+def test_a_world_metric_that_raises_in_some_frames_reads_nothing_there() -> None:
+    broken = _BrokenRoad(_TWO_WAY.lanes, from_x=5.0)
+    series = evaluate_metrics(_frames_along([0.0, 10.0, 1.0]), broken, [OFFROAD])
+    assert series[OFFROAD].values == [0.0, None, 0.0]
+
+
+def _old_replay(frames: list[Any], road: Any, keys: list[str]) -> dict[str, list[Any]]:
+    """The replay as it was before #2224: on the module's shared motion."""
+    from autoware_carla_scenario.metric_batch import ReplayWorld
+    from autoware_carla_scenario.metric_frames import _not_nan
+    from autoware_carla_scenario.metrics import set_importance_sampling_weight
+
+    world = ReplayWorld(road)
+    values: dict[str, list[Any]] = {key: [] for key in keys}
+    reset_ego_motion()
+    try:
+        for frame in frames:
+            world.show(frame)
+            set_importance_sampling_weight(frame.weight)
+            track_ego_motion(world, frame.t)  # type: ignore[arg-type]
+            for key in keys:
+                values[key].append(_not_nan(read_metric(key, world)))  # type: ignore[arg-type]
+    finally:
+        reset_ego_motion()
+        set_importance_sampling_weight(None)
+    return values
+
+
+def test_the_replay_keeps_the_live_progress_and_reads_as_it_did() -> None:
+    # A live run: the ego drove, then stalled.
+    _drive_at(lambda t: 10.0 if t <= 1.0 + 1e-9 else 0.0, 6.0)
+    live = metrics.ego_progress()
+    assert live is not None
+    # Its frames: a weave, steering and indicators, a weight.
+    recorder = FrameRecorder()
+    world = _world(_car(2, (12.0, 3.5)))
+    ego = world._actors[0]
+    across = _weave(0.4, 0.5)
+    for i in range(round(4.0 / _DT) + 1):
+        t = i * _DT
+        ego.velocity = _v(10.0, across(t))
+        ego.steer = 0.1 * math.sin(t * 3.0)
+        ego.lights = _LEFT if 1.0 <= t < 2.0 else 0
+        world.frame = next(_FRAMES)
+        recorder.record(world, t, 0.5 + 0.1 * i)  # type: ignore[arg-type]
+    keys = [k for k in BUILT_IN_METRICS if k not in metrics.COMMONROAD_METRICS]
+
+    try:
+        replayed = evaluate_metrics(recorder.frames, _TWO_WAY, keys)
+        # The run's progress, for a failure out of time, is still the run's.
+        assert metrics.ego_progress() == live
+    finally:
+        reset_ego_progress()
+    expected = _old_replay(recorder.frames, _TWO_WAY, keys)
+    for key in keys:
+        assert replayed[key].values == expected[key], key
+    assert any(v for v in replayed[LATERAL_REVERSALS].values)
+    assert replayed["importance_sampling_weight"].values[-1] == pytest.approx(8.5)
+    assert read_metric("importance_sampling_weight", world) is None  # type: ignore[arg-type]
+
+
+def test_judging_the_metrics_keeps_the_progress_a_timeout_reads() -> None:
+    from autoware_carla_scenario.failure import STALLED, FailureCategory
+    from autoware_carla_scenario.scenario_runner import _failure
+
+    _drive_at(lambda t: 10.0 if t <= 1.0 + 1e-9 else 0.0, 6.0)
+    try:
+        _judged_run(
+            MetricCondition(COLLISION_AT_FAULT, label="hit"),
+            result=ScenarioResult(passed=False, message="late", elapsed_seconds=6.0),
+            worlds=_hit_at_two(),
+        )
+        failure = _failure("fail[0](late)", FailureCategory.PROGRESS, 6.0, "late", [])
+    finally:
+        reset_ego_progress()
+
+    assert failure.detail == STALLED
+
+
+@pytest.fixture
+def another_map_held() -> Any:
+    """MapManager holding a map of one lane, as a run's leaves it."""
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    saved = MapManager._instance
+    MapManager.reset()
+    MapManager.get_instance()._carla_map = _ONE_LANE  # type: ignore[assignment]
+    yield
+    MapManager._instance = saved
+
+
+def test_the_world_metrics_are_read_on_the_map_given(another_map_held: Any) -> None:
+    # On the lane to the right of the ego's: on the road of two lanes, off
+    # the road of one.
+    recorder = FrameRecorder()
+    recorder.record(_world(at=(0.0, 3.5)), 0.0, None)  # type: ignore[arg-type]
+    keys = [OFFROAD, MIN_DISTANCE_TO_LANE_BOUNDARY_M]
+
+    on_two = evaluate_metrics(recorder.frames, _TWO_WAY, keys)
+    on_one = evaluate_metrics(recorder.frames, _ONE_LANE, keys)
+
+    assert on_two[OFFROAD].values == [0.0]
+    assert on_one[OFFROAD].values == [1.0]
+    assert (
+        on_two[MIN_DISTANCE_TO_LANE_BOUNDARY_M].values
+        != on_one[MIN_DISTANCE_TO_LANE_BOUNDARY_M].values
+    )
+
+
+def test_a_replay_that_fails_leaves_the_module_as_it_found_it() -> None:
+    """The ego's motion and the weight are put back, and the replay's world
+    and map let go, however the replay ends."""
+    from autoware_carla_scenario.metric_batch import MetricEvaluationError
+
+    motion = metrics._MOTION[0]
+    metrics.set_importance_sampling_weight(0.25)
+    try:
+        broken = _BrokenRoad(_TWO_WAY.lanes, from_x=-math.inf)
+        with pytest.raises(MetricEvaluationError):
+            evaluate_metrics(_frames_along([0.0, 1.0]), broken, [OFFROAD])
+        assert metrics._MOTION[0] is motion
+        assert metrics._RUN["weight"] == 0.25
+        assert metrics._CACHE.world is None
+        assert metrics._CACHE.carla_map is None
+    finally:
+        metrics.set_importance_sampling_weight(None)

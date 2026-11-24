@@ -110,8 +110,9 @@ from __future__ import annotations
 import logging
 import math
 import random
+import subprocess
 from pathlib import Path
-from typing import Any, ClassVar, Collection, Optional, Union
+from typing import IO, Any, ClassVar, Collection, Optional, Union
 
 from ...constants import EGO_ROLE_NAME
 from ...entity_role import canonical_role_name
@@ -119,7 +120,7 @@ from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import HIDDEN_BELOW_M, actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
 from ...utils.vehicles import is_emergency_vehicle_type
-from ...visibility import driver_quantile, sight_speed_at, world_visibility
+from ...visibility import world_visibility
 from ...world_reset import episode_of
 from ..base import (
     crossing_safe_speed,
@@ -131,6 +132,7 @@ from ..base import (
     TrafficContext,
     BACKGROUND_MAX_OFFSET_M,
     TurnDirection,
+    actor_destroyed,
     check_background_speed,
 )
 from ..config import TrafficManagerBackendConfig
@@ -144,7 +146,14 @@ from ..parameters import (
     VehicleParameters,
 )
 from ..mesoscopic import MesoscopicTraffic
-from .mesosim import MesoRoads, SumoMesoscopicTraffic, build_mesoscopic_model
+from .mesosim import (
+    MesoRoads,
+    SumoMesoscopicTraffic,
+    build_mesoscopic_model,
+    drop_traci_connection,
+    start_sumo,
+    stop_sumo,
+)
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
 from .geometry import (
@@ -152,9 +161,23 @@ from .geometry import (
     box_centre_to_origin,
     carla_to_sumo,
     carla_xy_to_sumo,
+    crossing_back_angle,
+    nearest_by_distance,
+    nearest_cut,
     origin_to_box_centre,
     sumo_to_carla,
     sumo_xy_to_carla,
+)
+
+# Re-exported: the backend's pure helpers live in the checked .geometry
+# (#2306); hybrid and the tests import them from here.
+from .geometry import (
+    _lane_step as _lane_step,
+    _safe_weights_prefix as _safe_weights_prefix,
+    _sight_cap as _sight_cap,
+    _sumo_velocity as _sumo_velocity,
+    _wrap,
+    world_opendrive as world_opendrive,
 )
 from .network import (
     SignalTable,
@@ -175,17 +198,14 @@ from .options import (
     LANE_CHANGE_SETTLED_M as LANE_CHANGE_SETTLED_M,
     MOTORCYCLE_TYPE as MOTORCYCLE_TYPE,
     OUTPUT_SUFFIX as OUTPUT_SUFFIX,
-    _ADDITIONAL_OPTIONS as _ADDITIONAL_OPTIONS,
     _BICYCLE_TYPE as _BICYCLE_TYPE,
     _EMERGENCY as _EMERGENCY,
     _LANE_CHANGE_MODE_DEFAULT as _LANE_CHANGE_MODE_DEFAULT,
     _LANE_CHANGE_MODE_EXTERNAL as _LANE_CHANGE_MODE_EXTERNAL,
     _LANE_CHANGE_MODE_STRATEGIC as _LANE_CHANGE_MODE_STRATEGIC,
     _PASSENGER as _PASSENGER,
-    _ROUTE_OPTIONS as _ROUTE_OPTIONS,
     _SPEED_MODE_DEFAULT as _SPEED_MODE_DEFAULT,
     _SPEED_MODE_EXTERNAL as _SPEED_MODE_EXTERNAL,
-    _SPEED_MODE_RED_LIGHT as _SPEED_MODE_RED_LIGHT,
     _SPEED_MODE_RIGHT_OF_WAY as _SPEED_MODE_RIGHT_OF_WAY,
     _SPEED_MODE_THROUGH_JUNCTION as _SPEED_MODE_THROUGH_JUNCTION,
     _SUMO_CLASSES as _SUMO_CLASSES,
@@ -195,6 +215,7 @@ from .options import (
     _write_scenario_types as _write_scenario_types,
     _write_type_distribution as _write_type_distribution,
     run_output_dir as run_output_dir,
+    sumo_class_of,
 )
 from .physics_control import (
     longitudinal,
@@ -206,10 +227,16 @@ from .physics_control import (
 from .signal_states import (
     DARK_SIGNAL_STATES,
     carla_light_state,
+    crossing_links,
+    first_lanes,
     green_together,
+    lane_edge,
     link_states,
     permissive_links,
+    program_state,
     sumo_step,
+    unfollowed_links,
+    vehicle_links,
 )
 
 logger = logging.getLogger(__name__)
@@ -322,36 +349,15 @@ _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
+#: The label of SUMO's TraCI connection: traci's own default, the one its
+#: module-level functions use.
+_TRACI_LABEL = "default"
 
 
-def _sight_cap(sumo_id: str, seen: float, held: tuple[float, float, float]) -> float:
-    """The maximum speed (m/s) *sumo_id*'s driver keeps in *seen* metres,
-    from *held*: its own maximum speed, deceleration and tau -- the weather
-    rules' ``sight_speed`` at the driver's own quantile, scaled to the
-    vehicle's braking and reaction."""
-    own, decel, tau = held
-    limit = sight_speed_at(seen, driver_quantile(sumo_id), decel, tau)
-    # Never to a standstill: a car in thick fog still creeps on.  Nor above
-    # its own: a background vehicle capped below the creep keeps its cap
-    # (#967).
-    return min(own, max(limit, 1.0))
-
-
-def _safe_weights_prefix(net_file: Path) -> Path:
-    """The prefix of the safe-weight files beside *net_file*, as roadgen names
-    them: ``network.safe`` (``network.safe.src.xml`` ...) beside
-    ``network.net.xml`` (:func:`.network.build_network`)."""
-    name = net_file.name
-    if name.endswith(".net.xml"):
-        return net_file.with_name(name[: -len(".net.xml")] + ".safe")
-    return net_file.with_suffix(".safe")
-
-
-def _sumo_velocity(speed: float, angle_deg: float) -> tuple[float, float]:
-    """A velocity in SUMO's frame from a speed and SUMO's angle (degrees
-    clockwise from north)."""
-    heading = math.radians(angle_deg)
-    return speed * math.sin(heading), speed * math.cos(heading)
+def _is_gui(binary: str) -> bool:
+    """Whether *binary* is sumo-gui (``sumo-gui``, ``sumo-gui.exe``, a path
+    to either), which shows the run in a window."""
+    return Path(binary).name.lower().startswith("sumo-gui")
 
 
 def _load_traci(use_libsumo: bool) -> Any:
@@ -413,9 +419,8 @@ def _sumo_class(actor: Any) -> tuple[str, str]:
     """The SUMO vehicle class and type the scenario's vehicle *actor* joins
     SUMO as: an emergency vehicle's whatever its body, else by its
     blueprint's ``base_type`` (:data:`_SUMO_CLASSES`)."""
-    if is_emergency(actor):
-        return _EMERGENCY
-    return _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
+    emergency = is_emergency(actor)
+    return sumo_class_of(_base_type(actor), emergency)
 
 
 def _parked(actor: Any) -> bool:
@@ -432,7 +437,7 @@ def _runs_along(shape: Any, offset: float, heading: float) -> bool:
     rotation = rotationAtShapeOffset(shape, min(offset, polyLength(shape)))
     if rotation is None:
         return False
-    turn = (math.degrees(rotation) - heading + 180.0) % 360.0 - 180.0
+    turn = _wrap(math.degrees(rotation) - heading)
     return abs(turn) <= _ROUTE_HEADING_DEG
 
 
@@ -440,11 +445,6 @@ def _runs_along(shape: Any, offset: float, heading: float) -> bool:
 #: length is what sets how fast it crosses (a vehicle's own default to 1 m/s).
 _CROSSING_MAX_LATERAL_SPEED_MPS = 10.0
 _CROSSING_LATERAL_ACCEL_MPS2 = 100.0
-
-
-def _lane_step(direction: LaneChangeDirection) -> int:
-    """The lane index one lane to *direction*: SUMO counts from the right kerb."""
-    return 1 if direction is LaneChangeDirection.LEFT else -1
 
 
 class _LaneChangeRequest:
@@ -649,6 +649,11 @@ class SumoTrafficBackend(TrafficBackend):
         #: tls id -> each pedestrian crossing link it controls, with the
         #: vehicle links into or out of a road the crossing crosses.
         self._crossing_links: dict[str, list[tuple[int, list[int]]]] = {}
+        #: tls id -> SUMO's own program of a junction where CARLA's lights
+        #: switch some links and leave others (each phase's state and
+        #: duration, the phase it was in and when that ends), read before
+        #: anything set its state: the links left run on it (program_state).
+        self._own_programs: dict[str, tuple[list[tuple[str, float]], int, float]] = {}
         self._ego_actor: Any = None
         self._running = False
         #: SUMO was started and its connection is still open.  Unlike
@@ -656,6 +661,12 @@ class SumoTrafficBackend(TrafficBackend):
         #: ``close`` still closes the connection (#1216).  Not ``_started``,
         #: which says start() has put the run's vehicles into SUMO.
         self._connected = False
+        #: SUMO's process and its standard error when it runs through TraCI
+        #: (libsumo runs it in this process): started by _start_traci().
+        self._sumo_process: Optional[subprocess.Popen[bytes]] = None
+        self._sumo_stderr: Optional[IO[bytes]] = None
+        #: Whether that SUMO is sumo-gui, which close() leaves open.
+        self._sumo_gui = False
         self._failures = 0
         #: Simulated seconds at which tick gave up stepping SUMO, ``None``
         #: while it has not: the result records it (describe(), #2082).
@@ -1130,10 +1141,13 @@ class SumoTrafficBackend(TrafficBackend):
             # anything else recorded on CARLA's (camera frames, a rosbag).
             self._clock_log = (out / "clock.csv").open("w")
             self._clock_log.write("sumo_time,carla_elapsed_seconds,carla_frame\n")
-        try:
-            self._traci.start(cmd)
-        except Exception as exc:
-            raise TrafficBackendError(f"SUMO did not start: {exc}") from exc
+        if self._traci.__name__ == "libsumo":
+            try:
+                self._traci.start(cmd)
+            except Exception as exc:
+                raise TrafficBackendError(f"SUMO did not start: {exc}") from exc
+        else:
+            self._start_traci(cmd)
         self._connected = True
         self._running = True
         logger.info("SUMO started on %s", self._network.net_file)
@@ -1145,6 +1159,63 @@ class SumoTrafficBackend(TrafficBackend):
             )
         if self._tm_drives_scenario:
             self._tm.prepare(context)
+
+    def _start_traci(self, cmd: list[str]) -> None:
+        """Start SUMO (*cmd*) as a process and connect TraCI's module-level
+        connection to it.
+
+        Not ``traci.start``: that launches a new SUMO for each of its 60
+        tries, leaves every one running when it fails, and keeps SUMO's
+        standard error out of its message (#2321).  A failed try here leaves
+        no connection registered under the label, and a failed start no SUMO.
+
+        Raises:
+            TrafficBackendError: If SUMO did not start, with the end of what it
+                wrote to its standard error.
+        """
+        traci = self._traci
+        try:
+            traci.getConnection(_TRACI_LABEL)
+        except Exception:  # noqa: BLE001 - none registered
+            # A TraCIException, but not always traci.exceptions' class:
+            # importing libsumo replaces that one with its own.
+            pass
+        else:
+            raise TrafficBackendError(
+                f"SUMO did not start: TraCI connection {_TRACI_LABEL!r} is already active"
+            )
+
+        def connect(port: int, process: subprocess.Popen[bytes]) -> None:
+            try:
+                # One try each: traci sleeps a second between its own.
+                traci.init(port, numRetries=0, label=_TRACI_LABEL, proc=process)
+            except BaseException:
+                # A handshake that failed after connecting left the label
+                # registered, and the next try (or start) refused.
+                drop_traci_connection(traci, _TRACI_LABEL)
+                raise
+
+        # SUMO's standard output stays the run's, as with traci.start.
+        _, self._sumo_process, self._sumo_stderr = start_sumo(cmd, connect, stdout=None)
+        self._sumo_gui = _is_gui(cmd[0])
+
+    def _stop_sumo_process(self) -> None:
+        """Reap SUMO's process (killing it if it does not exit once its
+        connection is closed) and close its standard error.
+
+        Not a sumo-gui still open: without ``--quit-on-end`` it stays open
+        after the run, for the user to look at the end of it, as it did when
+        traci.start ran it; closing its window ends it.
+        """
+        process, self._sumo_process = self._sumo_process, None
+        stderr, self._sumo_stderr = self._sumo_stderr, None
+        if self._sumo_gui and process is not None and process.poll() is None:
+            logger.info(
+                "sumo-gui (pid %d) stays open after the run; close it to end it",
+                process.pid,
+            )
+            process = None
+        stop_sumo(process, stderr, kill=False)
 
     def adopt(self, entity: Any) -> None:
         """Remember *entity*; it joins SUMO when the run starts, an emergency
@@ -1204,6 +1275,7 @@ class SumoTrafficBackend(TrafficBackend):
                 if self._config.cycle_on_sidewalks or self._config.net_path:
                     # Only such a network has edges for bicycles alone.
                     self._bicycle_rides = self._match_bicycle_rides()
+                self._own_programs = self._match_own_programs()
             if self._config.traffic_light_authority == "sumo":
                 for light in {id(tl): tl for tl in self._signals.values()}.values():
                     light.freeze(True)
@@ -1281,6 +1353,11 @@ class SumoTrafficBackend(TrafficBackend):
         stands and at its speed; driven by SUMO from there, with the route and
         speed it was given while parked, or published (:meth:`_join`)."""
         for actor_id, (actor, entity) in list(self._parked.items()):
+            # Destroyed while parked -- by whatever destroyed it: read at the
+            # origin, it would come up there (actor_destroyed, #2245).
+            if actor_destroyed(actor):
+                del self._parked[actor_id]
+                continue
             try:
                 up = not _parked(actor)
             except RuntimeError:  # destroyed while parked
@@ -1536,6 +1613,7 @@ class SumoTrafficBackend(TrafficBackend):
                     self._traci.close(False)
             except Exception as exc:  # noqa: BLE001 - teardown must go on
                 logger.debug("SUMO close: %s", exc)
+        self._stop_sumo_process()
         self._connected = False
         self._running = False
         if self._meso is not None and self._level_changes != [0, 0]:
@@ -1623,6 +1701,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._permissive_links = {}
         self._crossing_links = {}
         self._bicycle_rides = {}
+        self._own_programs = {}
         self._ego_actor = None
         self._failures = 0
         self._gave_up_at = None
@@ -2227,7 +2306,7 @@ class SumoTrafficBackend(TrafficBackend):
                 # the route goes on from that edge.
                 links = tc.lane.getLinks(lane)
                 if links:
-                    after = links[0][0].rsplit("_", 1)[0]
+                    after = lane_edge(links[0][0])
                     if after != here:
                         start.append(after)
             if (
@@ -3041,7 +3120,9 @@ class SumoTrafficBackend(TrafficBackend):
                     pose = self._background_origin(
                         sumo_id, self._meso_carla_pose(sumo_id, now)
                     )
-                    out[sumo_id] = (pose.x, pose.y, None)
+                    # Its lane's height where the network has one.
+                    meso_z = pose.z if self._meso_has_height() else None
+                    out[sumo_id] = (pose.x, pose.y, meso_z)
         for sumo_id in self._background & present:
             x, y, z = vehicle.getPosition3D(sumo_id)
             pose = self._background_origin(
@@ -3167,10 +3248,14 @@ class SumoTrafficBackend(TrafficBackend):
 
     def _push_external(self) -> None:
         for sumo_id, actor in list(self._external.items()):
-            try:
-                gone = _parked(actor)
-            except RuntimeError:  # destroyed: a despawn
-                gone = True
+            # Destroyed by whatever destroyed it (actor_destroyed): read at
+            # the origin, it would be moved there in SUMO every step (#2245).
+            gone = actor_destroyed(actor)
+            if not gone:
+                try:
+                    gone = _parked(actor)
+                except RuntimeError:  # destroyed: a despawn
+                    gone = True
             if gone:
                 # Out of the world (despawned, or parked again): out of SUMO,
                 # where it would stand in the way.
@@ -3306,11 +3391,11 @@ class SumoTrafficBackend(TrafficBackend):
                 continue
             ahead = positionAtShapeOffset(shape, offset + 0.1)
             behind = positionAtShapeOffset(shape, max(offset - 0.1, 0.0))
-            dx, dy = ahead[0] - behind[0], ahead[1] - behind[1]
-            if dx == 0.0 and dy == 0.0:
-                continue
             # SUMO's angle: clockwise from north; backwards along the crossing.
-            return (90.0 - math.degrees(math.atan2(-dy, -dx))) % 360.0
+            angle = crossing_back_angle(ahead[0] - behind[0], ahead[1] - behind[1])
+            if angle is None:
+                continue
+            return angle
         return pose.heading_deg
 
     def _walker_pose(self, actor: Any, yaw_deg: Optional[float] = None) -> Pose2D:
@@ -3981,24 +4066,13 @@ class SumoTrafficBackend(TrafficBackend):
         none, and so does a radius of ``0`` (or below), as nothing is that
         close -- the config refuses both, but a limit is a limit.
         """
-        if limit is not None and limit <= 0:
-            return []
-        if radius is not None and radius <= 0.0:
-            return []
-        if ego is None:
-            # Nothing to measure from: the first ones SUMO lists, up to the
-            # limit (the radius cannot be measured yet).
-            return ids if limit is None else ids[:limit]
-        if not ids or (radius is None and limit is None):
-            return ids
+        cut = nearest_cut(ids, ego is not None, radius, limit)
+        if cut is not None:
+            return cut
+        assert ego is not None
         tc = self._traci
         dist = {i: math.dist((ego.x, ego.y), tc.vehicle.getPosition(i)) for i in ids}
-        ids = sorted(ids, key=dist.__getitem__)
-        if radius is not None:
-            ids = [i for i in ids if dist[i] <= radius]
-        if limit is not None:
-            ids = ids[:limit]
-        return ids
+        return nearest_by_distance(ids, dist, radius, limit)
 
     def _vclass(self, sumo_id: str) -> str:
         """The vehicle class of *sumo_id*, read once; ``passenger`` if SUMO
@@ -4316,6 +4390,8 @@ class SumoTrafficBackend(TrafficBackend):
         points: list[tuple[float, float]] = []
         moving: list[tuple[float, float]] = []
         for actor in self._focus_actors():
+            if actor_destroyed(actor):
+                continue  # read at the origin, it would be a focus there
             try:
                 pose = self._carla_pose_to_sumo(actor)
                 velocity = actor.get_velocity() if velocities else None
@@ -4448,7 +4524,7 @@ class SumoTrafficBackend(TrafficBackend):
                 world,
                 self._meso_blueprints.get(sumo_id, self._config.blueprint),
                 str(getattr(entity, "role_name", None) or sumo_id),
-                self._meso_carla_pose(sumo_id, now),
+                self._meso_carla_pose(sumo_id, now, world),
             )
             if actor is None:
                 return False
@@ -4502,6 +4578,10 @@ class SumoTrafficBackend(TrafficBackend):
         self._level_changes[1] += 1
         return True
 
+    def _meso_has_height(self) -> bool:
+        """Whether the mesoscopic roads put a vehicle at its lane's height."""
+        return self._meso_roads is not None and self._meso_roads.has_elevation
+
     def _meso_pose(self, sumo_id: str, now: float) -> Pose2D:
         """Where the queue model has *sumo_id*, in SUMO's frame (front bumper).
 
@@ -4510,15 +4590,27 @@ class SumoTrafficBackend(TrafficBackend):
         assert self._meso is not None and self._meso_roads is not None
         return self._meso_roads.pose(*self._meso.position(sumo_id, now))
 
-    def _meso_carla_pose(self, sumo_id: str, now: float) -> Pose2D:
+    def _meso_carla_pose(self, sumo_id: str, now: float, world: Any = None) -> Pose2D:
         """Where the queue model has *sumo_id*, in CARLA's frame: its box
-        centre (:meth:`_spawn_at_centre` puts an actor's there)."""
-        assert self._meso is not None
-        return sumo_to_carla(
+        centre (:meth:`_spawn_at_centre` puts an actor's there).
+
+        At the height of its lane in SUMO's network, which keeps the
+        OpenDRIVE's elevation; on a network that has none, and given the
+        *world*, at the height of CARLA's driving lane there
+        (:func:`_carla_road_height`), so an actor spawned there is not put
+        at z = 0 on a map whose roads are not.
+        """
+        assert self._meso is not None and self._meso_roads is not None
+        pose = sumo_to_carla(
             self._meso_pose(sumo_id, now),
             self._meso.vehicle(sumo_id).length,
             self._offset,
         )
+        if world is not None and not self._meso_roads.has_elevation:
+            z = _carla_road_height(world, pose.x, pose.y)
+            if z is not None:
+                pose = Pose2D(pose.x, pose.y, z, pose.heading_deg)
+        return pose
 
     def _spawn_actor(
         self, world: Any, blueprint_id: str, role_name: str, pose: Pose2D
@@ -5092,15 +5184,87 @@ class SumoTrafficBackend(TrafficBackend):
             by_tls.setdefault(tls, {})[index] = traffic_light_state_name(
                 light.get_state()
             )
+        now = float(tc.simulation.getTime()) if self._own_programs else 0.0
         for tls, carla in by_tls.items():
+            own = ""
+            program = self._own_programs.get(tls)
+            if program is not None:
+                own = program_state(*program, now)
             state = link_states(
                 tc.trafficlight.getRedYellowGreenState(tls),
                 carla,
                 self._permissive_links.get(tls, set()),
                 self._bicycle_rides.get(tls, []),
                 self._crossing_links.get(tls, []),
+                own,
             )
             tc.trafficlight.setRedYellowGreenState(tls, state)
+
+    def _match_own_programs(
+        self,
+    ) -> dict[str, tuple[list[tuple[str, float]], int, float]]:
+        """SUMO's own program of each junction where CARLA's lights switch
+        some links but leave others no ride or crossing follows, as
+        :func:`.signal_states.program_state` steps through it.
+
+        Read before anything sets a light's state: once
+        :meth:`_signals_to_sumo` has, SUMO runs a fixed program there, which
+        would hold those links in the state they had for the whole run.  A
+        junction whose program cannot be read keeps that state, said once.
+        """
+        tc = self._traci
+        switched: dict[str, set[int]] = {}
+        for tls, index in self._signals:
+            switched.setdefault(tls, set()).add(index)
+        out: dict[str, tuple[list[tuple[str, float]], int, float]] = {}
+        running: list[str] = []
+        for tls, indices in sorted(switched.items()):
+            try:
+                width = len(tc.trafficlight.getRedYellowGreenState(tls))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("SUMO: reading %s's state: %s", tls, exc)
+                continue
+            left = unfollowed_links(
+                width,
+                indices,
+                self._bicycle_rides.get(tls, []),
+                self._crossing_links.get(tls, []),
+            )
+            if not left:
+                continue
+            shown = ", ".join(str(index) for index in left)
+            try:
+                program = tc.trafficlight.getProgram(tls)
+                logics = list(tc.trafficlight.getAllProgramLogics(tls))
+                logic = next(
+                    (lg for lg in logics if lg.programID == program), logics[0]
+                )
+                phases = [
+                    (str(phase.state), float(phase.duration)) for phase in logic.phases
+                ]
+                phase = int(tc.trafficlight.getPhase(tls))
+                ends_at = float(tc.trafficlight.getNextSwitch(tls))
+                if not 0 <= phase < len(phases):
+                    raise ValueError(f"phase {phase} of {len(phases)}")
+            except Exception as exc:  # noqa: BLE001 - the links keep their state
+                logger.warning(
+                    "SUMO: link(s) %s of junction %s, which no CARLA light "
+                    "switches, keep the state they have now: its own program "
+                    "cannot be read (%s)",
+                    shown,
+                    tls,
+                    exc,
+                )
+                continue
+            out[tls] = (phases, phase, ends_at)
+            running.append(f"{tls} ({shown})")
+        if running:
+            logger.info(
+                "SUMO: the links no CARLA light switches run on SUMO's own "
+                "program at %s",
+                "; ".join(running),
+            )
+        return out
 
     def _match_permissive(self) -> dict[str, set[int]]:
         """The links CARLA's lights switch that some phase of SUMO's own
@@ -5139,24 +5303,7 @@ class SumoTrafficBackend(TrafficBackend):
         tc = self._traci
         out: dict[str, list[tuple[int, list[int]]]] = {}
         for tls in tc.trafficlight.getIDList():
-            vehicles: list[tuple[int, str, str]] = []
-            walks: list[tuple[int, frozenset[str]]] = []
-            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls)):
-                for in_lane, out_lane, _via in controlled:
-                    to_edge = out_lane.rsplit("_", 1)[0]
-                    if to_edge in crossings:
-                        walks.append((index, crossings[to_edge]))
-                    else:
-                        vehicles.append((index, in_lane.rsplit("_", 1)[0], to_edge))
-            links = [
-                (
-                    index,
-                    sorted(
-                        {i for i, src, dst in vehicles if src in roads or dst in roads}
-                    ),
-                )
-                for index, roads in walks
-            ]
+            links = crossing_links(self._controlled_links(tls), crossings)
             if links:
                 out[tls] = links
         if out:
@@ -5189,17 +5336,12 @@ class SumoTrafficBackend(TrafficBackend):
         out: dict[str, list[tuple[int, str, list[int]]]] = {}
         switched = set(self._signals)
         for tls in tc.trafficlight.getIDList():
-            lanes: dict[int, tuple[str, str]] = {}
-            for index, controlled in enumerate(tc.trafficlight.getControlledLinks(tls)):
-                for in_lane, out_lane, _via in controlled:
-                    lanes.setdefault(index, (in_lane, out_lane))
+            lanes = first_lanes(self._controlled_links(tls))
             kinds = {
                 index: (self._lane_kind(i), self._lane_kind(o))
                 for index, (i, o) in lanes.items()
             }
-            vehicles = [
-                index for index, kind in kinds.items() if kind == ("road", "road")
-            ]
+            vehicles = vehicle_links(kinds)
             rides: list[tuple[int, str, list[int]]] = []
             phases: Optional[list[str]] = None
             for index, kind in kinds.items():
@@ -5233,6 +5375,14 @@ class SumoTrafficBackend(TrafficBackend):
             )
         return out
 
+    def _controlled_links(self, tls: str) -> list[list[tuple[str, str, str]]]:
+        """*tls*'s controlled links as TraCI lists them, by link index: each
+        index's (incoming lane, outgoing lane, via lane) connections."""
+        return [
+            [(in_lane, out_lane, via) for in_lane, out_lane, via in controlled]
+            for controlled in self._traci.trafficlight.getControlledLinks(tls)
+        ]
+
     def _lane_kind(self, lane_id: str) -> str:
         """``road`` for a lane a car may use, ``bicycle`` for one only a
         bicycle (and pedestrians) may, ``other`` for the rest -- a footway, a
@@ -5257,8 +5407,8 @@ class SumoTrafficBackend(TrafficBackend):
         """The vehicle links into *out_lane*'s edge from the approach whose
         lane ends nearest *in_lane*'s: the traffic a bicycle coming off that
         sidewalk joins."""
-        to_edge = out_lane.rsplit("_", 1)[0]
-        into = [i for i in vehicles if lanes[i][1].rsplit("_", 1)[0] == to_edge]
+        to_edge = lane_edge(out_lane)
+        into = [i for i in vehicles if lane_edge(lanes[i][1]) == to_edge]
         if not into:
             return []
 
@@ -5268,8 +5418,8 @@ class SumoTrafficBackend(TrafficBackend):
 
         start = end(in_lane)
         nearest = min(into, key=lambda i: math.dist(start, end(lanes[i][0])))
-        from_edge = lanes[nearest][0].rsplit("_", 1)[0]
-        return [i for i in into if lanes[i][0].rsplit("_", 1)[0] == from_edge]
+        from_edge = lane_edge(lanes[nearest][0])
+        return [i for i in into if lane_edge(lanes[i][0]) == from_edge]
 
     def _program_states(self, tls: str) -> list[str]:
         """The state of every phase of SUMO's own programs of *tls*."""
@@ -5345,18 +5495,24 @@ class SumoTrafficBackend(TrafficBackend):
         )
 
 
-def world_opendrive(context: TrafficContext, who: str) -> str:
-    """The OpenDRIVE of *context*'s world: its file, else the world's map.
+def _carla_road_height(world: Any, x: float, y: float) -> Optional[float]:
+    """The height of CARLA's driving lane nearest ``(x, y)``, m, or ``None``
+    where CARLA has none (or the map cannot be asked).
 
-    Raises:
-        TrafficBackendUnavailable: The run has neither (*who* needs it).
+    For a place the SUMO network gives no height for: asked at z = 0, the
+    nearest lane is the one CARLA projects to, which on a stacked road may be
+    either level -- still nearer than z = 0 on any road that is not at it.
     """
-    if context.xodr_path is not None and Path(context.xodr_path).is_file():
-        return Path(context.xodr_path).read_text()
-    if context.world is None:
-        raise TrafficBackendUnavailable(
-            f"{who} needs the world's OpenDRIVE, and the run has neither a world "
-            "nor an OpenDRIVE file"
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    try:
+        found = run_carla_map(world).get_waypoint(
+            carla.Location(x, y, 0.0),
+            project_to_road=True,
+            lane_type=int(carla.LaneType.Driving),
         )
-    # The run's map where one is held: get_map() builds a whole new one.
-    return str(run_carla_map(context.world).to_opendrive())
+    except RuntimeError:
+        return None
+    if found is None:
+        return None
+    return float(found.transform.location.z)

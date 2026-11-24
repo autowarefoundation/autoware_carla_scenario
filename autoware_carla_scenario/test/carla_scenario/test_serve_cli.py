@@ -298,6 +298,30 @@ class TestEditor:
             }
         ]
 
+    @pytest.mark.parametrize("blank", ["", "  ", "\t\n"])
+    def test_a_blank_directory_variable_is_unset(
+        self,
+        served: list[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        blank: str,
+    ) -> None:
+        """Blank means unset, as for every editor variable: the app's default,
+        not a directory named by the blank (#2235)."""
+        from autoware_carla_scenario.editor import app as app_module
+
+        made: list[dict[str, Any]] = []
+
+        def create_app(**kwargs: Any) -> object:
+            made.append(kwargs)
+            return object()
+
+        monkeypatch.setattr(app_module, "create_app", create_app)
+        monkeypatch.setenv("SCENARIO_EDITOR_DRAFTS", blank)
+        monkeypatch.setenv("SCENARIO_EDITOR_EXPORT_DIR", blank)
+        editor.main([])
+        assert made[0]["draft_dir"] is None
+        assert made[0]["export_dir"] is None
+
     def test_the_bound_host_reaches_the_app(
         self, served: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -494,6 +518,16 @@ def test_warn_if_exposed_writes_one_line_to_stderr(
         f"prog: WARNING: listening on {shown}:1234 with no authentication; "
         "anyone who can reach this port can edit drafts. Pass --host "
         "127.0.0.1 to serve this machine only.\n"
+    )
+
+
+def test_warn_if_exposed_takes_a_hint_of_its_own(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    warn_if_exposed("prog", "0.0.0.0", 1234, "edit drafts", hint="Firewall it.")
+    assert capsys.readouterr().err == (
+        "prog: WARNING: listening on 0.0.0.0:1234 with no authentication; "
+        "anyone who can reach this port can edit drafts. Firewall it.\n"
     )
 
 

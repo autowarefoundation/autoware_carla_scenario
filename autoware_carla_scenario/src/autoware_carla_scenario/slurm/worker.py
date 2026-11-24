@@ -39,6 +39,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import crash_report
+from ..crash_report_settings import repro_overrides as settings_repro_overrides
 from ..run_outputs import remove_run_outputs
 from ..run_timeout import run_timeout_seconds
 from ..seed import check_whole_number
@@ -615,6 +617,16 @@ def _batch_configs(
     return found
 
 
+def repro_overrides(case: dict[str, Any]) -> list[str]:
+    """What ``repro.sh`` of a crash report of *case* runs ``scenario`` with:
+    its scenario and overrides, without the batch's launcher (``launcher=``,
+    ``launcher.*``), so that it runs again here, as a single run (the
+    checked crash_report_settings.repro_overrides(), #2386)."""
+    return settings_repro_overrides(
+        f"{case['scenario']}", [str(o) for o in case["overrides"]]
+    )
+
+
 def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int:
     """Run task *task_index* of submission *submission_index*; its exit status."""
     layout = BatchLayout(manifest_path.resolve().parent.parent)
@@ -642,6 +654,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
 
     task = _Task(layout, submission_index, task_index)
     task.update(cases=chunk)
+    # What the task raises, a case's failed attempts and a native crash leave
+    # their crash reports beside a local batch's (docs/crash_reports.md).
+    crash_report.set_output_dir(batch_dir)
 
     if manifest.get("typechecked"):
         # Checked by the submitting process, once a config shape: building the
@@ -805,8 +820,16 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                     case=run._odd_case(cfg),
                     file_stem=stem,
                 )
-                started = time.time()
-                (result,) = queue.run_all(release=True, continue_on_error=True)
+                # The monotonic clock: a wall clock stepped mid-case (NTP)
+                # would skew, or make negative, how long it took (#2323).
+                started = time.monotonic()
+                # A crash report of the case runs it again with `scenario`.
+                with crash_report.run_context(
+                    batch_dir,
+                    overrides=repro_overrides(case),
+                    config_yaml=run.config_yaml(cfg),
+                ):
+                    (result,) = queue.run_all(release=True, continue_on_error=True)
                 # The case's recording is a few milliseconds' work, done in the
                 # background: wait for it, so its outcome is in the case's
                 # record for `collect`.
@@ -827,7 +850,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                         "task": task_index,
                         "job_id": task.status["job_id"],
                         "host": task.status["host"],
-                        "wall_seconds": round(time.time() - started, 3),
+                        "wall_seconds": round(time.monotonic() - started, 3),
                         "finished": _now(),
                         **({"rerun_error": rerun_error} if rerun_error else {}),
                     },
@@ -842,11 +865,13 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         exit_status = 143
     except BaseException as exc:  # noqa: BLE001 - recorded, then the task fails
         logger.error("Task failed: %s", exc, exc_info=True)
+        crash = crash_report.capture(exc) if isinstance(exc, Exception) else None
         task.update(
             state="failed",
             finished=_now(),
             error=f"{type(exc).__name__}: {exc}",
             traceback=traceback.format_exc(),
+            **({"crash_report": str(crash)} if crash is not None else {}),
             **sampler.to_dict(),
         )
         exit_status = 1
@@ -857,7 +882,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
         sampler.stop()
         if rerun is not None:
-            from ..rerun import report  # noqa: PLC0415
+            from ..rerun_report import report  # noqa: PLC0415
 
             logger.info("%s", report(rerun.close()))
         if slot is not None:
@@ -893,7 +918,10 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
-    return run_task(Path(args[0]), int(args[1]), int(args[2]))
+    # The task again, as the job script runs it, for a report of no case.
+    command = [sys.executable, "-m", "autoware_carla_scenario.slurm.worker", *args]
+    with crash_report.reporting(command):
+        return run_task(Path(args[0]), int(args[1]), int(args[2]))
 
 
 if __name__ == "__main__":

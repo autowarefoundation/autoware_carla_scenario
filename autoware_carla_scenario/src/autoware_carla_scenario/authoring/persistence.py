@@ -105,8 +105,12 @@ _DRAFT_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def default_draft_dir() -> Path:
-    """Return the directory drafts are stored in."""
-    env = os.environ.get(DRAFT_DIR_ENV)
+    """Return the directory drafts are stored in.
+
+    ``$SCENARIO_EDITOR_DRAFTS`` when it is set and not blank (a blank one is
+    unset), else ``./scenario_drafts``.
+    """
+    env = (os.environ.get(DRAFT_DIR_ENV) or "").strip()
     if env:
         return Path(env).expanduser().resolve()
     return (Path.cwd() / "scenario_drafts").resolve()
@@ -154,11 +158,31 @@ def load_document(path: str | Path) -> ScenarioDocument:
 
 
 def save_document(document: ScenarioDocument, path: str | Path) -> Path:
-    """Write *document* to *path* as YAML, creating parent directories."""
+    """Write *document* to *path* as YAML, creating parent directories.
+
+    In one rename (:func:`~autoware_carla_scenario.atomic_file.write_text_atomically`),
+    as a draft is saved: a reader sees the old document or the new one, whole,
+    and a write that fails leaves the old one in place.
+    """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(dump_document_yaml(document), encoding="utf-8")
+    write_text_atomically(file_path, dump_document_yaml(document))
     return file_path
+
+
+def _revision(value: Any) -> int:
+    """A stored revision, or 0 for a draft written before there was one.
+
+    A hand-edited value that is not a whole number reads as 0 rather than
+    failing the read: the revision only tells saves apart, and the next save
+    numbers the draft afresh from there.
+    """
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 @dataclass
@@ -170,6 +194,11 @@ class Draft:
     created_at: str
     updated_at: str
     document: ScenarioDocument
+    #: How many times the draft has been saved.  ``updated_at`` is stamped to
+    #: the second, so two saves in one second share it; this tells every save
+    #: apart, which is what lets the editor refuse a form rendered from an
+    #: older copy of the draft (#2345).
+    revision: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Return the on-disk representation."""
@@ -178,6 +207,7 @@ class Draft:
             "title": self.title,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "revision": self.revision,
             "document": self.document.to_yaml_dict(),
         }
 
@@ -191,6 +221,7 @@ class Draft:
             created_at=str(raw.get("created_at") or utc_timestamp()),
             updated_at=str(raw.get("updated_at") or utc_timestamp()),
             document=document,
+            revision=_revision(raw.get("revision")),
         )
 
 
@@ -302,8 +333,9 @@ class DraftStore:
         return draft
 
     def save(self, draft: Draft) -> Draft:
-        """Persist *draft*, refreshing its ``updated_at`` stamp."""
+        """Persist *draft*, stamping ``updated_at`` and bumping ``revision``."""
         draft.updated_at = utc_timestamp()
+        draft.revision += 1
         draft.title = draft.document.title or draft.title
         self._write(draft)
         return draft

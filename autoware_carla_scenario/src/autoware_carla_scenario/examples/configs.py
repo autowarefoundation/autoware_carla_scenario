@@ -21,6 +21,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from ..number_settings import finite_number_setting, number_setting
+
 # The shared configs are imported because the composite configs in this module
 # (``ScenarioRunConfig`` and ``IntersectionPassingConfig``) reference them.
 from ..scenario_config import (
@@ -79,25 +81,21 @@ def _require_number(key: str, value: Union[float, bool, str]) -> float:
     would pass as 1, ``=null`` as None and a quoted ``='10'`` as a string,
     which ``math.isfinite()`` refuses with a ``TypeError`` naming no key.  An
     int (Hydra reads ``=10`` as one) or a float is a number; a bool, a string
-    or anything ``float()`` refuses is not.
+    or anything ``float()`` refuses is not, and an int too big for a float
+    (``10**400``) is refused as not finite: the one check of a number
+    setting, :func:`~autoware_carla_scenario.number_settings.number_setting`
+    (#2398).
 
     Raises:
         ValueError: naming ``scenario.<key>``.
     """
-    if isinstance(value, bool) or isinstance(value, str):
-        raise ValueError(f"scenario.{key} must be a number, got {value!r}")
-    try:
-        number = float(value)
-    except TypeError:
-        raise ValueError(f"scenario.{key} must be a number, got {value!r}") from None
-    return number
+    return number_setting(f"scenario.{key}", value)
 
 
 def _require_finite(key: str, value: float) -> None:
-    """Refuse *value* of ``scenario.<key>`` unless it is a finite number."""
-    number = _require_number(key, value)
-    if not math.isfinite(number):
-        raise ValueError(f"scenario.{key} must be finite, not {value}")
+    """Refuse *value* of ``scenario.<key>`` unless it is a finite number
+    (:func:`~autoware_carla_scenario.number_settings.finite_number_setting`)."""
+    finite_number_setting(f"scenario.{key}", value)
 
 
 def _require_positive(key: str, value: float) -> None:
@@ -173,8 +171,9 @@ class IntersectionPassingConfig:
     #: Gives the ego time to reach cruising speed after spawn.
     speed_check_delay_seconds: float = 0.3
 
-    #: Turn direction at the intersection (``"left"``, ``"right"``, or
-    #: ``None`` for straight-through).
+    #: Turn direction at the intersection: ``"left"``, ``"right"`` or
+    #: ``"straight"``, each registering a ``TurnAction``; ``None`` registers
+    #: none (straight through, left to the TrafficManager).
     turn_direction: str | None = None
 
     #: From this many metres before the junction (the start of the route's
@@ -184,7 +183,8 @@ class IntersectionPassingConfig:
     #: enters the junction if it never showed it on that approach (one fast
     #: enough is through it before the grace runs out).  In the junction the
     #: indicator is ``max_turn_indicator_changes``' to judge.
-    #: ``None`` checks nothing.  Needs a ``"left"`` or ``"right"`` turn.
+    #: ``None`` checks nothing; otherwise finite and above 0.  Needs a
+    #: ``"left"`` or ``"right"`` turn.
     turn_indicator_before_m: float | None = None
 
     #: How long the indicator may be wrong before the run fails, in seconds:
@@ -254,7 +254,10 @@ class IntersectionPassingConfig:
             )
         turn_indicator_before_m = self.turn_indicator_before_m
         if turn_indicator_before_m is not None:
-            _require_finite("turn_indicator_before_m", turn_indicator_before_m)
+            # At 0 or below the ego is never "that close and not yet in the
+            # junction": near_junction never latches, and the check fails the
+            # run on junction entry even while the ego signals.
+            _require_positive("turn_indicator_before_m", turn_indicator_before_m)
         if self.turn_indicator_before_m is not None and self.turn_direction not in (
             "left",
             "right",

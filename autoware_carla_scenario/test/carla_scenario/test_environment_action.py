@@ -194,6 +194,16 @@ class TestRefusedValues:
     """A value CARLA or the weather rules cannot use fails at construction,
     naming the argument, not later inside the run (#1322)."""
 
+    @pytest.mark.parametrize("name", (*_NUMERIC_ARGUMENTS, "wind_speed_kmh"))
+    @pytest.mark.parametrize("value", [True, False])
+    def test_a_boolean_is_refused(self, name: str, value: bool) -> None:
+        # True would read as 1 (#2273).
+        with pytest.raises(
+            ValueError,
+            match=rf"EnvironmentAction: {name} must be a number, not {value!r}",
+        ):
+            EnvironmentAction(**_given(name, value))
+
     @pytest.mark.parametrize("name", _NUMERIC_ARGUMENTS)
     @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
     def test_a_non_finite_value_is_refused(self, name: str, value: float) -> None:
@@ -340,6 +350,36 @@ class TestTheEnvironmentConfig:
         cfg = _shipped([override])
         with pytest.raises(
             run.RunConfigError, match=r"^environment\.cloudiness must be a number"
+        ):
+            run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("value", [80, None])
+    def test_an_unknown_key_is_refused_naming_it(self, value: object) -> None:
+        # `rain` let through to EnvironmentAction's TypeError (#2265).
+        with pytest.raises(
+            ValueError,
+            match=r"^environment\.rain is no environment setting.*precipitation",
+        ):
+            self._add({"rain": value})
+
+    def test_every_shipped_key_is_known(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        from .test_video_removed import _shipped
+
+        cfg = _shipped([])
+        assert run.environment_settings(cfg) == {}
+
+    def test_a_run_is_refused_for_an_unknown_key_before_anything_is_built(
+        self,
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        from .test_video_removed import _shipped
+
+        cfg = _shipped(["+environment.rain=80"])
+        with pytest.raises(
+            run.RunConfigError, match=r"^environment\.rain is no environment setting"
         ):
             run.check_run_config(cfg)
 

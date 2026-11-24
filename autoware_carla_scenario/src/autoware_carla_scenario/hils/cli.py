@@ -27,6 +27,7 @@ import json
 import logging
 import signal
 import sys
+import threading
 from importlib import resources
 from types import FrameType
 from typing import List, Optional
@@ -215,6 +216,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     from .bridge import (  # noqa: PLC0415
         HilsBridge,
+        HilsListenError,
         HilsStepError,
         HilsUnavailableError,
     )
@@ -226,8 +228,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     def _stop(signum: int, frame: Optional[FrameType]) -> None:
+        # Not bridge.stop() here: it sets an Event, whose lock the main
+        # thread may hold, inside its wait(), when the signal arrives -- the
+        # handler runs on that thread and would wait for itself (#2323).  A
+        # thread of its own takes the lock once the main thread lets it go.
         logger.info("stopping (signal %d)", signum)
-        bridge.stop()
+        threading.Thread(target=bridge.stop, name="hils-stop", daemon=True).start()
 
     signal.signal(signal.SIGTERM, _stop)
     status = 0
@@ -235,6 +241,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         bridge.run()
     except KeyboardInterrupt:
         logger.info("interrupted")
+    except HilsListenError as exc:
+        # Before any startup step: close() sends the ECUs nothing (#2277).
+        print(f"scenario-hils: {exc}", file=sys.stderr)
+        status = 1
     except HilsStepError as exc:
         logger.error("%s", exc)
         status = 1

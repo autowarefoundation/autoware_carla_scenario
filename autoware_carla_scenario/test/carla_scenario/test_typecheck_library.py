@@ -3021,7 +3021,8 @@ def test_overridden_methods_protocols_and_type_checking_compile(
 
 
 # ---------------------------------------------------------------------------
-# The queue shim (the sensors' frame queues)
+# The queue shim (the sensors' frame queues) and the packaging model's
+# InvalidVersion (authoring.framework_pin), exceptions built by position (#2376)
 # ---------------------------------------------------------------------------
 
 
@@ -3030,6 +3031,8 @@ from __future__ import annotations
 
 import queue
 from typing import Optional
+
+from packaging.version import InvalidVersion, Version
 
 
 class Frames:
@@ -3071,6 +3074,19 @@ class Frames:
         if self._frames.empty() or self._frames.full():
             return 0
         return self._frames.qsize() + queue.Queue[int](0).qsize()
+
+    def overflow(self) -> None:
+        if self._frames.full():
+            raise queue.Full("frames")
+        raise queue.Empty()
+
+
+def checked_version(text: str) -> str:
+    if not text:
+        raise InvalidVersion()
+    if Version(text).local is not None:
+        raise InvalidVersion(text + " has a local label")
+    return text
 """
 
 
@@ -3094,6 +3110,13 @@ def test_the_queue_shim_takes_what_cpython_takes(
         ("self._frames.get(True, timeout)", "self._frames.get(True, timeout, 1)"),
         ("self._frames.qsize() + ", "self._frames.peek() + "),
         ("self._frames.get(timeout=1)", 'self._frames.get(timeout="1")'),
+        # CPython's exceptions take no keyword (#2376).
+        ('queue.Full("frames")', 'queue.Full(message="frames")'),
+        ("queue.Empty()", 'queue.Empty(message="")'),
+        (
+            'InvalidVersion(text + " has a local label")',
+            'InvalidVersion(message=text + " has a local label")',
+        ),
     ],
     ids=[
         "unknown-keyword",
@@ -3101,6 +3124,9 @@ def test_the_queue_shim_takes_what_cpython_takes(
         "get-arguments",
         "no-method",
         "timeout-type",
+        "full-keyword",
+        "empty-keyword",
+        "invalid-version-keyword",
     ],
 )
 def test_the_queue_shim_refuses_what_cpython_refuses(
@@ -5254,6 +5280,7 @@ _THIRD_PARTY_MODELS = {
     "lxml",
     "packaging",
     "pyxodr",
+    "roadgen",
     "sumo",
 }
 
@@ -5546,6 +5573,96 @@ def test_the_errno_codes_and_uuid_hex_slurm_start_lock_reads_are_cpythons() -> N
 
 
 # ---------------------------------------------------------------------------
+# os.lstat(), stat_result.st_uid and os.O_NOFOLLOW: what slurm.ports checks its
+# lock directory and opens its lock files with (#2325)
+# ---------------------------------------------------------------------------
+
+
+_PORT_LOCK_DIR = """
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+def private(path: Path) -> bool:
+    info = os.lstat(path)
+    again = os.lstat(str(path), dir_fd=None)
+    return info.st_uid == os.getuid() and again.st_mode & 18 == 0
+
+
+def owner(fd: int) -> int:
+    return os.fstat(fd).st_uid + os.stat("x").st_uid
+
+
+def lock(path: Path) -> int:
+    return os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 420)
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_os_shim_takes_what_slurm_ports_checks_its_lock_dir_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_PORT_LOCK_DIR, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ("os.lstat(path)", "os.lstat()"),
+        ("os.lstat(path)", "os.lstat(path, None)"),
+        ("os.lstat(str(path), dir_fd=None)", "os.lstat(str(path), follow=False)"),
+        ("info.st_uid", "info.st_owner"),
+        ("os.O_NOFOLLOW", "os.O_NOFOLLOWS"),
+    ],
+    ids=[
+        "lstat-no-path",
+        "lstat-dir-fd-keyword-only",
+        "lstat-unknown-keyword",
+        "stat-result-unknown-attribute",
+        "o-nofollow-unknown-name",
+    ],
+)
+def test_the_os_shim_refuses_what_cpython_refuses_of_slurm_ports_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _PORT_LOCK_DIR.replace(right, wrong, 1)
+    assert source != _PORT_LOCK_DIR
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_os_shims_lstat_and_o_nofollow_are_cpythons(tmp_path: Path) -> None:
+    import os
+    import platform
+
+    shim = (model_dir() / "os" / "__init__.codon").read_text()
+    # x86_64's value (0o400000; aarch64's is 0o100000): the check reads only
+    # its type, and the package always uses os.O_NOFOLLOW at run time.
+    assert re.search(r"^O_NOFOLLOW = 131072$", shim, re.MULTILINE)
+    if platform.machine() == "x86_64":
+        assert os.O_NOFOLLOW == 131072
+    elif platform.machine() == "aarch64":
+        assert os.O_NOFOLLOW == 32768
+    assert "    st_uid: int\n" in shim
+    # The arguments CPython takes and refuses, as the shim declares them.
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "missing")
+    assert os.lstat(link, dir_fd=None).st_uid == os.getuid()
+    with pytest.raises(TypeError):
+        os.lstat(link, None)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        os.lstat()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
 # errno.EACCES and errno.EROFS: what carla_install_paths tells a lock file
 # that cannot be created or written by (#2144)
 # ---------------------------------------------------------------------------
@@ -5678,6 +5795,136 @@ def test_the_errno_codes_scaffold_placement_reads_are_cpythons() -> None:
         value = int(getattr(errno, name))
         assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
     assert not hasattr(errno, "ENODIR")  # what the refusal above misspells
+
+
+# ---------------------------------------------------------------------------
+# errno.ENOENT, os.strerror(), os.geteuid(), os.read() and os.set_blocking():
+# what driver.hdmap_export, rerun, hils.host_setup and commonroad.worker read
+# (#2310)
+# ---------------------------------------------------------------------------
+
+
+_ERRNO_AND_OS = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+_RACES = frozenset({errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY})
+
+
+def missing(path: Path) -> str:
+    reason: str = os.strerror(errno.ENOENT)
+    return f"{path}: {reason}"
+
+
+def raced(exc: OSError) -> bool:
+    return exc.errno in _RACES
+
+
+def as_root() -> bool:
+    return os.geteuid() == 0
+
+
+def drained(fd: int) -> bytes:
+    os.set_blocking(fd, False)
+    chunk = os.read(fd, 65536)
+    return chunk
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_and_os_shims_take_what_issue_2310_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_ERRNO_AND_OS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is an AttributeError or a TypeError in CPython too.
+        ("{errno.ENOENT, errno.EEXIST", "{errno.ENOFILE, errno.EEXIST"),
+        ("os.strerror(errno.ENOENT)", "os.strerror()"),
+        ("os.strerror(errno.ENOENT)", "os.strerror(code=errno.ENOENT)"),
+        ("os.geteuid()", "os.geteuid(0)"),
+        ("os.read(fd, 65536)", "os.read(fd)"),
+        ("os.read(fd, 65536)", "os.read(fd=fd, length=65536)"),
+        ("os.set_blocking(fd, False)", "os.set_blocking(fd)"),
+        ("os.set_blocking(fd, False)", "os.set_blocking(fd, blocking=False)"),
+    ],
+    ids=[
+        "enoent-misspelt",
+        "strerror-no-code",
+        "strerror-positional-only",
+        "geteuid-arguments",
+        "read-no-length",
+        "read-positional-only",
+        "set-blocking-no-flag",
+        "set-blocking-positional-only",
+    ],
+)
+def test_the_errno_and_os_shims_refuse_what_cpython_refuses_of_issue_2310(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _ERRNO_AND_OS.replace(right, wrong, 1)
+    assert source != _ERRNO_AND_OS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_and_os_shims_of_issue_2310_declare_cpythons() -> None:
+    import errno
+    import inspect
+    import os
+
+    shim = (model_dir() / "errno.codon").read_text()
+    assert re.search(rf"^ENOENT = {int(errno.ENOENT)}$", shim, re.MULTILINE)
+    assert errno.ENOENT == 2
+    assert not hasattr(errno, "ENOFILE")  # what the refusal above misspells
+    os_source = (model_dir() / "os" / "__init__.codon").read_text()
+    os_shim = {
+        node.name: node.args
+        for node in ast.parse(os_source).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    # geteuid() takes nothing; strerror(code, /), read(fd, length, /) and
+    # set_blocking(fd, blocking, /) take their values by position only, a
+    # `*args` of that many here.
+    assert not inspect.signature(os.geteuid).parameters
+    geteuid = os_shim["geteuid"]
+    assert not geteuid.args and geteuid.vararg is None and not geteuid.kwonlyargs
+    for name, count in (("strerror", 1), ("read", 2), ("set_blocking", 2)):
+        parameters = inspect.signature(getattr(os, name)).parameters.values()
+        assert [p.kind for p in parameters] == [inspect.Parameter.POSITIONAL_ONLY] * (
+            count
+        ), name
+        assert os_shim[name].vararg is not None and not os_shim[name].args, name
+        assert f'_positional_only(args, {count}, "{name}()")' in os_source, name
+    # What CPython makes of what the check refuses.
+    with pytest.raises(TypeError):
+        os.strerror(code=errno.ENOENT)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.geteuid(0)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.read(fd=0, length=1)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.set_blocking(0, blocking=False)  # type: ignore[call-arg]
+    assert isinstance(os.strerror(errno.ENOENT), str)
+    read, write = os.pipe()
+    try:
+        os.set_blocking(read, False)
+        os.write(write, b"x")
+        assert os.read(read, 65536) == b"x"
+    finally:
+        os.close(read)
+        os.close(write)
 
 
 # ---------------------------------------------------------------------------
@@ -6421,7 +6668,7 @@ def test_the_shims_take_what_tools_file_writes_calls(
         ),
         (
             "_Partial(exc.errno, exc.strerror, str(path))",
-            "FileNotFoundError(exc.errno, exc.strerror, str(path))",
+            "FileNotFoundError(exc.errno, exc.strerror)",
         ),
         ('OSError(code, "message", "file")', 'OSError(code, "message")'),
         ("view = memoryview(data)", "view = memoryview()"),
@@ -6441,7 +6688,7 @@ def test_the_shims_take_what_tools_file_writes_calls(
         "oserror-unknown-attribute",
         "oserror-filename-not-callable",
         "oserror-no-keyword",
-        "subclass-of-one-message",
+        "subclass-errno-and-strerror-undeclared",
         "oserror-errno-and-strerror-undeclared",
         "memoryview-no-object",
         "write-int-data",
@@ -6533,6 +6780,104 @@ def test_the_shims_tools_file_writes_calls_declare_cpythons_signatures() -> None
 
 
 # ---------------------------------------------------------------------------
+# OSError's subclasses built of OSError's (errno, strerror, filename): what
+# rerun raises for a missing log (#2354)
+# ---------------------------------------------------------------------------
+
+
+_OSERROR_SUBCLASSES = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+
+def missing(path: Path) -> str:
+    error = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+    return str(error) + str(error.errno)
+
+
+def others(path: str, exc: OSError) -> list[str]:
+    return [
+        str(PermissionError(errno.EACCES, "Permission denied", path)),
+        str(FileExistsError(errno.EEXIST, exc.strerror, path)),
+        str(TimeoutError(exc.errno, exc.strerror, path)),
+        str(BrokenPipeError(exc.errno, "Broken pipe", path)),
+        str(FileNotFoundError(path)),
+    ]
+
+
+def raised(path: Path) -> None:
+    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_exceptions_model_takes_oserrors_three_values_for_its_subclasses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_OSERROR_SUBCLASSES, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Forms CPython takes that the model does not declare: a fourth value
+        # (CPython's winerror, ignored off Windows) and a filename that is not
+        # a str.
+        (
+            "raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))",
+            "raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "
+            "str(path), 0)",
+        ),
+        (
+            'PermissionError(errno.EACCES, "Permission denied", path)',
+            'PermissionError(errno.EACCES, "Permission denied", 1)',
+        ),
+    ],
+    ids=["subclass-fourth-value-undeclared", "subclass-filename-not-str"],
+)
+def test_the_exceptions_model_refuses_other_forms_of_oserrors_subclasses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _OSERROR_SUBCLASSES.replace(right, wrong, 1)
+    assert source != _OSERROR_SUBCLASSES
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_cpython_builds_oserrors_subclasses_of_its_three_values() -> None:
+    import errno
+    import os
+
+    for cls in (
+        FileNotFoundError,
+        PermissionError,
+        FileExistsError,
+        TimeoutError,
+        BrokenPipeError,
+    ):
+        built = cls(errno.ENOENT, os.strerror(errno.ENOENT), "/a/b")
+        assert str(built) == f"[Errno 2] {os.strerror(errno.ENOENT)}: '/a/b'"
+        assert (built.errno, built.filename) == (errno.ENOENT, "/a/b")
+        # What the model refuses, CPython takes.
+        assert cls(errno.ENOENT, "x", "f", 0).filename == "f"
+        assert cls(errno.ENOENT, "x", 1).filename == 1
+    # Every OSError subclass the model declares takes them in its constructor.
+    shim = (model_dir() / "autoware_carla_scenario" / "_exceptions.codon").read_text()
+    for name in re.findall(
+        r"^class (\w+)\(Static\[(?:OSError|ConnectionError)\]\):", shim, re.MULTILINE
+    ):
+        assert f'_os_message(args, kwargs, "{name}()")' in shim, name
+
+
+# ---------------------------------------------------------------------------
 # getpass.getuser(): whom hils.host_devices sets the devices up for
 # ---------------------------------------------------------------------------
 
@@ -6621,3 +6966,59 @@ def test_the_getpass_shim_declares_cpythons_getuser() -> None:
         pass
     except KeyError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# The array shim: what metric_frames keeps a recorded frame's motion in (#2338)
+# ---------------------------------------------------------------------------
+
+
+_ARRAY = """
+from __future__ import annotations
+
+from array import array
+
+
+def motion(values: list[float]) -> float:
+    kept = array("d")
+    kept.append(1.5)
+    kept.extend((2.0, 3.0))
+    kept.extend(values)
+    total = kept[0] + kept[-1] + float(len(kept))
+    for value in kept:
+        total += value
+    if kept.typecode != "d":
+        return 0.0
+    return total
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_array_shim_takes_what_metric_frames_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_ARRAY, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ('array("d")', "array()"),
+        ("kept.append(1.5)", "kept.append()"),
+        ("kept.append(1.5)", "kept.push(1.5)"),
+        ("kept.typecode !=", "kept.typecodes !="),
+    ],
+    ids=["no-typecode", "append-nothing", "unknown-method", "unknown-attribute"],
+)
+def test_the_array_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _ARRAY.replace(right, wrong, 1)
+    assert source != _ARRAY
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong

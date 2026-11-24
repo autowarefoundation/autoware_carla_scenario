@@ -63,6 +63,7 @@ from autoware_carla_scenario.route.model import JunctionSegmentSpec, LaneSegment
 from autoware_carla_scenario.route.search import find_route_matches
 
 from . import _route_maps as rm
+from ._exported_config import resolved_config
 
 #: The document a transpiler writes for "the ego turns left at a signalised
 #: junction; an oncoming car comes through it; a pedestrian waits at the
@@ -457,6 +458,8 @@ class TestValidation:
             "where it was declared" in m and "no lanelet of its own" in m
             for m in errors
         )
+        # Said once: the entity itself is not refused for it (#2281).
+        assert not any("positive lanelet ID" in m for m in errors)
 
     def test_one_on_a_lanelet_of_one_map_is_warned_about(self) -> None:
         raw = _raw()
@@ -527,7 +530,9 @@ class TestBuild:
         # case_count is the expansion's own, written beside the match (a
         # gate's case coverage, docs/gate.md).
         assert set(config["scenario"]["route"]) == {*written, "case_count"}
-        assert "goal_lanelet_id" not in config["ego"]
+        # The document's: none, so the route's end (an expansion's, or the
+        # scenario's own search) is the goal.
+        assert resolved_config(_document(), config)["ego"]["goal_lanelet_id"] is None
 
     def test_the_package_config_class_takes_the_route_keys(self) -> None:
         config = build_scenario_config(_document())

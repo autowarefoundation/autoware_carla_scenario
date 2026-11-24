@@ -203,12 +203,13 @@ class RuleSet:
         same per-rule robustness values -- a weighted saturated sum and a
         minimum -- and every caller that wants one wants the other, since
         selection is lexicographic in the pair. Evaluating the formulas twice
-        for that was the single largest cost in a policy step: at ten rules
+        for that was the single largest cost in a policy step: at nine rules
         over a forty-step horizon each pass costs about as much as the rollout
         it is judging, twice over.
 
         Equal to calling the two separately, which
-        :mod:`tests.test_ruleset` asserts directly -- the conjunction *is* the
+        ``tests/test_rules.py::test_the_combined_score_equals_the_two_it_replaces``
+        asserts directly -- the conjunction *is* the
         minimum over the rules, which is also what makes the per-rule breakdown
         in ``debug_scalars`` a genuine decomposition.
         """

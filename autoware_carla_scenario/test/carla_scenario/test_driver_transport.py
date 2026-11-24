@@ -302,15 +302,14 @@ def test_a_server_that_fails_to_start_leaves_no_socket_directory(
     monkeypatch: pytest.MonkeyPatch,
     failing: str,
 ) -> None:
-    class _Server:
-        def start(self) -> None:
-            raise RuntimeError("cannot bind")
+    servers: list[_UnstartableServer] = []
 
     def build(policy: BaseDriver, **kwargs: Any) -> Any:
         assert Path(kwargs["host"].removeprefix("unix://")).parent.is_dir()
         if failing == "build":
             raise RuntimeError("cannot bind")
-        return _Server(), 0
+        servers.append(_UnstartableServer())
+        return servers[-1], 0
 
     monkeypatch.setattr(egodriver_client, "build_server", build)
     for _ in range(3):
@@ -318,6 +317,37 @@ def test_a_server_that_fails_to_start_leaves_no_socket_directory(
             egodriver_client._serve_on_unix_socket("records")
     assert list(short_tmpdir.iterdir()) == []
     assert list(policies) == ["records"]  # the policy itself loaded, once
+    # #2321: each server that did not start was stopped, not left behind.
+    assert [server.stopped for server in servers] == [[None]] * len(servers)
+
+
+class _UnstartableServer:
+    """A gRPC server whose start fails; records its stops."""
+
+    def __init__(self) -> None:
+        self.stopped: list[Any] = []
+
+    def start(self) -> None:
+        raise RuntimeError("cannot bind")
+
+    def stop(self, grace: Any) -> None:
+        self.stopped.append(grace)
+
+
+def test_an_in_process_server_that_fails_to_start_is_stopped(
+    policies: Dict[str, BaseDriver], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    servers: list[_UnstartableServer] = []
+
+    def build(policy: BaseDriver, **kwargs: Any) -> Any:
+        servers.append(_UnstartableServer())
+        return servers[-1], 12345
+
+    monkeypatch.setattr(egodriver_client, "build_server", build)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="cannot bind"):
+            egodriver_client._serve_in_process("records")
+    assert [server.stopped for server in servers] == [[None], [None]]
 
 
 def test_unix_dials_a_policy_in_another_process() -> None:

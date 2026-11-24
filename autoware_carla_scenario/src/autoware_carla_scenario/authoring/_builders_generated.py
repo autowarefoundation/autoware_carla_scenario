@@ -32,6 +32,7 @@ __all__ = [
     "FAILURE_ONLY_CONDITIONS",
     "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
+    "POST_RUN_CONDITIONS",
     "build_and_condition",
     "build_or_condition",
     "build_not_condition",
@@ -54,6 +55,7 @@ __all__ = [
     "build_adversity_active_condition",
     "build_entity_distance_condition",
     "build_distance_condition",
+    "build_area_distance_condition",
     "build_relative_speed_condition",
     "build_entity_count_condition",
     "build_ttc_condition",
@@ -178,6 +180,17 @@ FAILURE_ONLY_CONDITIONS: frozenset[str] = frozenset(
         "off_road_fraction",
         "collision",
         "timeout",
+    }
+)
+
+#: The condition types judged once the run is over (their class sets
+#: ``IS_POST_RUN``, which :func:`~..conditions.base.refuse_post_run` reads): they
+#: read nothing while the run goes on and can never pass a run, so they stand
+#: only on their own as a fail condition, never as a pass condition, a
+#: trigger, a waypoint condition or a child of a composition.
+POST_RUN_CONDITIONS: frozenset[str] = frozenset(
+    {
+        "metric",
     }
 )
 
@@ -686,6 +699,33 @@ def build_distance_condition(
     return EntityPositionDistanceCondition(
         entity_name=str(params["entity"]),
         position=position,
+        value=params["distance"],
+        rule=ComparisonRule[str(params["rule"]).upper()],
+        tolerance=params["tolerance"],
+        label=compiled.label,
+    )
+
+
+def build_area_distance_condition(
+    compiled: "CompiledCondition",
+    children: "list[BaseCondition]",
+    ctx: "BuildContext",
+) -> "BaseCondition":
+    """Build an :class:`EntityAreaDistanceCondition`."""
+    from ..conditions import EntityAreaDistanceCondition  # noqa: PLC0415
+    from ..conditions import map_area_from_fields  # noqa: PLC0415
+    from ..conditions import ComparisonRule  # noqa: PLC0415
+
+    params = compiled.params
+    area = map_area_from_fields(
+        ground=params["ground"],
+        lanelet_ids=params["lanelet_ids"],
+        attributes=params["attributes"],
+        relief_m=params["relief_m"],
+    )
+    return EntityAreaDistanceCondition(
+        entity_name=str(params["entity"]),
+        area=area,
         value=params["distance"],
         rule=ComparisonRule[str(params["rule"]).upper()],
         tolerance=params["tolerance"],

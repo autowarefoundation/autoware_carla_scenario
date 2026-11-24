@@ -13,6 +13,8 @@ defaults:
   # Who runs a batch's cases: this process, one after another, unless a run
   # selects a launcher (launcher=slurm: SLURM array jobs, docs/slurm.md).
   - launcher: null
+  # `scenario --help` lists the runner's own flags too (hydra/help/scenario.yaml).
+  - override hydra/help: scenario
 
 # The run's seed: the one number every random draw of the run follows
 # (docs/usage.md#one-seed-for-the-whole-run). The cases a sweep draws from the
@@ -156,7 +158,8 @@ traffic_manager:
 map:
   name: ???
   # A git repository holding the HD map, e.g.
-  #   map.source=git+https://huggingface.co/datasets/OWNER/NAME@REF#PATH
+  #   "map.source='git+https://huggingface.co/datasets/OWNER/NAME@REF#PATH'"
+  # (quoted for Hydra, which refuses a `#` in an unquoted value)
   # Declared here so Hydra's struct mode accepts it as an override; see
   # autoware_carla_scenario.maps for what it resolves to.
   source: null

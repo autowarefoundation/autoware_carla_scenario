@@ -365,3 +365,31 @@ def test_the_golden_comparison_covers_every_change() -> None:
     assert all(
         counts[c] for c in ("regression", "fixed", "flaky", "new", "gone", "same")
     )
+
+
+def _labels(seed: int, count: int) -> list[str]:
+    import random  # noqa: PLC0415
+
+    rng = random.Random(seed)
+    pieces = ("a", "pkg/cut_in", "#", "#3", "##", " ", "\t", ",", "ü", "", "/", "\n")
+    return [
+        "".join(rng.choice(pieces) for _ in range(rng.randrange(0, 8)))
+        for _ in range(count)
+    ]
+
+
+def test_a_label_s_scenario_is_the_split_session_scenarios_made() -> None:
+    # ui.results.session_scenarios() names a case's scenario with the checked
+    # scenario_of() rather than its own split (#2386).
+    for label in ["", "#", "a#", "#a", "a#b#c", "pkg/cut_in#3", *_labels(2386, 1000)]:
+        assert comparison.scenario_of(label) == label.split("#", 1)[0], label
+
+
+def test_a_batch_s_scenarios_are_what_ui_app_read_of_its_summary() -> None:
+    # ui.app._scenarios()'s batch branch, as it was before #2386.
+    def old(scenario_name: str) -> set[str]:
+        return {n.strip().split("#", 1)[0] for n in scenario_name.split(",")}
+
+    names = ["", ",", " , ", "a#0, b#1", "a#0,a#1", "x # 1 ,", *_labels(2386, 1000)]
+    for name in names:
+        assert comparison.batch_scenarios(name) == old(name), name

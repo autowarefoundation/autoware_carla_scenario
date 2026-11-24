@@ -182,8 +182,13 @@ def getpgid(pid: int) -> int:
     return 0
 
 
-# getuid() and getgid(): this process's real user and group ids.
+# getuid() and getgid(): this process's real user and group ids; geteuid():
+# its effective user id, whether it runs as root (hils.host_setup, #2310).
 def getuid() -> int:
+    return 0
+
+
+def geteuid() -> int:
     return 0
 
 
@@ -413,6 +418,10 @@ O_TRUNC = 512
 O_RDWR = 2
 O_CLOEXEC = 524288
 
+# The flag of os.open() slurm.ports opens its lock files with: x86_64's value
+# (0o400000; aarch64's is 0o100000). The check only reads its type.
+O_NOFOLLOW = 131072
+
 
 # link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
 # a hard link *dst* to *src* (nothing is linked here).
@@ -430,14 +439,15 @@ def link(
 
 
 class stat_result:
-    """What os.stat() and os.fstat() return: its device, inode, mode, link
-    count, size and modification time, in seconds and in nanoseconds
-    (CPython's has more, which are not declared)."""
+    """What os.stat(), os.lstat() and os.fstat() return: its device, inode,
+    mode, link count, owner, size and modification time, in seconds and in
+    nanoseconds (CPython's has more, which are not declared)."""
 
     st_dev: int
     st_ino: int
     st_mode: int
     st_nlink: int
+    st_uid: int
     st_size: int
     st_mtime: float
     st_mtime_ns: int
@@ -447,6 +457,7 @@ class stat_result:
         self.st_ino = 0
         self.st_mode = 0
         self.st_nlink = 0
+        self.st_uid = 0
         self.st_size = 0
         self.st_mtime = 0.0
         self.st_mtime_ns = 0
@@ -461,6 +472,14 @@ def stat(
     follow_symlinks: bool = True,
 ) -> stat_result:
     _keyword_only(_kw, "stat(): dir_fd, follow_symlinks")
+    fspath(path)
+    return stat_result()
+
+
+# lstat(path, *, dir_fd=None): stat() of a link itself, not what it names;
+# all zero here.
+def lstat(path, *_kw, dir_fd: Optional[int] = None) -> stat_result:
+    _keyword_only(_kw, "lstat(): dir_fd")
     fspath(path)
     return stat_result()
 
@@ -486,6 +505,35 @@ def write(*args) -> int:
     else:
         compile_error("write(): the data is bytes or a memoryview")
     return 0
+
+
+# read(fd, length, /): at most *length* bytes from the descriptor, bytes (a
+# str here: the check reads bytes as str), empty at the end of the file ("",
+# as nothing is read); commonroad.worker reads the worker's output with it.
+# set_blocking(fd, blocking, /): whether a read or a write of the descriptor
+# waits (nothing is changed here); commonroad.worker's close() makes the
+# worker's input non-blocking with it, so that a full pipe drops the close
+# request rather than waiting (#2310).
+def read(*args) -> str:
+    _positional_only(args, 2, "read()")
+    fd: int = args[0]
+    length: int = args[1]
+    return ""
+
+
+def set_blocking(*args) -> None:
+    _positional_only(args, 2, "set_blocking()")
+    fd: int = args[0]
+    blocking: bool = args[1]
+
+
+# strerror(code, /): the message of an error code, a str ("No such file or
+# directory" of errno.ENOENT in CPython; "" here, as nothing runs), which
+# rerun's convert_outputs() builds its FileNotFoundError with (#2310).
+def strerror(*args) -> str:
+    _positional_only(args, 1, "strerror()")
+    code: int = args[0]
+    return ""
 
 
 # ftruncate(fd, length, /): cuts the descriptor's file to *length* bytes

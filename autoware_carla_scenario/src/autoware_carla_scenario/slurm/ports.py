@@ -15,20 +15,41 @@ of :data:`PORT_SLOT_WIDTH` consecutive ports from ``launcher.port_base``:
 
 The slot to try first comes from the job: ``SLURM_ARRAY_JOB_ID`` plus
 ``SLURM_ARRAY_TASK_ID``, so the tasks of one array start on different slots.
-A slot is taken only when no other task holds it -- an exclusive ``flock`` on
+A slot is taken only when no other task using the same lock directory holds
+it -- an exclusive ``flock`` on
 ``<lock dir>/autoware_carla_scenario-port-<first port>.lock``, released when the
 task's process ends, however it ends -- and none of its ports is bound;
 otherwise the next one is tried.  The lock directory must be one every job on
 the node sees: not ``/tmp`` where a cluster gives each job a private one, so
 ``/dev/shm/acs-slurm-ports-<uid>`` by default (:func:`default_lock_dir`), or
-``launcher.port_lock_dir``.  The default 20000-29999 stays below Linux's ephemeral
+``launcher.port_lock_dir``.  The default directory is used only if it is
+private (:func:`_private_dir_problem`): a real directory, not a symlink, of
+this user's that its group and others cannot write to, so that no other user
+on the node can create, hold or replace its lock files.  One that is not --
+another user made it first -- is passed over with a warning for
+``/tmp/acs-slurm-ports-<uid>`` (also where ``/dev/shm`` cannot be used),
+checked the same way, and a task with neither stops (#2325).  A configured
+``launcher.port_lock_dir`` is not checked: it may be shared on purpose.  Lock
+files are opened without following symlinks.  The default 20000-29999 stays below Linux's ephemeral
 range (32768-60999), so an outgoing connection never takes a slot's port.
+
+The default directory is per user, so slots (and ROS domains, below) are
+exclusive among one user's tasks only.  Another user's task on the node may
+take the same slot: only :func:`_port_free` stands in its way, and only once
+that task's CARLA has bound its ports, tens of seconds after the slot was
+taken.  Users who share nodes set ``launcher.port_lock_dir`` to one directory
+they can all write to -- a group's own (e.g. mode 2770) -- and keep a umask
+that leaves the lock files readable by the group (docs/slurm.md, "Ports").
+Not a world-writable one, where any user on the node could create or hold
+every lock file: that is why the default is not shared.
 
 A task's ROS domains are held the same way (:class:`RosDomains`): each domain
 id the task's config names is mapped to the first id from it on that no other
 task on the node holds (``<lock dir>/autoware_carla_scenario-ros-domain-<id>.lock``),
-so the Autoware stacks and ROS 2 egos of tasks sharing a node never share a
-DDS domain.  Not part of the port slot: a slot's index runs to
+so the Autoware stacks and ROS 2 egos of tasks sharing a node and a lock
+directory never share a DDS domain.  Nothing checks whether a domain is in
+use, so another user's tasks with a lock directory of their own may pick the
+same one.  Not part of the port slot: a slot's index runs to
 ``launcher.port_slots`` (1000 by default), past the 233 domains ROS 2 has.
 The worker reads a domain id an environment holds with :func:`_env_domain_id`
 and checks the range of one before it takes it with :func:`_take_domain`.
@@ -39,6 +60,7 @@ compiles (docs/typecheck.md); this module takes the slots and re-exports it.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import logging
 import os
@@ -76,25 +98,95 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: Where the slot locks are when no node-wide directory can be made.
+#: Where the slot locks are when no node-wide directory can be made: a
+#: per-user directory in it.
 LOCK_DIR = Path("/tmp")
 
+#: The bits of a mode that give its file's type, and a directory's type
+#: (``stat.S_IFMT``'s mask, ``stat.S_IFDIR``): 0o170000 and 0o040000, as Codon
+#: has no octal literal.
+_S_IFMT = 61440
+_S_IFDIR = 16384
+#: Write permission for the group or others (``stat.S_IWGRP | stat.S_IWOTH``,
+#: 0o022).
+_S_IWGRP_IWOTH = 18
 
-def default_lock_dir(shm: Path = Path("/dev/shm")) -> Path:
+#: How :func:`_private_dir_problem` begins when the directory cannot be made
+#: at all (no ``/dev/shm``): passed over without a warning, as before.
+_UNMADE = "cannot be made"
+
+
+def _private_dir_problem(path: Path) -> str:
+    """Why *path* cannot hold the slot locks privately, or ``""``: it is
+    created (mode 0o700) if missing, and must be a real directory (not a
+    symlink) owned by this user that its group and others cannot write to,
+    and that this user can write to.
+
+    The check holds once made: no one else can replace the directory in a
+    sticky ``/dev/shm`` or ``/tmp``, nor change it, as it is this user's and
+    closed to them.
+    """
+    try:
+        # 0o700: Codon has no octal literal.
+        path.mkdir(mode=448)
+    except FileExistsError:
+        pass  # checked below, whatever it is
+    except OSError as error:
+        return f"{_UNMADE} ({error})"
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        return f"cannot be checked ({error})"
+    uid = os.getuid()
+    if info.st_mode & _S_IFMT != _S_IFDIR:
+        return "is not a directory (a symlink or a file)"
+    if info.st_uid != uid:
+        return f"is owned by uid {info.st_uid}, not {uid}"
+    if info.st_mode & _S_IWGRP_IWOTH:
+        return f"is writable by others (mode {oct(info.st_mode & 511)})"
+    if not os.access(path, os.W_OK | os.X_OK):
+        return "is not writable"
+    return ""
+
+
+def default_lock_dir(shm: Path = Path("/dev/shm"), tmp: Path = LOCK_DIR) -> Path:
     """A node-wide directory for the slot locks: ``<shm>/acs-slurm-ports-<uid>``
-    when it can be made and written to, else :data:`LOCK_DIR`.
+    when it can be made and is private (:func:`_private_dir_problem`), else
+    ``<tmp>/acs-slurm-ports-<uid>`` (*tmp* is :data:`LOCK_DIR`), checked alike.
 
     ``/dev/shm`` is the node's own even where SLURM gives each job a private
     ``/tmp`` (``job_container/tmpfs``), in which two tasks would not see each
-    other's locks.
+    other's locks.  One another user made (or opened) first is passed over
+    with a warning: whoever owns or may write to it could hold every lock in
+    it, or replace one.
+
+    Raises:
+        RuntimeError: Neither is private: both are another user's.
     """
-    path = shm / f"acs-slurm-ports-{os.getuid()}"
-    try:
-        # 0o700: Codon has no octal literal.
-        path.mkdir(mode=448, exist_ok=True)
-    except OSError:
-        return LOCK_DIR
-    return path if os.access(path, os.W_OK | os.X_OK) else LOCK_DIR
+    name = f"acs-slurm-ports-{os.getuid()}"
+    problems: list[str] = []
+    squatted: list[str] = []
+    for parent in (shm, tmp):
+        path = parent / name
+        problem = _private_dir_problem(path)
+        if not problem:
+            if squatted:
+                logger.warning(
+                    "Not taking the port slots' locks in %s; using %s",
+                    "; ".join(squatted),
+                    path,
+                )
+            return path
+        problems.append(f"{path} ({problem})")
+        if not problem.startswith(_UNMADE):
+            squatted.append(f"{path} ({problem})")
+    raise RuntimeError(
+        "No private directory for the port slots' locks: "
+        + "; ".join(problems)
+        + ". Have the node's administrator remove another user's directory"
+        " (chmod go-w one of your own), or set launcher.port_lock_dir to a"
+        " directory of your own"
+    )
 
 
 @dataclass
@@ -167,17 +259,37 @@ def acquire_slot(
 
 def _try_lock(path: Path) -> IO[bytes] | None:
     """*path* opened and locked (exclusive, not waiting); None when another
-    process holds it or it cannot be opened (another user's lock file)."""
+    process holds it or it cannot be opened (another user's lock file).
+
+    Opened read-write: on NFS, Linux emulates flock with fcntl locks, and an
+    exclusive one needs the file open for writing, so a read-only descriptor
+    fails ``LOCK_EX`` with EBADF -- which made every slot and ROS domain
+    look held under a ``launcher.port_lock_dir`` on NFS (#2323).  Read-only
+    only where it cannot be written (EACCES, EROFS): another user's lock file
+    in a shared directory, which a local file system locks read-only too, as
+    ``autoware_stack.docker``'s build lock does (#1862, #2187).  Only
+    ``BlockingIOError`` means another process holds it; a lock that fails
+    otherwise is skipped with a warning naming why.
+    """
+    # 0o644: Codon has no octal literal.
     try:
-        # 0o644: Codon has no octal literal.
-        fd = os.open(path, os.O_RDONLY | os.O_CREAT, 420)
-    except OSError:
-        return None
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 420)
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EROFS):
+            return None
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return None
     stream = os.fdopen(fd, "rb")
     try:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except BlockingIOError:
         stream.close()
+        return None
+    except OSError as exc:
+        stream.close()
+        logger.warning("Cannot lock %s (%s): skipping it", path, exc)
         return None
     return stream
 

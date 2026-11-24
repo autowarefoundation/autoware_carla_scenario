@@ -33,6 +33,7 @@ from typing import Any, Optional
 import numpy as np
 import orjson
 
+from ..atomic_file import write_bytes_atomically
 from ..constants import CARLA_BICYCLE_BLUEPRINTS
 from ..entity_role import canonical_role_name
 from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
@@ -249,7 +250,8 @@ def trajectory_log_to_rollout(
     Args:
         log_path: A run's ``{stem}.trajectory.jsonl``.
         scenario_id: The ``ScenarioRollouts.scenario_id``: what its runs have
-            in common.  Default: :func:`scenario_id_of` the log's stem.
+            in common, a non-empty string.  Default: :func:`scenario_id_of`
+            the log's stem.
         current_index: The current row, counted at 10 Hz from the log's first
             tick (WOSAC's ``current_time_index``, 10).
         steps: The rows after the current one in the rollout (WOSAC's 80);
@@ -272,9 +274,17 @@ def trajectory_log_to_rollout(
     Raises:
         ValueError: If the log cannot be read, is too short for *steps* (and
             not *pad*) or has nothing on the current row, two agents share a
-            role or an object id, or an option is out of range.
+            role or an object id, two *object_ids* keys are one role, or an
+            option is out of range (an empty *scenario_id*).
     """
     path = Path(log_path)
+    if scenario_id is not None and (
+        not isinstance(scenario_id, str) or not scenario_id
+    ):
+        # An empty id is stored as none, which pack() refuses later.
+        raise ValueError(
+            f"scenario_id must be a non-empty string or None, not {scenario_id!r}"
+        )
     current_index = checked_count(current_index, "current_index", 0)
     if steps is not None:
         steps = checked_count(steps, "steps", 1)
@@ -407,6 +417,13 @@ def write_rollout(
     ``ScenarioRollouts``) and ``{stem}.wosac.json`` (its agents and grid,
     :meth:`WosacRollout.metadata`) beside it, or in *output_dir*.
 
+    Each file is written in one rename (:func:`write_bytes_atomically`): a
+    run killed while it writes leaves no truncated message, which would
+    often still parse.  The rollout of an earlier export is removed first and
+    the new one written last, after its ``.wosac.json``: a ``.wosac.pb`` on
+    disk always has its own sidecar beside it, never none (which ``pack``
+    lets through as a merged file) nor an earlier export's.
+
     *options* are :func:`trajectory_log_to_rollout`'s.
 
     Returns:
@@ -418,8 +435,12 @@ def write_rollout(
     directory.mkdir(parents=True, exist_ok=True)
     rollouts_path = directory / f"{rollout.stem}{WOSAC_SUFFIX}"
     agents_path = wosac_agents_path(rollouts_path)
-    rollouts_path.write_bytes(rollout.rollouts.SerializeToString(deterministic=True))
-    agents_path.write_bytes(
-        orjson.dumps(rollout.metadata(), option=orjson.OPT_INDENT_2) + b"\n"
+    rollouts_path.unlink(missing_ok=True)
+    write_bytes_atomically(
+        agents_path,
+        orjson.dumps(rollout.metadata(), option=orjson.OPT_INDENT_2) + b"\n",
+    )
+    write_bytes_atomically(
+        rollouts_path, rollout.rollouts.SerializeToString(deterministic=True)
     )
     return rollouts_path, agents_path

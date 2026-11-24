@@ -130,9 +130,9 @@ quantities:
           low:  [0, 1, 8, 30, 40, 70, 75, 90]
           high: [0, 1, 25, 30, 60, 70, 90, 100]
 
-  # CARLA's fog density, 0-100, for the visibility through the fog, metres:
-  # the taxonomy's thick fog (under 50 m) near 100, no detectable fog (over
-  # 1600 m) near 0.
+  # CARLA's fog density, 0-100, for the visibility through the fog, metres
+  # (interpolated between the points): the taxonomy's thick fog (under 50 m)
+  # 85-100, thinning to 10-20 at 1600 m, and none (0) from 5000 m.
   carla_fog_density:
     parts:
       fog:

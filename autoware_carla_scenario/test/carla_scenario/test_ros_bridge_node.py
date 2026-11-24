@@ -1194,3 +1194,184 @@ def test_ticks_stay_paced_until_the_stack_can_be_routed(
         if node is not None:
             node.destroy_node()
         entity.on_scenario_end(world)
+
+
+# ---------------------------------------------------------------------------
+# #2323: a stale answer, and shutting the node down
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_a_request_given_up_on_does_not_answer_for_its_retry(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer, success: bool
+) -> None:
+    """A late answer to a request _expire_stalled_steps gave up on (cancelling
+    it runs its callback too) popped the retry's in-flight entry and, when a
+    rejection, freed the latch the retry holds: the step was sent again."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
+    _tick_until(node, lambda: _route_calls(node))
+    ((_request, stale),) = _route_calls(node)
+
+    node._step_timeout_s = 0.0  # noqa: SLF001 - the first is given up on ...
+    _tick_until(node, lambda: len(_route_calls(node)) == 2)
+    node._step_timeout_s = 3600.0  # noqa: SLF001 - ... the retry is not
+    retry = _route_calls(node)[1][1]
+
+    stale.answer(success)
+    assert node._inflight["_route_requested"][1] is retry  # noqa: SLF001
+    assert node._route_requested  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert len(_route_calls(node)) == 2
+
+    retry.answer(True)
+    assert "_route_requested" not in node._inflight  # noqa: SLF001
+    assert node._route_accepted  # noqa: SLF001
+
+
+class _Executor:
+    def __init__(self, record: list[str], spin_error: BaseException) -> None:
+        self.record = record
+        self.spin_error = spin_error
+
+    def add_node(self, _node: Any) -> None:
+        self.record.append("add_node")
+
+    def spin(self) -> None:
+        self.record.append("spin")
+        raise self.spin_error
+
+    def shutdown(self) -> None:
+        self.record.append("executor.shutdown")
+
+
+def _patch_main(
+    node_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    record: list[str],
+    spin_error: BaseException = KeyboardInterrupt(),
+) -> None:
+    state = {"ok": False}
+
+    def init(**_kwargs: Any) -> None:
+        state["ok"] = True
+        record.append("init")
+
+    def shutdown() -> None:
+        state["ok"] = False
+        record.append("rclpy.shutdown")
+
+    monkeypatch.setattr(node_module.rclpy, "init", init)
+    monkeypatch.setattr(node_module.rclpy, "ok", lambda: state["ok"])
+    monkeypatch.setattr(node_module.rclpy, "shutdown", shutdown)
+    monkeypatch.setattr(
+        node_module, "MultiThreadedExecutor", lambda: _Executor(record, spin_error)
+    )
+
+
+def test_main_shuts_the_executor_the_node_and_rclpy_down(
+    node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record: list[str] = []
+    _patch_main(node_module, monkeypatch, record)
+
+    class _BridgeNode:
+        def destroy_node(self) -> bool:
+            record.append("destroy_node")
+            return True
+
+    monkeypatch.setattr(node_module, "ScenarioBridgeNode", _BridgeNode)
+    node_module.main()
+    assert record == [
+        "init",
+        "add_node",
+        "spin",
+        "executor.shutdown",
+        "destroy_node",
+        "rclpy.shutdown",
+    ]
+
+
+def test_main_shuts_rclpy_down_when_the_node_cannot_be_made(
+    node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record: list[str] = []
+    _patch_main(node_module, monkeypatch, record)
+
+    def no_node() -> None:
+        raise RuntimeError("no node")
+
+    monkeypatch.setattr(node_module, "ScenarioBridgeNode", no_node)
+    with pytest.raises(RuntimeError, match="no node"):
+        node_module.main()
+    assert record == ["init", "rclpy.shutdown"]
+
+
+# ---------------------------------------------------------------------------
+# #2405: the node ends with the shell that started the stack
+# ---------------------------------------------------------------------------
+
+
+def test_a_process_is_alive_until_it_has_ended(node_module: types.ModuleType) -> None:
+    import os
+    import subprocess
+
+    assert node_module._process_alive(os.getpid())  # noqa: SLF001
+    child = subprocess.Popen(["true"])
+    child.wait()  # reaped: its pid names no process now
+    assert not node_module._process_alive(child.pid)  # noqa: SLF001
+
+
+def test_a_process_of_another_user_is_alive(
+    node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def kill(pid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(node_module.os, "kill", kill)
+    assert node_module._process_alive(1)  # noqa: SLF001
+
+
+def test_a_node_without_a_parent_pid_watches_none(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    node = _node(node_module, bridge)
+    assert not any(
+        t.callback == node._watch_parent  # noqa: SLF001
+        for t in node.timers
+    )
+
+
+def test_the_node_shuts_down_once_its_parent_is_gone(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutdowns: list[bool] = []
+    monkeypatch.setattr(
+        node_module.rclpy, "try_shutdown", lambda: shutdowns.append(True), raising=False
+    )
+    alive = {"value": True}
+    checked: list[int] = []
+
+    def process_alive(pid: int) -> bool:
+        checked.append(pid)
+        return alive["value"]
+
+    monkeypatch.setattr(node_module, "_process_alive", process_alive)
+    node = _node(node_module, bridge, parent_pid=4321)
+    (watch,) = [t for t in node.timers if t.callback == node._watch_parent]  # noqa: SLF001
+    assert watch.period == node_module._PARENT_WATCH_PERIOD_S  # noqa: SLF001
+    assert watch.clock.clock_type == "steady"
+
+    watch.callback()
+    assert checked == [4321]
+    assert shutdowns == []
+    assert not watch.cancelled
+
+    alive["value"] = False
+    watch.callback()
+    assert shutdowns == [True]
+    assert watch.cancelled
+    assert any("4321" in message for _, message in node.logger.records)

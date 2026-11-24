@@ -108,10 +108,16 @@ runs:
         set -euo pipefail
         # A bare 'uv sync' already installs the dev group: only '--no-dev'
         # leaves it out (#1895).
+        #
+        # '--locked' fails the job when uv.lock is out of date with the
+        # pyproject files instead of silently re-locking it on the runner,
+        # which let a PR that edits dependencies without re-locking pass
+        # every job (#2359). release.yml re-locks after its version bump, so
+        # the commits it releases carry a current lock.
         if [ "${SYNC_DEV_GROUP}" = "true" ]; then
-          uv sync --dev
+          uv sync --locked --dev
         else
-          uv sync --no-dev
+          uv sync --locked --no-dev
         fi
 
     - name: Run pre-commit hooks

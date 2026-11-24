@@ -87,7 +87,7 @@ _NAMES = [
 
 
 @pytest.mark.parametrize(
-    ("name", "version"), itertools.product(_NAMES, [-1, 0, 1, 2, 3, 10, 123])
+    ("name", "version"), list(itertools.product(_NAMES, [-1, 0, 1, 2, 3, 10, 123]))
 )
 def test_versioned_item_name_is_masters(name: str, version: int) -> None:
     assert versioned_item_name(name, version) == _master_versioned_item_name(

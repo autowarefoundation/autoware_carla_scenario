@@ -36,8 +36,10 @@ re-exported here.
 from __future__ import annotations
 
 import math
+import operator
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
+from ..number_settings import number_setting
 from ..value_text import shown
 from .authored import (
     LANELET_PATH_STEP_M,
@@ -142,16 +144,13 @@ def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]
 
 
 def _field_float(name: str, value: Any) -> float:
-    """``float(value)`` of the card's field *name*; for a value ``float()``
-    cannot read -- not a number, or an int too big for a float
-    (``10**400``) -- a ``ValueError`` naming the field (#1660).  What
-    ``float()`` reads is read as before."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be a number, got {shown(value)}") from None
-    except OverflowError:
-        raise ValueError(f"{name} must be finite, got {shown(value)}") from None
+    """The card's field *name* as a float, read by
+    :func:`~autoware_carla_scenario.number_settings.number_setting` (#2398):
+    a ``ValueError`` naming the field for a value that is no number -- a
+    boolean among them, which is not read as 1 or 0 -- or an int too big for
+    a float (``10**400``, #1660).  A numeric string is read as the number it
+    spells, as it always was."""
+    return number_setting(name, value, text=True)
 
 
 def _field_int(name: str, value: Any) -> int:
@@ -490,6 +489,24 @@ def route_trajectory_summary(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _check_advance(name: str, gates: Mapping[int, "BaseCondition"], count: int) -> None:
+    """Refuse a waypoint condition on a vertex the trajectory does not have,
+    as :meth:`Trajectory.gated` does, rather than drop it (#2261).
+
+    Raises:
+        ValueError: ``<name>: no vertex <i> (it has <count>)``.
+    """
+    for index in gates:
+        # An int, or a number that is one (numpy's integers, which look up
+        # the same vertex); not a bool.
+        try:
+            position = None if isinstance(index, bool) else operator.index(index)
+        except TypeError:
+            position = None
+        if position is None or not (0 <= position < count):
+            raise ValueError(f"{name}: no vertex {index!r} (it has {count})")
+
+
 def authored_trajectory(
     path_source: str,
     vertices: Any = None,
@@ -526,7 +543,8 @@ def authored_trajectory(
             :func:`parse_route_vertices`).
 
     Raises:
-        ValueError: On an unknown source, or a source without what it needs.
+        ValueError: On an unknown source, a source without what it needs, or
+            a waypoint condition on a vertex the trajectory does not have.
     """
     gates = dict(advance or {})
     if path_source == "vertices":
@@ -534,6 +552,7 @@ def authored_trajectory(
         problems = vertex_problems(rows)
         if problems:
             raise ValueError(f"{name}: {problems[0]}")
+        _check_advance(name, gates, len(rows))
         return Trajectory(
             name,
             [
@@ -546,6 +565,7 @@ def authored_trajectory(
         problems = relative_vertex_problems(relative_rows)
         if problems:
             raise ValueError(f"{name}: {problems[0]}")
+        _check_advance(name, gates, len(relative_rows))
         reference = reference_entity or None
         return Trajectory(
             name,
@@ -568,6 +588,7 @@ def authored_trajectory(
         problems = vertex_problems(route_rows)
         if problems:
             raise ValueError(f"{name}: {problems[0]}")
+        _check_advance(name, gates, len(route_rows))
         return Trajectory(
             name,
             [

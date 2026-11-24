@@ -9,8 +9,10 @@ arguments (:mod:`autoware_carla_scenario.authoring.registry`).
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
+from ..value_text import shown
 from .parameters import (
     BicycleParameters,
     PedestrianParameters,
@@ -25,20 +27,60 @@ __all__ = [
 ]
 
 
-def _spread(mean: Optional[float], std: Optional[float], name: str) -> Optional[Spread]:
-    """``mean`` and ``std`` as a spread; ``None`` when no mean is given.
+def _number(value: Optional[float], key: str) -> Optional[float]:
+    """A form field's *value* as a float; ``None`` when it is empty.
+
+    The editor's compiler hands these fields over as floats already (it reads
+    a number field's text with ``float()``); a caller passing text is read the
+    same way, a number's text taken and anything else refused by *key*.
+    Every other value ``float()`` reads is taken as it was before these
+    fields were checked: a numpy scalar, a ``Decimal`` or a ``Fraction`` a
+    script passes as well as an int.
 
     Raises:
-        ValueError: If a std is given without a mean, or either is a bool
-            (which ``float()`` would read as 0 or 1).
+        ValueError: naming *key*, if *value* is a bool (which ``float()``
+            would read as 0 or 1), text that is no number (``'fast'``,
+            ``''``), an integer too big for a float, or no number at all.
     """
-    if isinstance(mean, bool) or isinstance(std, bool):
-        raise ValueError(f"{name}: a mean or std must be a number, not a bool")
-    if mean is None:
-        if std is not None:
-            raise ValueError(f"{name}: a std needs a mean")
+    if value is None:
         return None
-    return Spread(float(mean), 0.0 if std is None else float(std))
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be a number, not a bool (got {value!r})")
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    raise ValueError(f"{key} must be a number (got {shown(value)})")
+
+
+def _spread(
+    mean: Optional[float], std: Optional[float], field: str
+) -> Optional[Spread]:
+    """The form fields ``<field>_mean`` and ``<field>_std`` as a spread;
+    ``None`` when no mean is given.
+
+    *field* is the form's name of the parameter (``bicycle_accel``, apart from
+    the vehicles' ``accel`` on the same form), which every error names.
+
+    Raises:
+        ValueError: If either is no number (:func:`_number`), a std is given
+            without a mean, or the std is negative or not finite, naming the
+            field.
+    """
+    mean_key = f"{field}_mean"
+    std_key = f"{field}_std"
+    mean_value = _number(mean, mean_key)
+    std_value = _number(std, std_key)
+    if mean_value is None:
+        if std_value is not None:
+            raise ValueError(f"{std_key} needs {mean_key}: a std needs a mean")
+        return None
+    width = 0.0 if std_value is None else std_value
+    if not (math.isfinite(width) and width >= 0.0):
+        raise ValueError(
+            f"{std_key} must be finite and not negative (got {shown(std)})"
+        )
+    return Spread(mean_value, width)
 
 
 def authored_vehicle_parameters(
@@ -126,7 +168,7 @@ def authored_pedestrian_parameters(
             walking_speed_mps_mean, walking_speed_mps_std, "walking_speed_mps"
         ),
         min_gap_m=_spread(
-            pedestrian_min_gap_m_mean, pedestrian_min_gap_m_std, "min_gap_m"
+            pedestrian_min_gap_m_mean, pedestrian_min_gap_m_std, "pedestrian_min_gap_m"
         ),
         red_light_violation_s=_spread(
             red_light_violation_s_mean,
@@ -164,28 +206,32 @@ def authored_bicycle_parameters(
     """
     parameters = BicycleParameters(
         max_speed_mps=_spread(
-            bicycle_max_speed_mps_mean, bicycle_max_speed_mps_std, "max_speed_mps"
+            bicycle_max_speed_mps_mean,
+            bicycle_max_speed_mps_std,
+            "bicycle_max_speed_mps",
         ),
-        accel=_spread(bicycle_accel_mean, bicycle_accel_std, "accel"),
-        decel=_spread(bicycle_decel_mean, bicycle_decel_std, "decel"),
-        min_gap_m=_spread(bicycle_min_gap_m_mean, bicycle_min_gap_m_std, "min_gap_m"),
+        accel=_spread(bicycle_accel_mean, bicycle_accel_std, "bicycle_accel"),
+        decel=_spread(bicycle_decel_mean, bicycle_decel_std, "bicycle_decel"),
+        min_gap_m=_spread(
+            bicycle_min_gap_m_mean, bicycle_min_gap_m_std, "bicycle_min_gap_m"
+        ),
         reaction_time_s=_spread(
             bicycle_reaction_time_s_mean,
             bicycle_reaction_time_s_std,
-            "reaction_time_s",
+            "bicycle_reaction_time_s",
         ),
         imperfection=_spread(
-            bicycle_imperfection_mean, bicycle_imperfection_std, "imperfection"
+            bicycle_imperfection_mean, bicycle_imperfection_std, "bicycle_imperfection"
         ),
         max_lateral_speed_mps=_spread(
             bicycle_max_lateral_speed_mps_mean,
             bicycle_max_lateral_speed_mps_std,
-            "max_lateral_speed_mps",
+            "bicycle_max_lateral_speed_mps",
         ),
         red_light_violation_s=_spread(
             bicycle_red_light_violation_s_mean,
             bicycle_red_light_violation_s_std,
-            "red_light_violation_s",
+            "bicycle_red_light_violation_s",
         ),
     )
     if not parameters.set_fields():

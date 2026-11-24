@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Optional
 import lanelet2.core
 import lanelet2.io
 
-from ..coordinate.projection import load_lanelet2, map_origin
+from ..coordinate.projection import load_lanelet2, map_origin, missing_map_file
 
 if TYPE_CHECKING:
     from ..maps import MapPaths
@@ -77,9 +77,9 @@ def load_lanelet2_map(
         xodr = Path(xodr_path)
 
     if not osm_path.exists():
-        raise FileNotFoundError(f"Lanelet2 file not found: {osm_path}")
+        raise FileNotFoundError(missing_map_file("Lanelet2", osm_path, "lanelet2_path"))
     if xodr is not None and not xodr.exists():
-        raise FileNotFoundError(f"OpenDRIVE file not found: {xodr}")
+        raise FileNotFoundError(missing_map_file("OpenDRIVE", xodr, "xodr_path"))
 
     (lat, lon, alt), anchored_by = map_origin(osm_path, xodr)
     logger.info(

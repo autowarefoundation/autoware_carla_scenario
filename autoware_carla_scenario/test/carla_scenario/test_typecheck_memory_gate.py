@@ -16,6 +16,7 @@ import os
 import stat
 import threading
 import time
+import types
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -46,7 +47,8 @@ def _no_earlier_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_need_grows_with_the_source() -> None:
-    # As measured: next to nothing, ~1.8 GB; the whole library, ~9.3 GB.
+    # A little above what was measured: next to nothing, 1.8 GB; the library
+    # check of 2.8 million characters, 9.3 GB.
     assert 1.8 * GB <= codon_bytes(3_000) <= 2.0 * GB
     assert 9.0 * GB <= codon_bytes(2_800_000) <= 10.0 * GB
 
@@ -82,8 +84,15 @@ def test_a_build_that_does_not_fit_waits_for_one_to_end(tmp_path: Path) -> None:
 
 
 def test_a_build_too_large_for_the_machine_runs_alone(tmp_path: Path) -> None:
-    with admitted(30 * GB, directory=tmp_path, budget=_budget(14)):
-        pass
+    def sleep(seconds: float) -> None:
+        raise AssertionError("a build with none running waited")
+
+    with admitted(30 * GB, directory=tmp_path, budget=_budget(14), sleep=sleep):
+        # Admitted with its whole need held, not let through ungated.
+        holds = list(tmp_path.glob("*.hold"))
+        assert len(holds) == 1
+        assert holds[0].read_text().split()[0] == str(30 * GB)
+    assert not list(tmp_path.glob("*.hold"))
 
 
 def _hold_in_child(directory: str, ready: object, release: object) -> None:
@@ -1197,24 +1206,75 @@ def test_after_a_timeout_builds_in_the_gate_s_own_directory_are_all_gated(
 
 
 def test_builds_waiting_out_a_stuck_lock_together_all_take_the_fresh_one(
-    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+    default_gate: Path,
+    fallbacks: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Made 0o600 in place by an earlier gate while someone held it open: the
     # build that removes it, and every other one that waited as long, are
     # gated with the fresh lock -- one at a time.
+    #
+    # The stuck lock is waited out on the gate's clock, so LOCK_TIMEOUT_S is
+    # short; but every wait after it -- for the fresh lock as the six pass it
+    # around, for the directory's lock under which the stuck one is removed
+    # -- is one the claim says ends because the lock is taken, not because
+    # time runs out.  On a loaded runner those waits are wall-clock windows
+    # a stall overruns: CI once saw a build wait over _REPLACE_WAIT_S for the
+    # directory's lock while the build removing the stuck one was stalled
+    # inside it, so it gave the directory up and fell back (#2257).  So once
+    # a build has waited the stuck lock out and goes to remove it, the gate's
+    # clock runs 100 times slower: no stall a runner makes outlasts the
+    # windows then (50 s for the fresh lock), while a build that waited for
+    # a lock no one passes on still fails the test, not gated at the join.
     monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.5)
-    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.05)
+    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.001)
+    monkeypatch.setattr(memory_gate, "_LOCK_POLL_S", 0.002)
+    real_monotonic = time.monotonic
+    slowed_at: list[float] = []
+
+    def monotonic() -> float:
+        now = real_monotonic()
+        if not slowed_at:
+            return now
+        return slowed_at[0] + (now - slowed_at[0]) / 100
+
+    monkeypatch.setattr(
+        memory_gate,
+        "time",
+        types.SimpleNamespace(monotonic=monotonic, sleep=time.sleep),
+    )
+    real_drop_lock = memory_gate._drop_lock
+    slowing = threading.Lock()
+
+    def drop_lock(*args, **kwargs):  # type: ignore[no-untyped-def]
+        with slowing:
+            if not slowed_at:
+                slowed_at.append(real_monotonic())
+        real_drop_lock(*args, **kwargs)
+
+    monkeypatch.setattr(memory_gate, "_drop_lock", drop_lock)
+    real_unlink = os.unlink
+    removed = [0]
+
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+        if path == "gate.lock":
+            removed[0] += 1
+
+    monkeypatch.setattr(os, "unlink", unlink)
     default_gate.mkdir(mode=0o700)
     fd = _hold_lock(default_gate / "gate.lock")
     try:
         crowd = _Crowd(default_gate, inside_s=0.005)
-        began = time.monotonic()
-        crowd.run(6, crowd.build)
-        assert time.monotonic() - began < 0.5 * (1 + memory_gate._DEADLINE_RESETS)
+        with caplog.at_level(logging.WARNING, logger=memory_gate.__name__):
+            crowd.run(6, crowd.build)
     finally:
         os.close(fd)
     assert crowd.gated == [True] * 6
     assert crowd.most == 1
+    assert removed == [1]  # the stuck lock, once; never the fresh one
+    assert not caplog.records  # none timed out, gave up or ran ungated
     assert not fallbacks.exists()
 
 
@@ -1231,15 +1291,27 @@ def test_the_gate_s_own_directory_whose_lock_is_held_elsewhere_is_given_up(
     lock.chmod(0o644)  # to be removed, under the directory's lock
     held = os.open(default_gate, os.O_RDONLY | os.O_DIRECTORY)
     fcntl.flock(held, fcntl.LOCK_EX)
+    # Count the tries for the directory's lock rather than time the builds:
+    # "not tried again" is what matters, not how fast a fallback build is on
+    # a loaded runner (#2257).
+    real_try_lock = memory_gate._try_lock
+    directory_tries = [0]
+
+    def try_lock(fcntl_module, fd, deadline, *rest, **kwargs):  # type: ignore[no-untyped-def]
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_tries[0] += 1
+        return real_try_lock(fcntl_module, fd, deadline, *rest, **kwargs)
+
+    monkeypatch.setattr(memory_gate, "_try_lock", try_lock)
     try:
         crowd = _Crowd(fallbacks)
         began = time.monotonic()
         crowd.build()
         assert time.monotonic() - began < 2.0
-        began = time.monotonic()
+        assert directory_tries == [1]  # waited for it once, then gave up
         crowd.build()
-        assert time.monotonic() - began < 0.15  # given up on: not tried again
         crowd.run(6, crowd.build)
+        assert directory_tries == [1]  # given up on: not tried again
     finally:
         os.close(held)
     assert crowd.gated == [True] * 8  # gated, in the fallback

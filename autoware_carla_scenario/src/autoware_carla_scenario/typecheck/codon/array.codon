@@ -1,0 +1,38 @@
+# Python's array.array, for the checker (docs/typecheck.md): typecode "d"
+# only, an array of C doubles, which reads back the Python floats it was given
+# bit for bit (metric_frames keeps a frame's motion in one, #2338). Another
+# typecode raises ValueError, as CPython's does for one it does not know.
+# Declared: array(typecode) (no initializer),
+# typecode, len(), indexing by an int (negative from the end), iteration,
+# append(x) and extend(iterable) of floats. Slicing, the arithmetic, the
+# buffer and byte methods and the rest are not declared.
+
+
+class array:
+    typecode: str
+    _items: List[float]
+
+    def __init__(self, typecode: str):
+        if typecode != "d":
+            raise ValueError(
+                "bad typecode (the check declares array('d') only)"
+            )
+        self.typecode = typecode
+        self._items = List[float]()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __getitem__(self, index: int) -> float:
+        return self._items[index]
+
+    def __iter__(self) -> Generator[float]:
+        for item in self._items:
+            yield item
+
+    def append(self, x: float) -> None:
+        self._items.append(x)
+
+    def extend(self, iterable) -> None:
+        for item in iterable:
+            self._items.append(float(item))

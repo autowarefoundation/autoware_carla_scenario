@@ -50,6 +50,7 @@ from .entity.vehicle_entity import (
     VehicleEntityConfig,
 )
 from .gate.probe import GateProbe
+from .number_settings import finite_number_setting
 from .scenario_base import BaseScenario, EgoConfig
 from .value_text import shown
 
@@ -261,7 +262,12 @@ class DeclarativeScenario(BaseScenario):
                 entity.spawn.lanelet_id = lanelet_id
             offset = override.get("s")
             if offset is not None:
-                entity.spawn.s.value = _finite_number(f"{key}.s", offset)
+                # A quoted number (``...s='3.5'``) is read as it spells, as it
+                # always was; a boolean and a blank are no number (#2143,
+                # #2398).
+                entity.spawn.s.value = finite_number_setting(
+                    f"{key}.s", offset, text=True
+                )
 
     def _apply_param_overrides(self) -> None:
         """Fold ``config.param_overrides`` into the document's action/condition params.
@@ -423,6 +429,9 @@ class DeclarativeScenario(BaseScenario):
             minimum=0,
         )
         self._case_count = 0 if case_count is None else case_count
+        # The frame the ego was placed on, when the run laid the route on the
+        # map itself: the scenario's route is laid on it, not again (#2266).
+        placed_on: Optional[RouteFrame] = None
         if match is None:
             from .route.search import find_route_matches  # noqa: PLC0415
 
@@ -442,9 +451,9 @@ class DeclarativeScenario(BaseScenario):
             # Unexpanded, the run counts the matches itself (those the ego
             # cannot be placed on included, which an expansion skips).
             self._case_count = len(matches)
-            frame = RouteFrame(match, lanelet_map, routing_graph)
+            placed_on = RouteFrame(match, lanelet_map, routing_graph)
             (spawn_id, spawn_s), goal = ego_placement(
-                frame, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
+                placed_on, spec.ego_spawn_s, spec.ego_goal, spec.ego_goal_margin
             )
             # The route places the ego along it; across the lane and turned
             # against it is still what the run asked for.
@@ -457,7 +466,7 @@ class DeclarativeScenario(BaseScenario):
             )
             if goal is not None and self.goal_pose is None:
                 self.goal_pose = Lanelet2Pose(lanelet_id=goal[0], s=goal[1])
-        set_scenario_route(match, lanelet_map, routing_graph)
+        set_scenario_route(match, lanelet_map, routing_graph, frame=placed_on)
         self._route_match = match
         logger.info(
             "DeclarativeScenario '%s': route match %d through lanelets %s "
@@ -941,25 +950,6 @@ def _check_override_mapping(key: str, override: Any) -> None:
         raise ValueError(
             f"{key} must be a mapping of fields to values, got {shown(override)}"
         )
-
-
-def _finite_number(key: str, value: Any) -> float:
-    """*value* as a finite number, refused naming *key*.
-
-    ``float()`` alone reads ``true`` as 1.0 and lets NaN and infinities
-    through; a boolean and a blank are no number (#2143).
-    """
-    if isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
-        raise ValueError(f"{key} must be a number, got {shown(value)}")
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{key} must be a number, got {shown(value)}") from exc
-    except OverflowError:
-        raise ValueError(f"{key} must be finite, got {shown(value)}") from None
-    if not math.isfinite(number):
-        raise ValueError(f"{key} must be finite, got {shown(value)}")
-    return number
 
 
 def _merge_records(

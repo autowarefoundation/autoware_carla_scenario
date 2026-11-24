@@ -29,14 +29,13 @@ def yaws_of(plan) -> np.ndarray:
 
 
 def braking_distance(speed_mps: float) -> float:
-    """The distance the discrete profile covers before it stops, worked out
-    independently of the code under test: each step loses ``a dt`` of speed
-    and then travels ``v dt``."""
-    horizon = CONFIG.horizon
-    dt = horizon.step_s
-    steps = np.arange(1, horizon.n_steps + 1)
-    speeds = np.maximum(0.0, speed_mps - CONFIG.limits.emergency_decel_mps2 * dt * steps)
-    return float(speeds.sum() * dt)
+    """The distance a constant emergency deceleration covers over the horizon,
+    worked out independently of the code under test: ``v^2 / 2a`` once it
+    stops, ``v T - a T^2 / 2`` if it is still moving at the horizon ``T``."""
+    decel = CONFIG.limits.emergency_decel_mps2
+    horizon_s = CONFIG.horizon.n_steps * CONFIG.horizon.step_s
+    moving_s = min(horizon_s, speed_mps / decel)
+    return speed_mps * moving_s - 0.5 * decel * moving_s**2
 
 
 def straight_ahead(lead_m: float, lateral_m: float = 0.0) -> np.ndarray:
@@ -95,9 +94,8 @@ def test_the_emergency_plan_starts_at_the_ego(located, speed_mps):
     )
     first = plan.positions[0, :2]
     # One step of braking from the ego, no further -- and not behind it.
-    first_step = (speed_mps - CONFIG.limits.emergency_decel_mps2 * CONFIG.horizon.step_s) * (
-        CONFIG.horizon.step_s
-    )
+    dt = CONFIG.horizon.step_s
+    first_step = speed_mps * dt - 0.5 * CONFIG.limits.emergency_decel_mps2 * dt**2
     assert np.linalg.norm(first) == pytest.approx(first_step, abs=0.02)
     assert first[0] > 0.0
 
@@ -171,6 +169,15 @@ def test_without_a_route_the_emergency_plan_brakes_straight_ahead():
     plan = emergency_brake_plan(TIME_NOW_US, 10.0, CONFIG)
     assert plan.positions[-1, 0] == pytest.approx(braking_distance(10.0), abs=1e-6)
     assert np.allclose(plan.positions[:, 1], 0.0)
+
+
+def test_the_emergency_stop_is_at_the_constant_deceleration_distance():
+    """At 10 m/s and 7 m/s^2 the stop is v^2 / 2a = 7.14 m ahead: dropping the
+    speed before each step's ``v dt`` stopped the plan at 6.65 m, which asks
+    for more than the configured deceleration (#2401)."""
+    decel = CONFIG.limits.emergency_decel_mps2
+    plan = emergency_brake_plan(TIME_NOW_US, 10.0, CONFIG)
+    assert plan.positions[-1, 0] == pytest.approx(10.0**2 / (2.0 * decel), abs=1e-9)
 
 
 def test_the_hold_plan_starts_at_the_rig():

@@ -128,6 +128,10 @@ class CommonRoadWorker:
         # buffered pipe waits for the thread holding it (#1780).
         self._write_lock = threading.Lock()
         self._read_lock = threading.Lock()
+        # Held across a request's write and its read, so that two threads'
+        # requests do not interleave and one read the other's answer
+        # (#2323).  close() never takes it: it waits on the two above.
+        self._request_lock = threading.Lock()
         # Set by close(): a request that fails from then on closes the pipe
         # it holds, which close() did not wait for.
         self._closing = False
@@ -178,11 +182,18 @@ class CommonRoadWorker:
                 with the next request's).
 
         Raises:
-            CommonRoadWorkerError: The worker is gone, answered out of
+            CommonRoadWorkerError: *request* is not JSON-serializable
+                (nothing is sent), the worker is gone, answered out of
                 protocol (a line that is not a JSON object), answered not
                 ok, or did not answer within *timeout*.
         """
-        deadline = None if timeout is None else time.monotonic() + timeout
+        try:
+            encoded = json.dumps(request) + "\n"
+        except (TypeError, ValueError) as exc:
+            # A value JSON cannot carry (a NumPy float32): nothing is sent.
+            raise CommonRoadWorkerError(
+                f"cannot send {request.get('op')!r} to the CommonRoad worker: {exc}"
+            ) from exc
         process = self._process
         if (
             process.stdin is None
@@ -193,33 +204,37 @@ class CommonRoadWorker:
                 f"the CommonRoad worker has exited ({process.returncode})"
             )
         try:
-            with self._write_lock:
-                try:
-                    process.stdin.write(json.dumps(request) + "\n")
-                    process.stdin.flush()
-                except (OSError, ValueError):
-                    self._close_if_closing(process.stdin)
-                    raise
-            with self._read_lock:
-                try:
-                    line = self._read_line(process.stdout, deadline)
-                except (OSError, ValueError):
-                    self._close_if_closing(process.stdout)
-                    raise
-                if line is None:
-                    # Out of time: the worker is stuck, or slower than it may
-                    # be.  Killed rather than asked to exit, which it would
-                    # not hear until it is done; this request holds its
-                    # output, so closes that itself.
-                    self._kill()
-                    with contextlib.suppress(OSError, ValueError):
-                        process.stdout.close()
-                    raise CommonRoadWorkerError(
-                        f"the CommonRoad worker did not answer "
-                        f"{request.get('op')!r} within {timeout:g} s; killed it"
-                    )
-                if not line:
-                    self._close_if_closing(process.stdout)
+            with self._request_lock:
+                # Counted from here, not before the lock: a request that waited
+                # behind a slow one does not spend its own time waiting (#2403).
+                deadline = None if timeout is None else time.monotonic() + timeout
+                with self._write_lock:
+                    try:
+                        process.stdin.write(encoded)
+                        process.stdin.flush()
+                    except (OSError, ValueError):
+                        self._close_if_closing(process.stdin)
+                        raise
+                with self._read_lock:
+                    try:
+                        line = self._read_line(process.stdout, deadline)
+                    except (OSError, ValueError):
+                        self._close_if_closing(process.stdout)
+                        raise
+                    if line is None:
+                        # Out of time: the worker is stuck, or slower than it may
+                        # be.  Killed rather than asked to exit, which it would
+                        # not hear until it is done; this request holds its
+                        # output, so closes that itself.
+                        self._kill()
+                        with contextlib.suppress(OSError, ValueError):
+                            process.stdout.close()
+                        raise CommonRoadWorkerError(
+                            f"the CommonRoad worker did not answer "
+                            f"{request.get('op')!r} within {timeout:g} s; killed it"
+                        )
+                    if not line:
+                        self._close_if_closing(process.stdout)
         except (OSError, ValueError) as exc:
             # ValueError: its pipes were closed (close()) meanwhile.
             raise CommonRoadWorkerError(f"the CommonRoad worker failed: {exc}") from exc

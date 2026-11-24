@@ -44,7 +44,7 @@ from ..conditions.entity_existence import ReferencePoses
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.map_manager import run_carla_map
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
-from ..entity_role import EntityRole
+from ..entity_role import EntityRole, canonical_role_name
 from ..trajectory.model import (
     MapPose,
     RelativeLanePose,
@@ -257,10 +257,11 @@ class SpawnAction(BaseAction):
             the position's own height.
 
     Raises:
-        ValueError: For the ego; for neither or both of *entity_name* and
-            *name* (a blank *name* is none); a prop with no *position*, or
-            one on lanelet 0 or less; a negative or non-finite *shift_max*, *speed*, *length* or
-            *width*.
+        ValueError: For the ego (``"Ego"``, or ``"ego"`` or ``"hero"`` in any
+            case), which is in the scene from the start; for neither or both
+            of *entity_name* and *name* (a blank *name* is none); a prop with
+            no *position*, or one on lanelet 0 or less; a negative or
+            non-finite *shift_max*, *speed*, *length* or *width*.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -324,7 +325,11 @@ class SpawnAction(BaseAction):
             raise ValueError(
                 f"{label}: spawn an entity or a prop (a name), one of the two"
             )
-        if entity_name is not None and str(entity_name) == str(EGO_ROLE_NAME):
+        # As the lookups read it: "ego" and "hero", in any case, are the ego
+        # too (#2273).
+        if entity_name is not None and canonical_role_name(str(entity_name)) == str(
+            EGO_ROLE_NAME
+        ):
             raise ValueError(f"{label}: the ego is in the scene from the start")
         if entity_name is None and position is None:
             raise ValueError(f"{label}: adding prop '{prop_name}' needs a position")

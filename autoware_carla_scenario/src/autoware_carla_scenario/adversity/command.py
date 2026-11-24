@@ -11,10 +11,13 @@ the command's start, in the Lanelet2 map frame.
 
 * **ACCELERATION** keeps to the lane, following the straightest successor
   past its end, at constant acceleration, the speed clipped to
-  ``[0, max(desired speed, speed now)]``.
-* **LANE_CHANGE** crosses to the lane beside within the duration (1 s in
-  TeraSim), sideways at a constant rate, its forward speed reduced so the
-  sideways part comes out of it (:func:`.prediction.lane_change_longitudinal_speed`).
+  ``[0, max(desired speed, speed now)]``.  It holds the agent's offset from
+  the centreline (``LanePosition.t``), so the path starts where the agent is.
+* **LANE_CHANGE** crosses from where the agent is (its offset from its own
+  lane's centreline) to the centreline of the lane beside within the
+  duration (1 s in TeraSim), sideways at a constant rate, its forward speed
+  reduced so the sideways part comes out of it
+  (:func:`.prediction.lane_change_longitudinal_speed`).
 * **TRAJECTORY** is the path the trigger gives, re-timed to start at 0.
 """
 
@@ -140,8 +143,9 @@ class _LaneWalk:
             self.length = self.features.length(following)
         along = distance - self.start
         if along > self.length:
-            (x0, y0), (x1, y1) = self.points[-2], self.points[-1]
-            heading = math.atan2(y1 - y0, x1 - x0)
+            x1, y1 = self.points[-1]
+            # The last segment with a direction: a repeated end point has none.
+            heading = _heading_at(self.points, math.inf)
             beyond = along - self.length
             return (
                 x1 + beyond * math.cos(heading),
@@ -182,6 +186,15 @@ def drift_path(
     return states
 
 
+def _offset(x: float, y: float, yaw: float, offset: float) -> tuple[float, float]:
+    """``(x, y)`` moved *offset* metres to the left (negative: right) of *yaw*.
+
+    The left normal :func:`drift_path` offsets along, as ``LanePosition.t``
+    measures it.
+    """
+    return x - offset * math.sin(yaw), y + offset * math.cos(yaw)
+
+
 def _times(duration: float, resolution: float) -> list[float]:
     steps = max(int(math.ceil(duration / resolution - 1e-9)), 1)
     return [min(i * resolution, duration) for i in range(steps + 1)]
@@ -195,6 +208,8 @@ def _accelerate(
     command: AdversarialCommand,
     resolution: float,
 ) -> list[PredictedState]:
+    """Along the lane at the agent's offset from it (``lane.t``), as
+    :func:`drift_path` holds it, so the first state is where the agent is."""
     times = _times(command.duration, resolution)
     distances, speeds = predict_distance_velocity(
         agent.speed, command.acceleration, times, max(desired_speed, agent.speed)
@@ -202,7 +217,8 @@ def _accelerate(
     walk = _LaneWalk(features, lane.lanelet, lane.s)
     states: list[PredictedState] = []
     for t, d, v in zip(times, distances, speeds):
-        x, y, yaw = walk.at(d)
+        cx, cy, yaw = walk.at(d)
+        x, y = _offset(cx, cy, yaw, lane.t)
         states.append(PredictedState(x, y, yaw, v, t))
     return states
 
@@ -216,7 +232,13 @@ def _change_lane(
     resolution: float,
     span: float,
 ) -> list[PredictedState]:
-    """Cross in ``command.duration``, then (to *span*) keep to the new lane."""
+    """Cross in ``command.duration``, then (to *span*) keep to the new lane.
+
+    The crossing starts where the agent is -- its offset ``lane.t`` from its
+    own lane's centreline, along the left normal as :func:`drift_path` takes
+    it -- and ends on the new lane's centreline; the sideways distance the
+    forward speed gives up is the one actually crossed.
+    """
     own = _LaneWalk(features, lane.lanelet, lane.s)
     beside = _LaneWalk(features, side.lanelet, side.s)
     times = _times(max(span, command.duration), resolution)
@@ -224,7 +246,8 @@ def _change_lane(
     ys: list[float] = []
     speed = agent.speed
     for i, t in enumerate(times):
-        ox, oy, _o = own.at(speed * t)
+        cx, cy, own_yaw = own.at(speed * t)
+        ox, oy = _offset(cx, cy, own_yaw, lane.t)
         nx, ny, _n = beside.at(speed * t)
         if i == 0:
             # The lanes' separation, sideways out of the speed (TeraSim's

@@ -215,6 +215,27 @@ def test_without_extras_they_are_masked_not_zero() -> None:
         assert np.frombuffer(array.mask, dtype="?").all()
 
 
+def test_the_odometry_times_are_masked_where_the_ego_is_unavailable() -> None:
+    """A row the ego is not on has no odometry: its time is masked, as the
+    contract's masks mark unknown values, not left a valid-looking stamp
+    (#2352)."""
+    world, live, _ = _with_a_car()
+    for tick in range(9):  # frames 100..108; the ego gone on frame 106
+        world.frame = 100 + tick
+        world.snapshot = [_ActorSnapshot(2, 20.0 + 0.25 * tick, 5.0)]
+        if tick != 6:
+            world.snapshot.insert(0, _ActorSnapshot(1, 0.5 * tick, 10.0))
+        live.record(world, 0.05 * tick)
+    scene = live.scene("run")
+    assert scene is not None
+    assert list(_numeric(scene.frame_indices)) == [104, 106, 108]
+    assert list(_numeric(scene.ego.available)) == [True, False, True]
+    odometry = scene.ego.odometry_timestamps_ns
+    assert odometry.HasField("mask")
+    assert list(np.frombuffer(odometry.mask, dtype="?")) == [False, True, False]
+    assert list(_numeric(odometry)) == [200_000_000, 0, 400_000_000]
+
+
 def test_without_extras_the_angular_velocity_is_the_logs() -> None:
     scene = _run(ticks=5, extras=False, wz=-math.degrees(0.2)).scene("run")
     assert scene is not None
@@ -407,6 +428,37 @@ def test_a_long_run_keeps_a_bounded_window() -> None:
 def test_t4_points_scale_the_intensity_and_zero_the_fifth_column() -> None:
     out = _t4_points(np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32))
     assert out.shape == (1, 5) and out[0, 3] == 255.0 and out[0, 4] == 0.0
+
+
+def test_t4_points_scale_as_the_t4_datasets_sweeps() -> None:
+    from autoware_carla_scenario.t4_settings import t4_lidar_points
+
+    points = np.array([[1.0, 2.0, 3.0, 0.3], [4.0, 5.0, 6.0, 0.7]], dtype=np.float32)
+    np.testing.assert_array_equal(_t4_points(points)[:, :4], t4_lidar_points(points))
+
+
+def test_a_stopped_recorder_stops_the_scenes_and_freezes_nothing_more(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Once the recorder fails (and closes), a tick no longer overwrites the
+    frozen last row's extras, and no scene shows that history as now: the
+    scene is None, as before the first tick, said once (#2237)."""
+    live = _run(ticks=5)
+    frozen = dict(live._extras)
+    assert live.scene("run") is not None and not live.stopped
+    world = _World()
+    world.get_snapshot = MagicMock(side_effect=RuntimeError("gone"))  # type: ignore[method-assign]
+    late = EgoExtras(
+        acceleration_rig=np.array([9.0, 9.0]),
+        angular_velocity=np.array([0.0, 0.0, 9.0]),
+    )
+    with caplog.at_level("WARNING"):
+        for tick in range(5, 8):
+            live.record(world, 0.05 * tick, late)
+    assert live.stopped
+    assert live._extras == frozen
+    assert live.scene("run") is None
+    assert caplog.text.count("Live T4Scenes stopped") == 1
 
 
 # -- the road ahead on the lanelets ---------------------------------------------

@@ -3840,6 +3840,82 @@ def test_the_public_names_the_model_now_declares_compile(tmp_path: Path) -> None
     assert result.ok, result.format()
 
 
+_KINEMATICS_ARITHMETIC_SETUP = """
+from autoware_carla_scenario import (
+    AbsoluteAcceleration,
+    AbsoluteVelocity,
+    FrenetAcceleration,
+    FrenetVelocity,
+    RelativeAcceleration,
+    RelativeVelocity,
+    Vector3,
+)
+from autoware_carla_scenario.kinematics import CoordinateFrame
+world = CoordinateFrame.CARLA_WORLD
+u = Vector3(1.0, 2.0, 0.0)
+w: Vector3 = (u + u - u) * 2 / 4.0
+w = 0.5 * -w
+ego_v = AbsoluteVelocity.from_components(10.0, 0.0, 0.0, world)
+npc_v = AbsoluteVelocity.from_components(8.0, 1.0, 0.0, world)
+closing: RelativeVelocity = ego_v - npc_v
+back: AbsoluteVelocity = ego_v - closing
+back = closing + npc_v
+back = npc_v + closing * 2
+closing = (closing + closing - closing) / 2.0
+closing = 3 * -closing
+back = -(back * 0.5) / 2
+frenet: FrenetVelocity = (FrenetVelocity(1.0, 0.0) + FrenetVelocity.zero()) * 2
+frenet = -(0.5 * (frenet - frenet) / 3.0)
+ego_a = AbsoluteAcceleration.from_components(1.0, 0.0, 0.0, world)
+npc_a = AbsoluteAcceleration.zero(world)
+rel_a: RelativeAcceleration = ego_a - npc_a
+abs_a: AbsoluteAcceleration = ego_a - rel_a
+abs_a = rel_a + npc_a
+abs_a = npc_a + rel_a * 2
+rel_a = -(2 * (rel_a + rel_a - rel_a)) / 4.0
+abs_a = -(abs_a * 0.5) / 2
+frenet_a: FrenetAcceleration = FrenetAcceleration(1.0, 0.0) + FrenetAcceleration.zero()
+frenet_a = -(0.5 * (frenet_a - frenet_a) * 2 / 3.0)
+logger.info(
+    "%f %f %f %f %f %f %f",
+    w.magnitude(), closing.speed(), back.speed(), frenet.speed(),
+    rel_a.magnitude(), abs_a.magnitude(), frenet_a.magnitude(),
+)
+"""
+
+
+def test_kinematics_arithmetic_compiles(tmp_path: Path) -> None:
+    # The model declares the operators Python defines, each with the result
+    # Python's has for that operand (absolute - absolute is relative), #2259:
+    # without them `ego_v - npc_v` and `v * 2` were refused. The annotated
+    # locals pin each result's type.
+    scenario, config, _ = _write_case(
+        tmp_path, _KINEMATICS_ARITHMETIC_SETUP + textwrap.dedent(_VALID_SETUP)
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
+def test_adding_two_absolute_velocities_is_refused_at_its_line(tmp_path: Path) -> None:
+    # Python returns NotImplemented, so `+` raises TypeError; the model's
+    # operator, which dispatches on the operand, refuses it (#2259).
+    setup = """
+from autoware_carla_scenario import AbsoluteVelocity
+from autoware_carla_scenario.kinematics import CoordinateFrame
+ego_v = AbsoluteVelocity.zero(CoordinateFrame.CARLA_WORLD)
+both = ego_v + ego_v
+logger.info("%f", both.speed())
+"""
+    scenario, config, path = _write_case(
+        tmp_path, setup + textwrap.dedent(_VALID_SETUP)
+    )
+    error = _only_error(typecheck_scenario(scenario, config))
+    assert (
+        "AbsoluteVelocity + x: x must be a RelativeVelocity" in error.message
+    ), error.format()
+    assert error.line == _line_of(path, "both = ego_v + ego_v")
+
+
 _ADVERSARIAL_SETUP = """
 from autoware_carla_scenario import (
     AdversarialBrakeAction,
@@ -5046,7 +5122,7 @@ if route is not None:
     frame = scenario_route_frame()
     lanelet_id, along = frame.locate(route.length / 2.0)
     x, y, heading = frame.point(frame.length)
-    logger.info("%d %f %f %f %f %d", lanelet_id, along, x, y, heading, frame.lanelet_at(0.0).id)
+    logger.info("%d %f %f %f %f", lanelet_id, along, x, y, heading)
 """
 
 _MEMBERS_EXTRA = """

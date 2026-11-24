@@ -73,8 +73,8 @@ class CommunicationLossAction(BaseAction):
         until: A condition that ends the run, and with it the loss.
 
     Raises:
-        ValueError: *direction* is not one of the three, or *duration* is not
-            positive.
+        ValueError: *direction* is not one of the three, or *duration* is a
+            boolean or not positive.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -106,10 +106,15 @@ class CommunicationLossAction(BaseAction):
                 f"CommunicationLossAction: direction must be one of "
                 f"{', '.join(LINK_DIRECTIONS)}, got {direction!r}"
             )
-        if duration is not None and not duration > 0.0:
-            raise ValueError(
-                f"CommunicationLossAction: duration must be positive, got {duration}"
-            )
+        if duration is not None:
+            # Annotated, so Codon unwraps the Optional (docs/typecheck.md);
+            # True would read as 1 s (#2273).
+            seconds: float = duration
+            if isinstance(seconds, bool) or not seconds > 0.0:
+                raise ValueError(
+                    "CommunicationLossAction: duration must be positive "
+                    f"(a number), got {seconds!r}"
+                )
         # The run lasts until the loss ends, so it is never instantaneous.
         end: BaseCondition = _LossEnds(self, until, duration, label)
         super().__init__(

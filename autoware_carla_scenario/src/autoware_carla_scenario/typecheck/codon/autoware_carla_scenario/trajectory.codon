@@ -326,8 +326,9 @@ def _expect_timing(timing: TrajectoryTiming) -> TrajectoryTiming:
     return timing
 
 
-# What a trajectory resolves to (trajectory.model), for the modules the
-# library check compiles; the package does not export these.
+# Any position, and what a trajectory resolves to (trajectory.model), which
+# the package exports too (trajectory/__init__.py); the modules the library
+# check compiles import them.
 
 # Any position a vertex may be written in: only named, as a module imports it.
 TrajectoryPosition = Union[CarlaWorldPose, Lanelet2Pose, OpenDrivePose, MapPose,

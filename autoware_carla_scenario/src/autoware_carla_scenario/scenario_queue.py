@@ -17,10 +17,11 @@ from .maps.pack import MapPack
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
 from .run_outputs import remove_run_outputs
+from .run_timeout import check_run_timeout
 from .t4 import T4Recorder
 from .t4_scene import T4SceneExporter
 from .scenario_base import BaseScenario
-from .server import CarlaServerManager
+from .server import CarlaServerManager, _unbracketed_host
 from .traffic.base import TrafficBackend
 from .world_reset import RESET_RELOAD, check_world_reset
 
@@ -83,6 +84,8 @@ class ScenarioQueue:
     _traffic_backend: Optional[TrafficBackend]
     _odd: OddDefinition
     _autoware_launcher: Optional["AutowareLauncher"]
+    #: Whether each Autoware stack's log is named after its case's file stem.
+    _stack_logs_by_stem: bool
     _backends: Optional["BackendPreparer"]
     _map_source: Optional[str]
     _map_pack: Optional[MapPack]
@@ -144,6 +147,7 @@ class ScenarioQueue:
         t4scene: Optional[T4SceneExporter] = None,
         backends: Optional["BackendPreparer"] = None,
         map_pack: Optional[MapPack] = None,
+        stack_logs_by_stem: bool = False,
     ) -> None:
         """Create a scenario queue.
 
@@ -174,12 +178,18 @@ class ScenarioQueue:
                 OpenDRIVE) work.
             map_name: Built-in CARLA map name to load on start (optional).
                 Used alone or together with *xodr_path*.
-            host: CARLA RPC host.
+            host: CARLA RPC host (an IPv6 address bracketed or not).
             port: CARLA RPC port.
             tm_port: CARLA TrafficManager port.
             timeout_seconds: Default per-scenario timeout, for a scenario
                 that registers no timeout of its own.
-            output_dir: Directory for MP4 recordings.
+            output_dir: Where each run writes its outputs, all named after
+                the run's file stem (``run_outputs``): its result
+                (``_result.json``), trajectory log, CARLA recorder log
+                (``.log``), coverage file and so on, as the runner's
+                ``output_dir``; and the logs of the traffic backends and the
+                Autoware stack the queue prepares.  A relative path is
+                taken from this process's working directory.
             server_extra_args: Extra CLI arguments for CarlaUnreal.sh (only used
                 when the queue creates its own server).
             cooldown_seconds: Wait time (seconds) between consecutive scenario
@@ -244,11 +254,21 @@ class ScenarioQueue:
                 installed and mounted on the server each time it is started
                 (a restarted one included), before the map is loaded.  *None*:
                 the server is to have the map already.
+            stack_logs_by_stem: Name each Autoware stack's log after the file
+                stem its case was added with (``autoware-<stem>.log``, through
+                the launcher's ``use_log_stem()``, which the built-in launchers
+                have) rather than after the launcher's count and the
+                scenario's name.  A batch's queue and a SLURM task's, whose
+                processes write into one output directory, set it (#2247).
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
-                or *world_reset* is neither ``"reload"`` nor ``"soft"``.
+                or *world_reset* is neither ``"reload"`` nor ``"soft"``, or
+                *timeout_seconds* is not positive and finite.
         """
+        # Refused before the server is made, not once each case has spawned
+        # its ego -- and on every retry -- where it is registered (#2287).
+        check_run_timeout(timeout_seconds, key="timeout_seconds")
         if server is not None:
             self._server = server
             self._owns_server = False
@@ -265,7 +285,8 @@ class ScenarioQueue:
         self._opendrive_path = opendrive_path
         self._lanelet2_path = lanelet2_path
         self._map_name = map_name
-        self._host = host
+        # Unbracketed, as the runner and a map pack connect to it ("[::1]").
+        self._host = _unbracketed_host(host)
         self._port = port
         self._tm_port = tm_port
         self._timeout_seconds = timeout_seconds
@@ -289,6 +310,7 @@ class ScenarioQueue:
         # Resolved now, so a misspelt ODD fails before CARLA starts.
         self._odd = resolve_odd(odd)
         self._autoware_launcher = autoware_launcher
+        self._stack_logs_by_stem = stack_logs_by_stem
         self._map_source = map_source
         self._map_pack = map_pack
         self._rerun = rerun
@@ -333,7 +355,13 @@ class ScenarioQueue:
             file_stem: The stem its output files are named by; ``None``
                 names them by its class, numbered past the runs already in the
                 output directory (:meth:`ScenarioRunner.run_scenario`).
+
+        Raises:
+            ValueError: *timeout_seconds* is not positive and finite; the
+                scenario is not added.
         """
+        if timeout_seconds is not None:
+            check_run_timeout(timeout_seconds, key="timeout_seconds")
         self._scenarios.append(scenario)
         if self._backends is not None and self._runner is not None:
             # Added after the queue started (a SLURM task's cases join one at
@@ -350,6 +378,16 @@ class ScenarioQueue:
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
+
+    def _forget(self, key: int) -> None:
+        """Forget what :meth:`add` kept for the scenario of ``id()`` *key*:
+        its timeout, its case and its file stem."""
+        if key in self._timeouts:
+            del self._timeouts[key]
+        if key in self._cases:
+            del self._cases[key]
+        if key in self._stems:
+            del self._stems[key]
 
     def run_all(
         self,
@@ -439,12 +477,7 @@ class ScenarioQueue:
             if release:
                 # Keyed by id(): a released scenario's id may be the next
                 # scenario's, so nothing is left keyed by it.
-                if key in self._timeouts:
-                    del self._timeouts[key]
-                if key in self._cases:
-                    del self._cases[key]
-                if key in self._stems:
-                    del self._stems[key]
+                self._forget(key)
             # The stem every attempt writes under: the one given, or the one
             # the runner names the first attempt by (the first free in the
             # output directory), settled right before that attempt runs, after
@@ -456,6 +489,8 @@ class ScenarioQueue:
             run_stem = ""
             if file_stem is not None:
                 run_stem = file_stem
+            if self._stack_logs_by_stem and self._autoware_launcher is not None:
+                _use_log_stem(self._autoware_launcher, file_stem)
             last_error: Optional[Exception] = None
             last_message = ""
             for attempt in range(max_attempts):
@@ -506,7 +541,7 @@ class ScenarioQueue:
                         # later run_all() resets it, a new queue loads it, or
                         # stop() restores it on a server the queue does not
                         # stop (#2067).
-                        self._runner.reset_world(type(scenario).__name__)
+                        self._runner.reset_world(type(scenario).__name__, strict=True)
                         self._world_dirty = False
                     # Cooldown between consecutive scenarios, after the reset
                     # of the world the one before left: the server finishes
@@ -563,13 +598,7 @@ class ScenarioQueue:
                         # The cases not run yet are out of the queue already:
                         # leave nothing keyed by their ids either.
                         for rest in pending:
-                            rest_key = id(rest)
-                            if rest_key in self._timeouts:
-                                del self._timeouts[rest_key]
-                            if rest_key in self._cases:
-                                del self._cases[rest_key]
-                            if rest_key in self._stems:
-                                del self._stems[rest_key]
+                            self._forget(id(rest))
                     # All attempts exhausted — re-raise the last error.
                     raise RuntimeError(
                         f"Scenario {type(scenario).__name__} failed after "
@@ -906,10 +935,13 @@ class ScenarioQueue:
     ) -> Callable[[], Generator["ScenarioQueue", None, None]]:
         """Return a session-scoped pytest fixture that manages this queue.
 
-        The generated fixture automatically skips when there is no CARLA to
-        launch (``CARLA_EXECUTABLE`` unset and nothing installed) or when the
-        CARLA session cannot be started (:meth:`start` raises), so callers do
-        not need to add a manual ``pytest.skip`` guard.
+        The generated fixture automatically skips when the CARLA session
+        cannot be started (:meth:`start` raises): among other reasons, when
+        no server answers at *host* and there is none to launch
+        (``CARLA_EXECUTABLE`` unset and nothing installed, or a remote
+        *host*), so callers do not need to add a manual ``pytest.skip``
+        guard.  Whether a CARLA is installed here is not asked first: a
+        remote server, or one already running here, needs none.
 
         Once started, it runs every scenario with
         ``run_all(continue_on_error=True)``: a scenario that raises on every
@@ -955,11 +987,9 @@ class ScenarioQueue:
 
         @pytest.fixture(scope="session", name=fixture_name)
         def _queue_fixture() -> Generator["ScenarioQueue", None, None]:
-            if CarlaServerManager.executable() is None:
-                pytest.skip(
-                    f"Environment variable '{CarlaServerManager.ENV_VAR}' is not set "
-                    "and no CARLA is installed. Skipping CARLA integration tests."
-                )
+            # No pre-check for a CARLA to launch: a remote host, or a server
+            # already running here, needs none, and start() raises -- and the
+            # fixture skips -- when there is no server and none to launch.
             try:
                 queue.start()
             except Exception as exc:
@@ -993,6 +1023,23 @@ class ScenarioQueue:
 # ------------------------------------------------------------------
 # Module-level helpers
 # ------------------------------------------------------------------
+
+
+def _use_log_stem(launcher: "AutowareLauncher", stem: Optional[str]) -> None:
+    """Have *launcher* name the next stack's log after *stem*, when it can.
+
+    ``use_log_stem()`` is not part of the
+    :class:`~autoware_carla_scenario.autoware_stack.AutowareLauncher` protocol:
+    a launcher of one's own without it names its logs as it does.
+    """
+    if TYPE_CHECKING:
+        # Codon cannot look a method up by name on a protocol; the built-in
+        # launchers' use_log_stem() is compiled with them.
+        pass
+    else:
+        use = getattr(launcher, "use_log_stem", None)
+        if use is not None:
+            use(stem)
 
 
 def _wait_with_progress(seconds: float, *, desc: str = "Waiting") -> None:

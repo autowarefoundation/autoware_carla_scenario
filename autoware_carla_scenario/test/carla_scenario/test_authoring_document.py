@@ -69,6 +69,21 @@ class TestStarterDocuments:
         assert npc.spawn.s.binding is not None
         assert any(a.trigger is not None for a in document.actions)
 
+    @pytest.mark.parametrize("make", [new_document, blank_document])
+    def test_map_paths_ignore_the_map_config_variables(
+        self, make: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The group's relative fallbacks, never this machine's paths (#2340).
+
+        A document travels in scenario packages; a run reads the variables
+        through conf/map/nishishinjuku.yaml, composed after the scenario.
+        """
+        monkeypatch.setenv("NISHISHINJUKU_LANELET2_PATH", "/maps/n.osm")
+        monkeypatch.setenv("NISHISHINJUKU_XODR_PATH", "/maps/n.xodr")
+        document = make()
+        assert document.map.lanelet2_path == "data/nishishinjuku.osm"
+        assert document.map.xodr_path == "data/nishishinjuku_carla.xodr"
+
 
 class TestNodeIds:
     """Action and condition node ids are Hydra keys and lookups (#1889)."""
@@ -178,6 +193,43 @@ class TestRoundTrip:
         document = new_document()
         path = save_document(document, tmp_path / "document.yaml")
         assert load_document(path).to_yaml_dict() == document.to_yaml_dict()
+
+    def test_save_document_replaces_the_file_in_one_rename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Written as a draft is (#2235): a failed write leaves the old
+        document whole, and no scratch file behind."""
+        path = save_document(new_document(), tmp_path / "document.yaml")
+        before = path.read_text(encoding="utf-8")
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk full")
+
+        from autoware_carla_scenario import atomic_file
+
+        monkeypatch.setattr(atomic_file.os, "replace", fail)
+        changed = new_document()
+        changed.timeout_seconds = 99.0
+        with pytest.raises(OSError, match="disk full"):
+            save_document(changed, path)
+        assert path.read_text(encoding="utf-8") == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["document.yaml"]
+
+    def test_a_blank_drafts_variable_is_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blank means unset (#2235): ./scenario_drafts, not a directory named
+        by the blank."""
+        from autoware_carla_scenario.authoring.persistence import (
+            DRAFT_DIR_ENV,
+            default_draft_dir,
+        )
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(DRAFT_DIR_ENV, "  ")
+        assert default_draft_dir() == (tmp_path / "scenario_drafts").resolve()
+        monkeypatch.setenv(DRAFT_DIR_ENV, f" {tmp_path / 'mine'} ")
+        assert default_draft_dir() == (tmp_path / "mine").resolve()
 
     def test_assertions_serialise_under_pass_and_fail_keys(self) -> None:
         raw = yaml.safe_load(dump_document_yaml(new_document()))

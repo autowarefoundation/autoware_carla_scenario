@@ -59,16 +59,60 @@ def test_the_zones_are_terasims() -> None:
         ("taper_out", 370.0, 400.0),
         ("termination", 400.0, 430.0),
     ]
-    # No room for a work zone: none; a warning zone stops at the lane's start.
+    # No room for a work zone: none, and the tapers and buffer shortened to
+    # fit (#2263); a warning zone stops at the lane's start.
     short = construction_zones(20.0, 60.0)
-    assert [z for z, _, _ in short] == [
-        "warning",
-        "taper_in",
-        "buffer",
-        "taper_out",
-        "termination",
+    assert short == [
+        ("warning", 0.0, 20.0),
+        ("taper_in", 20.0, pytest.approx(44.0)),
+        ("buffer", pytest.approx(44.0), pytest.approx(48.0)),
+        ("taper_out", pytest.approx(48.0), 60.0),
+        ("termination", 60.0, 90.0),
     ]
-    assert short[0] == ("warning", 0.0, 20.0)
+
+
+@pytest.mark.parametrize(("start", "end"), [(100.0, 150.0), (20.0, 60.0), (0.0, 1.0)])
+def test_a_zone_shorter_than_its_tapers_and_buffer_does_not_overlap_itself(
+    start: float, end: float
+) -> None:
+    """Left at full length, a short zone's tapers overlapped, its cones on top
+    of each other and past its end, and the lane closed past it (#2263)."""
+    zones = construction_zones(start, end)
+    inner = [z for z in zones if z[0] in ("taper_in", "buffer", "taper_out")]
+    assert [z for z, _, _ in inner] == ["taper_in", "buffer", "taper_out"]
+    assert "work" not in [z for z, _, _ in zones]
+    assert inner[0][1] == start and inner[-1][2] == end
+    for (_, _, before), (_, after, _) in zip(inner, inner[1:]):
+        assert after == pytest.approx(before)
+    # The 60 : 10 : 30 of the defaults, kept.
+    lengths = [b - a for _, a, b in inner]
+    assert lengths == pytest.approx(
+        [0.6 * (end - start), 0.1 * (end - start), 0.3 * (end - start)]
+    )
+    placed = [o.s for o in construction_layout(start, end, 3.5) if o.kind != SIGN]
+    assert placed == sorted(placed) and len(set(placed)) == len(placed)
+    assert start <= min(placed) and max(placed) < end
+
+
+def test_a_zone_exactly_as_long_as_its_tapers_and_buffer_keeps_them() -> None:
+    assert construction_zones(100.0, 200.0)[1:4] == [
+        ("taper_in", 100.0, 160.0),
+        ("buffer", 160.0, 170.0),
+        ("taper_out", 170.0, 200.0),
+    ]
+
+
+@pytest.mark.parametrize("start", [0.0, -50.0, -200.0])
+def test_a_zone_from_the_lane_s_start_or_before_has_no_warning_zone(
+    start: float,
+) -> None:
+    """A negative start_s gave a warning zone from 0 back to it (#2263)."""
+    zones = construction_zones(start, start + 300.0)
+    assert zones[0][0] == "taper_in"
+    assert all(b > a for _, a, b in zones)
+    assert not [
+        o for o in construction_layout(start, start + 300.0, 3.5) if o.zone == "warning"
+    ]
 
 
 def test_the_layout_steps_through_each_zone() -> None:
@@ -200,6 +244,53 @@ def test_the_settings_refuse_what_would_not_lay_out(name: str, value: float) -> 
     """A NaN length placed nothing, an infinite one never ended (#1479)."""
     with pytest.raises(ValueError, match=name):
         ConstructionSettings(**{name: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("construction_type", "cones"),
+        ("construction_type", "Cone"),
+        ("construction_type", ""),
+        ("construction_type", "sign"),
+        ("side", "Left"),
+        ("side", "RIGHT"),
+        ("side", " left"),
+        ("side", "center"),
+        ("taper_type", "Curved"),
+        ("taper_type", "s-curve"),
+        ("taper_type", ""),
+        ("layout", "urbn"),
+        ("layout", "Urban"),
+        ("layout", "rural"),
+    ],
+)
+def test_the_settings_refuse_a_text_field_out_of_its_choices(
+    name: str, value: str
+) -> None:
+    """A typo was read as another choice or as none, in silence: "Left"
+    closed the lane from the right, "Curved" was linear and "cones" placed
+    nothing (#2263)."""
+    with pytest.raises(ValueError, match=rf"^{name} must be one of .*, not {value!r}$"):
+        ConstructionSettings(**{name: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("construction_type", "cone"),
+        ("construction_type", "barrier"),
+        ("construction_type", "mixed"),
+        ("side", "right"),
+        ("side", "left"),
+        ("taper_type", "linear"),
+        ("taper_type", "curved"),
+        ("layout", "highway"),
+        ("layout", "urban"),
+    ],
+)
+def test_the_settings_take_each_text_choice(name: str, value: str) -> None:
+    assert getattr(ConstructionSettings(**{name: value}), name) == value  # type: ignore[arg-type]
 
 
 def test_the_settings_take_their_bounds() -> None:

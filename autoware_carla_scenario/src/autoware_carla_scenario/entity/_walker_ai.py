@@ -92,6 +92,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Optional
 
+from ..constants import tick_seconds_or_fixed
 from ..kinematics import Vector3
 from ..kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from ..utils.clearance import HIDDEN_BELOW_M
@@ -179,8 +180,6 @@ BACK_STALL_S: float = 1.5
 _BACK_PROGRESS_M: float = 0.05
 #: How long (s) each stepped walker has given way, by actor id.
 _GIVING_WAY: dict[int, float] = {}
-#: The tick, for the retargeting clock where the world does not say.
-_DEFAULT_DT_S = 0.05
 
 #: Whether each episode's map has a navigation mesh, by world id.
 _NAVMESH: dict[int, bool] = {}
@@ -464,7 +463,7 @@ def drive(
             return False
         driven.started_at = (location.x, location.y)
         _start(world, driven)
-    driven.since_sent += _tick_seconds(world)
+    driven.since_sent += tick_seconds_or_fixed(world)
     if driven.since_sent >= RETARGET_S:
         driven.controller.go_to_location(driven.targets[driven.index][1])
         driven.since_sent = 0.0
@@ -546,7 +545,7 @@ def _turns_back(
     # is looked for (asked again this tick, the same).
     _walking(walker, location)
     if driven.back_to is not None:
-        driven.back_s += _tick_seconds(walker.get_world())
+        driven.back_s += tick_seconds_or_fixed(walker.get_world())
         if driven.back_s >= KERB_WAIT_MAX_S and (
             driven.turning_back or driven.waiting_back or driven.kerb_here >= 0.0
         ):
@@ -628,7 +627,7 @@ def _walk_back(
         driven.back_gap = gap
         driven.back_stalled = 0.0
     else:
-        driven.back_stalled += _tick_seconds(walker.get_world())
+        driven.back_stalled += tick_seconds_or_fixed(walker.get_world())
     if gap <= _BACK_REACHED_M or driven.back_stalled >= BACK_STALL_S:
         walker.apply_control(carla.WalkerControl(speed=0.0))
         driven.turning_back = False
@@ -708,7 +707,7 @@ def _kerb_wait(
     if said != driven.kerb_said:
         driven.kerb_said = said
         logger.info("walker %d: waits at the kerb for %s", int(walker.id), why)
-    driven.kerb_waited += _tick_seconds(world)
+    driven.kerb_waited += tick_seconds_or_fixed(world)
     return True
 
 
@@ -810,7 +809,7 @@ def give_way(
             int(found.id),
             here,
         )
-    _GIVING_WAY[key] = waited + _tick_seconds(world)
+    _GIVING_WAY[key] = waited + tick_seconds_or_fixed(world)
     return True
 
 
@@ -923,11 +922,15 @@ def _nearest_walk(x: float, y: float) -> Optional[tuple[float, float]]:
     import lanelet2.geometry  # noqa: PLC0415
 
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.transform import (  # noqa: PLC0415
+        carla_xy_to_map,
+        map_xy_to_carla,
+    )
     from ..route.geometry import MapFeatures  # noqa: PLC0415
 
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    px, py = x + offset_x, -y + offset_y
+    offset = mm.mgrs_offset
+    px, py = carla_xy_to_map(x, y, offset)
     point = lanelet2.core.BasicPoint2d(px, py)
     best: Optional[tuple[float, float, float]] = None
     for distance, lanelet in lanelet2.geometry.findNearest(
@@ -954,9 +957,10 @@ def _nearest_walk(x: float, y: float) -> Optional[tuple[float, float]]:
     if gap > 1e-6:
         ix = qx + (qx - px) / gap * _INTO_WALK_M
         iy = qy + (qy - py) / gap * _INTO_WALK_M
-        if _kind_at(ix - offset_x, -(iy - offset_y)) == "walk":
+        inside_x, inside_y = map_xy_to_carla(ix, iy, offset)
+        if _kind_at(inside_x, inside_y) == "walk":
             qx, qy = ix, iy
-    return (qx - offset_x, -(qy - offset_y))
+    return map_xy_to_carla(qx, qy, offset)
 
 
 def _kind_at_or_none(x: float, y: float) -> str:
@@ -974,11 +978,12 @@ def _kind_at(x: float, y: float) -> str:
     import lanelet2.geometry  # noqa: PLC0415
 
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.transform import carla_xy_to_map  # noqa: PLC0415
     from ..route.geometry import MapFeatures  # noqa: PLC0415
 
     mm = MapManager.get_instance()
-    offset_x, offset_y = mm.mgrs_offset
-    point = lanelet2.core.BasicPoint2d(x + offset_x, -y + offset_y)
+    map_x, map_y = carla_xy_to_map(x, y, mm.mgrs_offset)
+    point = lanelet2.core.BasicPoint2d(map_x, map_y)
     kind = ""
     for _distance, lanelet in lanelet2.geometry.findWithin2d(
         mm.lanelet_map.laneletLayer, point, 0.0
@@ -1057,10 +1062,3 @@ def _stop(driven: _Driven) -> None:
         driven.controller.stop()
     except RuntimeError:
         pass
-
-
-def _tick_seconds(world: "carla.World") -> float:
-    try:
-        return float(world.get_snapshot().timestamp.delta_seconds)
-    except (AttributeError, RuntimeError):
-        return _DEFAULT_DT_S

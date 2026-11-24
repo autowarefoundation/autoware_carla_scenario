@@ -2,8 +2,8 @@
 
 The name a recording is kept under in the viewer's cache directory when the
 log's own directory cannot be written (:func:`cached_recording_name`, a hash
-of the log's path), whether a recording is as new as its log
-(:func:`_fresh`), how a recording just made is put in place, without
+of the log's path), whether a recording is as new as its log and not a
+symbolic link (:func:`_fresh`), how a recording just made is put in place, without
 replacing one written there meanwhile unless asked (:func:`_publish`), and
 how an unpacked copy of the web viewer replaces the one already in the cache
 (:func:`_swap_into_place`).
@@ -34,7 +34,13 @@ def cached_recording_name(trajectory: Path) -> str:
 
 
 def _fresh(recording: Path, trajectory: Path) -> bool:
+    """Whether *recording* is there to serve: a file no older than
+    *trajectory*, and not a symbolic link, which may name a file outside the
+    viewer's base (a link ``X.rrd`` in an unpacked results archive); one is
+    made again in the cache instead."""
     try:
+        if recording.is_symlink():
+            return False
         return recording.stat().st_mtime >= trajectory.stat().st_mtime
     except OSError:
         return False

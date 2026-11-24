@@ -40,8 +40,10 @@ writer_module = pytest.importorskip("autoware_carla_scenario_t4")
 @pytest.fixture(autouse=True)
 def _no_driver_sensors_offered(monkeypatch: pytest.MonkeyPatch) -> None:
     """The offer of a driver entity's sensors is process-global: no test starts
-    with one left by an earlier test in the same worker."""
+    with one left by an earlier test in the same worker, nor with a recording
+    one left active (the trajectory log reads its rear-axle override)."""
     monkeypatch.setattr(t4, "_driver_rear_axle", None)
+    monkeypatch.setattr(t4, "_active", None)
 
 
 # ---------------------------------------------------------------------------
@@ -134,12 +136,13 @@ def test_settings_refuse_a_max_distance_that_is_not_positive_and_finite(
 
 @pytest.mark.parametrize(
     ("distance", "shown"),
-    [("", "''"), ("100", "'100'"), (True, "True"), (0.0, "0.0"), (-1, "-1.0")],
+    [("", "''"), ("100", "'100'"), (True, "True"), (0.0, "0.0"), (-1, "-1")],
 )
 def test_a_refused_max_distance_is_shown_as_written(
     distance: object, shown: str
 ) -> None:
-    # With repr: '' would read "..., not " and '100' "... not 100" (#2208).
+    # With repr: '' would read "..., not " and '100' "... not 100" (#2208);
+    # an int as given, as t4scene.max_distance_m shows it (one check, #2237).
     with pytest.raises(ValueError) as refused:
         T4Settings.from_driver(_driver(), {"max_distance_m": distance})
     assert str(refused.value) == (
@@ -1167,20 +1170,87 @@ def test_a_fed_sweep_of_the_step_itself_is_on_the_steps_pose(
         )
 
 
-def test_a_fed_sweep_older_than_the_snapshots_kept_is_dropped(
+def test_a_fed_sweep_from_before_the_recording_is_dropped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A sweep whose frame has no snapshot -- older than those kept, or from
-    before the recording started -- is dropped with a debug log; the step's
-    frame is written without it."""
+    """A sweep from before the recording started, or not after the key frame
+    written last, is dropped with a debug log saying so, not that its snapshot
+    is missing (#2362); the step's frame is written without it."""
     with caplog.at_level("DEBUG", logger=t4.logger.name):
         root, world = _fed_run(tmp_path, monkeypatch, age=50)
-    assert "no snapshot of frame 51 for a sweep fed on frame 101" in caplog.text
+    assert (
+        "a sweep taken on frame 51, fed on frame 101, is not after frame 99"
+        in caplog.text
+    )
+    assert "no snapshot" not in caplog.text
     poses = sorted(_table(root, "ego_pose"), key=lambda p: p["timestamp"])
     assert len(poses) == 5
     np.testing.assert_allclose(
         poses[0]["translation"][0], world.ego_x(101) - 1.25 + OFFSETS[0], atol=1e-9
     )
+    assert all(s["fileformat"] == "jpg" for s in _table(root, "sample_data"))
+
+
+def test_a_sweep_fed_again_after_its_key_frame_is_not_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A driver entity feeds the LiDAR's latest sweep on every tick: fed again
+    after its key frame is written, the sweep is dropped as not new, not as
+    missing its snapshot (#2362), and nothing more is written."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    sweep = np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32)
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        for frame in range(100, 106):
+            world.frame = frame
+            if frame % 2 == 1:
+                recording.feed_lidar(frame, sweep, taken_on=101)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert "no snapshot" not in caplog.text
+    for frame in (103, 105):
+        assert (
+            f"a sweep taken on frame 101, fed on frame {frame}, is not after "
+            "frame 101" in caplog.text
+        )
+    assert len(_table(root, "sample")) == 1
+    assert len(_table(root, "sample_data")) == 1
+
+
+def test_a_new_fed_sweep_whose_snapshot_is_gone_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A sweep after the key frame written last whose frame's snapshot the
+    recording no longer holds is dropped as missing it; the step's frame is
+    written without it."""
+    world = _World()
+    jpeg = _jpeg()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        for frame in range(100, 108):
+            world.frame = frame
+            if frame == 107:
+                recording.feed_lidar(
+                    frame,
+                    np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                    taken_on=101,
+                )
+                recording.feed_camera_jpeg(frame, "cam_front", jpeg)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert "no snapshot of frame 101 for a sweep fed on frame 107" in caplog.text
+    assert "is not after" not in caplog.text
+    assert len(_table(root, "sample")) == 1
     assert all(s["fileformat"] == "jpg" for s in _table(root, "sample_data"))
 
 
@@ -1190,6 +1260,289 @@ def _jpeg() -> bytes:
     ok, encoded = cv2.imencode(".jpg", np.zeros((48, 64, 3), dtype=np.uint8))
     assert ok
     return encoded.tobytes()
+
+
+def _sweeps(root: Path) -> list[np.ndarray]:
+    """Every sweep of the dataset, oldest first: T4's ``float32`` ``(x, y, z,
+    intensity, ring)`` per point."""
+    lidar = sorted(
+        (s for s in _table(root, "sample_data") if s["fileformat"] != "jpg"),
+        key=lambda s: s["timestamp"],
+    )
+    return [
+        np.fromfile(root / "0" / s["filename"], dtype=np.float32).reshape(-1, 5)
+        for s in lidar
+    ]
+
+
+def test_the_recorders_own_sweeps_are_on_t4s_intensity_scale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CARLA's intensity (0-1) is written on T4's 0-255 scale, as the T4Scenes
+    write it (#2237): 0.9 is 229.5, not a nearly black 0.9."""
+    root, _ = _record(tmp_path, monkeypatch)
+    sweeps = _sweeps(root)
+    assert len(sweeps) == 5
+    for sweep in sweeps:
+        np.testing.assert_allclose(
+            sorted(sweep[:, 3]),
+            sorted(
+                np.array([0.9, 0.8, 0.1], np.float32) * np.float32(t4.INTENSITY_SCALE)
+            ),
+            rtol=1e-6,
+        )
+
+
+def test_a_fed_sweep_is_on_t4s_intensity_scale_and_left_as_fed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep a driver policy is sent is scaled once, into the dataset: the
+    policy's own array keeps CARLA's 0-1."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    fed: list[np.ndarray] = []
+    for frame in range(101, 105):
+        world.frame = frame
+        if frame % 2 == 1:
+            points = np.array([[11.25, -3.5, 0.7, 0.5]], dtype=np.float32)
+            fed.append(points)
+            recording.feed_lidar(frame, points)
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert [float(sweep[0, 3]) for sweep in _sweeps(root)] == [127.5, 127.5]
+    assert all(float(points[0, 3]) == 0.5 for points in fed)
+
+
+def test_t4_lidar_points_scale_a_copy() -> None:
+    points = np.array([[1.0, 2.0, 3.0, 0.5]], dtype=np.float32)
+    out = t4.t4_lidar_points(points)
+    assert out.dtype == np.float32 and out.shape == (1, 4)
+    assert out.tolist() == [[1.0, 2.0, 3.0, 127.5]]
+    assert points[0, 3] == 0.5
+
+
+def test_a_camera_slower_than_the_policy_writes_no_empty_samples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A camera every 4 ticks and a policy every 2: every other step hands the
+    policy the frame written already, which is dropped -- and with nothing
+    else fed, that step is no sample (no pose-and-boxes-only key frame), and
+    the next frame is still written (#2237)."""
+    world = _World()
+    jpeg = _jpeg()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world, _driver(lidars=()))
+    finally:
+        t4.withdraw_driver_sensors()
+    rendered = -1
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        for frame in range(100, 113):
+            world.frame = frame
+            if frame % 4 == 1:  # the camera's ticks: 101, 105, 109
+                rendered = frame
+            if frame % 2 == 1 and rendered >= 0:  # the policy's steps
+                recording.feed_camera_jpeg(frame, "cam_front", jpeg, taken_on=rendered)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    assert [t - samples[0] for t in samples] == [0, 200_000, 400_000]
+    assert _jpg_timestamps(root) == samples
+    assert "nothing fed on frame 103 can be written" in caplog.text
+
+
+def _jpeg_of(value: int) -> bytes:
+    """A JPEG frame of its own: grey at *value*, so each rendered frame's
+    bytes tell it from the others."""
+    import cv2  # noqa: PLC0415
+
+    ok, encoded = cv2.imencode(".jpg", np.full((48, 64, 3), value, dtype=np.uint8))
+    assert ok
+    return encoded.tobytes()
+
+
+def _written_jpegs(root: Path) -> dict[str, list[bytes]]:
+    """Each camera channel's written frames, oldest first."""
+    sensors = {s["token"]: s["channel"] for s in _table(root, "sensor")}
+    channels = {
+        c["token"]: sensors[c["sensor_token"]]
+        for c in _table(root, "calibrated_sensor")
+    }
+    written: dict[str, list[tuple[int, bytes]]] = {}
+    for row in _table(root, "sample_data"):
+        if row["fileformat"] == "jpg":
+            written.setdefault(channels[row["calibrated_sensor_token"]], []).append(
+                (row["timestamp"], (root / "0" / row["filename"]).read_bytes())
+            )
+    return {
+        channel: [jpeg for _, jpeg in sorted(frames)]
+        for channel, frames in written.items()
+    }
+
+
+def test_a_camera_slower_than_the_policy_beside_an_older_sweep_is_written_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sweep a tick older than the step puts the key frame before the frame
+    of a camera rendering every 4 ticks on the step itself; on the next step
+    the policy is handed that frame again, which is after the key frame
+    written last but is not written a second time (#2352)."""
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    rendered = -1
+    for frame in range(100, 113):
+        world.frame = frame
+        if frame % 4 == 3:  # the camera's ticks: 103, 107, 111
+            rendered = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_lidar(
+                frame,
+                np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                taken_on=frame - 1,
+            )
+            if rendered >= 0:
+                recording.feed_camera_jpeg(
+                    frame, "cam_front", _jpeg_of(rendered), taken_on=rendered
+                )
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    # A sample per sweep: frames 100, 102, ..., 110.
+    assert [t - samples[0] for t in samples] == [i * 100_000 for i in range(6)]
+    assert _written_jpegs(root) == {
+        "CAM_FRONT": [_jpeg_of(103), _jpeg_of(107), _jpeg_of(111)]
+    }
+
+
+def test_two_cameras_at_other_rates_write_each_frame_once_a_step_apart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a LiDAR: a camera at the policy's rate, rendering a tick before
+    each step, and one every 4 ticks on the step itself.  The slow camera's
+    frame handed to the policy again on the next step is not written again,
+    nor does it pull that step's key frame back onto its own tick -- the
+    samples stay a policy step apart, not 50 and 150 ms (#2352)."""
+    rear = DriverCameraConfig(
+        logical_id="cam_rear", image_width=64, image_height=48, fov=90.0, yaw=180.0
+    )
+    world = _World()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(
+            tmp_path,
+            monkeypatch,
+            world,
+            _driver(lidars=(), cameras=(_driver().cameras[0], rear)),
+        )
+    finally:
+        t4.withdraw_driver_sensors()
+    rear_rendered = -1
+    for frame in range(100, 113):
+        world.frame = frame
+        if frame % 4 == 1:  # the rear camera's ticks: 101, 105, 109
+            rear_rendered = frame
+        if frame % 2 == 1:  # the policy's steps
+            recording.feed_camera_jpeg(
+                frame, "cam_front", _jpeg_of(frame - 1), taken_on=frame - 1
+            )
+            recording.feed_camera_jpeg(
+                frame, "cam_rear", _jpeg_of(rear_rendered), taken_on=rear_rendered
+            )
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    samples = sorted(s["timestamp"] for s in _table(root, "sample"))
+    # On the front camera's frames: 100, 102, ..., 110.
+    assert [t - samples[0] for t in samples] == [i * 100_000 for i in range(6)]
+    assert _written_jpegs(root) == {
+        "CAM_FRONT": [_jpeg_of(f) for f in range(100, 111, 2)],
+        "CAM_REAR": [_jpeg_of(101), _jpeg_of(105), _jpeg_of(109)],
+    }
+
+
+def test_a_fed_dataset_with_two_cameras_passes_t4_devkits_sanity_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run of
+    :func:`test_two_cameras_at_other_rates_write_each_frame_once_a_step_apart`
+    reads back with t4-devkit and passes its sanity checker."""
+    t4_devkit = pytest.importorskip("t4_devkit")
+    from t4_devkit.sanity import sanity_check  # noqa: PLC0415
+
+    test_two_cameras_at_other_rates_write_each_frame_once_a_step_apart(
+        tmp_path, monkeypatch
+    )
+    root = dataset_path(tmp_path / "out", "CutInScenario")
+    dataset = t4_devkit.T4Devkit(str(root))
+    assert len(dataset.sample) == 6
+    result = sanity_check(str(root))
+    assert result.is_passed()
+    failed = {r.id for r in result.reports if r.status.name == "FAILED"}
+    assert failed <= {"STR005", "STR009"}
+
+
+def test_the_dataset_and_the_trajectory_log_agree_on_the_rear_axle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``driver.rear_axle_offset_m`` set and no ego saying where its
+    base_link is, the trajectory log's ``rear_axle`` (so the T4Scenes') is the
+    dataset's, not one derived from the box (#2237)."""
+    from autoware_carla_scenario import ego_base_link
+    from autoware_carla_scenario.trajectory_recorder import _rear_axle
+
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", None)
+    world = _World()
+    derived = rear_axle_offset(world.ego)  # type: ignore[arg-type]
+    assert derived != -1.7
+    assert _rear_axle(world.ego) == derived
+    recording = _start(tmp_path, monkeypatch, world, _driver(rear_axle_offset_m=-1.7))
+    try:
+        assert t4.active_recording() is recording
+        assert _rear_axle(world.ego) == -1.7
+        assert t4.ego_rear_axle(world.ego) == -1.7
+        for frame in range(101, 103):
+            world.frame = frame
+            if frame % 2 == 1:
+                world.sense()
+            recording.record(world)  # type: ignore[arg-type]
+    finally:
+        root = recording.close()
+    assert root is not None
+    np.testing.assert_allclose(
+        _table(root, "ego_pose")[0]["translation"][0],
+        world.ego_x(101) - 1.7 + OFFSETS[0],
+        atol=1e-9,
+    )
+    # The run over, the log derives it again.
+    assert _rear_axle(world.ego) == derived
+
+
+def test_the_rear_axle_rule_puts_the_driver_offer_and_the_egos_base_link_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario import ego_base_link
+
+    world = _World()
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", -0.9)
+    assert t4.ego_rear_axle(world.ego, -1.7) == -0.9
+    t4.offer_driver_sensors(-1.25)
+    try:
+        assert t4.ego_rear_axle(world.ego, -1.7) == -1.25
+    finally:
+        t4.withdraw_driver_sensors()
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", None)
+    assert t4.ego_rear_axle(world.ego, -1.7) == -1.7
 
 
 def test_a_t4_camera_skips_an_attribute_the_server_lacks_with_a_warning(
@@ -1221,3 +1574,69 @@ def test_a_t4_camera_skips_an_attribute_the_server_lacks_with_a_warning(
     assert "bloom_intensity" not in blueprint.attributes
     assert blueprint.attributes["iso"] == "100.0"
     assert "has no attribute 'bloom_intensity'" in caplog.text
+
+
+def _frame_camera_attributes(config: Any, interval_ticks: int) -> list[tuple[str, str]]:
+    calls: list[tuple[str, str]] = []
+
+    class _Recorded(_Blueprint):
+        def set_attribute(self, name: str, value: str) -> None:
+            calls.append((name, value))
+
+    blueprint = _Recorded("sensor.camera.rgb")
+    world = _World()
+    world.get_blueprint_library = lambda: SimpleNamespace(find=lambda name: blueprint)  # type: ignore[method-assign]
+    t4._FrameCamera(config, interval_ticks).attach(world, world.ego)
+    return calls
+
+
+def test_a_t4_camera_is_set_up_as_it_was_before_sharing_the_setup() -> None:
+    """_FrameCamera.attach shares CarlaCameraSensor's blueprint setup (#2228):
+    the attributes it sets, and their order, are what it set itself before."""
+    from autoware_carla_scenario.sensor.carla_camera import (  # noqa: PLC0415
+        CarlaCameraSensorConfig,
+    )
+
+    config = CarlaCameraSensorConfig(
+        image_width=960, image_height=604, fov=120.0, gamma=2.2, exposure_mode="manual"
+    )
+    every_tick = [
+        ("image_size_x", "960"),
+        ("image_size_y", "604"),
+        ("fov", "120.0"),
+        ("gamma", "2.2"),
+        ("exposure_mode", "manual"),
+    ]
+    # A frame every tick: the blueprint's own sensor_tick, which is not set.
+    assert _frame_camera_attributes(config, 1) == every_tick
+    # Every other tick: just under 0.1 s, set before the overrides.
+    assert _frame_camera_attributes(config, 2) == [
+        *every_tick[:3],
+        ("sensor_tick", "0.099999"),
+        *every_tick[3:],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "fov"),
+    [(960, 604, 120.0), (1920, 1080, 90.0), (832, 480, 70.3), (1, 1, 0.5)],
+)
+def test_a_t4_camera_intrinsic_is_its_pinhole_as_before(
+    width: int, height: int, fov: float
+) -> None:
+    """The T4 intrinsics are CameraSensorConfig.intrinsic_matrix now, no longer
+    rebuilt by hand (#2228): the same numbers, to the bit."""
+    camera = DriverCameraConfig(
+        logical_id="cam", image_width=width, image_height=height, fov=fov
+    ).to_sensor_config()
+    recording = object.__new__(t4.T4Recording)
+    recording._settings = SimpleNamespace(cameras=[("cam", camera)], lenses=())  # type: ignore[assignment]
+    [(intrinsic, distortion)] = recording._camera_models()
+    fx = width / (2.0 * math.tan(math.radians(fov / 2.0)))
+    assert intrinsic == [
+        [fx, 0.0, width / 2.0],
+        [0.0, fx, height / 2.0],
+        [0.0, 0.0, 1.0],
+    ]
+    assert all(type(value) is float for row in intrinsic for value in row)
+    assert distortion == [0.0, 0.0, 0.0, 0.0, 0.0]

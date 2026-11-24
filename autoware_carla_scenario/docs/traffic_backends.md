@@ -131,7 +131,9 @@ parameter's bounds (drawn again until it is inside them -- a truncated
 normal). The traffic is a population of drivers, not one driver copied. Every
 numeric parameter also takes a plain value instead, in a config and in Python
 alike: a number (or a `std` of 0) gives every road user exactly that value. The
-draws come from the run's seed: the same seed, the same drivers.
+draws come from the run's seed: the same seed, the same drivers. A value out of
+its bounds, or a negative `std`, is refused by its full key and shown as
+written: `traffic.bicycles.min_gap_m.mean must be within [0, inf] (got '-1')`.
 
 ```yaml
 traffic:
@@ -232,7 +234,8 @@ where it is fixed. A numeric one is a spread whose mean must lie in the range
 given, which is also what each road user's draw is cut to; a mean outside it,
 or a negative std, is refused when the config is read, before the backend is
 built. Each vehicle draws once, when it is first put on autopilot
-(TrafficManager) or departs (SUMO), and keeps its draws.
+(TrafficManager; those there at the start in the order they were spawned) or
+departs (SUMO), and keeps its draws.
 
 #### `traffic.vehicles`
 
@@ -944,7 +947,10 @@ CARLA's TrafficManager drives in the weather as on a clear day: its vehicles
 know where every actor is whatever the fog. With
 `traffic.vehicles.follow_visibility: true` each vehicle it drives is held to
 the speed its driver keeps in what it sees: the weather rules' `sight_speed`
-([Weather rules](odd.md#weather-rules)) at the driver's own quantile, for
+([Weather rules](odd.md#weather-rules)) at the driver's own quantile
+(`visibility.driver_quantile` of the run's seed and how many vehicles were put
+on autopilot before it, not of its CARLA actor id, so a run repeats on a
+server that ran others before it), for
 SUMO's default car's reaction (1 s) and braking (4.5 m/s²) -- about 46-62
 km/h in 50 m of fog, never more than the 62 km/h it stops from within it.
 A vehicle is never held faster than it drives anyway. One given a speed of
@@ -991,6 +997,12 @@ Only **background vehicles** (`spawn_background`) are left to that. Every other
 vehicle the `traffic_manager` backend has on autopilot — the ego, each NPC the
 scenario authored — is kept from it in `tick()`; under `traffic=sumo` with
 `scenario_vehicles=traffic_manager` the same, since SUMO hands those to it.
+A background vehicle the TrafficManager destroyed is forgotten: no longer
+counted, listed or chosen by an adversity. It is told by `is_alive`, not by an
+error -- another handle to an actor destroyed elsewhere raises nothing and
+reads at the origin -- except on the frame it was spawned on, before the world
+has ticked, when a client reads every new actor that way; it is given at its
+spawn point then.
 
 - **Standing:** once a kept vehicle has stood 60 s (90 s less a 30 s margin)
   it is taken off autopilot and put straight back on. Unregistering a vehicle erases its idle
@@ -1092,12 +1104,19 @@ are drawn from the run's seed.
 **How it comes back.** On the nearest driving lane to where the model has
 it (the model has no lanes: its rightmost lane a car may use), facing along
 it, as the same blueprint with the same `role_name` (its handle), at the
-model's speed, on autopilot again and capped at its speed as before. A spot
+model's speed, on autopilot again and capped at its speed as before. The
+model has its bounding box's centre, as SUMO places a vehicle; it is spawned
+at the origin that puts its box there, by the box offset it had when it left
+(about a metre behind the centre for a car), so it does not come back a
+metre ahead each time it changes level. The lane is looked up at the height
+of SUMO's lane there -- a network converted from OpenDRIVE keeps the roads'
+elevation -- so a stacked or elevated road gives the right level. A spot
 CARLA refuses (taken) leaves it out until the next decision.
-`background_vehicles()` reports every background vehicle wherever it is --
-one out of CARLA where the model has it, with no height -- and
-`background_actors()` only those in CARLA; `remove_background()` takes one
-out of either.
+`background_vehicles()` reports every background vehicle wherever it is, by
+its origin, as the TrafficManager's are -- one out of CARLA where the model
+has it, at its lane's height where SUMO's network has one and with no height
+otherwise -- and `background_actors()` only those in CARLA;
+`remove_background()` takes one out of either.
 
 | `traffic.options` | Default | Meaning |
 | --- | --- | --- |
@@ -1112,7 +1131,11 @@ written to `<output_dir>/<stem>.sumo/sumo_meso.log`; its junctions run SUMO's
 own signal programs, since CARLA's lights are matched to SUMO's only by the
 `sumo` backend. `engine: queue` is the in-process queue model
 (`headway_s`, `jam_spacing_m`), which holds nobody at a junction here, having
-no signals to read.
+no signals to read; it needs sumolib and SUMO's network of the map
+(`net_path`, or the world's OpenDRIVE converted with roadgen and `netconvert`),
+but not the `sumo` binary, which only `engine: sumo` looks up. Either binary
+is the one in `$SUMO_HOME` or the `eclipse-sumo` package, else the one on
+`PATH`.
 
 `describe()` adds `mesoscopic` -- the engine, the radii and the changes of
 level so far -- and `fidelity_census()` counts the vehicles the
@@ -1131,7 +1154,15 @@ uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
 uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
 uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
 uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{stem}.sumo/fcd.xml
+uv run scenario ... traffic=sumo traffic.options.use_libsumo=false traffic.options.binary=sumo-gui
 ```
+
+**To watch a run**, run SUMO as a TraCI process (`use_libsumo: false`) with
+`binary: sumo-gui`. Its window stays open after the run, for a look at how it
+ended, until it is closed (or `--quit-on-end` in `sumo_args` closes it at
+once). A headless `sumo` is ended with the run: it is given 5 s to exit once
+its connection closes, then killed, and a failed start kills it and quotes
+what it wrote to its standard error.
 
 **Its switches** -- `publish_walkers`, `pedestrian_crossings`,
 `cycle_on_sidewalks`, `use_libsumo`, `fcd_output`, `ambient.enabled`,
@@ -1142,8 +1173,10 @@ uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{s
 and `"true"`, `"yes"`, `"on"`, `"1"`, `1`), read as the run's own switches
 are ([The switches](usage.md#the-switches)): so a quoted
 `traffic.options.fcd_output='false'` is false. Anything else (`maybe`, `2`,
-null) is refused before the run, naming the option as
-`ambient.enabled must be true or false, got 'maybe'`.
+null) is refused before the run, naming the option by its full key as
+`traffic.options.ambient.enabled must be true or false, got 'maybe'`. So
+does every other option's error, and it shows the value as written
+(`traffic.options.warmup_s must be finite and not negative (got -1)`).
 
 **Its sections** -- `ambient`, `pedestrians`, `bicycles` and `mesoscopic`
 under `traffic.options` -- are mappings. An absent or null one is the
@@ -1508,11 +1541,13 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   queue at a light say, is given its zero once).
 
 **Visibility** (`traffic.vehicles.follow_visibility`, on by default): SUMO's traffic sees only
-as far as the run's weather lets a driver see. An
-`EnvironmentAction` that sets the fog, the rain or the sun records how far
-drivers see in the weather it leaves
-([Visibility follows the conditions](odd.md#visibility-follows-the-conditions)),
-and the backend holds each of SUMO's own vehicles (ambient and background)
+as far as the run's weather lets a driver see. How far drivers see is
+worked out before the run from the conditions the run names
+([Visibility follows the conditions](odd.md#visibility-follows-the-conditions));
+during the run only an `EnvironmentAction` given `visibility_m` changes it
+(one that sets the fog, the rain or the sun alone leaves the visibility as it
+was, so a mid-run fog change does not slow the traffic without one), and the
+backend holds each of SUMO's own vehicles (ambient and background)
 to the speed its driver keeps in that distance: the weather rules'
 `sight_speed` ([Weather rules](odd.md#weather-rules)), which reads the
 visibility, at the driver's own quantile (`visibility.driver_quantile`, from
@@ -1564,9 +1599,16 @@ of its `get_opendrive_id()`, roadgen records which map element that signal
 became when it reads the OpenDRIVE (`map.xodr.trace.json`), and which SUMO links
 of the junction's program that element became when it writes the network
 (`network.sumo.trace.json`). A light whose signal reached no link is named in a
-warning, and SUMO keeps its own program there. A network given as `net_path`
-has no traces, and its links are matched geometrically instead: a light's stop
-waypoints to the SUMO lane there.
+warning, and SUMO keeps its own program there. That holds link by link: setting
+a junction's state switches SUMO to a fixed program of its own, so the links of
+a junction where CARLA's lights switch others -- and that no bicycle ride or
+pedestrian crossing follows -- are given the state SUMO's original program
+shows each step, read before the first state is set and stepped through phase
+by phase at each phase's duration (an actuated program at its phases' default
+ones). The start log names them; a junction whose program cannot be read is
+named in a warning, and those links then hold the state they had. A network
+given as `net_path` has no traces, and its links are matched geometrically
+instead: a light's stop waypoints to the SUMO lane there.
 
 On Town10HD_Opt all 15 lights match, 56 links between them; SUMO's only other
 signal links are on emergency-only shoulder lanes.
@@ -1612,6 +1654,13 @@ uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \
 | `segment_length_m` | `20` | `engine: sumo`: the segments SUMO's mesoscopic model cuts a road into (`--meso-edgelength`) |
 | `headway_s`, `jam_spacing_m` | `1.5`, `7.5` | `engine: queue`: the queue model's capacity per lane, and the road a queued vehicle takes up |
 | `junction_control` | `true` | hold a mesoscopic vehicle at a SUMO signal unless it is green (`G`, `g`) or switched off (`o`, `O`) on some lane of its move: red, red-yellow, yellow and a right turn on red (`s`) hold it. Under `engine: sumo`, SUMO's `--meso-junction-control`, with the microscopic SUMO's signal states |
+
+An option left out, or null, is its default. `false`, `0` and `''` are
+values like any other: a number refuses `false` and `''` as not numbers and
+`0` where it must be positive, and a switch reads `false` and `0` as off and
+refuses `''` ([the switches](usage.md#the-switches)). A value refused is named
+by its full key and shown as written: `micro_radius_m: 0` is
+`traffic.options.mesoscopic.micro_radius_m must be positive and finite (got 0)`.
 
 **When a vehicle changes level** is the radii's decision, with two options
 that refine it:
@@ -1663,7 +1712,11 @@ done around it:
 
 A vehicle leaves only from a normal edge, never from inside a junction, and
 comes back with its route, its type, length, width and top speed, and a speed
-it was told to keep. A scenario's vehicle that is mesoscopic takes
+it was told to keep. A scenario's vehicle comes back at the height of its
+lane in SUMO's network, which keeps the OpenDRIVE's elevation; on a network
+without any (all its heights 0), at the height of the driving lane CARLA
+finds nearest to where SUMO has it, so it is not put at z = 0 on a map whose
+roads are not. A scenario's vehicle that is mesoscopic takes
 `set_desired_speed` and `turn_at_junction` in the mesoscopic model; it cannot change
 lanes there, and says so. `scenario_vehicles` is off by default because such a
 vehicle has no actor while it is far: a scenario that reads it -- a condition

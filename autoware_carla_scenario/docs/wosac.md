@@ -59,7 +59,12 @@ write_submission(build_submission(scenarios, {"unique_method_name": "..."}), "su
 A log too short for the rows asked for is refused, naming how many it has: a
 run ends with its verdict, which can be well before 9 s. A log whose last
 line is cut off is read without it, as for a [T4 Scene](t4_scene.md); a
-log that fails does not stop the others, and the command exits 1.
+log that fails does not stop the others, and the command exits 1. An
+option out of range (`--current-index` below 0, `--steps` below 1, an empty
+`--scenario-id`) is refused before any log is read, naming the option, and so
+is a path that does not exist, as a directory with no log under it is (exit
+2). Ctrl-C prints `scenario-wosac: interrupted` and exits 130. Two
+`--object-ids` keys of one role (`ego` and `hero`) are refused.
 
 ### `pack`
 
@@ -79,7 +84,8 @@ prints how many rollouts each scenario got, then the files it wrote. A
 scenario is refused, and nothing is written, when its runs are not rollouts
 of it ([below](#are-they-rollouts)), when its rollouts simulate different
 agents (without `--common-agents`), when two of its trajectories differ in
-length, or when it has not `--rollouts` rollouts.
+length, or when it has not `--rollouts` rollouts. `--rollouts` or
+`--shards` below 1 is refused before anything is read, naming the option.
 
 The metadata are the submission's fields the challenge asks for:
 
@@ -93,7 +99,7 @@ method_link: https://example.com/method
 uses_lidar_data: false
 uses_camera_data: false
 uses_public_model_pretraining: false
-num_model_parameters: "0"
+num_model_parameters: "200K"            # an integer and a multiplier suffix (K, M, B, T)
 acknowledge_complies_with_closed_loop_requirement: true
 ```
 
@@ -143,13 +149,16 @@ it builds the digest of its config, `scenario_hash`
 class and of the sections of the config that say what is simulated --
 `scenario`, `map`, `ego`, `entity`, `environment`, `controls`,
 `scenario_rules`, `background_traffic`, `traffic`, `odd` and `odd_case` --
-without `seed`, and without the settings that say where a run connects
-(hosts, addresses, ports, ROS domains: what a SLURM task moves to its own
-slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
+and of `server.fog_density_scale` when it is set (it scales how thick
+`environment.fog_density` renders, to the cameras and the LiDARs' fog alike;
+left `null`, the server's own scale, it is not digested), without `seed`, and
+without the settings that say where a run connects (hosts, addresses, ports,
+ROS domains: what a SLURM task moves to its own slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
 under test, not the scenario, and how a run is recorded does not change what
 is simulated: neither is in it. Every top-level section of the `scenario`
 command's config is listed as hashed or not (`SCENARIO_SECTIONS`,
-`OTHER_SECTIONS`), and a test keeps it so, so a new section cannot be left
+`OTHER_SECTIONS`; the settings of the latter that are hashed all the same are
+`SCENARIO_SETTINGS`), and a test keeps it so, so a new section cannot be left
 out of the hash unseen. The runner writes the run's seed and its
 hash into the trajectory log (its [`run`](trajectory_log.md#records)
 record), and `export` into the `.wosac.json`, with each agent's pose on the
@@ -163,6 +172,11 @@ current row.
   `--scenario-id`.
 - **A seed of its own**: two runs of one seed are one rollout run twice,
   and are refused.
+- **One grid in one frame**: every run has the first run's `frame`,
+  `offset`, `step_s` and `current_index`. A run exported with another
+  `--map-frame` or `--current-index` is refused, naming both files and the
+  field: its rollout would be scored on other rows, or kilometres from the
+  others.
 - **One initial state**: each agent starts its future -- the current row --
   where it does in the first run, within `--position-tolerance` and
   `--heading-tolerance`. The history before it is simulated too, so a stack
@@ -197,6 +211,14 @@ result.
 | `{stem}.wosac.json` | What the message has no field for: the `scenario_id`, the grid (`step_s`, `current_index`, `steps`, `padded_steps`, `current_frame`, `current_t`), the `frame` (`local` or `map`) and its `offset`, the run's verdict (`result`: `passed`, `message`, or null), its `seed` and `scenario_hash` (null for a log without a `run` record), and every agent: `object_id`, `role`, `actor_id`, `type_id`, `object_type`, `ego`, `valid_steps`, and `current` (its box centre and heading on the current row, `[x, y, z, heading]`) |
 | `submission.binproto-00000-of-00001` | One serialised `SimAgentsChallengeSubmission` per shard: the metadata, and a contiguous share of the scenarios, sorted by `scenario_id` (`read_submission()` reads them back as one: every shard's scenarios, and the metadata once, the last shard's) |
 | `submission.tar.gz` | The shards, with `--tar` |
+
+Each `.wosac.pb`, `.wosac.json` and shard is written in one rename (a
+scratch file beside it, renamed over it), so a run killed while it writes
+leaves no truncated message, which would often still parse. `export` writes
+the `.wosac.json` first and the `.wosac.pb` last, removing an earlier
+export's `.wosac.pb` before: a rollout on disk always has its own sidecar,
+never none (which `pack` would take for a merged file) nor an earlier
+export's.
 
 The run's own files are named after its stem (`run_outputs.WOSAC_SUFFIX`),
 so a case run again under that stem removes the last attempt's rollout

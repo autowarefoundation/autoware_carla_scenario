@@ -22,7 +22,6 @@ import pytest
 from omegaconf import DictConfig, OmegaConf
 
 from autoware_carla_scenario.authoring.compiler import compile_document
-from autoware_carla_scenario.authoring.hydra_config import build_scenario_config
 from autoware_carla_scenario.authoring.models import (
     AUTO_MODEL,
     BindingRef,
@@ -39,6 +38,8 @@ from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pos
 from autoware_carla_scenario.examples.run import build_ego_and_spawn
 
 import autoware_carla_scenario.examples as examples_package
+
+from ._exported_config import resolved_config
 
 CONF = Path(examples_package.__file__).parent / "conf"
 
@@ -146,7 +147,7 @@ def built_entities(document: ScenarioDocument) -> dict[str, Any]:
 
 def _runtime(document: ScenarioDocument) -> dict[str, Any]:
     """Everything of *document* that reaches a run."""
-    export = build_scenario_config(document)
+    export = resolved_config(document)
     return {"export": export, "ego": _ego_spawn(export), "built": _built(document)}
 
 
@@ -360,12 +361,12 @@ def _with_ego_spawn(t: float, heading: float) -> ScenarioDocument:
 
 class TestTheEgoSpawn:
     def test_offset_and_heading_are_exported(self) -> None:
-        ego = build_scenario_config(_with_ego_spawn(1.5, 0.5))["ego"]
+        ego = resolved_config(_with_ego_spawn(1.5, 0.5))["ego"]
         assert ego["spawn_t"] == 1.5
         assert ego["spawn_heading"] == 0.5
 
     def test_the_runner_builds_the_pose_from_them(self) -> None:
-        export = build_scenario_config(_with_ego_spawn(-0.75, math.pi))
+        export = resolved_config(_with_ego_spawn(-0.75, math.pi))
         assert _ego_spawn(export) == Lanelet2Pose(
             lanelet_id=242, s=5.0, t=-0.75, heading=math.pi
         )

@@ -29,15 +29,17 @@ import logging
 import math
 import tarfile
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional
 
 from google.protobuf import json_format
 from google.protobuf.message import DecodeError
 
+from ..atomic_file import write_chunks_atomically
 from ..kinematics.angle import normalize_angle_rad
 from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
+from ..seed import check_whole_number
 from ..t4_scene.grid import files_under
 from ._proto import sim_agents_submission_pb2 as pb
 from .ids import checked_count
@@ -125,16 +127,13 @@ def read_run(path: Path | str) -> Optional[dict[str, Any]]:
 
 
 def _whole(value: Any) -> bool:
-    """Whether ``int(value)`` reads *value* as a whole number: not a bool,
-    which a sidecar never holds for an id or a seed, nor a fraction, which
-    ``int()`` would truncate (seeds 1.2 and 1.7 would both read as 1)."""
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, float) and not value.is_integer():
-        return False
+    """Whether *value* is a whole number (:func:`seed.check_whole_number`):
+    not a bool, which a sidecar never holds for an id or a seed, nor a
+    fraction, which ``int()`` would truncate (seeds 1.2 and 1.7 would both
+    read as 1), nor text."""
     try:
-        int(value)
-    except (TypeError, ValueError, OverflowError):
+        check_whole_number("value", value)
+    except ValueError:
         return False
     return True
 
@@ -231,8 +230,21 @@ def _check_scenario_runs(
             scenario_id,
             ", ".join(unknown),
         )
-    # The initial state: every agent where the first run has it.
+    # The grid and the frame: rollouts of one scenario are scored row by row
+    # in one frame, so a run exported with another --map-frame, step or
+    # current row is no rollout of the others.
     reference, reference_source = runs[0]
+    for run, source in runs[1:]:
+        for field in _GRID_FIELDS:
+            first, other = _grid_value(reference, field), _grid_value(run, field)
+            if first != other:
+                raise ValueError(
+                    f"scenario {scenario_id!r}: {reference_source} and {source} "
+                    f"differ in {field} ({first!r} and {other!r}), so they are "
+                    "not rollouts on one grid in one frame: export them with "
+                    "the same --map-frame and --current-index"
+                )
+    # The initial state: every agent where the first run has it.
     poses = _current_poses(reference)
     for run, source in runs[1:]:
         for object_id, pose in _current_poses(run).items():
@@ -253,22 +265,30 @@ def _check_scenario_runs(
                 )
 
 
+#: What every run of a scenario has to share with the first
+#: (:func:`_check_scenario_runs`): its frame, the offset added to its
+#: positions, and its grid.
+_GRID_FIELDS = ("frame", "offset", "step_s", "current_index")
+
+
+def _grid_value(run: Mapping[str, Any], field: str) -> Any:
+    """*run*'s *field* as :func:`_check_scenario_runs` compares it: an
+    ``offset`` as floats, absent or null as no offset."""
+    value = run.get(field)
+    if field == "offset":
+        return [float(v) for v in value or (0.0, 0.0, 0.0)]
+    return value
+
+
 def _current_poses(run: Mapping[str, Any]) -> dict[int, tuple[float, ...]]:
-    """Each agent's pose on the current row of *run*, by object id, in the
-    frame without the map's offsets (two runs may be written in either)."""
-    offset = [float(v) for v in run.get("offset") or (0.0, 0.0, 0.0)]
+    """Each agent's pose on the current row of *run*, by object id, in its
+    frame (which every run of a scenario shares, :data:`_GRID_FIELDS`)."""
     poses: dict[int, tuple[float, ...]] = {}
     for agent in run.get("agents") or ():
         current = agent.get("current")
         if current is None:
             continue
-        x, y, z, heading = (float(v) for v in current)
-        poses[int(agent["object_id"])] = (
-            x - offset[0],
-            y - offset[1],
-            z - offset[2],
-            heading,
-        )
+        poses[int(agent["object_id"])] = tuple(float(v) for v in current)
     return poses
 
 
@@ -288,6 +308,9 @@ def check_runs(
     * every run of a ``scenario_id`` ran one concrete scenario: one
       ``scenario_hash`` (:mod:`~autoware_carla_scenario.scenario_hash`);
     * each with a seed of its own: two of one seed are one rollout twice;
+    * each in the first run's frame, offset, step and current row
+      (``frame``, ``offset``, ``step_s``, ``current_index``): a run exported
+      with another ``--map-frame`` or ``--current-index`` is on another grid;
     * and each agent starts its future -- the current row -- where it does in
       the first run, within *position_tolerance_m* and
       *heading_tolerance_rad*: an agent placed at random before it would
@@ -303,7 +326,8 @@ def check_runs(
 
     Raises:
         ValueError: If a scenario's runs ran different scenarios, two ran
-            one seed, or an agent starts two of them apart.
+            one seed, two differ in frame, offset, step or current row, or an
+            agent starts two of them apart.
     """
     position_tolerance_m = float(position_tolerance_m)
     heading_tolerance_rad = float(heading_tolerance_rad)
@@ -508,6 +532,15 @@ def shard_name(index: int, count: int) -> str:
     return f"{SHARD_PREFIX}-{index:05d}-of-{count:05d}"
 
 
+def _shard_chunks(head: bytes, scenarios: Sequence[Any]) -> Iterator[bytes]:
+    """A shard's bytes: the metadata's *head*, then each of *scenarios* as a
+    submission of its own, which concatenate into one message."""
+    yield head
+    for scenario in scenarios:
+        one = pb.SimAgentsChallengeSubmission(scenario_rollouts=[scenario])
+        yield one.SerializeToString(deterministic=True)
+
+
 def write_submission(
     submission: pb.SimAgentsChallengeSubmission,
     output_dir: Path | str,
@@ -557,11 +590,11 @@ def write_submission(
         start = index * count // shards
         stop = (index + 1) * count // shards
         path = directory / shard_name(index, shards)
-        with path.open("wb") as stream:
-            stream.write(head)
-            for scenario in submission.scenario_rollouts[start:stop]:
-                one = pb.SimAgentsChallengeSubmission(scenario_rollouts=[scenario])
-                stream.write(one.SerializeToString(deterministic=True))
+        # In one rename: a run killed mid-shard leaves no truncated shard,
+        # which would parse as a submission short of scenarios.
+        write_chunks_atomically(
+            path, _shard_chunks(head, submission.scenario_rollouts[start:stop])
+        )
         paths.append(path)
     if tar:
         archive = directory / TARBALL_NAME

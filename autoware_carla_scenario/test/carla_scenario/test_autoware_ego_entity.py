@@ -812,7 +812,7 @@ class TestLivenessAgainstTheNodesParameters:
             DockerAutowareConfig(
                 workspace=Path("/nonexistent"),
                 launch=["x"],
-                bridge_parameters={"route_watch_period_s": "20.0"},
+                bridge_parameters={"route_watch_period_s": 20.0},
             )
         )
         with pytest.raises(ValueError, match="route_watch_period_s .20 s."):
@@ -1189,6 +1189,22 @@ class TestReRouting:
 
         with pytest.raises(NotImplementedError, match="_OldBridge cannot re-route"):
             entity.set_mission(None, _GOAL)
+
+    def test_a_retry_hands_over_the_mission_from_before_the_re_route(self) -> None:
+        """#2275: the queue retries with the same entity; a mid-run re-route
+        was the attempt before's, not the retry's starting mission."""
+        bridge = FakeAutowareBridge()
+        entity, world = self._started(bridge)
+        rerouted = BridgePose.from_yaw(x=99.0, y=0.0, z=0.0, yaw=0.0)
+        entity.set_mission(None, rerouted, [rerouted])
+        _assert_pose_close(bridge.configured_goal, rerouted.moved_forward(self._OFFSET))
+        entity.on_scenario_end(world)
+
+        entity.on_scenario_start(world)
+
+        assert bridge.calls.count("configure") == 2
+        _assert_pose_close(bridge.configured_goal, _GOAL.moved_forward(self._OFFSET))
+        assert not bridge.configured_waypoints
 
     def test_a_mission_set_after_the_run_ended_is_the_next_runs(self) -> None:
         bridge = FakeAutowareBridge()

@@ -27,17 +27,28 @@ from typing import NamedTuple
 
 from ..templating import code_environment
 from .names import (
-    BUILTIN_SCENARIO_NAMES,
     _FRAMEWORK_DISTRIBUTION,
     _default_scenario_name,
-    _is_framework_name,
     _normalise_distribution,
     _to_hyphen,
     _to_pascal,
     _to_snake,
     _validate_identifier,
     _validate_scenario_name,
+    check_package_name,
+    check_scenario_name,
+    reserved_scenario_names,
+    scenario_class_names,
 )
+
+# The built-in scenarios, the framework-name rule, the framework's own
+# top-level modules and its dependencies' import names, which the checked
+# scaffold.names holds with the rules that read them; re-exported here, where
+# they have always been imported from (the same objects).
+from .names import BUILTIN_SCENARIO_NAMES as BUILTIN_SCENARIO_NAMES
+from .names import _DEPENDENCY_IMPORT_NAMES as _DEPENDENCY_IMPORT_NAMES
+from .names import _FRAMEWORK_TOP_LEVEL_MODULES as _FRAMEWORK_TOP_LEVEL_MODULES
+from .names import _is_framework_name as _is_framework_name
 
 # Putting a rendered package in place, which the library check compiles from
 # its own module; every name of it is re-exported here, where it has always
@@ -201,21 +212,10 @@ def _reserved_scenario_names() -> frozenset[str]:
     :func:`_package_init_globals`.  Derived from the templates so it follows
     them.
     """
-    reserved: set[str] = set()
-    for template_name, out_template in _FILE_MANIFEST.items():
-        if template_name == _SCENARIO_TEMPLATE or not out_template.startswith(
-            _PACKAGE_DIR
-        ):
-            continue
-        top = out_template[len(_PACKAGE_DIR) :].split("/", 1)[0]
-        if "{" in top:
-            # Named after the scenario itself, so it cannot collide.
-            continue
-        reserved.add(top.removesuffix(".py"))
-    reserved |= _package_init_globals()
-    # A scenario name is lower case once normalised (``CONF_DIR`` and the
-    # config class cannot clash), so only lower-case names are listed.
-    return frozenset(name for name in reserved if name == name.lower())
+    # The walk is the checked scaffold.names' (#2364).
+    return reserved_scenario_names(
+        _FILE_MANIFEST, _SCENARIO_TEMPLATE, _PACKAGE_DIR, _package_init_globals()
+    )
 
 
 def _imported_modules(source: str) -> set[str]:
@@ -266,52 +266,6 @@ def _template_imported_modules() -> frozenset[str]:
     return frozenset(modules)
 
 
-#: The top-level modules the framework's wheel ships besides
-#: ``autoware_carla_scenario`` (``[tool.uv.build-backend] module-name`` in its
-#: ``pyproject.toml``; ``test_scaffold.py`` checks the two agree).
-#: ``hydra_plugins`` is a PEP 420 namespace package the framework shares with
-#: Hydra: a generated package of that name is a regular package, which Python
-#: prefers over every namespace portion, so installing it hides the
-#: framework's searchpath plugin and sweeper (#2031).  A plain constant, as an
-#: editable install maps ``hydra_plugins`` to no distribution.
-_FRAMEWORK_TOP_LEVEL_MODULES: tuple[str, ...] = ("hydra_plugins",)
-
-
-#: Import names of the framework's direct run-time dependencies, kept as a
-#: floor under what :func:`_dependency_import_names` reads off the installed
-#: metadata (which is absent when the framework runs from a bare source tree).
-#: A scaffolded package of one of these names would shadow it once installed.
-_DEPENDENCY_IMPORT_NAMES: frozenset[str] = frozenset(
-    {
-        "autoware_lanelet2_extension_python",  # simple-lanelet2
-        "carla_driver_interface",
-        "cv2",  # opencv-python-headless
-        "dotenv",  # python-dotenv
-        "fastapi",
-        "google",  # protobuf
-        "grpc",  # grpcio
-        "hydra",  # hydra-core
-        "jinja2",
-        "lanelet2",  # simple-lanelet2
-        "multipart",  # python-multipart
-        "mypy",
-        "numpy",
-        "omegaconf",
-        "openodd",  # openodd-py
-        "orjson",
-        "packaging",
-        "pydantic",
-        "pytest",
-        "pyxodr",
-        "tomli",
-        "tqdm",
-        "typesafe_carla",
-        "uvicorn",
-        "yaml",  # pyyaml
-    }
-)
-
-
 @functools.cache
 def _dependency_import_names() -> frozenset[str]:
     """Return the import names of the framework's direct run-time dependencies.
@@ -355,38 +309,14 @@ def _check_package_name(package_name: str) -> None:
     installed framework on ``uv pip install -e``; one named after another
     top-level module the framework ships (``hydra_plugins``, #2031), a stdlib
     module or a dependency of the framework shadows it (#1451).
+
+    The rules are the checked :func:`.names.check_package_name`'s (#2364).
     """
-    framework_import = _FRAMEWORK_DISTRIBUTION.replace("-", "_")
-    if _is_framework_name(package_name):
-        msg = (
-            f"package name {package_name!r} is reserved: it is the framework's "
-            f"own ({framework_import!r} / {_FRAMEWORK_DISTRIBUTION!r}), so the "
-            f"package would depend on itself and replace the installed "
-            f"framework. Pass a different name."
-        )
-        raise ValueError(msg)
-    if package_name in _FRAMEWORK_TOP_LEVEL_MODULES:
-        msg = (
-            f"package name {package_name!r} is reserved: {framework_import} "
-            f"ships a {package_name!r} namespace package, which a package of "
-            f"that name would hide once installed (framework top-level "
-            f"modules: {', '.join(_FRAMEWORK_TOP_LEVEL_MODULES)}). Pass a "
-            f"different name."
-        )
-        raise ValueError(msg)
-    if package_name in sys.stdlib_module_names:
-        msg = (
-            f"package name {package_name!r} is reserved: it would shadow the "
-            f"standard library module {package_name!r}. Pass a different name."
-        )
-        raise ValueError(msg)
-    if package_name in _dependency_import_names():
-        msg = (
-            f"package name {package_name!r} is reserved: it would shadow "
-            f"{package_name!r}, which {framework_import} depends on. Pass a "
-            f"different name."
-        )
-        raise ValueError(msg)
+    check_package_name(
+        package_name,
+        stdlib_names=sys.stdlib_module_names,
+        dependency_names=_dependency_import_names(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -430,60 +360,17 @@ def resolve_names(
     # Hydra's override grammar takes ASCII ids only, which a Python
     # identifier need not be (#1858).
     scenario = _validate_scenario_name(scenario)
-    reserved = _reserved_scenario_names()
-    if scenario in reserved:
-        msg = (
-            f"scenario name {scenario!r} is reserved: the generated package "
-            f"already has a {scenario!r} module, directory or global (reserved "
-            f"names: "
-            f"{', '.join(sorted(reserved))}). Pass a different --scenario."
-        )
-        raise ValueError(msg)
-    imported = _template_imported_modules()
-    if scenario in imported:
-        msg = (
-            f"scenario name {scenario!r} is reserved: the generated package "
-            f"imports the module {scenario!r}, which a scenario module "
-            f"{scenario}.py beside it would replace in the static check "
-            f"(imported modules: {', '.join(sorted(imported))}). Pass a "
-            f"different --scenario."
-        )
-        raise ValueError(msg)
-    if scenario in BUILTIN_SCENARIO_NAMES:
-        msg = (
-            f"scenario name {scenario!r} is reserved: it names a built-in "
-            f"scenario, which the installed package would replace while the "
-            f"built-in configs (scenario={scenario}/...) still select it "
-            f"(built-in scenarios: {', '.join(BUILTIN_SCENARIO_NAMES)}). Pass a "
-            f"different --scenario."
-        )
-        raise ValueError(msg)
-    groups = _builtin_scenario_groups()
-    if scenario in groups:
-        msg = (
-            f"scenario name {scenario!r} is reserved: it names a built-in "
-            f"scenario config group (conf/scenario/{scenario}/), which the "
-            f"generated package's configs would share: scenario={scenario}/* "
-            f"would also run the built-in configs, and a built-in config would "
-            f"shadow the package's config of the same name (built-in groups: "
-            f"{', '.join(groups)}). Pass a different --scenario."
-        )
-        raise ValueError(msg)
+    # The refusals are the checked scaffold.names' (#2364).
+    check_scenario_name(
+        scenario,
+        reserved=_reserved_scenario_names(),
+        imported=_template_imported_modules(),
+        groups=_builtin_scenario_groups(),
+        module_globals=_scenario_module_globals(),
+    )
 
     pascal = _to_pascal(scenario)
-    # Avoid awkward doubling when the name already ends in "scenario".
-    scenario_class = pascal if pascal.endswith("Scenario") else f"{pascal}Scenario"
-    config_class = f"{pascal}Config"
-    taken = _scenario_module_globals()
-    for generated in (scenario_class, config_class):
-        if generated in taken:
-            msg = (
-                f"scenario name {scenario!r} is reserved: its class "
-                f"{generated!r} would replace the {generated!r} the scenario "
-                f"module already binds (an import from the framework). Pass a "
-                f"different --scenario."
-            )
-            raise ValueError(msg)
+    scenario_class, config_class = scenario_class_names(scenario)
     return {
         "package_name": package_name,
         "distribution_name": _to_hyphen(package_name),

@@ -19,6 +19,7 @@ from typing import Optional
 
 from ..constants import EGO_ROLES, tick_multiple
 from ..rerun import TRAJECTORY_SUFFIX
+from ..run_outputs import trajectory_stem
 
 __all__ = [
     "checked_max_distance",
@@ -115,21 +116,29 @@ def checked_max_distance(
 
 def scene_stem(name: str) -> str:
     """The run's stem of a trajectory log's file *name*: the name without
-    ``.trajectory.jsonl``, or without its last suffix for any other name."""
-    if name.endswith(TRAJECTORY_SUFFIX):
-        return name[: -len(TRAJECTORY_SUFFIX)]
-    return Path(name).stem
+    ``.trajectory.jsonl``, or without its last suffix for any other name:
+    the checked run_outputs's rule (:func:`.run_outputs.trajectory_stem`,
+    #2298), which names the run's other outputs too."""
+    return trajectory_stem(Path(name))
 
 
 def files_under(paths: list[Path], suffix: str) -> list[Path]:
     """The files *paths* name: a file itself, or every ``*{suffix}`` file
-    under a directory (sorted)."""
+    under a directory (sorted).
+
+    Each file once, where it is first named: a file named twice -- itself
+    and under a directory given too, or by two spellings of one path -- was
+    converted twice, and with ``-o`` refused as two logs of one stem (#2283).
+    """
     found: list[Path] = []
+    seen: set[Path] = set()
     for path in paths:
-        if path.is_dir():
-            found.extend(sorted(path.rglob(f"*{suffix}")))
-        else:
-            found.append(path)
+        named = sorted(path.rglob(f"*{suffix}")) if path.is_dir() else [path]
+        for file in named:
+            resolved = file.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                found.append(file)
     return found
 
 
@@ -161,17 +170,26 @@ def is_ego(role: str) -> bool:
 
 
 def on_scene(spawned: Optional[int], despawned: Optional[int], frame: int) -> bool:
-    """Whether a road user is on the scene at *frame*, not parked out of
-    sight up to its ``SpawnAction``'s frame *spawned* (whose tick may have
-    been logged before the action moved it) or from its ``DespawnAction``'s,
-    *despawned*; ``None``: it has no such action."""
+    """Whether a road user is on the scene at *frame*: not parked out of
+    sight before its ``SpawnAction``'s frame *spawned*, nor gone after its
+    ``DespawnAction``'s, *despawned*; ``None``: it has no such action.
+
+    Both frames are the tick logged last when the action ran, and each can
+    hold a valid row (#2352): a pre-tick spawn (the default) moves the actor
+    before the world is stepped to *spawned*, so that tick shows it on its
+    place; a post-tick despawn, or the run's of a walker lying fallen,
+    destroys it after *despawned* was logged with it still there.  The other
+    phase's row is no box all the same: a post-tick spawn's tick shows the
+    actor still parked under the map, which the caller leaves out by its
+    height, and a pre-tick despawn's has no row of it at all.
+    """
     if spawned is not None:
         first: int = spawned
-        if frame <= first:
+        if frame < first:
             return False
     if despawned is not None:
         last: int = despawned
-        if frame >= last:
+        if frame > last:
             return False
     return True
 

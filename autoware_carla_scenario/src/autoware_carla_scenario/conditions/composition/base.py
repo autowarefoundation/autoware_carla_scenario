@@ -89,8 +89,8 @@ class CompositionCondition(BaseCondition):
 
     :meth:`check` evaluates guards and prerequisites in order:
 
-    1. **Entity existence guard** — when *entity_existence* is provided, the
-       entity must be present in the world.  If the entity is absent the
+    1. **Entity existence guard** — when *entity_name* is provided, the
+       entity must be present in the scene.  If the entity is absent the
        condition returns ``None``.
     2. **Child condition** — when *child* is provided it must have fired
        (returned ``ScenarioResult(passed=True)``).  If the child has not yet
@@ -100,9 +100,11 @@ class CompositionCondition(BaseCondition):
     3. **Subclass logic** — :meth:`_check` is called only after both guards
        pass.
 
-    Leaf composition conditions (e.g. :class:`SpeedCondition`) that have no
-    child or entity guard pass ``None`` for both and implement all logic in
-    :meth:`_check`.
+    Leaf composition conditions (e.g. :class:`SpeedCondition`) have no child:
+    they pass their entity's name, so the entity guard applies to them too,
+    and implement the rest of their logic in :meth:`_check`.  Conditions built
+    on a child (:class:`StandstillCondition`, :class:`TemporaryStopCondition`)
+    pass both.
 
     Args:
         child: An optional child condition that must be satisfied before

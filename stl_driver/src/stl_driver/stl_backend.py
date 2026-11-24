@@ -238,7 +238,7 @@ def _suffix_scalar(
 
     A rule's robustness is the first entry of its trace, and this
     specification never nests one temporal operator inside another, so the
-    rest of the trace is built and discarded. Over ten rules, forward and
+    rest of the trace is built and discarded. Over nine rules, forward and
     backward, that was most of the operations in a refinement step -- and the
     step is dominated by dispatching operations, not by performing them: 1,822
     of them to write 84,854 elements, 5.8 us each on an average tensor of 47.

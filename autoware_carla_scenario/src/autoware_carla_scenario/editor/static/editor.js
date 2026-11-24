@@ -772,6 +772,332 @@
   };
 
   /* ---------------------------------------------------------------------
+   * Edits across a swap (#2345)
+   *
+   * Every inspector form posts on `change delay:200ms` and gets the whole of
+   * `#editor-body` back. Two things were lost when that answer landed:
+   *
+   *   typing  the field the author had moved on to and was typing in is
+   *           replaced by its server-rendered copy mid-word;
+   *   changes a change made in the 200 ms before the swap is never posted:
+   *           htmx sends nothing for an element that has left the page, and
+   *           the delayed (or queued) post belongs to the replaced form.
+   *
+   * So just before a body swap, the field with focus and every field changed
+   * but not yet posted are remembered, and found again after it by the URL
+   * they post to and their name. The focused one gets focus and its caret
+   * back, and what was typed -- unless the request being answered already
+   * carried exactly that value, when the server's rendering of it (normalised,
+   * or refused) is the one to show. Typing put back this way is posted when
+   * the field is left, even if nothing more is typed; a pending change is
+   * posted again at once, from the new form, which carries the new revision.
+   * ------------------------------------------------------------------- */
+
+  // Names this page to the server: see `check_revision` in editor/service.py.
+  // A form one revision behind is still current when every save since was
+  // this page's own -- its post in flight while the last answer was swapped.
+  var CLIENT_ID = (window.crypto && window.crypto.randomUUID)
+    ? window.crypto.randomUUID()
+    : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+
+  // htmx wires up swapped-in content when the swap settles, 20 ms after it
+  // by default, so a change made in between went to a form nothing listened
+  // to yet. Nothing here animates the settle, so it happens at once.
+  if (window.htmx) window.htmx.config.defaultSettleDelay = 0;
+
+  var TOGGLES = /^(checkbox|radio)$/;
+  var TYPED = /^(text|search|url|tel|email|password|number)$/;
+
+  // A field whose value a form posts. A read-only one is set by script -- a
+  // lanelet readout the map picker fills in and sends a `change` for -- so
+  // its change can be dropped by a swap like a typed one.
+  function isPosted(el) {
+    return !!el && !!el.name && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) &&
+      el.type !== 'hidden';
+  }
+
+  // A field the author types in or chooses from, whose focus is carried.
+  function isField(el) {
+    return isPosted(el) && !el.readOnly;
+  }
+
+  function isTyped(el) {
+    return el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && TYPED.test(el.type));
+  }
+
+  // The URL a field's value is posted to: its form's, or the nearest element
+  // that posts on its own (a radio group with its own hx-post).
+  function postOf(el) {
+    var owner = el.form && el.form.getAttribute('hx-post') ? el.form : el.closest('[hx-post]');
+    return owner ? owner.getAttribute('hx-post') : '';
+  }
+
+  function fieldsLike(key) {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('input, select, textarea'),
+      function (f) {
+        return f.name === key.name && postOf(f) === key.post &&
+          (key.value === null || f.value === key.value);
+      });
+  }
+
+  function stateOf(el) {
+    return TOGGLES.test(el.type) ? (el.checked ? 'on' : '') : el.value;
+  }
+
+  function setState(el, state) {
+    if (TOGGLES.test(el.type)) el.checked = state === 'on';
+    else el.value = state;
+  }
+
+  // Whether *state* can be put back into *el*. A <select> shows only one of
+  // its options: given a value the new render no longer offers (a removed
+  // actor, a phase now disabled) it would read empty, and post that (#2348).
+  function canHold(el, state) {
+    if (el.tagName !== 'SELECT') return true;
+    for (var i = 0; i < el.options.length; i++) {
+      if (el.options[i].value === state && !el.options[i].disabled) return true;
+    }
+    return false;
+  }
+
+  /* A form that posts to a URL holding its row's position (a signal group's,
+   * a phase's, a waypoint condition's) names that row too, in hidden inputs
+   * marked `data-row`: what the row, and the row it belongs to, were called
+   * when rendered (see `_check_row` in editor/routes.py). After a row before
+   * it was removed, or the rows reordered, the same URL is another row's, and
+   * what was typed must not be put back, let alone posted, there (#2348). */
+  function rowInputs(form) {
+    return form
+      ? Array.prototype.slice.call(form.querySelectorAll('input[type="hidden"][data-row]'))
+      : [];
+  }
+
+  function formPosting(url) {
+    var forms = document.querySelectorAll('form[hx-post]');
+    for (var i = 0; i < forms.length; i++) {
+      if (forms[i].getAttribute('hx-post') === url) return forms[i];
+    }
+    return null;
+  }
+
+  // What the row a `data-row` input names may be called in the next render:
+  // what it was rendered as, what the request being answered renamed it to,
+  // or what the field that names it says now (a rename still on its way).
+  // That field is in the same form (`data-row-field`), or names the row in
+  // another one (`data-row-form`, the URL of the form of the row it is in).
+  function rowNames(input, config) {
+    var url = input.getAttribute('data-row-form');
+    if (url) {
+      var owner = formPosting(url);
+      var own = owner && owner.querySelector('input[type="hidden"][data-row-field]');
+      return own ? rowNames(own, config) : [input.value];
+    }
+    var names = [input.value];
+    var field = input.getAttribute('data-row-field');
+    var form = input.form;
+    if (!field || !form) return names;
+    if (config && config.path === form.getAttribute('hx-post') &&
+        config.formData && config.formData.getAll) {
+      config.formData.getAll(field).forEach(function (v) { names.push(String(v).trim()); });
+    }
+    var named = form.elements.namedItem(field);
+    if (named && typeof named.value === 'string') names.push(named.value.trim());
+    return names;
+  }
+
+  function rowsOf(el, config) {
+    var inputs = rowInputs(el.form);
+    if (!inputs.length) return null;
+    var rows = {};
+    inputs.forEach(function (input) { rows[input.name] = rowNames(input, config); });
+    return rows;
+  }
+
+  // Whether *el* edits the row *snap* was taken in.
+  function sameRow(snap, el) {
+    if (!snap.rows) return true;
+    return rowInputs(el.form).every(function (input) {
+      var names = snap.rows[input.name];
+      return !names || names.indexOf(input.value) >= 0;
+    });
+  }
+
+  // What the page last rendered into the field: the server's value.
+  function renderedOf(el) {
+    if (TOGGLES.test(el.type)) return el.defaultChecked ? 'on' : '';
+    if (el.tagName === 'SELECT') {
+      for (var i = 0; i < el.options.length; i++) {
+        if (el.options[i].defaultSelected) return el.options[i].value;
+      }
+      return el.options.length ? el.options[0].value : '';
+    }
+    return el.defaultValue;
+  }
+
+  // Whether the request being answered posted the field as it is now.
+  function wasPosted(snap) {
+    if (!snap.posted) return false;
+    if (TOGGLES.test(snap.el.type)) {
+      return (snap.posted.indexOf(snap.el.value) >= 0) === (snap.state === 'on');
+    }
+    return snap.posted.indexOf(snap.state) >= 0;
+  }
+
+  function capture(snap) {
+    var el = snap.el;
+    snap.state = stateOf(el);
+    snap.rendered = renderedOf(el);
+    snap.start = snap.end = null;
+    try {
+      snap.start = el.selectionStart;
+      snap.end = el.selectionEnd;
+    } catch (e) { /* no selection on this kind of input */ }
+    return snap;
+  }
+
+  function snapshot(el, config) {
+    var key = { post: postOf(el), name: el.name, value: TOGGLES.test(el.type) ? el.value : null };
+    var data = config.path === key.post && config.formData && config.formData.getAll
+      ? config.formData : null;
+    return capture({
+      el: el,
+      key: key,
+      index: Math.max(0, fieldsLike(key).indexOf(el)),
+      rows: rowsOf(el, config),
+      posted: data ? data.getAll(el.name).map(String) : null,
+    });
+  }
+
+  function select(el, start, end) {
+    if (start == null || !isTyped(el)) return;
+    try { el.setSelectionRange(start, end); } catch (e) { /* not selectable */ }
+  }
+
+  function post(el) {
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Typing put back after a swap is not on the server: post it when the field
+  // is left, unless the browser does (it does when more was typed).
+  function postOnLeave(el) {
+    var posted = false;
+    el.addEventListener('change', function () { posted = true; }, { once: true });
+    el.addEventListener('blur', function () {
+      window.setTimeout(function () {
+        if (!posted && el.isConnected && stateOf(el) !== renderedOf(el)) post(el);
+      }, 0);
+    }, { once: true });
+  }
+
+  // Puts the snapshot's focus, caret and typing back on its replacement, and
+  // returns the replacement if its value must be posted -- once htmx has
+  // wired up the new form, which it does when the swap settles.
+  function restoreFocus(snap) {
+    var el = fieldsLike(snap.key)[snap.index];
+    if (!el || !sameRow(snap, el)) return null;
+    if (document.activeElement !== el) {
+      try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    }
+    var unsentTyping = snap.state !== snap.rendered && !wasPosted(snap);
+    if (unsentTyping && stateOf(el) !== snap.state && canHold(el, snap.state)) {
+      setState(el, snap.state);
+      if (isTyped(el)) {
+        select(el, snap.start, snap.end);
+        postOnLeave(el);
+        return null;
+      }
+      // A choice is made in one go, so it is posted now, as its own change
+      // would have been had htmx not dropped it with the old form.
+      return el;
+    }
+    if (stateOf(el) === snap.state) select(el, snap.start, snap.end);
+    return null;
+  }
+
+  // Puts a pending change back on its replacement; returns the replacement,
+  // whose value is to be posted, as restoreFocus does.
+  function restoreChange(snap) {
+    if (wasPosted(snap)) return null;
+    var el = fieldsLike(snap.key)[snap.index];
+    if (!el || !sameRow(snap, el)) return null;
+    if (stateOf(el) !== snap.state) {
+      // Not an option any more: the server's rendering stands, and nothing is
+      // posted again.
+      if (!canHold(el, snap.state)) return null;
+      setState(el, snap.state);
+    }
+    return el;
+  }
+
+  // Fields changed since their form last posted; see `htmx:configRequest`.
+  var unsent = [];
+
+  document.addEventListener('change', function (event) {
+    var el = event.target;
+    if (isPosted(el) && postOf(el) && unsent.indexOf(el) < 0) unsent.push(el);
+  }, true);
+
+  document.body.addEventListener('htmx:configRequest', function (event) {
+    var detail = event.detail || {};
+    if (detail.headers) detail.headers['X-Editor-Client'] = CLIENT_ID;
+    // What the request posts is on its way, as it stands now.
+    var from = detail.elt;
+    unsent = unsent.filter(function (el) {
+      return el.isConnected && !(from && (from === el || from.contains(el)));
+    });
+  });
+
+  var carried = null;   // what the swap in progress must carry across
+
+  document.body.addEventListener('htmx:beforeSwap', function (event) {
+    var detail = event.detail || {};
+    carried = null;
+    if (!detail.target || detail.target.id !== 'editor-body' || !detail.shouldSwap) return;
+    var config = detail.requestConfig || {};
+    var active = document.activeElement;
+    var focus = isField(active) && postOf(active) ? snapshot(active, config) : null;
+    carried = {
+      request: config,
+      toPost: [],
+      focus: focus,
+      changes: unsent.filter(function (el) {
+        return el.isConnected && el !== active;
+      }).map(function (el) { return snapshot(el, config); }),
+    };
+  });
+
+  // Put back whatever of `carried` has left the page; keep the rest (a field
+  // in an open picker, which hangs off <body> until `reopenPicker` replaces
+  // it) for later.
+  function carryAcross(load) {
+    if (!carried) return;
+    if (load) {
+      // Still on the page, so still editable while the swap settled.
+      if (carried.focus && carried.focus.el === document.activeElement) capture(carried.focus);
+      carried.changes.forEach(capture);
+    }
+    var focus = carried.focus;
+    var toPost = carried.toPost;
+    if (focus && !focus.el.isConnected) {
+      carried.focus = null;
+      toPost.push(restoreFocus(focus));
+    }
+    var gone = carried.changes.filter(function (snap) { return !snap.el.isConnected; });
+    carried.changes = carried.changes.filter(function (snap) { return snap.el.isConnected; });
+    gone.forEach(function (snap) { toPost.push(restoreChange(snap)); });
+    unsent = unsent.filter(function (el) { return el.isConnected; });
+  }
+
+  // Straight after the swap, before a key can reach a detached field.
+  document.body.addEventListener('htmx:afterSwap', function (event) {
+    var detail = event.detail || {};
+    if (!carried || carried.request !== detail.requestConfig) return;
+    if (event.target !== detail.target) return;  // an out-of-band swap
+    carryAcross(false);
+  });
+
+  /* ---------------------------------------------------------------------
    * Failed requests
    *
    * htmx 2 swaps no 4xx/5xx response, so the error pages the server renders
@@ -832,7 +1158,7 @@
     return String((config && config.verb) || 'get').toLowerCase();
   }
 
-  function errorNotice(title, message, verb) {
+  function errorNotice(title, message, verb, reload) {
     var notice = document.createElement('div');
     notice.className = 'ed-notice ed-notice-bad';
     notice.setAttribute('role', 'alert');
@@ -847,6 +1173,18 @@
     text.textContent = message;
     body.appendChild(head);
     body.appendChild(text);
+    if (reload) {
+      // 409: the draft was changed in another tab, and this page's forms
+      // describe the copy before that. Reloading is the way back in step.
+      var again = document.createElement('button');
+      again.type = 'button';
+      again.className = 'ed-btn-sm';
+      again.style.marginTop = '8px';
+      again.textContent = 'Reload';
+      again.addEventListener('click', function () { window.location.reload(); });
+      body.appendChild(document.createElement('br'));
+      body.appendChild(again);
+    }
     notice.appendChild(body);
     return notice;
   }
@@ -865,7 +1203,8 @@
         error.title + ': ' + error.message, requestVerb(detail)));
       return;
     }
-    var notice = errorNotice(error.title, error.message, requestVerb(detail));
+    var stale = !!(detail.xhr && detail.xhr.status === 409);
+    var notice = errorNotice(error.title, error.message, requestVerb(detail), stale);
     var status = document.getElementById('status');
     if (status) {
       status.replaceChildren(notice);
@@ -895,6 +1234,23 @@
     }
   }
 
+  /* htmx fires `htmx:responseError` on the element that sent the request, and
+   * an event on an element no longer in the page reaches no listener here.
+   * That is the second of two quick clicks: the answer to the first replaced
+   * the body, and with it the button, before the second was refused (409, a
+   * row button checked strictly). Its refusal is shown all the same. */
+  document.body.addEventListener('htmx:beforeSend', function (event) {
+    var detail = event.detail || {};
+    var xhr = detail.xhr;
+    var elt = detail.elt;
+    if (!xhr || !elt) return;
+    xhr.addEventListener('loadend', function () {
+      if (xhr.status >= 400 && !elt.isConnected) {
+        showRequestError({ detail: Object.assign({}, detail, { xhr: xhr }) });
+      }
+    });
+  });
+
   document.body.addEventListener('htmx:responseError', showRequestError);
   document.body.addEventListener('htmx:sendError', showRequestError);
   document.body.addEventListener('htmx:afterRequest', clearRequestError);
@@ -921,6 +1277,13 @@
    * from a URL that carries the pattern it is showing. */
   function afterSettle(event) {
     var target = event.detail && event.detail.target;
+    // htmx settles every element a response swapped in, the out-of-band ones
+    // (the top bar's crumb) too, each with this same detail: answer once, for
+    // the target.
+    if (target && event.target !== target && target.isConnected) return;
+    // A field in an open picker is replaced by `reopenPicker`, in refresh().
+    var config = event.detail && event.detail.requestConfig;
+    var pending = carried && carried.request === config ? carried : null;
     if (target && target.id === 'scenario-map') {
       // The panel replaced itself: its map is parked and put back, and its
       // pins are new. Nothing outside it moved, so nothing outside it is redone.
@@ -928,7 +1291,14 @@
       layoutEveryPin();
       return;
     }
+    if (pending) carryAcross(true);   // read what was typed before it goes
     refresh();
+    if (pending) {
+      carryAcross(false);
+      carried = null;
+      // htmx has wired up the new forms by now: post what the swap held back.
+      pending.toPost.forEach(function (el) { if (el && el.isConnected) post(el); });
+    }
     if (target && target.id === 'editor-body') {
       document.body.dispatchEvent(new CustomEvent('scenario-changed'));
     }

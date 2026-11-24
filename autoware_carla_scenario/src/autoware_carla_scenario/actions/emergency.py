@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
 from ..control_domain import ControlDomain
-from ..entity.registry import find_vehicle_entity
+from ..entity.registry import fail_if_pedestrian, find_vehicle_entity
 from ..entity_role import EntityRole
 from .base import BaseAction, TickTiming
 
@@ -29,7 +29,8 @@ class EmergencyAction(BaseAction):
     lights and stop signs, and, under SUMO, with SUMO's vehicles making way;
     off duty it is lit and driven as any other vehicle.  It stays so until set
     again.  A vehicle that is not an emergency vehicle is left as it is, with
-    a warning.
+    a warning; a vehicle not found is too, but a pedestrian raises, as for
+    the other vehicle actions.
 
     Args:
         entity_name: ``role_name`` of the emergency vehicle.
@@ -75,6 +76,8 @@ class EmergencyAction(BaseAction):
         """Put the named emergency vehicle on a call, or take it off one."""
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
+            # A pedestrian is not a vehicle that is missing (#2273).
+            fail_if_pedestrian(self._entity_name, "set_emergency")
             logger.warning("EmergencyAction: entity '%s' not found", self._entity_name)
             return
         # Logged only when it took: a vehicle that is not an emergency vehicle

@@ -7,7 +7,13 @@
    to choose.
 
    Every control posts on change and swaps the whole body, like the rest of the
-   inspector, so a rename reaches the lists that offer the name immediately. #}
+   inspector, so a rename reaches the lists that offer the name immediately.
+
+   A row's form posts to a URL holding the row's position, so it also names
+   the row (`row`, and a phase its controller in `parent_row`: what they were
+   called when rendered): an edit reaching the server after a row before it
+   was removed is refused rather than applied to the row that moved up, and
+   editor.js does not carry a pending change across a swap onto it (#2348). #}
 
 {%- set groups = document.map.signal_groups -%}
 {%- set controllers = document.map.traffic_signal_controllers -%}
@@ -39,21 +45,24 @@
       </span>
       <form hx-post="/draft/{{ draft.id }}/signal-group/{{ loop.index0 }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
-        <button type="submit" class="ed-del" title="Remove group">{{ ic.icon('x', 10) }}</button>
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+        <button type="submit" class="ed-del" title="Remove group" aria-label="Remove group">{{ ic.icon('x', 10) }}</button>
       </form>
     </div>
     <form class="ed-constraint-fields"
           hx-post="/draft/{{ draft.id }}/signal-group/{{ loop.index0 }}"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+      <input type="hidden" name="row" value="{{ group.name }}" data-row data-row-field="name">
       <div class="ed-field">
-        <label class="ed-label">Name</label>
-        <input type="text" name="name" class="ed-input mono" value="{{ group.name }}">
+        <label class="ed-labelled"><span class="ed-label">Name</span>
+        <input type="text" name="name" class="ed-input mono" value="{{ group.name }}"></label>
       </div>
       <div class="ed-field">
-        <label class="ed-label">Regulatory element IDs</label>
+        <label class="ed-labelled"><span class="ed-label">Regulatory element IDs</span>
         <input type="text" name="lanelet2_regulatory_element_ids" class="ed-input mono"
                value="{{ group.lanelet2_regulatory_element_ids|join(', ') }}"
-               placeholder="1330, 1333">
+               placeholder="1330, 1333"></label>
         <p class="ed-help">
           The Lanelet2 traffic_light regulatory elements this movement drives.
         </p>
@@ -61,7 +70,7 @@
       {% set others = groups|rejectattr('name', 'equalto', group.name)|list %}
       {% if others %}
         <div class="ed-field">
-          <label class="ed-label">Conflicts with</label>
+          <div class="ed-label">Conflicts with</div>
           {% for other in others %}
             <label class="ed-check">
               <input type="checkbox" name="conflicts_with" value="{{ other.name }}"
@@ -107,34 +116,37 @@
       </span>
       <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/delete"
             hx-target="#editor-body" hx-swap="innerHTML" style="margin-left:auto">
-        <button type="submit" class="ed-del" title="Remove controller">{{ ic.icon('x', 10) }}</button>
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+        <button type="submit" class="ed-del" title="Remove controller" aria-label="Remove controller">{{ ic.icon('x', 10) }}</button>
       </form>
     </div>
 
     <form class="ed-constraint-fields"
           hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}"
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+      <input type="hidden" name="row" value="{{ controller.name }}" data-row data-row-field="name">
       <div class="ed-field">
-        <label class="ed-label">Name</label>
-        <input type="text" name="name" class="ed-input mono" value="{{ controller.name }}">
+        <label class="ed-labelled"><span class="ed-label">Name</span>
+        <input type="text" name="name" class="ed-input mono" value="{{ controller.name }}"></label>
       </div>
       {% set peers = controllers|rejectattr('name', 'equalto', controller.name)|list %}
       {% if peers %}
         <div class="ed-field">
-          <label class="ed-label">Starts after</label>
+          <label class="ed-labelled"><span class="ed-label">Starts after</span>
           <select name="reference" class="ed-input">
             <option value="" {% if not controller.reference %}selected{% endif %}>— with the run —</option>
             {% for peer in peers %}
               <option value="{{ peer.name }}"
                       {% if controller.reference == peer.name %}selected{% endif %}>{{ peer.name }}</option>
             {% endfor %}
-          </select>
+          </select></label>
         </div>
         {% if controller.reference %}
           <div class="ed-field">
-            <label class="ed-label">Delay <span class="unit">(s)</span></label>
+            <label class="ed-labelled"><span class="ed-label">Delay <span class="unit">(s)</span></span>
             <input type="number" step="any" name="delay_seconds" class="ed-input"
-                   value="{{ controller.delay_seconds }}">
+                   value="{{ controller.delay_seconds }}"></label>
             <p class="ed-help">
               Measured from when {{ controller.reference }} began its first
               phase. A green wave is declared this way, not timed by actions.
@@ -157,33 +169,40 @@
                 <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/move"
                       hx-target="#editor-body" hx-swap="innerHTML">
                   <input type="hidden" name="delta" value="-1">
-                  <button type="submit" class="ed-move-btn" title="Earlier in the cycle">↑</button>
+                  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+                  <button type="submit" class="ed-move-btn" title="Earlier in the cycle" aria-label="Earlier in the cycle">↑</button>
                 </form>
               {% endif %}
               {% if not loop.last %}
                 <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/move"
                       hx-target="#editor-body" hx-swap="innerHTML">
                   <input type="hidden" name="delta" value="1">
-                  <button type="submit" class="ed-move-btn" title="Later in the cycle">↓</button>
+                  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+                  <button type="submit" class="ed-move-btn" title="Later in the cycle" aria-label="Later in the cycle">↓</button>
                 </form>
               {% endif %}
               <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}/delete"
                     hx-target="#editor-body" hx-swap="innerHTML">
-                <button type="submit" class="ed-del" title="Remove phase">{{ ic.icon('x', 10) }}</button>
+                <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+                <button type="submit" class="ed-del" title="Remove phase" aria-label="Remove phase">{{ ic.icon('x', 10) }}</button>
               </form>
             </span>
           </div>
           <form class="ed-constraint-fields"
                 hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase/{{ pi }}"
                 hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+            <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
+            <input type="hidden" name="row" value="{{ phase.name }}" data-row data-row-field="name">
+            <input type="hidden" name="parent_row" value="{{ controller.name }}" data-row
+                   data-row-form="/draft/{{ draft.id }}/signal-controller/{{ ci }}">
             <div class="ed-field">
-              <label class="ed-label">Name</label>
-              <input type="text" name="name" class="ed-input mono" value="{{ phase.name }}">
+              <label class="ed-labelled"><span class="ed-label">Name</span>
+              <input type="text" name="name" class="ed-input mono" value="{{ phase.name }}"></label>
             </div>
             <div class="ed-field">
-              <label class="ed-label">Holds for <span class="unit">(s)</span></label>
+              <label class="ed-labelled"><span class="ed-label">Holds for <span class="unit">(s)</span></span>
               <input type="number" step="any" name="duration_seconds" class="ed-input"
-                     value="{{ phase.duration_seconds }}">
+                     value="{{ phase.duration_seconds }}"></label>
             </div>
             {% if groups %}
               {%- set shown = {} -%}
@@ -192,7 +211,7 @@
               {%- endfor -%}
               {% for group in groups %}
                 <div class="ed-field">
-                  <label class="ed-label">{{ group.name }}</label>
+                  <label class="ed-labelled"><span class="ed-label">{{ group.name }}</span>
                   {#- Compared lower-cased, as the validator and the runtime read
                       a state: a CARLA spelling ("Red") is the same colour, and
                       matching none of the options would show the first one and
@@ -209,7 +228,7 @@
                         {{ colour }}
                       </option>
                     {% endfor %}
-                  </select>
+                  </select></label>
                 </div>
               {% endfor %}
             {% else %}
@@ -232,6 +251,7 @@
 
       <form hx-post="/draft/{{ draft.id }}/signal-controller/{{ ci }}/phase"
             hx-target="#editor-body" hx-swap="innerHTML">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <button type="submit" class="ed-btn ed-btn-xs">{{ ic.icon('plus', 10) }} Phase</button>
       </form>
     </div>

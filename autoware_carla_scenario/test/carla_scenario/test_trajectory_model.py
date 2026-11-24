@@ -974,3 +974,91 @@ class TestNotFinite:
 
         with pytest.raises(ValueError, match=r"ResolvedTrajectory\.xs\[1\]"):
             resolve_trajectory(trajectory, None, resolve=resolve)
+
+
+# ---------------------------------------------------------------------------
+# What a pose's and a timing's fields may hold (#2261)
+# ---------------------------------------------------------------------------
+
+
+class TestFieldTypes:
+    @pytest.mark.parametrize("domain", ["absolute", "relative", None, 1])
+    def test_a_timing_domain_is_a_reference_context(self, domain: object) -> None:
+        """Every consumer tests ``domain is ABSOLUTE``: "absolute" counted
+        from the action instead."""
+        with pytest.raises(
+            ValueError, match=r"^TrajectoryTiming\.domain must be a ReferenceContext"
+        ):
+            TrajectoryTiming(domain=domain)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("key", ["scale", "offset"])
+    @pytest.mark.parametrize("value", [True, False, "2", None, [2.0]])
+    def test_a_timing_scale_or_offset_is_a_number(
+        self, key: str, value: object
+    ) -> None:
+        with pytest.raises(
+            ValueError, match=rf"^TrajectoryTiming\.{key} must be a number, got "
+        ):
+            TrajectoryTiming(**{key: value})  # type: ignore[arg-type]
+
+    def test_a_timing_keeps_its_numbers_as_floats(self) -> None:
+        import numpy as np
+
+        timing = TrajectoryTiming(scale=np.int64(2), offset=1)  # type: ignore[arg-type]
+        assert (timing.scale, timing.offset) == (2.0, 1.0)
+        assert type(timing.scale) is float and type(timing.offset) is float
+
+    @pytest.mark.parametrize("value", ["5", True, None, b"5", [1.0]])
+    def test_a_map_pose_coordinate_is_a_number(self, value: object) -> None:
+        """ "5" failed only as the action started; True was read as 1.0."""
+        with pytest.raises(ValueError, match=r"^MapPose\.y must be a number, got "):
+            MapPose(x=0.0, y=value)  # type: ignore[arg-type]
+
+    def test_a_numpy_bool_or_array_is_no_coordinate(self) -> None:
+        import numpy as np
+
+        for value in (np.True_, np.array([1.0])):
+            with pytest.raises(ValueError, match=r"must be a number"):
+                RelativeLanePose(ds=value)  # type: ignore[arg-type]
+
+    def test_a_number_is_stored_as_a_float(self) -> None:
+        import numpy as np
+
+        pose = MapPose(x=np.float32(1.5), y=2, yaw=np.float64(0.5), z=None)  # type: ignore[arg-type]
+        assert (pose.x, pose.y, pose.yaw, pose.z) == (1.5, 2.0, 0.5, None)
+        assert all(type(v) is float for v in (pose.x, pose.y, pose.yaw))
+
+    @pytest.mark.parametrize(
+        ("pose", "field"),
+        [
+            (lambda v: RouteLanePose(offset=v), "RouteLanePose.offset"),
+            (lambda v: RouteOppositePose(ds=v), "RouteOppositePose.ds"),
+            (lambda v: RouteCrossingPose(distance=v), "RouteCrossingPose.distance"),
+            (lambda v: RouteCrosswalkPose(along=v), "RouteCrosswalkPose.along"),
+            (
+                lambda v: RouteRoadsidePose(kerb_distance=v),
+                "RouteRoadsidePose.kerb_distance",
+            ),
+            (lambda v: RelativeLanePose(yaw=v), "RelativeLanePose.yaw"),
+        ],
+    )
+    def test_every_pose_refuses_a_bool_naming_its_field(self, pose, field: str) -> None:
+        with pytest.raises(ValueError, match=rf"^{field} must be a number, got True"):
+            pose(True)
+
+    def test_a_non_finite_coordinate_is_still_refused(self) -> None:
+        with pytest.raises(ValueError, match=r"^MapPose\.x must be finite, got nan"):
+            MapPose(x=math.nan, y=0.0)
+
+    @pytest.mark.parametrize("entity_ref", ["", 5, ["npc1"]])
+    def test_an_entity_ref_is_a_role_name(self, entity_ref: object) -> None:
+        """ "" named a role no entity has: the action waited for it all run."""
+        with pytest.raises(ValueError, match=r"^RelativeLanePose\.entity_ref must be"):
+            RelativeLanePose(entity_ref=entity_ref)  # type: ignore[arg-type]
+
+    def test_an_entity_ref_is_kept_as_its_role_name(self) -> None:
+        from autoware_carla_scenario.entity_role import EntityRole
+
+        assert RelativeLanePose(entity_ref=EntityRole.npc(1)).entity_ref == "npc1"
+        assert RelativeLanePose(entity_ref="npc2").entity_ref == "npc2"
+        assert RelativeLanePose().entity_ref is None

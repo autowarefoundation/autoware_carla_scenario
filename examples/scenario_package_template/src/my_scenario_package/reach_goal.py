@@ -1,4 +1,4 @@
-"""A minimal external scenario: verify the ego reaches its goal roads.
+"""A minimal external scenario: verify the ego reaches its goal lanelets.
 
 This module lives in a **separate installable package**, not inside
 ``autoware_carla_scenario``.  It only depends on the framework's public API,
@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 
+import typesafe_carla.carla as carla
+
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
     AndCondition,
@@ -26,6 +28,8 @@ from autoware_carla_scenario import (
     Lanelet2Pose,
     StickyCondition,
     TimeoutCondition,
+    TrafficLightTarget,
+    TrafficSignalAction,
 )
 
 from .configs import ReachGoalConfig
@@ -34,7 +38,11 @@ logger = logging.getLogger(__name__)
 
 
 class ReachGoalScenario(BaseScenario):
-    """Pass when the ego has visited every configured goal road."""
+    """Pass when the ego has been on every configured goal lanelet.
+
+    The lanelets themselves, not their roads: each latched once the ego has
+    been on it, in any order.
+    """
 
     _config: ReachGoalConfig
 
@@ -51,13 +59,14 @@ class ReachGoalScenario(BaseScenario):
         self._config = config or ReachGoalConfig()
 
     def setup(self) -> None:
-        """Snap the ego spawn and register the pass/fail conditions."""
+        """Snap the ego spawn, set the lights green and register the
+        pass/fail conditions."""
         cfg = self._config
         # An empty goal list is refused by the config (__post_init__), before
         # anything starts.
 
         # 1. Every scenario says where its ego is going, and this one already
-        #    has: the last road it asserts the ego reaches is the destination.
+        #    has: the last lanelet it asserts the ego reaches is the destination.
         #    A goal given in the config wins.
         self.derive_goal_from_route(cfg.goal_lanelet_ids)
 
@@ -65,7 +74,19 @@ class ReachGoalScenario(BaseScenario):
         #    also where the goal is handed to an ego that plans its own route.
         self._setup_ego_spawn()
 
-        # 3. Pass condition: the ego reaches each goal lanelet (latched via Sticky).
+        # 3. Every traffic light green from the start: the default route
+        #    crosses a signalised junction a few metres past the spawn, and
+        #    an ego that stops at a red light would pass or time out on the
+        #    light's phase rather than on whether it can reach its goal.
+        self.register_init(
+            TrafficSignalAction(
+                state=carla.TrafficLightState.Green,
+                lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+                label="set_all_green",
+            )
+        )
+
+        # 4. Pass condition: the ego reaches each goal lanelet (latched via Sticky).
         # Appended one by one and chosen by if/else below: Codon gives
         # neither a list comprehension nor a conditional expression the
         # base class's type.
@@ -94,7 +115,7 @@ class ReachGoalScenario(BaseScenario):
             reach_goals = AndCondition(stickies)
         self.register_pass_condition(reach_goals)
 
-        # 4. Fail-safe timeout.
+        # 5. Fail-safe timeout.
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")
         )

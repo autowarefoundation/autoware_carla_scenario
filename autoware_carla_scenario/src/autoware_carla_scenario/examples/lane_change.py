@@ -3,12 +3,14 @@
 This scenario spawns the ego vehicle on a configurable lanelet, sets all
 traffic lights to green, and registers a
 :class:`~autoware_carla_scenario.LaneChangeAction` to force a lane change
-via TrafficManager when the trigger condition is met.
+via TrafficManager.  It has no trigger condition: it fires at once, on the
+first tick.
 
 The target lane is tested in the Lanelet2 frame
 (:func:`lane_change_target`): the lanelet beside the spawn lanelet on the
 requested side -- the routing graph's ``left`` / ``right``, the lane the
-sweep's ``has_adjacent`` asks about -- and the lanelets ahead of it before
+sweep's ``has_adjacent`` asks about, failing that its ``adjacentLeft`` /
+``adjacentRight`` (:func:`lane_beside`) -- and the lanelets ahead of it before
 the next junction.  The ego has changed lanes once its centre is on one of
 them.  An OpenDRIVE road and a lane ID shifted by one is not used: matched
 through the nearest road, part of a lanelet's centreline can read as the lane

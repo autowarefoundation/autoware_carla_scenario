@@ -1,7 +1,11 @@
-"""Unit tests for composition conditions (PersistentCondition, StandstillCondition, TemporaryStopCondition)."""
+"""Unit tests for composition conditions (PersistentCondition, TemporaryStopCondition).
+
+StandstillCondition is tested in test_conditions.py.
+"""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Generator
 from pathlib import Path
 from typing import Optional
@@ -16,7 +20,6 @@ from autoware_carla_scenario import (
     OrCondition,
     PersistentCondition,
     ScenarioResult,
-    StandstillCondition,
     TemporaryStopCondition,
 )
 from autoware_carla_scenario.conditions.comparison import (
@@ -258,102 +261,6 @@ class TestPersistentCondition:
         result = cond.check(world, elapsed=1.0)
         assert result is not None
         assert result.passed is True
-
-
-# ---------------------------------------------------------------------------
-# StandstillCondition (composition version) – unit tests
-# ---------------------------------------------------------------------------
-
-
-class TestStandstillConditionComposition:
-    """Tests for the composition-based StandstillCondition.
-
-    These match the original StandstillCondition test cases to ensure
-    API compatibility.
-    """
-
-    def test_returns_none_before_duration(self) -> None:
-        condition = StandstillCondition("ego", duration=3.0, label="test_standstill")
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        assert condition.check(world, elapsed=0.0) is None
-        assert condition.check(world, elapsed=2.9) is None
-
-    def test_returns_pass_after_duration(self) -> None:
-        condition = StandstillCondition("ego", duration=3.0, label="test_standstill")
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        condition.check(world, elapsed=0.0)
-        result = condition.check(world, elapsed=3.0)
-        assert result is not None
-        assert result.passed is True
-
-    def test_timer_resets_when_moving(self) -> None:
-        condition = StandstillCondition("ego", duration=2.0, label="test_standstill")
-        world_stop = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        world_move = _make_world_with_actor("ego", 0.0, 0.0, vx=5.0, vy=0.0)
-
-        # Stand still from t=0 to t=1
-        condition.check(world_stop, elapsed=0.0)
-        assert condition.check(world_stop, elapsed=1.0) is None
-
-        # Start moving at t=1.5 → timer resets
-        assert condition.check(world_move, elapsed=1.5) is None
-
-        # Stand still again from t=2
-        condition.check(world_stop, elapsed=2.0)
-        assert condition.check(world_stop, elapsed=3.0) is None  # only 1s
-        result = condition.check(world_stop, elapsed=4.0)  # 2s standstill
-        assert result is not None
-        assert result.passed is True
-
-    def test_speed_below_threshold_counts(self) -> None:
-        condition = StandstillCondition(
-            "ego", duration=1.0, speed_threshold=0.5, label="test_standstill"
-        )
-        # Speed = sqrt(0.3^2 + 0.3^2) ~ 0.42 < 0.5
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.3, vy=0.3)
-        condition.check(world, elapsed=0.0)
-        result = condition.check(world, elapsed=1.0)
-        assert result is not None
-        assert result.passed is True
-
-    def test_speed_above_threshold_no_trigger(self) -> None:
-        condition = StandstillCondition(
-            "ego", duration=1.0, speed_threshold=0.1, label="test_standstill"
-        )
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=1.0, vy=0.0)
-        condition.check(world, elapsed=0.0)
-        assert condition.check(world, elapsed=5.0) is None
-
-    def test_entity_not_found_returns_none(self) -> None:
-        condition = StandstillCondition("ego", duration=1.0, label="test_standstill")
-        world = _make_world_with_actor("other", 0.0, 0.0, vx=0.0, vy=0.0)
-        assert condition.check(world, elapsed=0.0) is None
-
-    def test_invalid_duration_raises(self) -> None:
-        with pytest.raises(ValueError, match="duration must be positive"):
-            StandstillCondition("ego", duration=0.0, label="test_standstill")
-        with pytest.raises(ValueError, match="duration must be positive"):
-            StandstillCondition("ego", duration=-1.0, label="test_standstill")
-
-    @pytest.mark.parametrize("duration", [float("nan"), float("inf"), float("-inf")])
-    def test_refuses_a_duration_that_is_not_finite(self, duration: float) -> None:
-        """A NaN duration fails every comparison, so it would never fire (#1109)."""
-        with pytest.raises(ValueError, match="positive and finite"):
-            StandstillCondition("ego", duration=duration, label="test_standstill")
-
-    def test_invalid_speed_threshold_raises(self) -> None:
-        with pytest.raises(ValueError, match="speed_threshold must be non-negative"):
-            StandstillCondition(
-                "ego", duration=1.0, speed_threshold=-0.1, label="test_standstill"
-            )
-
-    def test_elapsed_seconds_in_result(self) -> None:
-        condition = StandstillCondition("ego", duration=1.0, label="test_standstill")
-        world = _make_world_with_actor("ego", 0.0, 0.0, vx=0.0, vy=0.0)
-        condition.check(world, elapsed=10.0)
-        result = condition.check(world, elapsed=11.0)
-        assert result is not None
-        assert result.elapsed_seconds == pytest.approx(11.0)
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +661,138 @@ class TestAStopMarginReachesAsFarAsItReaches:
             (4, 0.0, 2.0),
         ]
 
+    def test_a_ring_of_lanelets_reached_from_both_ends_ends(self) -> None:
+        # #2219: lanelet 1 (4 m) and 2 (5 m) form a ring; the margin runs off
+        # both ends of 1 into 2.  One visited set for both directions left
+        # the second stretch out.
+        lengths = {1: 4.0, 2: 5.0}
+        links = {1: [2], 2: [1]}
+        stretches: list[tuple[int, float, float]] = []
+
+        def record(entity, lanelet_id, lo, hi, *, label):  # type: ignore[no-untyped-def]
+            stretches.append((lanelet_id, lo, hi))
+            return EntityLanePositionCondition(
+                entity, OpenDrivePose(road_id="0", lane_id=-1, s=0.0), label=label
+            )
+
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_lanelet_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_find_linked_lanelets",
+                side_effect=lambda lid, d: links[lid],
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_make_lanelet_segment_condition",
+                side_effect=record,
+            ),
+        ):
+            TemporaryStopCondition(
+                "ego",
+                stop_positions=[Lanelet2Pose(lanelet_id=1, s=2.0)],
+                s_margin=10.0,
+                label="stop",
+            )
+        assert stretches == [(1, 0.0, 4.0), (2, 0.0, 5.0), (2, 0.0, 5.0)]
+
+    @pytest.mark.parametrize(
+        ("predecessors", "expected"),
+        [
+            (
+                [2, 1],
+                [(10, 0.0, 10.0), (2, 0.0, 10.0), (1, 0.0, 1.0), (3, 87.0, 100.0)],
+            ),
+            (
+                [1, 2],
+                [(10, 0.0, 10.0), (1, 0.0, 1.0), (2, 0.0, 10.0), (3, 87.0, 100.0)],
+            ),
+        ],
+    )
+    def test_a_lanelet_reached_two_ways_gets_the_longer_stretch(
+        self, predecessors: list[int], expected: list[tuple[int, float, float]]
+    ) -> None:
+        # #2367: 14 m run off the start of lanelet 10 into 2 (10 m) and 1
+        # (1 m), both preceded by 3 (100 m).  Through 2, 4 m reach 3; through
+        # 1, 13 m do -- whichever order the routing graph lists them in, 3 is
+        # covered over [87, 100], once.
+        lengths = {10: 10.0, 2: 10.0, 1: 1.0, 3: 100.0}
+        previous = {10: predecessors, 2: [3], 1: [3], 3: []}
+        stretches: list[tuple[int, float, float]] = []
+
+        def record(entity, lanelet_id, lo, hi, *, label):  # type: ignore[no-untyped-def]
+            stretches.append((lanelet_id, lo, hi))
+            return EntityLanePositionCondition(
+                entity, OpenDrivePose(road_id="0", lane_id=-1, s=0.0), label=label
+            )
+
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_lanelet_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_find_linked_lanelets",
+                side_effect=lambda lid, d: previous[lid] if d == "previous" else [],
+            ),
+            patch.object(
+                TemporaryStopCondition,
+                "_make_lanelet_segment_condition",
+                side_effect=record,
+            ),
+        ):
+            TemporaryStopCondition(
+                "ego",
+                stop_positions=[Lanelet2Pose(lanelet_id=10, s=1.0)],
+                s_margin=15.0,
+                label="stop",
+            )
+        assert stretches == expected
+
+    def test_each_lanelet_is_walked_on_once_across_many_forks(self) -> None:
+        # A chain of 16 forks that join again, the first branch listed always
+        # the longer, and the gap narrowing down the chain: walked
+        # depth-first, and again whenever a branch brings more, each fork
+        # would double the walks of the forks after it (2**18 queries).
+        lengths: dict[int, float] = {0: 10.0}
+        following: dict[int, list[int]] = {0: []}
+        join = 0
+        for i in range(16):
+            long, short, after = 3 * i + 1, 3 * i + 2, 3 * i + 3
+            lengths.update({long: 1.0 + 0.5**i, short: 1.0, after: 0.001})
+            following.update({join: [long, short], long: [after], short: [after]})
+            following[after] = []
+            join = after
+        queried: list[int] = []
+
+        def linked(lanelet_id: int, direction: str) -> list[int]:
+            queried.append(lanelet_id)
+            return following[lanelet_id] if direction == "following" else []
+
+        reach: dict[int, float] = {0: math.inf}
+        order: list[int] = []
+        with (
+            patch.object(
+                TemporaryStopCondition,
+                "_get_lanelet_length",
+                side_effect=lengths.__getitem__,
+            ),
+            patch.object(
+                TemporaryStopCondition, "_find_linked_lanelets", side_effect=linked
+            ),
+        ):
+            TemporaryStopCondition._reach_lanelets(0, 1000.0, "following", reach, order)
+        assert sorted(queried) == sorted(lengths)
+        assert sorted(order) == sorted(set(lengths) - {0})
+        # Every join gets what the short branches leave.
+        assert reach[48] == pytest.approx(1000.0 - 16 * 1.001 + 0.001)
+
 
 class TestAStopMarginReachesAcrossShortRoads:
     """A margin longer than the next road carries on into the roads beyond it.
@@ -901,6 +940,30 @@ class TestAStopMarginReachesAcrossShortRoads:
             6.0,
         )
         assert stretches == [("1", 91.0, 100.0), ("A", 0.0, 3.0)]
+
+    @pytest.mark.parametrize("first", ["2", "1"])
+    def test_a_road_reached_two_ways_gets_the_longer_stretch(self, first: str) -> None:
+        # #2367, on roads: 14 m before road 10 run into 2 (10 m) and 1 (1 m),
+        # both entered at their ends and both preceded by 3 (100 m).  Through
+        # 1, 13 m reach 3 -- whichever is listed first.
+        second = "1" if first == "2" else "2"
+        stretches = self._stretches(
+            {"10": 10.0, "2": 10.0, "1": 1.0, "3": 100.0},
+            {
+                ("10", "predecessor"): [(first, "end"), (second, "end")],
+                ("2", "predecessor"): [("3", "end")],
+                ("1", "predecessor"): [("3", "end")],
+            },
+            OpenDrivePose("10", -1, s=1.0),
+            15.0,
+        )
+        spans = {"2": ("2", 0.0, 10.0), "1": ("1", 0.0, 1.0)}
+        assert stretches == [
+            ("10", 0.0, 10.0),
+            spans[first],
+            spans[second],
+            ("3", 87.0, 100.0),
+        ]
 
 
 class TestAStopOnALaneletSpillsOntoTheLaneletsAroundIt:

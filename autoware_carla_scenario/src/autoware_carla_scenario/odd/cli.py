@@ -9,8 +9,11 @@
 An ODD is named the way the ``odd`` config key names it: ``default``, a
 registered name, an OpenODD ``.yaml`` file, or ``package.module:function``.
 ``check`` builds it, and compiles a Python one with Codon as the runner would.
-The exit status is 0 when every ODD passed, 1 when one failed, and 2 when a
-Python ODD could not be compiled for want of Codon.
+The exit status is 0 when every ODD passed, 1 when one failed (or the checker
+itself raised on it: ``[FAILED] <odd>: checker error: ...``, with the
+traceback on stderr, and the other ODDs are still checked and reported), and 2
+when a Python ODD could not be compiled: for want of Codon, or because the
+check cannot compile it (``[SKIPPED] ...`` says why).
 
 ``route`` plans each scenario config's ego route on its Lanelet2 map (no
 CARLA server) and checks it against the ODD (:mod:`.route`).  Scenario
@@ -40,6 +43,7 @@ from .registry import odd_builder, odd_names, resolve_odd
 # metres per bucket printed, are the checked odd.route_text's (#2135).
 from .route_text import _format_buckets as _format_buckets
 from .route_text import _split_items
+from .route_text import format_route_lines, own_package
 
 __all__ = ["main"]
 
@@ -115,10 +119,9 @@ def _is_library(tb: TracebackType, library: tuple[str, ...]) -> bool:
 
 def _own_package(spec: Optional[str]) -> Optional[str]:
     """The top-level package of the module a ``package.module:function`` spec names."""
-    if not isinstance(spec, str) or ":" not in spec:
+    if not isinstance(spec, str):
         return None
-    top = spec.split(":", 1)[0].split(".", 1)[0]
-    return top if top and top not in ("openodd", "autoware_carla_scenario") else None
+    return own_package(spec)
 
 
 def _user_location(
@@ -209,6 +212,7 @@ def describe_error(exc: BaseException, spec: Optional[str] = None) -> str:
 
 def _check(spec: str) -> int:
     from ..typecheck import typecheck_odd  # noqa: PLC0415
+    from ..typecheck.cli import _checker_error  # noqa: PLC0415
 
     try:
         odd = resolve_odd(spec)
@@ -219,10 +223,16 @@ def _check(spec: str) -> int:
     if builder is None:
         print(f"[ok] {spec}: {odd.name} reads ({len(odd.attributes)} attributes)")  # noqa: T201
         return 0
-    result = typecheck_odd(builder)
+    try:
+        result = typecheck_odd(builder)
+    except Exception as exc:  # noqa: BLE001 - reported as a failed check (#2249)
+        print(_checker_error(spec, exc))  # noqa: T201
+        return 1
     if result.skipped is not None:
+        # No verdict either way, whatever the reason (no Codon, or nothing
+        # the check can compile): never a pass (#2249).
         print(f"[SKIPPED] {spec}: {result.format()}")  # noqa: T201
-        return 2 if "Codon" in result.skipped else 0
+        return 2
     print(f"[{'ok' if result.ok else 'FAILED'}] {spec}: {result.format()}")  # noqa: T201
     return 0 if result.ok else 1
 
@@ -264,26 +274,21 @@ def _scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
 
 
 def _format_route(coverage: Any) -> list[str]:
-    ids = [str(i) for i in coverage.lanelet_ids]
-    if len(ids) > 12:
-        ids = [*ids[:6], "...", *ids[-5:]]
-    lines = [
-        f"{coverage.name}: lanelets {' -> '.join(ids)} ({coverage.length_m:.1f} m)",
-        f"  inside {coverage.inside_m:.1f} m, undecided {coverage.undecided_m:.1f} m, "
-        f"outside {coverage.outside_m:.1f} m",
-    ]
-    for lanelet in coverage.outside():
-        lines.append(
-            f"  OUTSIDE lanelet {lanelet.lanelet_id} ({lanelet.length_m:.1f} m): "
-            f"modules {', '.join(lanelet.failing_modules) or '-'}"
-        )
-    undecided = coverage.undecided()
-    if undecided:
-        lines.append(
-            "  inside only by assumption: lanelets "
-            + ", ".join(str(ll.lanelet_id) for ll in undecided)
-        )
-    return lines
+    # openodd's coverage, read into the plain values the checked
+    # odd.route_text formats (#2386).
+    return format_route_lines(
+        coverage.name,
+        [str(i) for i in coverage.lanelet_ids],
+        coverage.length_m,
+        coverage.inside_m,
+        coverage.undecided_m,
+        coverage.outside_m,
+        [
+            (f"{ll.lanelet_id}", ll.length_m, list(ll.failing_modules))
+            for ll in coverage.outside()
+        ],
+        [str(ll.lanelet_id) for ll in coverage.undecided()],
+    )
 
 
 def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
@@ -338,6 +343,10 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
 
     if as_json:
         out = summary.describe()
+        if not routes:
+            # No route planned says nothing about which buckets the routes
+            # reach, as the text output says nothing either.
+            out["unreached"] = {}
         out["routes"] = [r.describe() for r in routes]
         out["not_planned"] = dict(failed)
         print(json.dumps(out, indent=2))  # noqa: T201

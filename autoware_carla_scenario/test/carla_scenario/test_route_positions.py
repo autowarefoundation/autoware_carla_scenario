@@ -175,6 +175,31 @@ class TestTheFrame:
 # ---------------------------------------------------------------------------
 
 
+class TestTheScenarioRoutesFrame:
+    """#2266: a frame already built for the match is the route's, not built
+    again."""
+
+    def test_a_given_frame_is_the_scenarios(
+        self, road: tuple[Any, Any], frame: RouteFrame, straight: RouteMatch
+    ) -> None:
+        from autoware_carla_scenario.route import scenario_route_frame
+
+        try:
+            set_scenario_route(straight, *road, frame=frame)
+            assert scenario_route_frame() is frame
+            set_scenario_route(straight, *road)
+            built = scenario_route_frame()
+            assert built is not frame and built.match is straight
+        finally:
+            clear_scenario_route()
+
+    def test_a_frame_of_another_match_is_refused(
+        self, road: tuple[Any, Any], straight: RouteMatch
+    ) -> None:
+        with pytest.raises(ValueError, match="another route match"):
+            set_scenario_route(straight, *road, frame=_one_way(road))
+
+
 class TestRouteLanePose:
     def test_from_an_anchor(self, frame: RouteFrame) -> None:
         pose = resolve_route_pose(

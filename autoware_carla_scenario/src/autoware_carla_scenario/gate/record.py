@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional  # noqa: UP035
 
 from ..atomic_file import write_text_atomically
+from ..seed import check_whole_number
 
 __all__ = [
     "GATE_RECORD_SCHEMA",
@@ -86,6 +87,35 @@ def _array(raw: Mapping[str, Any], key: str) -> list[Any]:
     return value
 
 
+def _whole(raw: Mapping[str, Any], key: str) -> int:
+    """The whole number *raw* holds at *key*; ``0`` when it holds none.
+
+    ``int()`` would read ``true`` as 1 and ``12.9`` as 12, so a corrupt count
+    or id would be taken as another (#2265).
+
+    Raises:
+        ValueError: If *key* holds a boolean, a fraction, text or anything
+            else that is no whole number (:func:`seed.check_whole_number`).
+    """
+    value = raw.get(key)
+    if value is None:
+        return 0
+    return check_whole_number(f"case {key!r}", value)
+
+
+def _wholes(raw: Mapping[str, Any], key: str) -> tuple[int, ...]:
+    """The whole numbers of the JSON array *raw* holds at *key*, as
+    :func:`_whole` reads each; empty when it holds none.
+
+    Raises:
+        ValueError: If *key* holds no array, or an item no whole number.
+    """
+    return tuple(
+        check_whole_number(f"case {key!r}[{index}]", value)
+        for index, value in enumerate(_array(raw, key))
+    )
+
+
 @dataclass(frozen=True)
 class GateCase:
     """The concrete case a run drove: one route match on one map.
@@ -138,19 +168,20 @@ class GateCase:
         """The case *raw* holds.
 
         Raises:
-            ValueError: If *raw* is not a JSON object, or one of its lists is
-                not a JSON array.
+            ValueError: If *raw* is not a JSON object, one of its lists is
+                not a JSON array, or its index, case count, a lanelet id or a
+                segment's lanelet count is no whole number.
         """
         if not isinstance(raw, dict):
             raise ValueError(f"the case is not a JSON object ({type(raw).__name__})")
         return cls(
             map=str(raw.get("map") or ""),
-            index=int(raw.get("index") or 0),
-            lanelet_ids=tuple(int(v) for v in _array(raw, "lanelet_ids")),
-            case_count=int(raw.get("case_count") or 0),
+            index=_whole(raw, "index"),
+            lanelet_ids=_wholes(raw, "lanelet_ids"),
+            case_count=_whole(raw, "case_count"),
             segment_kinds=tuple(str(v) for v in _array(raw, "segment_kinds")),
             segment_ends=tuple(float(v) for v in _array(raw, "segment_ends")),
-            segment_lanelets=tuple(int(v) for v in _array(raw, "segment_lanelets")),
+            segment_lanelets=_wholes(raw, "segment_lanelets"),
         )
 
 

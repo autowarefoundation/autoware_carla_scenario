@@ -13,6 +13,7 @@ from typing import Optional
 import pytest
 
 from autoware_carla_scenario.constants import EGO_ROLES, FIXED_DELTA_SECONDS
+from autoware_carla_scenario.run_outputs import trajectory_stem
 from autoware_carla_scenario.t4_scene.convert import (
     LOG_SUFFIX,
     _Log,
@@ -60,8 +61,10 @@ def _original_is_ego(role: str) -> bool:
 def _original_on_scene(
     spawned: Optional[int], despawned: Optional[int], frame: int
 ) -> bool:
-    return (spawned is None or frame > spawned) and (
-        despawned is None or frame < despawned
+    # The spawn's and the despawn's own frames are on the scene since #2352
+    # (the original left both out).
+    return (spawned is None or frame >= spawned) and (
+        despawned is None or frame <= despawned
     )
 
 
@@ -165,6 +168,13 @@ def test_scene_stem_matches_the_originals(name: str) -> None:
     for path in (Path(name), Path("some/dir") / name):
         assert scene_stem(path.name) == _original_convert_stem(path)
         assert scene_stem(path.name) == _original_main_stem(path)
+
+
+@pytest.mark.parametrize("name", _NAMES)
+def test_scene_stem_is_the_trajectory_stem(name: str) -> None:
+    # One rule names a run's outputs, the T4Scene's among them (#2298).
+    for path in (Path(name), Path("some/dir") / name):
+        assert scene_stem(path.name) == trajectory_stem(path)
 
 
 @pytest.mark.parametrize(

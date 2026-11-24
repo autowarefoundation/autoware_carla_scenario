@@ -322,7 +322,7 @@ if name == "sbatch":
     count = os.path.join(base, "sbatch.count")
     number = int(open(count).read()) if os.path.exists(count) else 0
     open(count, "w").write(str(number + 1))
-    sys.stdout.write(f"{5000 + number};cluster\\n")
+    sys.stdout.write(f"{5000 + number}\\n")
 """
 
 

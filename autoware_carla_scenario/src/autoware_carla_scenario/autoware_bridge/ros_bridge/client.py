@@ -2,10 +2,13 @@
 
 This is the Autoware side of the (deliberately tiny) contract: pull the mission
 once it is available (``GetMission``) -- and again later, to follow a re-route --
-and push a single readiness flag
-(``ReportReadiness``).  It opens an ``insecure_channel`` to a server the interface
-node launches and dials, and is kept free of ``rclpy`` so it can be unit tested
-against an in-process server.
+push a single readiness flag (``ReportReadiness``), and forward Autoware's
+turn-indicator command (``ReportTurnIndicators``).  The scenario framework
+hosts the server
+(:class:`~autoware_carla_scenario.autoware_bridge.grpc_server.GrpcAutowareBridgeServer`);
+the interface node is the client and dials it, opening an ``insecure_channel``
+to its address.  Kept free of ``rclpy`` so it can be unit tested against an
+in-process server.
 """
 
 from __future__ import annotations

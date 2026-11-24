@@ -196,8 +196,10 @@ def solve_along(
 #: Where :func:`vehicle_bumpers` spawns it: this high above the map's origin,
 #: clear of everything on the road, and higher by as much again if that fails.
 _PROBE_HEIGHT_M = 500.0
-#: Blueprint id -> its bumpers, as measured.
-_BUMPERS: dict[str, Bumpers] = {}
+#: ``(world id, blueprint id)`` -> its bumpers, as measured: per world, as
+#: :mod:`~autoware_carla_scenario.entity.fit` keeps its boxes, so one
+#: server's (or map's) box is not served to another.
+_BUMPERS: dict[tuple[int, str], Bumpers] = {}
 
 
 def _destroy_probes(world: carla.World, probes: list[carla.Actor], what: str) -> None:
@@ -261,7 +263,8 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
     synchronous mode that tick is this client's, whoever else ticks the world:
     call it where the caller owns the ticking, as a scenario's ``setup()``
     does.
-    The result is remembered by blueprint id for the rest of the process.
+    The result is remembered by the world's id and the blueprint id for the
+    rest of the process.
     Placing a vehicle for a bumper-to-bumper gap needs its size where it is
     placed, and this way it is placed once, where the gap reads right, rather
     than spawned and then moved.
@@ -272,12 +275,13 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
         RuntimeError: When the probe cannot be destroyed even after a tick;
             it is then left in the world.
     """
-    if vehicle_type in _BUMPERS:
-        return _BUMPERS[vehicle_type]
+    key = (int(world.id), vehicle_type)
+    if key in _BUMPERS:
+        return _BUMPERS[key]
     for existing in world.get_actors():
         if existing.type_id == vehicle_type:
             found = bumpers_of_box(existing.bounding_box)
-            _BUMPERS[vehicle_type] = found
+            _BUMPERS[key] = found
             return found
     library = world.get_blueprint_library()
     known = {bp.id for bp in library.filter("vehicle.*")}
@@ -307,7 +311,7 @@ def vehicle_bumpers(world: carla.World, vehicle_type: str) -> Bumpers:
                 pass
             raise
         _destroy_probe(world, spawned)
-        _BUMPERS[vehicle_type] = bumpers
+        _BUMPERS[key] = bumpers
         return bumpers
     raise ValueError(
         f"vehicle_bumpers(): no {vehicle_type} could be spawned to measure"

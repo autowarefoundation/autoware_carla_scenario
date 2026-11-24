@@ -58,6 +58,7 @@ from .criteria import (
     ConsistencyResult,
     CriterionChange,
     CriterionResult,
+    _case_count_warnings,
     _case_coverage,
     _criterion,
     _outcomes,
@@ -67,7 +68,7 @@ from .criteria import (
     find_gate_records,
     station_values,
 )
-from .record import GATE_RECORD_SUFFIX, GateRecord, read_gate_record
+from .record import GateRecord, read_gate_record
 
 # The scans of a set of runs are the checked gate.unrecorded's, the same
 # objects (docs/typecheck.md).
@@ -80,6 +81,9 @@ from .unrecorded import _has_gate_record as _has_gate_record
 from .unrecorded import _has_result as _has_result
 from .unrecorded import _has_result_since as _has_result_since
 from .unrecorded import _recorded_at_stem as _recorded_at_stem
+from .unrecorded import _scan_batches as _scan_batches
+from .unrecorded import _slurm_cases as _slurm_cases
+from .unrecorded import _slurm_unrecorded as _slurm_unrecorded
 from .unrecorded import _summary_cases as _summary_cases
 from .unrecorded import _unstarted_jobs as _unstarted_jobs
 from .report import (
@@ -214,81 +218,6 @@ def load_gate_records(paths: Iterable[Path]) -> tuple[list[GateRecord], list[str
             continue
         records.append(record)
     return records, errors
-
-
-def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
-    """The labels of a SLURM batch's cases that errored, have no outcome or
-    one holding no verdict, and left no gate record at their stem; and how
-    many cases it has.  Why the manifest cannot be read, instead, if it
-    cannot."""
-    from ..slurm.manifest import BatchLayout, recorded_verdict  # noqa: PLC0415
-
-    layout = BatchLayout(directory)
-    try:
-        manifest = layout.read_manifest()
-        cases = list(manifest["cases"])
-    except (KeyError, OSError, TypeError, ValueError) as exc:
-        return f"{layout.manifest}: the SLURM manifest cannot be read ({exc})"
-    unrecorded: list[str] = []
-    for case in cases:
-        try:
-            index = int(case["index"])
-        except (KeyError, TypeError, ValueError):
-            return f"{layout.manifest}: a case without an index ({case!r})"
-        record = layout.read_result(index)
-        if (
-            record is not None
-            and recorded_verdict(record) is not None
-            and not record.errored
-        ):
-            continue
-        stem = case.get("stem")
-        if stem and (directory / f"{stem}{GATE_RECORD_SUFFIX}").is_file():
-            continue
-        unrecorded.append(str(case.get("label") or case.get("scenario") or index))
-    return unrecorded, len(cases)
-
-
-def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
-    """The names of a local batch's errored and pending cases that left no
-    gate record, and how many cases it has; why the summary cannot be read,
-    instead (:func:`.unrecorded._summary_cases`, which reads it)."""
-    names, total, unreadable = _summary_cases(directory)
-    if unreadable is not None:
-        return unreadable
-    return names, total
-
-
-def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
-    """What :func:`unrecorded_cases` and :func:`batch_read_errors` return for
-    *path*, read once."""
-    if not path.is_dir():
-        return [], []
-    lines: list[str] = []
-    unreadable: list[str] = []
-    for directory in _batch_dirs(path):
-        if (directory / "slurm" / "manifest.json").is_file():
-            found = _slurm_unrecorded(directory)
-        else:
-            found = _summary_unrecorded(directory)
-        if isinstance(found, str):
-            unreadable.append(found)
-            continue
-        names, total = found
-        if not names:
-            continue
-        shown = ", ".join(names[:_NAMED])
-        more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
-        lines.append(
-            f"{directory}: {len(names)} of {total} case(s) raised or have no "
-            f"outcome, and left no gate record ({shown}{more}); the gate would "
-            "be judged over the runs that survived"
-        )
-    lines.extend(_errored_jobs(path))
-    unstarted, unreadable_plans = _unstarted_jobs(path)
-    lines.extend(unstarted)
-    unreadable.extend(unreadable_plans)
-    return lines, unreadable
 
 
 def unrecorded_cases(path: Path) -> list[str]:
@@ -455,6 +384,7 @@ def judge(
         )
     if gate.min_case_coverage is not None:
         value, detail = _case_coverage(records)
+        warnings.extend(_case_count_warnings(records))
         out.append(
             _criterion("min_case_coverage", value, ">=", gate.min_case_coverage, detail)
         )
@@ -494,7 +424,7 @@ def judge_all(
 ) -> list[GateVerdict]:
     """Judge every logical scenario *records* are runs of, one verdict each,
     sorted by id; only *scenario* when it is given."""
-    groups = _by_scenario(records, scenario)
+    groups = records_by_scenario(records, scenario)
     return [judge(groups[name], gate) for name in sorted(groups)]
 
 
@@ -672,18 +602,14 @@ def compare_all(
 ) -> list[GateComparison]:
     """Compare every logical scenario either side ran, one comparison each,
     sorted by id; only *scenario* when it is given."""
-    before, after = _by_scenario(baseline, scenario), _by_scenario(candidate, scenario)
+    before, after = (
+        records_by_scenario(baseline, scenario),
+        records_by_scenario(candidate, scenario),
+    )
     return [
         compare(before.get(name, []), after.get(name, []), gate)
         for name in sorted(before.keys() | after.keys())
     ]
-
-
-def _by_scenario(
-    records: Sequence[GateRecord], scenario: Optional[str] = None
-) -> dict[str, list[GateRecord]]:
-    """*records* grouped by scenario id; only *scenario*'s when it is given."""
-    return records_by_scenario(records, scenario)
 
 
 # ---------------------------------------------------------------------------

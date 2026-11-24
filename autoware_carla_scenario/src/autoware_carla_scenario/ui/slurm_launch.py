@@ -22,17 +22,18 @@ import json
 import os
 import re
 import shlex
-import signal
 import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from ..slurm.collect import stale_reason
 from ..slurm.manifest import (
     BatchLayout,
+    CaseOutcome,
     Manifest,
     SubmissionRecord,
     TaskStatus,
@@ -43,6 +44,10 @@ from ..slurm.manifest import (
 )
 from ..slurm.queue import ACTIVE_STATES, squeue_states
 from ..slurm.records import JsonMembers
+
+# SIGKILLs a submitting process's group: the ``scenario`` it ran, the ``uv
+# run`` in front of it and the sbatch or checks it started.
+from ..utils.process_group import kill_group as _kill_group
 from .case_paths import session_order
 from .slurm_case_state import case_state, no_job_case_state
 
@@ -211,7 +216,11 @@ def _now_iso() -> str:
     from :func:`time.gmtime`'s fields, as Codon's datetime holds no timezone
     (no ``timezone.utc``, no aware ``now()``) and the check compiles this.
     """
-    now = time.gmtime()
+    # Not a bare time.gmtime(): with no argument it reads time(NULL), the
+    # coarse clock (the seconds at the last kernel tick), which can lag the
+    # CLOCK_REALTIME that datetime.now() and time.time() read just after a
+    # second ticks over (#2257).
+    now = time.gmtime(time.time_ns() // 1_000_000_000)
     date = f"{now.tm_year:04d}-{now.tm_mon:02d}-{now.tm_mday:02d}"
     clock = f"{now.tm_hour:02d}:{now.tm_min:02d}:{now.tm_sec:02d}"
     return f"{date}T{clock}+00:00"
@@ -245,8 +254,13 @@ _submission: Submission | None = None
 
 
 def submission() -> Submission | None:
+    """A copy of the last submission as it is now: the record itself is
+    filled in by the submitting thread, under :data:`_lock`, while the
+    caller reads it without (#2323)."""
     with _lock:
-        return _submission
+        if _submission is None:
+            return None
+        return replace(_submission, command=list(_submission.command))
 
 
 def _new_manifests(base: Path, before: set[Path]) -> list[Path]:
@@ -266,16 +280,6 @@ def _new_manifests(base: Path, before: set[Path]) -> list[Path]:
 #: past them the submit is recorded as failed (:data:`TIMED_OUT`), and the
 #: viewer takes a new one.
 SUBMIT_TIMEOUT_SECONDS = 1800.0
-
-
-def _kill_group(process: subprocess.Popen[str]) -> None:
-    """SIGKILL *process*'s group (its own session's, ``start_new_session``):
-    the ``scenario`` it ran, the ``uv run`` in front of it and the sbatch or
-    checks it started."""
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass  # Every process of the group has ended already.
 
 
 def _joined(stdout: str | None, stderr: str | None) -> str:
@@ -464,6 +468,14 @@ def _case_states(
     for case in manifest.listed_cases():
         index = case.index()
         record = layout.read_result(index)
+        if record is not None:
+            # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+            outcome: CaseOutcome = record
+            if stale_reason(layout, index, outcome) is not None:
+                # An earlier submission's outcome, which the last one to give
+                # the case stopped before replacing (#2247): shown as without
+                # one, where its task is, as `status` counts it.
+                record = None
         label_json = case.value_json("label")
         stem_json = case.value_json("stem")
         overrides_json = case.value_json("case_overrides")

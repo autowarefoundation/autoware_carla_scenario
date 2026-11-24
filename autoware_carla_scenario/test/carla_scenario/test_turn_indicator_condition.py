@@ -121,6 +121,26 @@ def test_the_action_skips_a_missing_entity_or_a_walker() -> None:
     walker.get_actors.return_value[0].set_light_state.assert_not_called()
 
 
+def test_two_names_of_the_ego_in_one_tick_conflict() -> None:
+    """The ego under two of its names is one entity's lights (#2273)."""
+    from autoware_carla_scenario.control_domain import ControlConflictError
+
+    world = _world(0)
+    world.get_actors.return_value[0].attributes = {"role_name": "Ego"}
+    left = TurnIndicatorAction("Ego", TurnIndicatorState.LEFT, label="left")
+    right = TurnIndicatorAction("hero", TurnIndicatorState.RIGHT, label="right")
+    left.tick(world, 0.0)
+    with pytest.raises(ControlConflictError):
+        right.tick(world, 0.0)
+    (ego,) = world.get_actors.return_value
+    ego.set_light_state.assert_called_once_with(_LEFT_BLINKER)
+    # Released as the tick passes and on close: the next tick is free.
+    left.close()
+    later = TurnIndicatorAction("ego", TurnIndicatorState.RIGHT, label="later")
+    later.tick(world, 0.05)
+    assert ego.set_light_state.call_args.args == (_RIGHT_BLINKER,)
+
+
 def test_the_editor_offers_every_state() -> None:
     """The authoring select lists exactly the enum's members."""
     from autoware_carla_scenario.authoring.registry import _TURN_INDICATOR_STATES

@@ -47,12 +47,11 @@ import random
 from dataclasses import dataclass
 from typing import Optional
 
+from ..seed import MAX_SEED, check_whole_number
 from .avoidance import (
     AVOID,
     DEFAULT_AVOIDANCE,
     AvoidanceSettings,
-    _check_non_negative,
-    _check_positive,
     _check_probability,
     accept_command,
     avoid_command,
@@ -60,6 +59,7 @@ from .avoidance import (
     respond,
     victims,
 )
+from .checks import check_non_negative, check_positive
 from .collision import DEFAULT_DISTANCE_THRESHOLD
 from .command import AdversarialCommand, predict_command
 from .geometry import AgentFootprint, PredictedState
@@ -82,6 +82,8 @@ __all__ = [
     "ego_command",
     "is_probability",
     "stream_seed",
+    "trigger_key",
+    "trigger_stream_seed",
 ]
 
 
@@ -109,8 +111,9 @@ class NadeSettings:
     1 would sample the adversity every time and still weight it by ``p / q``.
 
     Attributes:
-        max_controlled: How many of the nearest vehicles are candidates
-            (>= 0).
+        max_controlled: How many of the nearest vehicles are candidates (a
+            whole number, >= 0: ``2.0`` is read as 2; ``2.5``, NaN or a
+            boolean is refused).
         control_radius: How near the ego (m) a candidate is (finite, >= 0).
         horizon: How far ahead futures are predicted (s; finite, > 0).
         resolution: How far apart their states are (s; finite, > 0).
@@ -140,17 +143,22 @@ class NadeSettings:
     avoidance: AvoidanceSettings = DEFAULT_AVOIDANCE
 
     def __post_init__(self) -> None:
-        if self.max_controlled < 0:
+        # A whole number, kept as an int: 2.5, NaN or True would pass the
+        # sign check and fail as a slice index on the first tick with a
+        # vehicle in range (#2226).
+        count = check_whole_number("max_controlled", self.max_controlled)
+        if count < 0:
             raise ValueError(
                 f"max_controlled must not be negative, not {self.max_controlled}"
             )
-        _check_non_negative("control_radius", self.control_radius)
-        _check_positive("horizon", self.horizon)
-        _check_positive("resolution", self.resolution)
-        _check_non_negative("magnitude", self.magnitude)
+        object.__setattr__(self, "max_controlled", count)
+        check_non_negative("control_radius", self.control_radius)
+        check_positive("horizon", self.horizon)
+        check_positive("resolution", self.resolution)
+        check_non_negative("magnitude", self.magnitude)
         _check_probability("max_is_probability", self.max_is_probability)
         _check_probability("fixed_is_probability", self.fixed_is_probability)
-        _check_non_negative("cooldown", self.cooldown)
+        check_non_negative("cooldown", self.cooldown)
 
 
 DEFAULT_NADE = NadeSettings()
@@ -220,6 +228,55 @@ def stream_seed(seed: int, stream: int) -> int:
     if not 0 <= stream < _STREAMS:
         raise ValueError(f"stream must be 0 to {_STREAMS - 1}, not {stream}")
     return seed * _STREAMS + stream
+
+
+#: Where the triggers' own streams start: past every seed :func:`stream_seed`
+#: gives (``3 * MAX_SEED + 2`` at most), and every seed a component seeded
+#: with the run's seed itself takes (``MAX_SEED`` at most).
+_TRIGGER_BASE = _STREAMS * (MAX_SEED + 1)
+
+#: How many triggers a run's seed tells apart: a trigger key is below it.
+_TRIGGER_KEYS = 1 << 30
+
+_FNV_OFFSET = 2166136261
+_FNV_PRIME = 16777619
+
+
+def trigger_key(text: str) -> int:
+    """A whole number from 0 to ``2**30 - 1`` that *text* names, the same in
+    every process.
+
+    FNV-1a over the characters' code points, folded to 30 bits: not
+    ``hash()``, which CPython salts per process (so a run would not repeat
+    from its seed) and Codon computes differently.
+    """
+    number = _FNV_OFFSET
+    for char in text:
+        number = ((number ^ ord(char)) * _FNV_PRIME) & 0xFFFFFFFF
+    return (number ^ (number >> 30)) & (_TRIGGER_KEYS - 1)
+
+
+def trigger_stream_seed(seed: int, key: int) -> int:
+    """The seed of the stream a trigger keyed *key* draws from in a run
+    seeded *seed*: an
+    :class:`~..conditions.adversity_feasible.AdversityFeasibleCondition`'s
+    (a jaywalker's speed, a stopped crosser's wait).
+
+    ``3 * 2**31 + seed * 2**30 + key``: one-to-one over the seeds (0 to
+    :data:`~..seed.MAX_SEED`) and keys (0 to ``2**30 - 1``,
+    :func:`trigger_key`), so two triggers of a run draw apart, no trigger of
+    one run draws another run's numbers, and none draws what
+    :func:`stream_seed` gives NADE or what a component seeded with the run's
+    seed itself draws (#2226).  Below ``2**62``, so a 64-bit integer holds it.
+
+    Raises:
+        ValueError: If *seed* or *key* is out of its range.
+    """
+    if not 0 <= seed <= MAX_SEED:
+        raise ValueError(f"seed must be 0 to {MAX_SEED}, not {seed}")
+    if not 0 <= key < _TRIGGER_KEYS:
+        raise ValueError(f"key must be 0 to {_TRIGGER_KEYS - 1}, not {key}")
+    return _TRIGGER_BASE + seed * _TRIGGER_KEYS + key
 
 
 def candidates(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ...coordinate.lane_distance import lane_offset, lane_separation
@@ -114,8 +113,6 @@ class EntityDistanceCondition(CompositionCondition):
         label: str,
         signed: bool = False,
     ) -> None:
-        if not math.isfinite(tolerance) or tolerance < 0:
-            raise ValueError("tolerance must be non-negative and finite")
         in_lane = coordinate_system is DistanceCoordinateSystem.LANE
         if signed and not in_lane:
             raise ValueError(

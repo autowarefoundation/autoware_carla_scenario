@@ -1,5 +1,64 @@
 # Migrating
 
+## `visibility.at_quantile` is gone
+
+The helper was exported but nothing read it: the weather rules' quantities
+take their quantiles from their own distributions
+([Weather rules](odd.md#weather-rules)). Code importing `at_quantile` writes
+its own; it was `low + q * (high - low)`, with `q` the quantile clamped to
+`[0, 1]` (#2251).
+
+The same release refuses, as the config is read, what used to fail later
+(#2251): a blank weather-rules path (`environment.rules`, its `default` or a
+`vehicles` entry) is refused naming the key, rather than read as the
+directory the run started in; and `PerceptionFaultInjectionAction` refuses
+the ego under any of its role names (`ego` or `hero`, in any case), not only
+`Ego`.
+
+## The driver's steering angles default to null
+
+`DriverControlSpec.max_steer_angle_deg` and `yaw_rate_trim_limit_deg` now
+default to `None` instead of `56.0` and `25.0`, and the spec has their radian
+twins, `max_steer_angle_rad` and `yaw_rate_trim_limit_rad`, also `None`
+([Driver interface](driver_interface.md)). Null is the controller's default,
+so a run steers as before; but the degrees used to win silently over a
+`driver.control.max_steer_angle_rad` override, and one angle set both ways is
+now refused. Code reading the spec's `max_steer_angle_deg` for a number reads
+the effective angle from the controller's config instead:
+`ControlConfig.from_mapping(dataclasses.asdict(spec)).max_steer_angle_rad`. A
+config group of your own that sets `max_steer_angle_deg` keeps working, unless
+it also sets `max_steer_angle_rad`.
+
+The same release refuses as the config is read what used to fail later or
+pass silently (#2241): a null `driver.control` (or `ros2.control`) setting is
+now its default rather than an error; `driver.policy` and `driver.map_dir`
+must be a non-empty string or null; `driver.map_formats` must be a list of
+known format names, with `t4` only beside `driver.t4_scene`; and a HILS
+device's `url` must be non-blank text, its `codec` neither empty nor a bare
+`NAME:` ([HILS](hils.md)).
+
+## A T4 dataset's LiDAR intensity is on the 0-255 scale
+
+A run's T4 dataset (`t4.enabled`) wrote its sweeps' intensity on CARLA's
+`[0, 1]` scale, which T4's readers take for a nearly black cloud. It is now
+on T4's 0-255 scale, as Autoware's point clouds and the T4Scenes' sweeps are
+([T4 Dataset](t4_dataset.md)): CARLA's value times 255. Code reading an
+earlier dataset's `.pcd.bin` files that scaled the intensity itself drops
+that; datasets written before stay on `[0, 1]` (#2237).
+
+## An adversity trigger's draws have a stream of their own
+
+`AdversityFeasibleCondition`, the default trigger of every adversarial action,
+now seeds its draws (a jaywalker's speed, a stopped crosser's wait) from its
+seed and a key of its entity, kind and label
+([Adversity](adversity.md), `adversity.nade.trigger_stream_seed`), instead of
+`random.Random(seed)`. Two actions following the run's seed no longer draw the
+same numbers, nor NADE's (#2226). A run still repeats from its seed, but the
+draws for any given seed, whether the run's or an explicit `seed=`, differ
+from those of earlier releases: a scenario that pinned a jaywalker's path or a
+crosser's wait to a seed needs its expectation updated. Renaming an action's
+label or entity also changes its draws.
+
 ## `debug_markers.DRIVEN_PATH_COLOR` is gone
 
 The colour was exported for a viewer to draw the driven path in, but nothing

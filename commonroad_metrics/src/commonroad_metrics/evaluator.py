@@ -86,6 +86,55 @@ MEASURES: tuple[str, ...] = (*CRIME_MEASURES, *REACH_MEASURES)
 #: (ALongReq) take a lane heading of exactly 0 for one they could not read.
 _TILT = 1e-3
 
+#: The least length and width a box is given (m): CommonRoad's shapes and
+#: Reach's discs need a positive extent.  Obstacles and the ego alike.
+_MIN_EXTENT_M = 0.1
+
+#: Actor's fields that must be finite numbers (every one but id and kind).
+_ACTOR_NUMBERS = ("x", "y", "yaw", "vx", "vy", "ax", "ay", "yaw_rate", "length", "width")
+
+
+class NonFiniteError(ValueError):
+    """A number that must be finite is not: a NaN, an infinity or an int too
+    big for a float.  A ``ValueError`` as any other refusal; told apart so
+    that the worker can answer a frame holding one with its measures failed,
+    a reading gone bad in one frame, rather than the request refused
+    (:func:`failed_frame`)."""
+
+
+def _finite(name: str, value: Any) -> float:
+    """*value* as a float, refused (``ValueError`` naming *name*) unless it is
+    a finite number -- :class:`NonFiniteError` when it is a number but not
+    finite.  A NaN read as a speed or a headway gives the least critical value
+    (TTC ``inf``, ALongReq ``0``), and one read as a position makes every
+    measure ``None``: neither says the input was bad."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a number, got {value!r}")
+    try:
+        number = float(value)
+    except OverflowError:  # an int too big for a float
+        raise NonFiniteError(f"{name} must be finite, got an int too big for a float") from None
+    if not math.isfinite(number):
+        raise NonFiniteError(f"{name} must be finite, got {number!r}")
+    return number
+
+
+#: The error a measure that is not one of :data:`MEASURES` fails with.
+UNKNOWN_MEASURE = "unknown measure"
+
+
+def failed_frame(
+    measures: Iterable[str], error: str
+) -> tuple[dict[str, float | None], dict[str, str]]:
+    """What :meth:`Evaluator.evaluate` gives for a frame none of whose
+    *measures* could be evaluated: each known one ``None``, failed with
+    *error*; each unknown one failed with :data:`UNKNOWN_MEASURE`, as ever."""
+    wanted = list(dict.fromkeys(measures))
+    values: dict[str, float | None] = {m: None for m in wanted if m in MEASURES}
+    errors = {m: error if m in MEASURES else UNKNOWN_MEASURE for m in wanted}
+    return values, errors
+
+
 #: The CommonRoad obstacle type of each kind of road user the frame names.
 _OBSTACLE_TYPES: dict[str, str] = {
     "car": "CAR",
@@ -112,6 +161,11 @@ class Actor:
         ax, ay: Its acceleration (m/s^2), in the map's frame.
         yaw_rate: How fast it turns (rad/s).
         length, width: Its box (m).
+
+    Every number but ``id`` must be finite: a NaN or an infinity is refused
+    with a :class:`NonFiniteError` naming the field (the worker answers the
+    frame with each measure ``null`` and failed with that message), anything
+    but a number with a ``ValueError`` (the worker answers ``ok: false``).
     """
 
     id: int
@@ -126,6 +180,10 @@ class Actor:
     yaw_rate: float = 0.0
     length: float = 4.5
     width: float = 1.8
+
+    def __post_init__(self) -> None:
+        for name in _ACTOR_NUMBERS:
+            _finite(name, getattr(self, name))
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> Actor:
@@ -143,10 +201,18 @@ class EvaluatorSettings:
             the reachable set is computed over.
         radius_m: How far from the ego the lanelets are kept (m).
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
-            section and key (``{"planning": {"size_grid": 0.3}}``).
+            section and key (``{"reachable_set": {"size_grid": 0.3}}``, the
+            grid the drivable area is computed on); a section or key Reach's
+            configuration does not have is refused
+            (:func:`_apply_reach_settings`).
         share_frame: Let CriMe's measures share the frame's scenario rather
             than each copy it (:func:`_shared_frame`); the same values, in a
             fifth of the time.  Off only to check that.
+
+    ``dt`` and ``radius_m`` must be finite and positive, ``horizon_steps`` an
+    int of at least 1; anything else is refused with a ``ValueError`` (the
+    worker's ``init`` answers ``ok: false``) rather than breaking every frame
+    after it.
     """
 
     dt: float = 0.1
@@ -154,6 +220,14 @@ class EvaluatorSettings:
     radius_m: float = 150.0
     reach_settings: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     share_frame: bool = True
+
+    def __post_init__(self) -> None:
+        for name in ("dt", "radius_m"):
+            if not _finite(name, getattr(self, name)) > 0.0:
+                raise ValueError(f"{name} must be positive, got {getattr(self, name)!r}")
+        steps = self.horizon_steps
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+            raise ValueError(f"horizon_steps must be an int of at least 1, got {steps!r}")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> EvaluatorSettings:
@@ -206,6 +280,10 @@ class Evaluator:
         map_xml: The CommonRoad 2020a scenario of the map (roadgen's
             ``Map.export_commonroad``); only its lanelet network is read.
         settings: How a frame is evaluated.
+
+    Raises:
+        ValueError: The settings' ``reach_settings`` name a section or key
+            CommonRoad-Reach's configuration does not have.
     """
 
     def __init__(self, map_xml: str, settings: EvaluatorSettings | None = None) -> None:
@@ -245,6 +323,10 @@ class Evaluator:
         self._segment_starts = np.concatenate(starts) if starts else np.zeros((0, 2))
         self._segment_ends = np.concatenate(ends) if ends else np.zeros((0, 2))
         self._segment_owners = np.concatenate(owners) if owners else np.zeros(0, dtype=int)
+        if self.settings.reach_settings:
+            # A section or key Reach does not have is refused now, by init,
+            # rather than failing every frame's Reach measures.
+            self._reach_base_config()
 
     # ------------------------------------------------------------------
     # The scenario of a frame
@@ -319,7 +401,9 @@ class Evaluator:
         from commonroad.scenario.trajectory import Trajectory
 
         dt = self.settings.dt
-        shape = Rectangle(length=max(actor.length, 0.1), width=max(actor.width, 0.1))
+        shape = Rectangle(
+            length=max(actor.length, _MIN_EXTENT_M), width=max(actor.width, _MIN_EXTENT_M)
+        )
         speed = math.hypot(actor.vx, actor.vy)
         heading = math.atan2(actor.vy, actor.vx) if speed > 0.1 else actor.yaw
 
@@ -394,7 +478,7 @@ class Evaluator:
         wanted = list(dict.fromkeys(measures))
         unknown = [m for m in wanted if m not in MEASURES]
         values: dict[str, float | None] = {}
-        errors: dict[str, str] = {m: "unknown measure" for m in unknown}
+        errors: dict[str, str] = {m: UNKNOWN_MEASURE for m in unknown}
         wanted = [m for m in wanted if m not in unknown]
         if not wanted:
             return values, errors
@@ -528,7 +612,8 @@ class Evaluator:
 
         config = copy.deepcopy(self._reach_base_config())
         config.planning.steps_computation = horizon - start
-        _set_ego_footprint(config, ego.length, ego.width)
+        # Floored as the obstacles' boxes are (Evaluator._obstacle).
+        _set_ego_footprint(config, max(ego.length, _MIN_EXTENT_M), max(ego.width, _MIN_EXTENT_M))
         config.vehicle.ego.v_max = max(config.vehicle.ego.v_max, speed + 1.0)
         config.vehicle.ego.v_lon_max = max(config.vehicle.ego.v_lon_max, speed + 1.0)
         config.vehicle.ego.v_lon_min = min(config.vehicle.ego.v_lon_min, velocity - 1.0)
@@ -554,7 +639,13 @@ class Evaluator:
     def _reach_base_config(self) -> Any:
         """CommonRoad-Reach's configuration with the settings applied, made
         once (from its YAML files, through omegaconf) and copied for each
-        reachable set."""
+        reachable set.
+
+        Raises:
+            ValueError: :attr:`EvaluatorSettings.reach_settings` names a
+                section or key Reach's configuration does not have
+                (:func:`_apply_reach_settings`).
+        """
         if self._reach_config is None:
             _import_reach()
             from commonroad_reach.data_structure.configuration_builder import (
@@ -565,10 +656,7 @@ class Evaluator:
             # Reach saves its configuration under ./output/ every computation.
             config.debug.save_config = False
             config.planning.dt = self.settings.dt
-            for section, overrides in self.settings.reach_settings.items():
-                target = getattr(config, section)
-                for name, value in overrides.items():
-                    setattr(target, name, value)
+            _apply_reach_settings(config, self.settings.reach_settings)
             self._reach_config = config
         return self._reach_config
 
@@ -924,7 +1012,7 @@ def _required_deceleration(
 
 @functools.cache
 def _signed_crime_measures() -> dict[str, type]:
-    """CriMe's TTC and ALongReq, and the measures built on them, reading the
+    """CriMe's HW, THW, TTC and ALongReq, and the measures built on them, reading the
     other road user's velocity and acceleration along the lane with their sign.
 
     CriMe 0.4 reads the other road user's velocity and acceleration along the
@@ -946,17 +1034,39 @@ def _signed_crime_measures() -> dict[str, type]:
     keeps the ego off it in that model (:func:`_required_deceleration`;
     ``-inf``, and BTN ``inf``, when none does).  A road user behind the ego
     (CriMe's HW ``inf``) needs no ALongReq.
+
+    CriMe's HW and THW read ``inf`` -- a road user behind -- for one whose
+    box overlaps the ego's from ahead (a negative bumper-to-bumper headway):
+    a collision read as no conflict.  Here HW and THW read ``0`` for it (its
+    centre ahead of the ego's along the lane, their boxes touching), and TTC
+    and ALongReq, which take HW, read the gap as closed: TTC ``0``, ALongReq
+    ``-inf`` and BTN ``inf`` while the ego closes on it, as for a gap closing
+    to ``0``, and ALatReq and STN, which take TTC, ``inf``.  A road user
+    whose centre is behind the ego's, or one beside it whose box does not
+    touch the ego's (CriMe takes any lanelet their boxes share as the same
+    lane), still reads HW ``inf``.
     """
     import commonroad_crime.utility.general as utils_gen
     import commonroad_crime.utility.solver as utils_sol
     from commonroad.scenario.obstacle import DynamicObstacle
-    from commonroad_crime.measure import BTN, STN, TTC, ALatReq, ALongReq
+    from commonroad_crime.measure import BTN, HW, STN, THW, TTC, ALatReq, ALongReq
 
-    def heading_at(lanelet: Any, position: Any) -> Any:
+    def heading_at(lanelet: Any, position: Any) -> float | None:
         # The lane's heading where *position* projects onto it, as CriMe reads
-        # it (None out of its domain); wrap-safe under
-        # _unwrapped_lane_headings, which Evaluator._crime holds.
-        return utils_sol.compute_lanelet_width_orientation(lanelet, position)[1]
+        # it, or None where there is none; wrap-safe under
+        # _unwrapped_lane_headings, which Evaluator._crime holds.  CriMe
+        # answers (None, None) for a position out of the projection's domain,
+        # and raises ValueError for a lanelet it cannot build the projection of
+        # (a degenerate centre line: smoothing it fails, and the raw one has
+        # fewer than the 3 points a CurvilinearCoordinateSystem needs).  Both
+        # are None here, and every measure below reads None the same way: the
+        # ego's heading missing is NaN (nothing to measure), the other's is a
+        # road user far away.
+        try:
+            heading = utils_sol.compute_lanelet_width_orientation(lanelet, position)[1]
+        except ValueError:
+            return None
+        return None if heading is None else float(heading)
 
     def ego_along(state: Any, heading: float, name: str) -> float:
         # CriMe's TTC reading of the ego: its magnitude, signed as its
@@ -970,7 +1080,68 @@ def _signed_crime_measures() -> dict[str, type]:
         y = float(getattr(state, f"{name}_y", 0.0) or 0.0)
         return _along_lane(x, y, heading)
 
+    def overlapping_ahead(measure: Any, bumpers: bool) -> bool:
+        # Whether the other's box touches or overlaps the ego's, its centre
+        # not behind the ego's along the ego's lane (CriMe's curvilinear
+        # frame) -- and, with *bumpers*, the ego's front bumper past the
+        # other's rear one, as CriMe's THW reads them.  A negative headway
+        # alone is no contact: CriMe takes a road user in the ego's lane by
+        # any lanelet their boxes share, so one beside the ego (straddling a
+        # lane line, or the ego changing lanes) overlaps it along the lane
+        # without touching it.
+        time_step = measure.time_step
+        try:
+            ego_position = measure.ego_vehicle.state_at_time(time_step).position
+            other_position = measure.other_vehicle.state_at_time(time_step).position
+            ego_s, _ = measure.clcs.convert_to_curvilinear_coords(*ego_position)
+            other_s, _ = measure.clcs.convert_to_curvilinear_coords(*other_position)
+            ego_add_on = measure._compute_vehicle_add_on(measure.ego_vehicle)
+            other_add_on = measure._compute_vehicle_add_on(measure.other_vehicle)
+        except ValueError:  # out of the projection's domain, or no box
+            return False
+        if other_s < ego_s or (bumpers and ego_s + ego_add_on <= other_s - other_add_on):
+            return False
+        ego_occupancy = measure.ego_vehicle.occupancy_at_time(time_step)
+        other_occupancy = measure.other_vehicle.occupancy_at_time(time_step)
+        if ego_occupancy is None or other_occupancy is None:
+            return False
+        # CriMe's HW moves each centre by half the length along x and y both,
+        # which in a frame turned _TILT off the lane overshoots the bumpers by
+        # that much: boxes this close read a negative headway too.
+        touching = (ego_add_on + other_add_on) * 2.0 * _TILT + 1e-6
+        gap = ego_occupancy.shape.shapely_object.distance(other_occupancy.shape.shapely_object)
+        return bool(gap <= touching)
+
+    class SignedHW(HW):
+        # CriMe's HW, but for a road user overlapping the ego from ahead
+        # (their boxes touching, overlapping_ahead): CriMe reads its negative
+        # bumper-to-bumper headway as one behind (inf, no conflict), here it
+        # is 0 -- touching -- so TTC reads 0, ALongReq -inf and BTN inf for a
+        # collision, as they do for a gap closing to 0 (_contact_time).  0
+        # rather than the negative gap: a negative gap opening would read as
+        # a contact still to come.  CriMe's other infs (a projection failing,
+        # a road user beside the ego or behind it) stay inf.
+        def cal_headway(self, verbose: bool = True) -> Any:
+            headway = super().cal_headway(verbose=verbose)
+            if headway == math.inf and overlapping_ahead(self, bumpers=False):
+                return 0.0
+            return headway
+
+    class SignedTHW(THW):
+        # CriMe's THW, but 0 rather than inf for a road user overlapping the
+        # ego from ahead, as SignedHW: the ego's front is already past its rear.
+        # (CriMe's inf also means not reached within the horizon.)
+        def cal_headway(self, verbose: bool = True) -> Any:
+            headway = super().cal_headway(verbose=verbose)
+            if headway == math.inf and overlapping_ahead(self, bumpers=True):
+                return 0.0
+            return headway
+
     class SignedTTC(TTC):
+        def __init__(self, config: Any) -> None:
+            super().__init__(config)
+            self._hw_object = SignedHW(config)
+
         def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
             if not self.validate_update_states_log(vehicle_id, time_step, verbose):
                 return np.nan
@@ -985,17 +1156,11 @@ def _signed_crime_measures() -> dict[str, type]:
             lanelet = network.find_lanelet_by_id(
                 _best_lanelet(network, lanelet_ids, state.orientation)
             )
-            try:
-                ego_heading = heading_at(lanelet, state.position)
-            except ValueError:
-                ego_heading = None
+            ego_heading = heading_at(lanelet, state.position)
             if ego_heading is None:
                 self.value = math.nan
                 return self.value
-            try:
-                other_heading = heading_at(lanelet, state_other.position)
-            except ValueError:
-                other_heading = None
+            other_heading = heading_at(lanelet, state_other.position)
             if other_heading is None:
                 # Out of the projection's domain: the other is far away.
                 self.value = math.inf
@@ -1012,6 +1177,10 @@ def _signed_crime_measures() -> dict[str, type]:
             return self.value
 
     class SignedALongReq(ALongReq):
+        def __init__(self, config: Any) -> None:
+            super().__init__(config)
+            self._hw_object = SignedHW(config)
+
         def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
             if not self.validate_update_states_log(vehicle_id, time_step, verbose):
                 return np.nan
@@ -1028,8 +1197,13 @@ def _signed_crime_measures() -> dict[str, type]:
                 )
             )
             ego_heading = heading_at(lanelet, state.position)
+            if ego_heading is None:
+                # Nothing to measure from, as SignedTTC: NaN, not the least
+                # critical 0.
+                self.value = math.nan
+                return self.value
             other_heading = heading_at(lanelet, state_other.position)
-            if ego_heading is None or other_heading is None:
+            if other_heading is None:
                 # Out of the projection's domain: the other is far away.  (A
                 # heading of exactly 0.0 is a heading, not a missing one.)
                 a_req = 0.0
@@ -1092,15 +1266,24 @@ def _signed_crime_measures() -> dict[str, type]:
                 )
             )
             ego_orientation = heading_at(lanelet, state.position)
-            try:
-                other_orientation = heading_at(lanelet, state_other.position)
-            except ValueError:
+            if ego_orientation is None:
+                # Nothing to measure from, as SignedTTC (math.sin(None) would
+                # fail the measure for the whole frame).
+                self.value = math.nan
+                return self.value
+            other_orientation = heading_at(lanelet, state_other.position)
+            if other_orientation is None:
                 # Out of the projection's domain: the other is far away.
                 self.value = 0.0
             else:
                 ttc = self._ttc_object.compute(vehicle_id, time_step, verbose=verbose)
                 if ttc == math.inf:
                     self.value = 0.0
+                    return self.value
+                if ttc == 0.0:
+                    # In contact now (an overlapping road user, SignedHW): no
+                    # lateral acceleration avoids it.
+                    self.value = math.inf
                     return self.value
                 a_obj_lat = math.sqrt(
                     state_other.acceleration_y**2 + state_other.acceleration**2
@@ -1127,13 +1310,73 @@ def _signed_crime_measures() -> dict[str, type]:
             super().__init__(config)
             self._a_lat_req_object = SignedALatReq(config)
 
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            # CriMe's, but for an ALatReq of inf (in contact now), which
+            # CriMe's rounding cannot take: STN inf, as SignedBTN.
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            a_lat_req = self._a_lat_req_object.compute(vehicle_id, time_step, verbose=verbose)
+            stn = abs(a_lat_req / self.configuration.vehicle.curvilinear.a_lat_max)
+            self.value = utils_gen.int_round(stn, 4) if math.isfinite(stn) else stn
+            return self.value
+
     return {
+        "HW": SignedHW,
+        "THW": SignedTHW,
         "TTC": SignedTTC,
         "ALongReq": SignedALongReq,
         "BTN": SignedBTN,
         "ALatReq": SignedALatReq,
         "STN": SignedSTN,
     }
+
+
+#: The sections of CommonRoad-Reach's configuration ``reach_settings`` may
+#: override (``Configuration``'s attributes that are sections: not the
+#: scenario, the planning problem or the omegaconf it was read from).
+_REACH_SECTIONS: tuple[str, ...] = ("general", "planning", "vehicle", "reachable_set", "debug")
+
+
+def _apply_reach_settings(config: Any, reach_settings: Mapping[str, Any]) -> None:
+    """Set *reach_settings*, overrides by section and key, on CommonRoad-
+    Reach's *config*.
+
+    Reach's sections are plain objects, where setting a name they do not
+    have adds it, read by nothing: a misspelled or misplaced key
+    (``planning.size_grid`` for ``reachable_set.size_grid``) would do
+    nothing.  Every section and key must be one the configuration has, and a
+    key must hold a value, not a section of its own (``vehicle.ego``).
+
+    Raises:
+        ValueError: A section or key it does not have, naming it as
+            ``reach_settings[section][key]``.
+    """
+    for section, overrides in reach_settings.items():
+        if section not in _REACH_SECTIONS:
+            raise ValueError(
+                f"reach_settings[{section!r}]: CommonRoad-Reach's configuration has "
+                f"no section {section!r} (its sections: {', '.join(_REACH_SECTIONS)})"
+            )
+        if not isinstance(overrides, Mapping):
+            raise ValueError(
+                f"reach_settings[{section!r}] must be a mapping of keys to values, "
+                f"got {overrides!r}"
+            )
+        target = getattr(config, section)
+        for name, value in overrides.items():
+            where = f"reach_settings[{section!r}][{name!r}]"
+            if not isinstance(name, str) or name.startswith("_") or not hasattr(target, name):
+                known = ", ".join(sorted(k for k in vars(target) if not k.startswith("_")))
+                raise ValueError(
+                    f"{where}: CommonRoad-Reach's {section!r} section has no key "
+                    f"{name!r} (its keys: {known})"
+                )
+            if type(getattr(target, name)).__module__.startswith("commonroad_reach"):
+                raise ValueError(
+                    f"{where}: {section}.{name} is a section of CommonRoad-Reach's "
+                    "configuration, not a value"
+                )
+            setattr(target, name, value)
 
 
 def _set_ego_footprint(config: Any, length: float, width: float) -> None:

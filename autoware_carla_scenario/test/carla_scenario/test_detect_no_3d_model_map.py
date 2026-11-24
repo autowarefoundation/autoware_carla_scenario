@@ -310,6 +310,23 @@ def _run_main(path: Path, capsys: pytest.CaptureFixture[str]) -> str:
     return lines[0]
 
 
+def test_ctrl_c_prints_one_line_and_exits_130(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Not a traceback (#2333).
+    def interrupted(*_: Any, **__: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(tool, "_resolve_map_config", interrupted)
+    config = _write(tmp_path / "map.yaml", "map:\n  name: Town\n")
+    with pytest.raises(SystemExit) as excinfo:
+        tool.main([str(config)])
+    assert excinfo.value.code == 130
+    assert capsys.readouterr().err == "detect-no-3d-model: interrupted\n"
+
+
 def test_malformed_yaml_is_a_one_line_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

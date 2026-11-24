@@ -41,15 +41,21 @@ _TOLERANT = (
 
 
 def _document(trigger: dict[str, Any]) -> ScenarioDocument:
+    timeout = {"type": "timeout", "params": {"timeout_seconds": 30.0}}
+    # A metric fails a run, never passes one (#2316): it goes beside the
+    # timeout, with the timeout's place among the pass conditions taken by
+    # an elapsed time.
+    if trigger["type"] == "metric":
+        passes = [{"type": "elapsed_time", "params": {"duration_seconds": 5.0}}]
+        fails = [timeout, trigger]
+    else:
+        passes, fails = [trigger], [timeout]
     return ScenarioDocument.model_validate(
         {
             "entities": [
                 {"id": "ego", "kind": "ego", "spawn": {"lanelet_id": 242}},
             ],
-            "assertions": {
-                "pass": [trigger],
-                "fail": [{"type": "timeout", "params": {"timeout_seconds": 30.0}}],
-            },
+            "assertions": {"pass": passes, "fail": fails},
         }
     )
 

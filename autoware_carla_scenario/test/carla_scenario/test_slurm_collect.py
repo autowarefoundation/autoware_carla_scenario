@@ -83,8 +83,10 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     return fake
 
 
-def _layout(tmp_path: Path, cases: int = 1) -> BatchLayout:
-    layout = BatchLayout(tmp_path / "batch")
+def _layout(
+    tmp_path: Path, cases: int = 1, directory: Path | None = None
+) -> BatchLayout:
+    layout = BatchLayout(tmp_path / "batch" if directory is None else directory)
     write_json(
         layout.manifest,
         {
@@ -926,3 +928,191 @@ _MIXED_RESULTS: list[dict[str, Any]] = [
         "No result: the case did not finish under SLURM (it was never submitted). Run it again with: scenario-slurm resubmit <B>",
     ),
 ]
+
+
+def _passed(submission: int) -> dict[str, Any]:
+    return {
+        "result": {
+            "passed": True,
+            "message": "ok",
+            "elapsed_seconds": 1.0,
+            "condition_statuses": [],
+        },
+        "submission": submission,
+    }
+
+
+@pytest.mark.parametrize(
+    ("state", "record_from", "stale"),
+    [
+        # The task resubmitting it stopped before reaching it: stale.
+        ("failed", 0, True),
+        ("cancelled", 0, True),
+        # Its outcome is the last submission's own: current.
+        ("failed", 1, False),
+        # Queued, running or done: the latest there is.
+        (None, 0, False),
+        ("running", 0, False),
+        ("done", 0, False),
+    ],
+)
+def test_an_outcome_a_resubmission_did_not_replace_is_stale(
+    tmp_path: Path,
+    clock: _Clock,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    state: str | None,
+    record_from: int,
+    stale: bool,
+) -> None:
+    """#2247: the worker removes a case's outcome only right before it runs
+    the case, so a resubmission whose task stopped first left the earlier
+    submission's verdict there, silently: it is reported as stale, ERROR,
+    and resubmitted."""
+    from autoware_carla_scenario.slurm import collect as collect_module
+    from autoware_carla_scenario.slurm import status as status_module
+    from autoware_carla_scenario.slurm.collect import stale_reason
+
+    monkeypatch.setattr(collect_module, "resubmit_target", lambda *_a: _TARGET)
+    monkeypatch.setattr(status_module, "squeue_states", lambda _job: {})
+    # Where the viewer finds it: a batch session under outputs/.
+    layout = _layout(tmp_path, cases=2, directory=tmp_path / "outputs" / _DAY / _TIME)
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1]]})
+    write_json(layout.task(0, 0), {"state": "done"})
+    write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [[1]]})
+    if state is not None:
+        write_json(layout.task(1, 0), {"state": state, "error": "boom"})
+    write_json(layout.result(0), _passed(0))
+    write_json(layout.result(1), _passed(record_from))
+
+    record = layout.read_result(1)
+    assert record is not None
+    reason = stale_reason(layout, 1, record)
+    # Case 0 was given only by submission 0, which ran it.
+    first = layout.read_result(0)
+    assert first is not None
+    assert stale_reason(layout, 0, first) is None
+    # The results pages, before it is collected: a stale outcome is without
+    # one, saying why, never its old verdict (#2285).
+    _assert_results_pages(tmp_path, monkeypatch, layout, reason)
+    assert unfinished_cases(layout) == ([1] if stale else [])
+    assert collect(layout) == (1 if stale else 0)
+    out = capsys.readouterr().out
+    # The viewer shows a stale outcome as `status` counts it: without one.
+    from autoware_carla_scenario.ui import slurm_launch
+
+    shown = slurm_launch._case_states(layout, layout.read_manifest(), {0: {}, 1: {}})
+    if not stale:
+        assert reason is None
+        assert "stale" not in out
+        assert shown[1].state == "passed"
+        return
+    assert shown[1].state == "missing"
+    assert json.loads(shown[1].message_json) == (
+        f"no result: task 0 of job 71 {state}: boom"
+    )
+    assert shown[0].state == "passed"
+    assert reason == (
+        f"submission 1 was to run the case again, but task 0 of job 71 {state} "
+        "before it reached the case (boom): this outcome is an earlier "
+        "submission's"
+    )
+    assert f"Stale result: {reason}." in out
+    assert (
+        "1 case(s) have a stale result (the submission that was to run them "
+        "again stopped before it reached them): s#2\n"
+        "Run them again with: scenario-slurm resubmit /b\n"
+    ) in out
+    collected = json.loads((layout.root / "collected.json").read_text())
+    assert collected["passed"] == 1
+    assert collected["errored"] == ["s#2"]
+    status_module.print_status(layout)
+    status = capsys.readouterr().out
+    assert "  1 with a result (1 passed, 0 errored), 1 without\n" in status
+    assert "1 of those without have a stale result" in status
+    assert status.split("\n")[2].endswith(": s#2")
+
+
+_DAY = "2026-11-07"
+_TIME = "12-00-00"
+
+
+def _assert_results_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    layout: BatchLayout,
+    reason: str | None,
+) -> None:
+    """What ``ui.cases.batch_entries``, the session list and the session page
+    show of the two-case batch at *layout*, case 1's outcome stale for
+    *reason* if it is not ``None`` (#2285)."""
+    from fastapi.testclient import TestClient
+
+    from autoware_carla_scenario.ui import app as app_module
+    from autoware_carla_scenario.ui import cases, scanner, slurm_launch
+
+    found = cases.batch_entries(layout.batch_dir)
+    assert found is not None
+    entries, final = found
+    assert not final
+    assert [e["passed"] for e in entries] == [True, None if reason else True]
+    if reason is None:
+        assert not entries[1].get("pending")
+    else:
+        assert entries[1]["pending"] is True
+        assert entries[1]["message"] == f"Stale result: {reason}"
+
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(slurm_launch, "squeue_states", lambda _job: {})
+    scanner.clear_cache()
+    try:
+        client = TestClient(app_module.app, base_url="http://127.0.0.1")
+        index = client.get("/")
+        assert index.status_code == 200, index.text
+        page = client.get(f"/session/batch/{_DAY}/{_TIME}")
+        assert page.status_code == 200, page.text
+    finally:
+        scanner.clear_cache()
+    if reason is None:
+        assert "2/2 passed" in index.text
+        assert "All passed" in page.text
+        return
+    assert "1/2 passed" in index.text and "2/2 passed" not in index.text
+    assert "1 pending" in index.text
+    assert "All passed" not in page.text
+    assert "1 without a result" in page.text
+
+
+def test_a_stale_outcome_past_a_later_submission_that_left_the_case_alone(
+    tmp_path: Path,
+) -> None:
+    """#2247: the submission that last gave the case, not the batch's last,
+    decides; a later one that did not give it changes nothing."""
+    from autoware_carla_scenario.slurm.collect import stale_reason
+
+    layout = _layout(tmp_path, cases=2)
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1]]})
+    write_json(layout.task(0, 0), {"state": "done"})
+    write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [[1]]})
+    write_json(layout.task(1, 0), {"state": "failed"})
+    write_json(layout.submission(2), {"index": 2, "job_id": "72", "chunks": [[0]]})
+    write_json(layout.task(2, 0), {"state": "done"})
+    write_json(layout.result(0), _passed(2))
+    write_json(layout.result(1), _passed(0))
+
+    first = layout.read_result(0)
+    second = layout.read_result(1)
+    assert first is not None and second is not None
+    assert stale_reason(layout, 0, first) is None
+    assert stale_reason(layout, 1, second) == (
+        "submission 1 was to run the case again, but task 0 of job 71 failed "
+        "before it reached the case: this outcome is an earlier submission's"
+    )
+    assert unfinished_cases(layout) == [1]
+    # An outcome submission 1 recorded names a submission after the one that
+    # last gave the case: current, though a later submission exists.
+    write_json(layout.result(1), _passed(1))
+    second = layout.read_result(1)
+    assert second is not None
+    assert stale_reason(layout, 1, second) is None

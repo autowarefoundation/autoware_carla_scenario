@@ -86,7 +86,10 @@ driver:
     max_lookahead_m: 20.0
     wheelbase_m: 2.8
     # CARLA 0.10 turns the wheels by about 56 deg * steer**2 (see ControlConfig).
-    max_steer_angle_deg: 56.0
+    # The full lock, in degrees or in radians: null is the default, 56 deg.
+    # Set one of the two; both set is refused.
+    max_steer_angle_deg: null
+    max_steer_angle_rad: null
     steer_exponent: 2.0
     max_steer_rate: 4.0
     # Integral trim on the measured yaw rate; 0 steers open-loop.

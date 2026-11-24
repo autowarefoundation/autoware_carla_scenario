@@ -42,7 +42,16 @@ from autoware_carla_scenario.npc_collisions import SCAN_EVERY_TICKS, NpcCollisio
 from autoware_carla_scenario.trajectory_recorder import SCHEMA_PATH, TrajectoryRecorder
 from autoware_carla_scenario.waypoint_arrival import WaypointArrival
 
-_WORLD: Any = object()
+
+class _TickedWorld:
+    """A world that says only how long its last tick was, the step the
+    pacer's smoothing reads."""
+
+    def get_snapshot(self) -> Any:
+        return SimpleNamespace(timestamp=SimpleNamespace(delta_seconds=0.05))
+
+
+_WORLD: Any = _TickedWorld()
 
 
 class _Never(BaseCondition):
@@ -91,6 +100,44 @@ class TestPacer:
         for _ in range(30):
             last = pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0)
         assert last == pytest.approx(5.0, abs=0.01)
+
+    @staticmethod
+    def _settle_seconds(tick: float) -> float:
+        """The simulated time the command takes from 0 to within 1 % of a
+        5 m/s target, at ticks of *tick* seconds."""
+        pacer = RoutePacer("npc1", "driver", [PaceMark(1, 50.0, time=10.0)], 1.0, 0.0)
+        for n in range(1, 2000):
+            speed = pacer.speed(
+                _WORLD, 0.0, 0.0, cruise=8.0, limit=15.0, tick_seconds=tick
+            )
+            if speed >= 0.99 * 5.0:
+                return n * tick
+        raise AssertionError("never settled")
+
+    def test_the_smoothing_settles_in_the_same_simulated_time_at_any_tick_rate(
+        self,
+    ) -> None:
+        # #2219: smoothed once per tick, the command settled twice as fast
+        # (in simulated time) at 10 Hz as at 20 Hz.
+        assert self._settle_seconds(0.1) == pytest.approx(
+            self._settle_seconds(0.05), abs=0.1
+        )
+        assert self._settle_seconds(0.025) == pytest.approx(
+            self._settle_seconds(0.05), abs=0.05
+        )
+
+    def test_at_the_tuned_tick_the_smoothing_is_what_it_was(self) -> None:
+        # 0.05 s, the default step: each tick moves exactly 0.3 of the way,
+        # bit for bit, as before the smoothing was scaled.
+        pacer = RoutePacer("npc1", "driver", [PaceMark(1, 50.0, time=10.0)], 1.0, 0.0)
+        command = 0.0
+        for _ in range(20):
+            command += 0.3 * (5.0 - command)
+            assert pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0) == command
+            assert (
+                pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0, tick_seconds=0.0)
+                == command  # a tick that covered no time moves nothing
+            )
 
     def test_a_late_entity_catches_up_at_the_limit(self) -> None:
         pacer = RoutePacer("npc1", "driver", [PaceMark(1, 50.0, time=10.0)], 1.0, 15.0)
@@ -479,6 +526,30 @@ class TestNpcCollisions:
             world.poses[5] = (0.01 * tick, 0.0, z, 0.0)
             falls += monitor.tick(world, tick * 0.05)[1]  # type: ignore[arg-type]
         assert [round(f.t, 2) for f in falls] == [8.5]
+
+    def test_a_walker_already_gone_is_logged_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A walker whose destroy() raises was already gone: that is the one
+        line logged, not "despawned" as well (#2401)."""
+
+        def destroy() -> None:
+            raise RuntimeError("actor already destroyed")
+
+        walker = SimpleNamespace(id=5, destroy=destroy)
+        world = SimpleNamespace(
+            get_actor=lambda actor_id: walker,
+            get_actors=lambda: SimpleNamespace(filter=lambda pattern: []),
+        )
+        monitor = NpcCollisionMonitor()
+        with caplog.at_level(logging.INFO, logger="autoware_carla_scenario"):
+            removed = monitor._remove_walker(world, 5, "w1")  # type: ignore[arg-type]
+        assert removed
+        lines = [
+            r.getMessage() for r in caplog.records if "fallen walker" in r.getMessage()
+        ]
+        assert lines == ["fallen walker: 'w1' was already gone from the world"]
+        monitor.close()
 
     def test_a_walker_that_appears_is_not_fallen(self) -> None:
         walker = _actor(5, "walker.pedestrian.0001", "w1")

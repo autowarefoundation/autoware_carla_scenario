@@ -28,6 +28,8 @@ import lanelet2.core
 import lanelet2.geometry
 
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose
+from ..coordinate.stacked import choose_lanelet, height_at
+from ..kinematics.angle import normalize_angle_rad
 from .model import RelativeLanePose
 
 if TYPE_CHECKING:
@@ -50,6 +52,11 @@ _CANDIDATES = 8
 _ON_TOLERANCE_M = 1e-3
 #: Arc lengths closer than this (m) to a lanelet's end are at its end.
 _EPSILON_M = 1e-9
+#: Arc lengths closer than this (m) to a centreline vertex are at the vertex.
+#: Lanelet2 sums a centreline's segments in its own order, so the ``s`` that
+#: ``toArcCoordinates`` gives for a point snapped to a vertex can fall an ulp
+#: or so short of the sum :func:`_heading_at` builds.
+_VERTEX_TOLERANCE_M = 1e-9
 #: How many lanelets a single ``ds`` may run through before it is taken to be
 #: going round a loop with no end.
 _MAX_HOPS = 10_000
@@ -69,13 +76,26 @@ def _length(lanelet: Union[ConstLanelet, Lanelet]) -> float:
 
 
 def _heading_at(points: list[tuple[float, float]], s: float) -> float:
-    """The centreline's direction (rad) at arc length *s*."""
+    """The centreline's direction (rad) at arc length *s*.
+
+    A vertex belongs to the segment that *starts* there, as in
+    :mod:`~autoware_carla_scenario.coordinate.transform`'s ``_interpolate_at_s``
+    and ``_heading_at_s``, up to :data:`_VERTEX_TOLERANCE_M`; at the last
+    point, or past it, the last segment's heading.  Zero-length segments have
+    no direction and are skipped.  A caller after the segment arriving at a
+    vertex asks a little before it (``s - 1e-6``).
+    """
     travelled = 0.0
+    last: Optional[float] = None
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         span = math.hypot(x1 - x0, y1 - y0)
-        if span > 0.0 and travelled + span >= s:
-            return math.atan2(y1 - y0, x1 - x0)
+        if span > 0.0:
+            last = math.atan2(y1 - y0, x1 - x0)
+            if travelled + span > s + _VERTEX_TOLERANCE_M:
+                return last
         travelled += span
+    if last is not None:
+        return last
     (x0, y0), (x1, y1) = points[-2], points[-1]
     return math.atan2(y1 - y0, x1 - x0)
 
@@ -97,14 +117,15 @@ def _start_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
 
 
 def _end_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
-    points = _centreline(lanelet)
-    (x0, y0), (x1, y1) = points[-2], points[-1]
-    return math.atan2(y1 - y0, x1 - x0)
+    """The centreline's direction (rad) at its end: that of its last segment
+    with non-zero length, as :func:`_heading_at` reads past the end -- a
+    centreline ending on a repeated point is not taken to face East (#2367)."""
+    return _heading_at(_centreline(lanelet), math.inf)
 
 
 def _turn(a: float, b: float) -> float:
     """The absolute angle (rad) between headings *a* and *b*."""
-    return abs((b - a + math.pi) % (2.0 * math.pi) - math.pi)
+    return abs(normalize_angle_rad(b - a))
 
 
 def _arc(
@@ -140,9 +161,12 @@ def reference_lane_pose(
             ``None`` ignores elevation.
 
     Of the lanelets it is on -- several where lanelets overlap in a junction,
-    or meet at a seam -- the one whose direction is nearest its heading wins,
-    then the one nearest its elevation, then the lowest id.  ``s`` is exact
-    along the centreline (not snapped to a vertex).
+    meet at a seam, or are stacked over one another -- the elevation picks
+    the level, then the one whose direction is nearest its heading wins, then
+    the one nearest its elevation, then the lowest id: the rule
+    :func:`~autoware_carla_scenario.coordinate.to_lanelet2` follows too
+    (:func:`~autoware_carla_scenario.coordinate.stacked.choose_lanelet`).
+    ``s`` is exact along the centreline (not snapped to a vertex).
 
     Raises:
         ValueError: If the map has no lanelets.
@@ -153,7 +177,9 @@ def reference_lane_pose(
     if not found:
         raise ValueError("the map has no lanelets to place a relative pose on")
     nearest = float(found[0][0])
-    best: Optional[tuple[tuple[float, float, int], Lanelet, float, float]] = None
+    lanelets: list[Lanelet] = []
+    arcs: list[tuple[float, float]] = []
+    ranks: list[tuple[float, float, int]] = []
     for distance, lanelet in found:
         if float(distance) > nearest + _ON_TOLERANCE_M:
             continue
@@ -161,20 +187,21 @@ def reference_lane_pose(
         turn = _turn(heading, _heading_at(_centreline(lanelet), s))
         dz = 0.0
         if z is not None:
-            heights = [float(p.z) for p in lanelet.centerline]
-            dz = abs(sum(heights) / len(heights) - z)
-        key = (turn, dz, int(lanelet.id))
-        if best is None or key < best[0]:
-            best = (key, lanelet, s, t)
-    assert best is not None
-    _key, lanelet, s, t = best
-    points = _centreline(lanelet)
+            # The surface where the entity is, not the lanelet's mean height:
+            # a lanelet on a ramp is metres off its mean at either end.
+            points = [(float(p.x), float(p.y), float(p.z)) for p in lanelet.centerline]
+            dz = abs(height_at(points, s) - z)
+        lanelets.append(lanelet)
+        arcs.append((s, t))
+        ranks.append((dz, turn, int(lanelet.id)))
+    chosen = choose_lanelet(ranks)
+    lanelet = lanelets[chosen]
+    s, t = arcs[chosen]
     return Lanelet2Pose(
         lanelet_id=int(lanelet.id),
         s=s,
         t=t,
-        heading=(heading - _heading_at(points, s) + math.pi) % (2.0 * math.pi)
-        - math.pi,
+        heading=normalize_angle_rad(heading - _heading_at(_centreline(lanelet), s)),
     )
 
 
@@ -345,13 +372,14 @@ def relative_lane_pose(
 def reference_lane_pose_of(pose: CarlaWorldPose) -> Lanelet2Pose:
     """:func:`reference_lane_pose` of a CARLA world pose, on the loaded map."""
     from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+    from ..coordinate.transform import carla_xy_to_map  # noqa: PLC0415
 
     manager = MapManager.get_instance()
-    offset_x, offset_y = manager.mgrs_offset
+    x, y = carla_xy_to_map(pose.x, pose.y, manager.mgrs_offset)
     return reference_lane_pose(
         manager.lanelet_map,
-        pose.x + offset_x,
-        -pose.y + offset_y,
+        x,
+        y,
         -math.radians(pose.yaw),
         pose.z + manager.z_offset,
     )

@@ -1,0 +1,98 @@
+# Model of roadgen (docs/typecheck.md), the OpenDRIVE converter of the `map`
+# and `sumo` extras: what the checked commonroad.map and traffic.sumo.network
+# use of it, with the installed package's signatures, which
+# test_typecheck_model.py compares (where roadgen is installed).
+#
+# __version__ (a str); read_opendrive(path, sampling=2.0, origin=None,
+# projection="local_cartesian") -> Map; of a Map, read_warnings(),
+# write_read_trace(path=None), export_ir(path), export_commonroad(path, ...)
+# and commonroad_warnings(...) with the CommonRoad export's options,
+# export_sumo(directory, trace=True, curve_lateral_acceleration=None,
+# cycle_on_sidewalks=False) -> str (the prefix of the files) and
+# sumo_warnings(); and Trace.load(*paths, check_files=True) -> Trace, of str
+# paths. A light cycle (a str, a bool or a sequence of (colour, seconds),
+# which Codon has no one type for) is not declared, so only None is taken for
+# it. Nothing else of the package (building a map, the other exporters, a
+# Trace's queries, whose answers are dicts of mixed value types) is declared.
+# Nothing here runs: no file is read or written.
+
+__version__: str = ""
+
+
+def _no_light_cycle(light_cycle):
+    if not (isinstance(light_cycle, None) or isinstance(light_cycle, Optional[NoneType])):
+        compile_error("roadgen: a light cycle is not declared, only None")
+
+
+class Map:
+    def read_warnings(self) -> List[str]:
+        return List[str]()
+
+    def write_read_trace(self, path: Optional[str] = None) -> str:
+        return ""
+
+    def export_ir(self, path: str) -> None:
+        pass
+
+    def commonroad_warnings(
+        self,
+        benchmark_id: Optional[str] = None,
+        author: Optional[str] = None,
+        affiliation: Optional[str] = None,
+        source: Optional[str] = None,
+        date: Optional[str] = None,
+        time_step: Optional[float] = None,
+        planning_problem: bool = True,
+        goal_steps: Optional[int] = None,
+        elevation: bool = False,
+        light_cycle=None,
+    ) -> List[str]:
+        _no_light_cycle(light_cycle)
+        return List[str]()
+
+    def export_commonroad(
+        self,
+        path: str,
+        benchmark_id: Optional[str] = None,
+        author: Optional[str] = None,
+        affiliation: Optional[str] = None,
+        source: Optional[str] = None,
+        date: Optional[str] = None,
+        time_step: Optional[float] = None,
+        planning_problem: bool = True,
+        goal_steps: Optional[int] = None,
+        elevation: bool = False,
+        light_cycle=None,
+        trace: bool = True,
+    ) -> None:
+        _no_light_cycle(light_cycle)
+
+    def export_sumo(
+        self,
+        directory: str,
+        trace: bool = True,
+        curve_lateral_acceleration: Optional[float] = None,
+        cycle_on_sidewalks: bool = False,
+    ) -> str:
+        return ""
+
+    def sumo_warnings(self) -> List[str]:
+        return List[str]()
+
+
+class Trace:
+    @staticmethod
+    def load(*paths, check_files: bool = True) -> Trace:
+        for path in paths:
+            if not isinstance(path, str):
+                compile_error("roadgen.Trace.load(): the paths are str")
+        return Trace()
+
+
+def read_opendrive(
+    path: str,
+    sampling: float = 2.0,
+    origin: Optional[Tuple[float, float, float]] = None,
+    projection: str = "local_cartesian",
+) -> Map:
+    return Map()

@@ -7,31 +7,32 @@
 
 <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <p class="ed-kicker">{{ {'ego': 'Ego vehicle', 'motorcycle': 'Motorcycle', 'pedestrian': 'Pedestrian'}.get(target.kind, 'Vehicle') }}</p>
   <h3 class="ed-heading">{{ target.display_name }}</h3>
 
   <div class="ed-field">
-    <label class="ed-label">Name</label>
-    <input type="text" name="title" class="ed-input" value="{{ target.title }}">
+    <label class="ed-labelled"><span class="ed-label">Name</span>
+    <input type="text" name="title" class="ed-input" value="{{ target.title }}"></label>
   </div>
   <div class="ed-field">
-    <label class="ed-label">CARLA blueprint</label>
+    <label class="ed-labelled"><span class="ed-label">CARLA blueprint</span>
     <input type="text" name="vehicle_type" class="ed-input mono" style="font-size:11.5px"
-           value="{{ target.vehicle_type }}">
+           value="{{ target.vehicle_type }}"></label>
   </div>
   {# A pedestrian has no initial speed -- a walk card sets how fast it goes --
      so the field is shown for one only to clear a value the validator refuses. #}
   {% if target.kind != 'pedestrian' or target.initial_speed_kmh %}
   <div class="ed-field">
-    <label class="ed-label">Initial speed <span class="unit">(km/h)</span></label>
+    <label class="ed-labelled"><span class="ed-label">Initial speed <span class="unit">(km/h)</span></span>
     <input type="number" step="any" min="0" name="initial_speed_kmh" class="ed-input"
-           value="{{ target.initial_speed_kmh }}">
+           value="{{ target.initial_speed_kmh }}"></label>
   </div>
   {% endif %}
 
   <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Spawn</h4>
   <div class="ed-field">
-    <label class="ed-label">Lanelet ID</label>
+    <label class="ed-label" for="pick-spawn_lanelet_id">Lanelet ID</label>
     {# The field here, the map -- and with it the choice between a pinned
        lanelet and a constraint search -- behind Edit: a constraint is a
        statement about the map, and this column is 384px wide. #}
@@ -57,7 +58,7 @@
     {% set autoware = target.driven_by == 'autoware' %}
     <h4 class="ed-subheading">{{ ic.icon('car', 12) }} Driven by</h4>
     <div class="ed-field">
-      <select name="driven_by" class="ed-input">
+      <select name="driven_by" class="ed-input" aria-label="Driven by">
         <option value="autopilot" {% if not autoware %}selected{% endif %}>
           TrafficManager (CARLA autopilot)
         </option>
@@ -79,7 +80,7 @@
        the goal and only then engages. #}
     <h4 class="ed-subheading">{{ ic.icon('target', 12) }} Goal</h4>
     <div class="ed-field">
-      <label class="ed-label">Goal lanelet</label>
+      <label class="ed-label" for="pick-goal_lanelet_id">Goal lanelet</label>
       {# The readout only; the map -- and the same Fixed / Constraint search
          choice the spawn has -- is below, outside this form. #}
       {{ f.lanelet_field('goal_lanelet_id',
@@ -105,11 +106,11 @@
     </div>
     {% if target.goal %}
       <div class="ed-field">
-        <label class="ed-label">
+        <label class="ed-labelled"><span class="ed-label">
           Offset along the goal lanelet <span class="unit">(m)</span>
-        </label>
+        </span>
         <input type="number" step="any" name="goal_s" class="ed-input"
-               value="{{ target.goal.s }}">
+               value="{{ target.goal.s }}"></label>
       </div>
     {% endif %}
   {% endif %}
@@ -127,8 +128,9 @@
   <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
         hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
         style="margin-top:16px">
+    <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
     <div class="ed-field">
-      <label class="ed-label">Position along it <span class="unit">(m)</span></label>
+      <div class="ed-label">Position along it <span class="unit">(m)</span></div>
       <div class="ed-radio-row" style="margin-bottom:8px">
         <label class="ed-radio">
           <input type="radio" name="spawn_s_mode" value="fixed"
@@ -142,6 +144,7 @@
         </label>
       </div>
       <input type="number" step="any" name="spawn_s" class="ed-input"
+             aria-label="Position along it (m)"
              value="{{ target.spawn.s.value }}">
       {% if target.spawn.s.mode == 'derived' %}
         <p class="ed-help">The value a run falls back to when nothing derives it.</p>
@@ -160,14 +163,14 @@
          mostly read zero.  The ego spawns from its own Hydra keys, which have
          neither. #}
       <div class="ed-field">
-        <label class="ed-label">Off the centreline <span class="unit">(m, + left)</span></label>
+        <label class="ed-labelled"><span class="ed-label">Off the centreline <span class="unit">(m, + left)</span></span>
         <input type="number" step="any" name="spawn_t" class="ed-input"
-               value="{{ target.spawn.t }}">
+               value="{{ target.spawn.t }}"></label>
       </div>
       <div class="ed-field">
-        <label class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></label>
+        <label class="ed-labelled"><span class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></span>
         <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
-               value="{{ target.spawn.heading_deg|round(1) }}">
+               value="{{ target.spawn.heading_deg|round(1) }}"></label>
       </div>
       <div class="ed-field">
         <input type="hidden" name="spawn_hidden_shown" value="1">

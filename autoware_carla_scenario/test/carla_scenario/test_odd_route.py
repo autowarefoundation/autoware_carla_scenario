@@ -879,6 +879,22 @@ class TestCli:
         assert odd_main(argv) == 2
         assert "NOT PLANNED: no goal" in capsys.readouterr().out
 
+    def test_json_claims_no_unreached_bucket_when_nothing_was_planned(
+        self, capsys: Any
+    ) -> None:
+        argv = [
+            "route",
+            "default",
+            "pedestrian_dart_out/pedestrian_dart_out",
+            "--json",
+            *self.MAP,
+        ]
+        assert odd_main(argv) == 2
+        out = json.loads(capsys.readouterr().out)
+        assert out["routes"] == []
+        assert "pedestrian_dart_out/pedestrian_dart_out" in out["not_planned"]
+        assert out["unreached"] == {}
+
     def test_leaving_outranks_not_planned(self, capsys: Any) -> None:
         argv = [
             "route",

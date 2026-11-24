@@ -155,7 +155,7 @@ class ControlConfig:
     """
 
     max_steer_rate: float = 4.0
-    """Maximum change in normalised steering per second."""
+    """Maximum change in normalised steering per second; positive."""
 
     yaw_rate_ki: float = 3.0
     """Integral feedback on the yaw rate.
@@ -425,7 +425,7 @@ class ControlConfig:
     # -- Vehicle interface ----------------------------------------------------------
     throttle_deadband: float = 0.3
     """The least throttle a standing vehicle (below :attr:`standstill_speed_mps`) is
-    given when asked to speed up; ``0`` sets no floor.
+    given when asked to speed up, in [0, 1]; ``0`` sets no floor.
 
     Part of the vehicle interface, not of the controller: the powertrain model, like
     an accel map, has a standing car move at any throttle, while a standing Lincoln
@@ -443,14 +443,17 @@ class ControlConfig:
     """Below this speed the vehicle counts as standing, for :attr:`throttle_deadband`."""
 
     stop_brake: float = 0.6
-    """Brake applied with no plan to track (and, ``time_indexed``, when holding still)."""
+    """Brake applied with no plan to track (and, ``time_indexed``, when holding
+    still), in [0, 1]."""
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "ControlConfig":
         """Return gains built from a plain mapping (e.g. a Hydra node).
 
         Every ``*_rad`` field is also accepted as ``*_deg`` (``max_steer_angle_deg``,
-        ``yaw_rate_trim_limit_deg``), since degrees read better in YAML.  A
+        ``yaw_rate_trim_limit_deg``), since degrees read better in YAML; one
+        angle given both ways is refused, as neither may silently win.  A
+        null value is the field's default, as an absent key is.  A
         ``time_indexed`` field set away from its default for the ``pid`` controller,
         which does not read it, is warned about.
 
@@ -462,6 +465,11 @@ class ControlConfig:
         controller divides by (``wheelbase_m``, ``max_steer_angle_rad``,
         ``steer_exponent``, ``min_lookahead_m``, ``velocity_lookahead_time``)
         must be positive, and ``max_lookahead_m`` at least ``min_lookahead_m``.
+        So must ``max_steer_rate`` (a rate limit of 0 would steer not at all;
+        a large one barely limits).  The pedal values (``stop_brake``,
+        ``throttle_deadband``) and the low-pass gains (``lpf_vel_error_gain``,
+        ``lpf_acc_error_gain``, ``accel_lowpass_gain``) are in [0, 1], and
+        ``lookahead_gain_s`` is not negative (#2277).
 
         Each error starts with the key it is for, the ``*_deg`` alias when the
         mapping gave that, and no section: the run reads this config from
@@ -487,14 +495,25 @@ class ControlConfig:
             for name in known
             if name.endswith("_rad")
         }
-        values = dict(mapping)
+        # A null setting is its default, as an absent one: Hydra cannot
+        # leave a key out of a config group's node, only set it to null
+        # (#2241).
+        values = {key: value for key, value in mapping.items() if value is not None}
         # The key each value was given under, and the degrees an alias gave,
         # for the errors: they show what the mapping held.
         keys = {name: name for name in known}
         given: dict[str, Any] = {}
-        for alias, name in aliases.items():
+        for alias, name in sorted(aliases.items()):
             degrees = values.pop(alias, None)
             if degrees is not None:
+                if name in values:
+                    # Either would win silently over the other, and Hydra
+                    # cannot tell a config group's default from an override.
+                    raise ValueError(
+                        f"{alias} and {name} set the same angle, in degrees "
+                        f"and in radians; set one of them to null, got "
+                        f"{shown(degrees)} and {shown(values[name])}"
+                    )
                 values[name] = math.radians(_config_number(alias, degrees))
                 keys[name] = alias
                 given[name] = degrees
@@ -538,6 +557,25 @@ class ControlConfig:
             if value <= 0.0:
                 shown_value = shown(given[name]) if name in given else value
                 raise ValueError(f"{keys[name]} must be positive, got {shown_value}")
+        for name in (
+            "stop_brake",
+            "throttle_deadband",
+            "lpf_vel_error_gain",
+            "lpf_acc_error_gain",
+            "accel_lowpass_gain",
+        ):
+            value = getattr(config, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{keys[name]} must be in [0, 1], got {value!r}")
+        if config.max_steer_rate <= 0.0:
+            raise ValueError(
+                f"max_steer_rate must be positive, got {config.max_steer_rate!r}"
+            )
+        if config.lookahead_gain_s < 0.0:
+            raise ValueError(
+                "lookahead_gain_s must not be negative, got "
+                f"{config.lookahead_gain_s!r}"
+            )
         if config.max_lookahead_m < config.min_lookahead_m:
             raise ValueError(
                 f"max_lookahead_m must be at least min_lookahead_m "

@@ -11,6 +11,7 @@ import typesafe_carla.carla as carla
 
 from autoware_carla_scenario import (
     BaseAction,
+    DespawnAction,
     EntityRole,
     LaneChangeAction,
     LaneChangeDirection,
@@ -183,6 +184,40 @@ def test_a_vehicle_action_on_a_pedestrian_raises_as_before(
         action.execute(MagicMock())
 
 
+def test_the_emergency_and_traffic_parameter_actions_on_a_pedestrian_raise() -> None:
+    """As the other vehicle actions do, rather than saying "not found" (#2273)."""
+    from autoware_carla_scenario import EmergencyAction, TrafficParametersAction
+    from autoware_carla_scenario.traffic import (
+        NullTrafficBackend,
+        Spread,
+        VehicleParameters,
+    )
+
+    register_entity("walker1", _pedestrian())
+    with pytest.raises(AttributeError, match="'PedestrianEntity'.*'set_emergency'"):
+        EmergencyAction("walker1").execute(MagicMock())
+    parameters = TrafficParametersAction(
+        VehicleParameters(speed_factor=Spread(0.5)), entity_name="walker1"
+    )
+    # Given straight to the action: NullTrafficBackend changes nothing, and
+    # the pedestrian check comes before any change is asked for.
+    parameters._backend = NullTrafficBackend()
+    with pytest.raises(
+        AttributeError, match="'PedestrianEntity'.*'override_vehicle_parameters'"
+    ):
+        parameters.execute(MagicMock())
+
+
+def test_the_emergency_action_on_an_unknown_role_still_says_not_found(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from autoware_carla_scenario import EmergencyAction
+
+    with caplog.at_level(logging.WARNING):
+        EmergencyAction("npc9").execute(MagicMock())
+    assert "entity 'npc9' not found" in caplog.text
+
+
 def test_a_vehicle_action_on_an_unknown_role_says_not_found(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -202,3 +237,70 @@ def test_clearing_forgets_every_kind() -> None:
         assert find_entity_by_role_name(role) is None
         assert find_vehicle_entity(role) is None
         assert find_pedestrian_entity(role) is None
+
+
+# ---------------------------------------------------------------------------
+# The ego by any of its names (#2271)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["Ego", "ego", "EGO", "hero", "Hero"])
+def test_the_ego_is_found_by_any_name_the_actor_lookups_take(name: str) -> None:
+    ego = MagicMock()
+    register_entity("Ego", ego)
+    assert find_vehicle_entity(name) is ego
+    assert find_entity_by_role_name(name) is ego
+    assert find_pedestrian_entity(name) is ego
+
+
+def test_registering_under_an_alias_keeps_the_ego_under_its_canonical_name() -> None:
+    ego = MagicMock()
+    register_entity("hero", ego)
+    assert find_entity_by_role_name("Ego") is ego
+    unregister_entity("ego")
+    assert find_entity_by_role_name("Ego") is None
+
+
+def test_a_vehicle_registered_as_the_ego_is_found_as_ego() -> None:
+    ego = _vehicle()
+    register_vehicle_entity(EntityRole.ego(), ego)
+    assert find_vehicle_entity("ego") is ego
+
+
+def test_other_names_still_match_exactly() -> None:
+    vehicle = _vehicle()
+    register_vehicle_entity("npc1", vehicle)
+    assert find_vehicle_entity("npc1") is vehicle
+    assert find_vehicle_entity("NPC1") is None
+
+
+@pytest.mark.parametrize(
+    "name", ["Ego", "ego", "EGO", "hero", "HERO", EntityRole.ego()]
+)
+def test_the_ego_cannot_be_despawned_by_any_of_its_names(
+    name: str | EntityRole,
+) -> None:
+    with pytest.raises(ValueError, match="the ego cannot be despawned"):
+        DespawnAction(name)
+
+
+@pytest.mark.parametrize(
+    "name", ["Ego", "ego", "EGO", "hero", "HERO", EntityRole.ego()]
+)
+def test_the_ego_cannot_be_spawned_by_any_of_its_names(
+    name: str | EntityRole,
+) -> None:
+    from autoware_carla_scenario.actions.spawn import SpawnAction
+
+    with pytest.raises(ValueError, match="the ego is in the scene from the start"):
+        SpawnAction(name)
+
+
+def test_an_npc_can_still_be_spawned() -> None:
+    from autoware_carla_scenario.actions.spawn import SpawnAction
+
+    assert SpawnAction("npc1").entity_name == "npc1"
+
+
+def test_an_npc_can_still_be_despawned() -> None:
+    assert DespawnAction("npc1").entity_name == "npc1"

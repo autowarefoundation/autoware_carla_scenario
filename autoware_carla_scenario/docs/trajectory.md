@@ -74,7 +74,7 @@ A trajectory has the same four parts as OpenSCENARIO's trajectory following:
 | OpenSCENARIO | Here | Notes |
 |---|---|---|
 | `Trajectory` (`name`, `closed`, `shape`) | `Trajectory(name, vertices, closed=False)` | Only the `Polyline` shape. A recording is a sequence of samples; a clothoid or NURBS fitted to one would add an approximation between the data and the vehicle. |
-| `Vertex` (`time`, `Position`) | `TrajectoryVertex(position, advance=None)` | A vertex's time is its departure condition, `advance=TrajectoryTimeCondition(t)` (read back as `vertex.time`); any other condition can take its place -- see [Waypoint conditions](#waypoint-conditions). Either every vertex has a time or none has, a vertex with another condition counting as having one. |
+| `Vertex` (`time`, `Position`) | `TrajectoryVertex(position, advance=None)` | A vertex's time is its departure condition, `advance=TrajectoryTimeCondition(time)` (read back as `vertex.time`); any other condition can take its place -- see [Waypoint conditions](#waypoint-conditions). Either every vertex has a time or none has, a vertex with another condition counting as having one. |
 | `TimeReference` | `time_reference=None` or `TrajectoryTiming(domain, scale, offset)` | `None` is `<None/>`: the vertex times are ignored and the entity keeps the speed it had when the action started. With a timing, a vertex at time `τ` is reached at `τ * scale + offset` seconds after the scenario (`ABSOLUTE`) or the action (`RELATIVE`) started. |
 | `TrajectoryFollowingMode` | `mode=RoutingMode.POSITION` or `FOLLOW` (or `DRIVER`) | See below. |
 | `initialDistanceOffset` | `initial_distance_offset` | Start that many metres along. With a timing, the clock starts at the time the trajectory reaches that point, when the first vertex is due (`τ * scale + offset` for its time `τ`): the entity waits at the point until then -- out of the world with `hidden_outside_trajectory` -- and the rest of the trajectory is brought forward by the time the part skipped takes, in either domain, gated or not. |
@@ -192,9 +192,12 @@ the road user is brought in where it was declared, and a prop is not added.
 How a vertex is placed, on the Lanelet2 map and its routing graph:
 
 1. **The reference's lane.** The lanelet the reference entity is on, and the
-   exact distance along its centreline. Where lanelets overlap (a junction) or
-   meet (a seam), the one whose direction is nearest the entity's heading
-   wins, then the one nearest its elevation, then the lowest id.
+   exact distance along its centreline. Where lanelets overlap (a junction),
+   meet (a seam) or are stacked (an overpass and the road beneath it), the
+   entity's elevation picks the level -- the lanelets whose surface where it
+   stands is within 1 m of the nearest one -- then, of those, the one whose
+   direction is nearest the entity's heading wins, then the one nearest its
+   elevation, then the lowest id. `to_lanelet2` chooses by the same rule.
 2. **`ds` along the lane.** Past a lanelet's end the distance carries on into
    the lanelet that follows it in the routing graph; a negative `ds` past its
    start into the one before it. Where several follow (a fork) or precede (a
@@ -356,7 +359,7 @@ document) -- see [Logical Scenarios from Routes](logical_scenarios.md).
 
 A route's end is where the road user's recording ends, but its driver does not
 know that: a vehicle the TrafficManager drives carries on wherever its traffic
-takes it. `DespawnAction(entity, condition)` (card **Despawn**, `despawn`)
+takes it. `DespawnAction(entity_name, condition)` (card **Despawn**, `despawn`)
 takes a vehicle or a pedestrian -- never the ego -- out of the world when its
 condition holds: the traffic backend lets go of it (and stops protecting it),
 the collision log stops listening to it, its actor is destroyed and the entity
@@ -452,8 +455,8 @@ starts; farther apart they are routed between on the walkable lanelets.
 the entity leaves the vertex for the next one. A vertex with none is passed
 through on arrival.
 
-- **Time is one kind of condition.** `TrajectoryTimeCondition(t)` departs the
-  vertex when the trajectory's clock reaches `t` -- the scenario clock mapped
+- **Time is one kind of condition.** `TrajectoryTimeCondition(time)` departs the
+  vertex when the trajectory's clock reaches `time` -- the scenario clock mapped
   through the action's `TrajectoryTiming` (domain, `scale`, `offset`) and its
   `initial_distance_offset`. That is what a vertex time has always meant, and
   `vertex.time` reads it back. Without a time reference times are ignored, as
@@ -468,7 +471,10 @@ through on arrival.
   `ElapsedTimeCondition(30.0, label=...)` reads "not before the scenario is
   30 s old". (A `TrajectoryTimeCondition` *inside* a composition has no
   trajectory clock to read and compares the scenario's elapsed time; the
-  editor refuses it there.)
+  editor refuses it there.) A `MetricCondition` is the exception: it is
+  judged once the run is over and reads nothing while the entity waits, so
+  `TrajectoryVertex` refuses one with a `ValueError`, as an action's trigger
+  and every composition do.
 
 A vertex cannot carry two: a time and another condition are combined, if
 that is what is meant, by giving the vertex an `AndCondition` of an
@@ -591,7 +597,7 @@ vertex (0-based) the entity waits at for a condition other than a time, or
 !!! warning "Breaking change"
     `TrajectoryVertex` no longer takes `time=` (or a time as its second
     argument), and the editor's vertex rows no longer have a time column:
-    write `TrajectoryVertex(position, TrajectoryTimeCondition(t))`, and in a
+    write `TrajectoryVertex(position, TrajectoryTimeCondition(time))`, and in a
     document a `trajectory_time` waypoint condition on the vertex. The old
     forms raise an error that says so.
 

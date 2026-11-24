@@ -203,7 +203,8 @@ def test_rerun_lidar_is_read_from_the_config(monkeypatch: pytest.MonkeyPatch) ->
     build_rerun_converter(cfg(enabled=True, lidar=True, cameras=True))
     assert built == [
         {"strict": False, "cameras": True},
-        {"strict": False, "lidar_max_points": 0, "cameras": True},
+        # Absent: the documented default (#2298).
+        {"strict": False, "lidar_max_points": 65536, "cameras": True},
     ]
 
 
@@ -229,9 +230,9 @@ def test_a_bad_rerun_lidar_max_points_is_refused_before_anything_runs(
     # Not read when the case records no LiDAR sweeps.
     build_rerun_converter(cfg(enabled=True, lidar=False, lidar_max_points=bad))
     assert build_rerun_converter(cfg(lidar=True, lidar_max_points=bad)) is None
-    # null keeps every point, as 0 does.
+    # null is the documented default, 65536 (#2298); only 0 keeps every point.
     build_rerun_converter(cfg(enabled=True, lidar=True, lidar_max_points=None))
-    assert built == [{"strict": False}, {"strict": False, "lidar_max_points": 0}]
+    assert built == [{"strict": False}, {"strict": False, "lidar_max_points": 65536}]
 
 
 def test_rerun_switches_given_as_text_are_read_as_what_they_spell(
@@ -256,7 +257,7 @@ def test_rerun_switches_given_as_text_are_read_as_what_they_spell(
     build_rerun_converter(cfg(enabled="yes", strict="1", lidar="on", cameras=1))
     assert built == [
         {"strict": False},
-        {"strict": True, "lidar_max_points": 0, "cameras": True},
+        {"strict": True, "lidar_max_points": 65536, "cameras": True},
     ]
 
 
@@ -306,6 +307,31 @@ def test_an_integral_rerun_lidar_max_points_is_read_as_that_integer(
     )
     assert built == [{"strict": False, "lidar_max_points": points}]
     assert type(built[0]["lidar_max_points"]) is int
+
+
+@pytest.mark.parametrize(
+    ("rerun", "points"),
+    [
+        ({}, 65536),
+        ({"lidar_max_points": None}, 65536),
+        ({"lidar_max_points": 0}, 0),
+        ({"lidar_max_points": 7}, 7),
+    ],
+)
+def test_an_absent_or_null_rerun_lidar_max_points_is_the_default(
+    rerun: dict[str, Any], points: int
+) -> None:
+    """Absent or null is the documented 65536, and only an explicit 0 keeps
+    every point of a sweep (#2298: null kept every point)."""
+    from autoware_carla_scenario.examples import run
+
+    cfg = OmegaConf.create({"rerun": {"enabled": True, "lidar": True, **rerun}})
+    assert run._rerun_lidar_max_points(cfg) == points
+    assert run._DEFAULT_LIDAR_MAX_POINTS == 65536
+    shipped = OmegaConf.load(
+        Path(run.__file__).resolve().parent / "conf" / "config.yaml"
+    )
+    assert shipped.rerun.lidar_max_points == run._DEFAULT_LIDAR_MAX_POINTS
 
 
 @pytest.fixture

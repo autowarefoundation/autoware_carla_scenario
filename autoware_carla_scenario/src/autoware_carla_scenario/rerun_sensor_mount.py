@@ -10,7 +10,7 @@ a sweep's points by height; :data:`SENSOR_ENTITIES` and
 ``rerun rrd print``; and :func:`carries_sensors` scans a recording's bytes for
 the sensors' entity paths.  rerun_lidar re-exports every name and keeps what
 needs the Rerun SDK (held as ``Any``) and its CLI; this module is pure numpy,
-``re`` and file reads, so the library check compiles it (``docs/typecheck.md``, "Checking
+``re``, file reads and :mod:`.sensor.base`'s focal length, so the library check compiles it (``docs/typecheck.md``, "Checking
 the framework itself", #1688, #1697).
 """
 
@@ -20,6 +20,8 @@ import re
 from pathlib import Path
 
 import numpy as np
+
+from .sensor.base import focal_length_px
 
 __all__ = [
     "SENSOR_ENTITIES",
@@ -121,8 +123,10 @@ class CameraMount:
         return rz @ ry @ rx
 
     def focal_length_px(self) -> float:
-        """CARLA's horizontal field of view as a focal length in pixels."""
-        return self.width / (2.0 * float(np.tan(np.radians(self.fov) / 2.0)))
+        """CARLA's horizontal field of view as a focal length in pixels
+        (:func:`~autoware_carla_scenario.sensor.base.focal_length_px`, as a
+        driver camera's ``fx``)."""
+        return focal_length_px(self.width, self.fov)
 
 
 def _height_colours(

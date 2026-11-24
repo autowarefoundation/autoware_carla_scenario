@@ -32,6 +32,10 @@ from typing import Any, Optional  # noqa: UP035
 
 from ..atomic_file import write_text_atomically
 
+# A member laid out as in the object json.dumps() writes: batch_report's,
+# which lays out a batch's summary the same way.
+from ..batch_report import json_member as _member
+
 __all__ = [
     "CASE_ERRORED",
     "CASE_ERRORED_SCHEMA",
@@ -123,13 +127,6 @@ class _Chunks:
 
     def text(self) -> str:
         return "".join(self._parts)
-
-
-def _member(single: str) -> str:
-    """The one member of *single*, ``json.dumps({key: value}, indent=2,
-    ensure_ascii=False)``, as it is laid out in any object of members at that
-    depth: the text between the braces (``"{\\n"`` and ``"\\n}"``)."""
-    return single[2:-2]
 
 
 def write_case_unfinished(
