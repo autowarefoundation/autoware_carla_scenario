@@ -42,7 +42,7 @@ from autoware_carla_scenario.actions._departures import (
 )
 from autoware_carla_scenario.conditions.base import ScenarioResult
 from autoware_carla_scenario.actions.base import reset_control_slots
-from autoware_carla_scenario.entity.pedestrian_entity import _UE5_WALKER_SPEED_SCALE
+from autoware_carla_scenario.carla_release import walker_speed_scale
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
 from ._fake_world import ActorsById
@@ -815,7 +815,7 @@ class _Walker(_Actor):
     def apply_control(self, control: Any) -> None:
         super().apply_control(control)
         if isinstance(control, carla.WalkerControl):
-            speed = control.speed / _UE5_WALKER_SPEED_SCALE
+            speed = control.speed / walker_speed_scale()
             self.vx = control.direction.x * speed
             self.vy = control.direction.y * speed
             self.speed = math.hypot(self.vx, self.vy)

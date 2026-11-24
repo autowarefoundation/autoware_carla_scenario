@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 import numpy as np
 
+from ..carla_release import default_max_steer_angle_deg, default_steer_exponent
 from ..utils.powertrain import ChaosPowertrain
 from .geometry import Pose, Trajectory
 
@@ -140,18 +141,24 @@ class ControlConfig:
     wheelbase_m: float = 2.8
     """Distance between front and rear axles, used by the pure pursuit law."""
 
-    max_steer_angle_rad: float = math.radians(56.0)
-    """Wheel angle at full lock in CARLA's steering response (see :attr:`steer_exponent`)."""
+    max_steer_angle_rad: float = math.radians(default_max_steer_angle_deg())
+    """Wheel angle at full lock in CARLA's steering response (see :attr:`steer_exponent`):
+    the server's by default, 53 degrees on CARLA 1.0, 56 on 0.10
+    (:func:`~autoware_carla_scenario.carla_release.default_max_steer_angle_deg`)."""
 
-    steer_exponent: float = 2.0
+    steer_exponent: float = default_steer_exponent()
     """How CARLA's ``[-1, 1]`` steer turns the wheels:
-    ``angle = max_steer_angle * |steer| ** steer_exponent``.
+    ``angle = max_steer_angle * |steer| ** steer_exponent``; the server's by default
+    (:func:`~autoware_carla_scenario.carla_release.default_steer_exponent`).
 
-    CARLA 0.10's Chaos vehicles answer quadratically, whatever ``max_steer_angle`` the
-    wheel physics reports (70 degrees): measured on the MKZ at 2 and 8 m/s, steer 0.1
-    turns like 0.56 degrees, 0.3 like 5.0, 0.5 like 13.9 -- ``56 * steer**2`` within a
-    few percent up to 0.5, at every speed.  A linear map asks for a tenth of the needed
-    angle on a gentle curve.  ``1.0`` is a linear map.
+    CARLA 1.0's vehicles answer linearly: measured on the MKZ at 4.8 m/s, steer 0.1
+    turns the wheels 5.4 degrees, 0.3 16.2, 0.5 26.9 -- ``53 * steer``. CARLA 0.10's
+    Chaos vehicles answer quadratically, whatever ``max_steer_angle`` the wheel
+    physics reports (70 degrees on both): steer 0.1 turns like 0.56 degrees, 0.3 like
+    5.0, 0.5 like 13.9 -- ``56 * steer**2`` within a few percent up to 0.5, at every
+    speed.  The wrong map steers a gentle curve ten times too little (linear on 0.10)
+    or too much (quadratic on 1.0, where the car weaves out of its lane).  ``1.0`` is a
+    linear map.
     """
 
     max_steer_rate: float = 4.0

@@ -113,7 +113,7 @@ class DriverControlSpec:
     wheelbase_m: float = 2.8
     max_steer_angle_deg: Optional[float] = None
     max_steer_angle_rad: Optional[float] = None
-    steer_exponent: float = 2.0
+    steer_exponent: Optional[float] = None
     max_steer_rate: float = 4.0
     yaw_rate_ki: float = 3.0
     yaw_rate_trim_limit_deg: Optional[float] = None

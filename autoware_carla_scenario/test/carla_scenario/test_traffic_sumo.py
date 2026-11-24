@@ -4482,8 +4482,12 @@ def test_sumo_walks_the_scenarios_pedestrian_straight_across_the_road(
             location = walker.transform.location
             # Where SUMO has it (CARLA's y mirrored), a step behind at most.
             assert math.hypot(location.x - x, location.y + y) < 0.1
-            # CARLA 0.10's command for 1.5 m/s.
-            assert walker.control.speed == pytest.approx(1.5 * 20.5)
+            # The server's command for 1.5 m/s.
+            from autoware_carla_scenario.entity.pedestrian_entity import (
+                walker_speed_command,
+            )
+
+            assert walker.control.speed == pytest.approx(walker_speed_command(1.5))
         # Straight on across the eastbound lanes, at its speed, on the road
         # lanes SUMO's traffic drives (and yields to it on).
         assert tc.person.getPosition(person) == pytest.approx(

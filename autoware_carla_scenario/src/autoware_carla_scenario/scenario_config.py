@@ -484,8 +484,10 @@ class DriverControlSpec:
     ``yaw_rate_trim_limit_deg``), which read better, or in radians
     (``max_steer_angle_rad``, ``yaw_rate_trim_limit_rad``), not both: one
     angle set both ways is refused.  Each is ``None`` here, the controller's
-    default (56 and 25 degrees), so that an override of either one works
-    (#2241).
+    default (the server's full lock, 53 degrees on CARLA 1.0 and 56 on 0.10,
+    and 25 degrees), so that an override of either one works (#2241).
+    ``steer_exponent`` is ``None`` too, the server's (1 on CARLA 1.0, 2 on
+    0.10; carla_release).
     """
 
     lookahead_gain_s: float = 0.6
@@ -494,7 +496,7 @@ class DriverControlSpec:
     wheelbase_m: float = 2.8
     max_steer_angle_deg: Optional[float] = None
     max_steer_angle_rad: Optional[float] = None
-    steer_exponent: float = 2.0
+    steer_exponent: Optional[float] = None
     max_steer_rate: float = 4.0
     yaw_rate_ki: float = 3.0
     yaw_rate_trim_limit_deg: Optional[float] = None
