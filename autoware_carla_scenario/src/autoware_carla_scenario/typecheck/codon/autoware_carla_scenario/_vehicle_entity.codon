@@ -132,6 +132,9 @@ class VehicleEntity:
     def lane_change_finished(self, world: carla.World) -> bool:
         raise NotImplementedError()
 
+    def cancel_lane_change(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
     def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
         raise NotImplementedError()
 

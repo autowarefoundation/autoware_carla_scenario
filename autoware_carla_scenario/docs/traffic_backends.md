@@ -648,6 +648,7 @@ own bookkeeping on the vehicle rather than in a table of its own:
 ```python
     def change_lane(self, entity, world, direction) -> None: ...
     def lane_change_finished(self, entity, world) -> bool: ...
+    def cancel_lane_change(self, entity, world) -> None: ...
     def turn_at_junction(self, entity, world, direction, **kwargs) -> None: ...
     def follow_route(self, entity, world, stops) -> None: ...
     def end_route(self, entity, world) -> None: ...
@@ -665,6 +666,15 @@ point, and there a point lies on several ways through. A backend that has no ans
 base class logs that the intent is unavailable and the vehicle keeps doing what
 it was doing, which is also what `LaneChangeAction` sees when it asks whether the
 manoeuvre finished.
+
+`cancel_lane_change` is called when a `LaneChangeAction` is stopped before
+the vehicle settled, overridden by another action that takes its lane (a
+`TurnAction`, say). A lane change the backend keeps to carry out later -- one
+waiting for its `start_after_m`, or being stretched over its
+`lane_change_length_m` -- is dropped, and what it changed in how the vehicle
+drives given back; one that is done, or was handed on at once, is left as it
+is. It does nothing by default. The TrafficManager and SUMO backends drop
+their pending request for the vehicle.
 
 `end_route` is called when a route a `RoutingAction` watched is over: the
 vehicle arrived, or the action was stopped, overridden or closed first. It gives

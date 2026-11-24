@@ -169,11 +169,24 @@ class LaneChangeAction(BaseAction):
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
             fail_if_pedestrian(self._entity_name, "change_lane")
-            logger.warning(
-                "LaneChangeAction: entity '%s' not found", str(self._entity_name)
-            )
+            if self._report_missing():
+                logger.warning(
+                    "LaneChangeAction: entity '%s' not found", str(self._entity_name)
+                )
             return
 
         entity.change_lane(
             world, self._direction, self._start_after_m, self._lane_change_length_m
         )
+
+    def _stopped(self, world: "carla.World") -> None:
+        """Overridden mid-run (:meth:`BaseAction._stop_overridden`): the lane
+        change the backend is still to carry out -- one waiting for its
+        *start_after_m*, or being stretched over its *lane_change_length_m* --
+        is dropped, so it does not happen on top of what took the lane over
+        (#2430).  One that is done is left as it is
+        (:meth:`~autoware_carla_scenario.traffic.TrafficBackend.cancel_lane_change`)."""
+        entity = find_vehicle_entity(self._entity_name)
+        if entity is None:
+            return
+        entity.cancel_lane_change(world)

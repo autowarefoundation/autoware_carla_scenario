@@ -1869,6 +1869,35 @@ class SumoTrafficBackend(TrafficBackend):
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not change lane for %s: %s", sumo_id, exc)
 
+    def cancel_lane_change(self, entity: Any, world: Any) -> None:
+        """Drop *entity*'s lane change still waiting for its ``start_after_m``
+        or still being stretched over its ``lane_change_length_m``
+        (:meth:`TrafficBackend.cancel_lane_change`), and give the vehicle its
+        own lane changes, lateral limits and speed back.  One SUMO was asked
+        for at once (``changeLane``) is SUMO's; one the TrafficManager carries
+        out for a vehicle SUMO leaves to it is dropped there.
+        """
+        sumo_id = self._id_of(entity)
+        if sumo_id is None:
+            if self._tm_drives_scenario:
+                self._tm.cancel_lane_change(entity, world)
+            return
+        pending = self._lane_change_requests.pop(sumo_id, None)
+        if pending is None:
+            return
+        try:
+            self._end_lane_change_request(pending)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SUMO could not cancel the lane change of %s: %s", sumo_id, exc
+            )
+            return
+        logger.info(
+            "SUMO: the %s lane change asked of %s was cancelled",
+            pending.direction.value,
+            sumo_id,
+        )
+
     def _ask_lane_change(self, sumo_id: str, direction: LaneChangeDirection) -> None:
         """Ask SUMO for a lane change of its own one lane to *direction*."""
         tc = self._traci

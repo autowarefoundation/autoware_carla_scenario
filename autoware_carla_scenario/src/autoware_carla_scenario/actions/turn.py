@@ -132,7 +132,10 @@ class TurnAction(BaseAction):
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
             fail_if_pedestrian(self._entity_name, "turn_at_junction")
-            logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
+            if self._report_missing():
+                logger.warning(
+                    "TurnAction: entity '%s' not found", str(self._entity_name)
+                )
             return
 
         if TYPE_CHECKING:

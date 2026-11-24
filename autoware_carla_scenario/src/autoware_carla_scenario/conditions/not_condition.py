@@ -20,7 +20,13 @@ class NotCondition(BaseCondition):
 
     That is not a logical NOT of whether the child holds -- a condition that
     has not fired returns ``None``, so "the entity is *not* on any of these
-    lanelets" cannot be said with it.  ``holds_when_pending=True`` gives the
+    lanelets" cannot be said with it.  An action's trigger and the runner's
+    pass and fail conditions count any result, so there the default fires
+    exactly when the child does: a NOT of a distance below 10 m fires once
+    the entity *is* within 10 m (the editor's validator warns about one,
+    #2430).  The default is meant for a child that only
+    reports a failure (a collision, a timeout), whose failure it turns into a
+    pass.  ``holds_when_pending=True`` gives the
     logical one: the NOT holds (``passed=True``) on every check the child
     returns ``None``, and is pending (``None``) while the child has fired,
     whatever its verdict.  Wrapped in a :class:`PersistentCondition` it waits

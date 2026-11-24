@@ -267,9 +267,11 @@ class WalkStraightAction(BaseAction):
         entity = find_pedestrian_entity(self._entity_name)
         if entity is None:
             if find_vehicle_entity(self._entity_name) is None:
-                logger.warning(
-                    "WalkStraightAction: entity '%s' not found", str(self._entity_name)
-                )
+                if self._report_missing():
+                    logger.warning(
+                        "WalkStraightAction: entity '%s' not found",
+                        str(self._entity_name),
+                    )
             else:
                 self._warn_not_a_pedestrian()
             return None

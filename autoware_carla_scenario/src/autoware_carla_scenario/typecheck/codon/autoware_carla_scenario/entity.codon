@@ -177,6 +177,8 @@ class EgoVehicle:
             _acs_expect_return(r, NoneType, "EgoVehicle.change_lane() returns None")
         elif name == "lane_change_finished":
             _acs_expect_return(r, bool, "EgoVehicle.lane_change_finished() returns bool")
+        elif name == "cancel_lane_change":
+            _acs_expect_return(r, NoneType, "EgoVehicle.cancel_lane_change() returns None")
         elif name == "set_desired_speed":
             _acs_expect_return(r, NoneType, "EgoVehicle.set_desired_speed() returns None")
         elif name == "turn_at_junction":
@@ -254,6 +256,9 @@ class EgoVehicle:
         raise NotImplementedError()
 
     def lane_change_finished(self, world: carla.World) -> bool:
+        raise NotImplementedError()
+
+    def cancel_lane_change(self, world: carla.World) -> None:
         raise NotImplementedError()
 
     def set_desired_speed(self, world: carla.World, speed_kmh: float) -> None:
