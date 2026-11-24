@@ -3703,6 +3703,75 @@ def test_a_parked_vehicle_destroyed_elsewhere_does_not_come_up() -> None:
     assert vehicles.moved == []
 
 
+class _CrossingPersons:
+    """TraCI's persons for one person moved onto a crossing: SUMO gives it the
+    crossing's backward angle (the SUMO 1.28 crash workaround of
+    _person_angle()), whichever way it walks."""
+
+    def __init__(self, x: float, y: float, angle: float) -> None:
+        self.x, self.y, self.angle = x, y, angle
+
+    def getPosition3D(self, person: str) -> tuple[float, float, float]:
+        return (self.x, self.y, 0.0)
+
+    def getAngle(self, person: str) -> float:
+        return self.angle
+
+
+def _walked_on_a_crossing() -> tuple[Any, _CrossingPersons, _FakeActor, _Entity]:
+    """A scenario pedestrian SUMO walks, facing north across the road (CARLA
+    yaw -90, SUMO angle 0), its person on a crossing SUMO points south."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    persons = _CrossingPersons(-50.0, -6.0, 180.0)
+    backend._traci = SimpleNamespace(person=persons)
+    walker = _FakeActor(
+        _carla_transform(-50.0, 8.25, -90.0), "pedestrian1", "walker.pedestrian.0001"
+    )
+    entity = _Entity(walker, "pedestrian1")
+    backend._walked = {"person0": entity}
+    backend._running = True
+    return backend, persons, walker, entity
+
+
+def test_a_walked_pedestrian_on_a_crossing_keeps_its_walk_heading() -> None:
+    """Its walker faces, and is driven, the way the walk goes, not along the
+    crossing's backward angle SUMO has its person at; only the position is
+    SUMO's (#2448)."""
+    backend, persons, walker, entity = _walked_on_a_crossing()
+    assert backend.walk_straight(entity, 1.5)
+    assert backend._walking["person0"][2] == pytest.approx(0.0)
+    backend._follow_walked()
+    transform = walker.transform
+    assert transform.rotation.yaw == pytest.approx(-90.0)
+    assert walker.control.direction.x == pytest.approx(0.0, abs=1e-9)
+    assert walker.control.direction.y == pytest.approx(-1.0)
+    # Where SUMO has it (CARLA's y mirrored), a step behind along the walk.
+    assert transform.location.x == pytest.approx(-50.0)
+    assert transform.location.y == pytest.approx(6.0 + 1.5 * 0.05)
+    # A walk given a yaw (turning back) faces that way.
+    assert backend.walk_straight(entity, 1.5, yaw_deg=90.0)
+    backend._follow_walked()
+    assert walker.transform.rotation.yaw == pytest.approx(90.0)
+    assert walker.control.direction.y == pytest.approx(1.0)
+
+
+def test_a_stopped_walked_pedestrian_on_a_crossing_keeps_its_heading() -> None:
+    backend, persons, walker, entity = _walked_on_a_crossing()
+    assert backend.walk_straight(entity, 1.5)
+    backend._follow_walked()
+    assert backend.walk_straight(entity, 0.0)
+    assert backend._walking == {}
+    assert walker.transform.rotation.yaw == pytest.approx(-90.0)
+    assert walker.transform.location.y == pytest.approx(6.0)
+    assert walker.control.speed == 0.0
+    # Stopped before it was ever sent on a walk: the way its walker faces.
+    backend, persons, walker, entity = _walked_on_a_crossing()
+    assert backend.walk_straight(entity, 0.0)
+    assert walker.transform.rotation.yaw == pytest.approx(-90.0)
+
+
 def test_a_destroyed_focus_actor_is_no_focus_at_the_origin() -> None:
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
