@@ -2707,9 +2707,15 @@ report (<code>crash_report</code>).</p>
 <p>A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as <code>ERROR</code> with a message
 saying so, and <code>collect</code> lists them, saying what to do about them, chosen from
-the batch's records alone (#1803): where the case's task may still be queued
+the batch's records alone (#1803). A task killed outright (a node failure
+without requeue, a <code>SIGKILL</code> for memory, <code>scancel -s KILL</code>, a hang past
+<code>KillWait</code>) writes no final state, and its status still says <code>running</code>; but
+as it starts, a task removes the outcome and outputs an earlier submission
+left for each of its cases (#2418), so such a case has none, not the earlier
+one counted as current. Where the case's task may still be queued
 or running (it has a job, and it has no status yet, or its status says
-<code>starting</code>, <code>waiting</code>, <code>building</code> or <code>running</code>), to wait for it with
+<code>starting</code>, <code>waiting</code>, <code>building</code> or <code>running</code> -- or <code>cancelled</code>, which a
+task preempted and requeued says too), to wait for it with
 <code>scenario-slurm wait</code> (with <code>--submission &lt;k&gt;</code> when its submission is not the
 latest) if <code>squeue --me</code> still lists it and to <code>resubmit</code> once it has ended;
 where its submission is in flight, to try again once sbatch returns; where its
@@ -2728,10 +2734,16 @@ pass, and <code>collect</code> reports it as <code>ERROR</code> naming its file;
 task recorded for it is kept in <code>batch_results.json</code>. <code>status</code>, <code>wait</code> and the
 viewer count it as not passed: the results pages show it as an error.
 An outcome is stale when the last submission that gave the case was to run
-it again and its task stopped (<code>failed</code> or <code>cancelled</code>) before it reached the
-case: the task removes a case's outcome only right before it runs the case,
-so the one there names an earlier submission. <code>collect</code> reports it as <code>ERROR</code>
-saying so, and <code>status</code> and the viewer count it as without a result (#2247).
+it again and its task stopped (<code>failed</code> or <code>cancelled</code>) before it removed it,
+so the one there names an earlier submission: a task removes an earlier
+submission's outcome as it starts, and a case's outcome again right before it
+runs the case, but one stopped before that -- or one of an earlier version,
+which removed it only before the case ran -- leaves it. Only an earlier
+submission's outcome is removed as the task starts: one naming the task's own
+submission or a later one (a <code>--force</code> resubmit running beside it) is kept.
+<code>collect</code> reports a stale outcome as <code>ERROR</code> saying so, <code>status</code> and the
+viewer count it as without a result (#2247), and <code>scenario-gate</code> counts it as
+unrecorded whatever gate record is at its stem (#2418, <a href="../gate/">gate</a>).
 <code>resubmit</code> submits again the cases with no outcome, no verdict or a stale
 one and those that raised on every attempt (<code>ERROR</code>); <code>--failed</code> adds the ones that ran and
 failed, <code>--cases a,b</code> names them (labels or indices; a case named twice runs
@@ -3263,7 +3275,7 @@ another's <code>auto</code> build uses it rather than build again.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 10:11:44 UTC"><span class="timeago" datetime="2026-11-22T10:11:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 10:11:44 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 05:56:19 UTC"><span class="timeago" datetime="2026-11-24T05:56:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 05:56:19 UTC">2026-11-24</span>
   </span>
 
     
