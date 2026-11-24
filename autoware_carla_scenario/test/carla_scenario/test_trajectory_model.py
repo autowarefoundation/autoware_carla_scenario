@@ -636,7 +636,86 @@ class TestHeadings:
         )
         assert stop.at_time(arrived - 0.01).yaw == pytest.approx(0.0)
         assert stop.at_vertex(1).yaw == pytest.approx(0.0)
+        assert stop.at_vertex(2).yaw == pytest.approx(0.0)
         assert stop.at_time(times[3] + 0.01).yaw == pytest.approx(90.0)
+        # The turn is spread over the whole stop, not its last pause (#2438):
+        # 90 degrees in its 0.5 s, half way round between the two pauses.
+        duration = times[3] - times[1]
+        assert stop.at_time(times[2]).yaw == pytest.approx(
+            90.0 * (times[2] - times[1]) / duration
+        )
+        for time in (arrived + 0.1, times[2], times[2] + 0.1):
+            assert stop.at_time(time).yaw_rate == pytest.approx(90.0 / duration)
+            assert stop.at_time(time).yaw == pytest.approx(
+                90.0 * (time - arrived) / duration
+            )
+
+    def test_a_stop_written_as_repeated_samples_turns_over_the_stop(self) -> None:
+        """A 10 Hz track standing at (10, 0) from 1 s to 3 s, then leaving
+        North: the turn is spread over the 2 s on the spot, 45 degrees a
+        second, rather than all 90 degrees in its last 0.1 s (#2438)."""
+        xs = [0.0, *([10.0] * 21), 10.0]
+        ys = [0.0, *([0.0] * 21), 10.0]
+        times = [0.0, *(1.0 + 0.1 * index for index in range(21)), 4.0]
+        stop = ResolvedTrajectory(
+            xs=xs, ys=ys, zs=[0.0] * len(xs), yaws=[None] * len(xs), times=times
+        )
+        middle = stop.at_time(2.0)
+        assert (middle.x, middle.y) == pytest.approx((10.0, 0.0))
+        assert middle.yaw == pytest.approx(45.0)
+        assert middle.yaw_rate == pytest.approx(45.0)
+        for tick in range(1, 200):
+            time = 1.0 + tick * 0.01
+            sample = stop.at_time(time)
+            assert sample.yaw == pytest.approx(45.0 * (time - 1.0))
+            assert sample.yaw_rate == pytest.approx(45.0)
+        assert stop.at_time(0.99).yaw == pytest.approx(0.0)
+        assert stop.at_time(3.01).yaw == pytest.approx(90.0)
+        # The stop's vertices keep their resolved headings.
+        assert stop.at_vertex(1).yaw == pytest.approx(0.0)
+        assert stop.at_vertex(11).yaw == pytest.approx(0.0)
+        assert stop.at_vertex(21).yaw == pytest.approx(90.0)
+
+    def test_a_stop_turns_alike_written_as_samples_or_as_one_pause(self) -> None:
+        """The same stop written as one pause and as twenty samples turns the
+        same on the clock, at every time."""
+        once = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0],
+            ys=[0.0, 0.0, 0.0, -10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 1.0, 3.0, 4.0],
+        )
+        xs = [0.0, *([10.0] * 21), 0.0]
+        ys = [0.0, *([0.0] * 21), -10.0]
+        times = [0.0, *(1.0 + 0.1 * index for index in range(21)), 4.0]
+        samples = ResolvedTrajectory(
+            xs=xs, ys=ys, zs=[0.0] * len(xs), yaws=[None] * len(xs), times=times
+        )
+        for tick in range(0, 401):
+            time = tick * 0.01
+            expected = once.at_time(time)
+            got = samples.at_time(time)
+            assert (got.x, got.y) == pytest.approx((expected.x, expected.y))
+            assert math.remainder(got.yaw - expected.yaw, 360.0) == pytest.approx(
+                0.0, abs=1e-9
+            )
+            assert got.yaw_rate == pytest.approx(expected.yaw_rate)
+
+    def test_a_stop_with_a_given_yaw_keeps_it(self) -> None:
+        """A stop whose samples have yaws of their own is not spread: the
+        given yaws are what the clock faces."""
+        yaws: list[Optional[float]] = [None, 0.0, 0.0, 0.0, 0.0, 90.0, None]
+        stop = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 7,
+            yaws=yaws,
+            times=[0.0, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+        )
+        assert stop.at_time(2.25).yaw == pytest.approx(0.0)
+        assert stop.at_time(2.75).yaw == pytest.approx(45.0)
+        assert stop.at_time(2.75).yaw_rate == pytest.approx(180.0)
 
 
 class TestAlongThePath:

@@ -327,6 +327,9 @@ removed). Outside that window the vehicle is out of the world.
 A vehicle cannot be spawned once a run has started, so the scenario spawns it
 in `setup`, preferably out of the world (`spawn.hidden`). The action is a
 trajectory run (the engine of `RoutingAction`'s `position` mode) of a held pose, with `hidden_outside_trajectory`.
+Registered before the tick, it is observable (to a condition, a sensor, the
+ego) from one tick after `start_time` until `end_time`
+([Trajectories](trajectory.md#who-drives-in-follow-and-position-modes-and-when-it-ends)).
 `collision_objects` creates two of them for a collision's aftermath.
 
 ```python

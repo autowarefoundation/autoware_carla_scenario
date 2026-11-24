@@ -123,7 +123,9 @@ A pause of half a second or longer is a **stop**, not part of a corner, and
 neither are the first and last vertices of an open trajectory, nor a point
 with a `yaw` of its own: they face along the path, a vertex at a stop keeping
 the heading it arrived with, and over the stop the entity turns on the spot to
-the heading it leaves with.
+the heading it leaves with: at one steady rate over the stop's whole time,
+whether it is written as one pause or as many samples on the same point (a
+recording standing still).
 
 Every number of a `MapPose`, a `RelativeLanePose` or a route pose must be
 finite: `nan` and `inf` are refused when the pose is built, a `yaw` or `z`
@@ -341,7 +343,7 @@ in or take it out (`appear_on_start` and `hidden_outside_trajectory` are gone
 from it as of 1.0).  A road user that enters a recording late is spawned
 hidden and brought in by a `SpawnAction` (the `spawn` card): put on its place,
 physics on, facing its heading, moving at `speed`; its routing card is
-triggered on the spawn card completing and starts where it stands.  Triggered
+triggered on the spawn card completing.  Triggered
 by a `RouteProgressCondition` it enters when the ego has come as far as it had
 when the road user was first seen; a `PlaceClearCondition` on the same place
 in its trigger waits for the place to be clear, and `shift_max` lets it take
@@ -349,6 +351,30 @@ the nearest clear place further on along its lane once the trigger gives up
 waiting.  The run writes a `spawn` record to the
 [trajectory log](trajectory_log.md) on the tick it is brought in (a prop the
 action adds has none).  One that leaves early is removed by a `DespawnAction`.
+
+Where the routing card then starts depends on its mode.  Only in `driver`
+mode does it start **where the entity stands**: at the nearest point of its
+path within 6 m, so a spawn moved along its lane by `shift_max` starts its
+route there.  `position` and `follow` follow the trajectory's **clock**
+instead, whatever the spawn did.  With `time_domain: absolute` the clock is
+the scenario's: `position` places the entity at its pose for the current
+time, and `follow` drives it to keep that time, so a spawn delayed by its
+clearance condition is put (or driven) down its track to where the
+recording has it by then -- the trajectory's start is not where it enters --
+and `position` does not keep the clear place `shift_max` found either.  With
+`time_domain: relative` the clock starts when the action does: triggered on
+the spawn card completing, with a `time_offset` that moves its own first
+vertex's time to `0`, it starts at the beginning of its trajectory however
+late the spawn was, and runs that much behind the recording from there.
+
+`TrajectoryRun` itself -- the engine of `position` and `follow`, which
+`StalledObjectAction` (see [Adversities](adversity.md)) runs with it -- still
+keeps an entity out of the world outside its trajectory's times
+(`hidden_outside_trajectory`, `position` mode with a time reference).  The
+action runs before the world ticks (its default phase) and what it places is
+observed after, so such an entity is first observable **one tick after** its
+first vertex is due, and last when its last vertex is due: from `t0 + dt` to
+`t_end`, `t0` and `t_end` those vertices' scenario times and `dt` the tick.
 
 Vertices may also be placed against a logical scenario's *route*
 (`RouteLanePose`, `RouteOppositePose`, `RouteCrossingPose`,
@@ -712,9 +738,19 @@ above:
   with one Set Goal card: map-frame vertices, each departed at its
   recorded time (a `trajectory_time` waypoint condition) on the scenario
   clock (`time_domain: absolute`, `time_offset` moving the recording's first
-  frame to `t = 0`), in Position mode and hidden outside its trajectory;
+  frame to `t = 0`), in Position mode: placed, every tick, where the
+  recording has it at that time;
 - a road user first seen after the start spawns **out of the world**
-  (`spawn.hidden`) and appears at its first vertex.
+  (`spawn.hidden`), is brought in at its first vertex by a `SpawnAction`, and
+  is taken out by a `DespawnAction` where its recording ends.  Its routing
+  card is triggered on the spawn card completing; on the absolute clock it is
+  placed where the recording has it at the moment it is brought in, which is
+  down its track from the first vertex if the spawn was held back by its
+  clearance condition (and not on the clear place `shift_max` found).  To
+  have it start at its first vertex instead, use `time_domain: relative`
+  with a `time_offset` moving its own first vertex's time to `0`: its clock
+  then starts when the spawn completes, at the cost of running that much
+  behind the recording.
 
 Open it in the editor to add the conditions the test is about -- a road
 user can wait for the ego by replacing one of its vertex times with another
