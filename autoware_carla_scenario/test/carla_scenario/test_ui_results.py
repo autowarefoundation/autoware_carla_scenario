@@ -1115,9 +1115,126 @@ def test_update_swaps_the_session_table_in_on_the_index_page_only(
     helper = text.split("function refreshCurrentPage()", 1)[1].split("\n    }\n", 1)[0]
     assert "hasAttribute('hx-post')" in helper and "refreshAndReload()" in helper
     # Off the index page the cache is still cleared before the reload.
-    reload = text.split("function refreshAndReload()", 1)[1].split("\n    }\n", 1)[0]
+    reload = text.split("function refreshAndReload(url)", 1)[1].split("\n    }\n", 1)[0]
     post = reload.index("fetch('/api/refresh', {method: 'POST'})")
-    assert post < reload.index(".finally(() => location.reload())")
+    assert post < reload.index(".finally(() => {")
+    assert post < reload.index("else location.reload();")
+
+
+#: Runs base.html's refreshAndReload against a stubbed fetch and location.
+_RELOAD_HARNESS = """
+const calls = [];
+globalThis.fetch = async (url, init) => { calls.push(['fetch', url, init.method]); return {}; };
+globalThis.location = {reload: () => calls.push(['reload']),
+  assign: (url) => calls.push(['assign', url])};
+__SCRIPT__
+(async () => {
+  refreshAndReload();
+  await new Promise(r => setImmediate(r));
+  refreshAndReload('/');
+  await new Promise(r => setImmediate(r));
+  console.log(JSON.stringify(calls));
+})();
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_a_re_run_refreshes_the_cache_and_goes_to_the_session_list(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A Re-run writes a new session: the page it was started from would
+    still show the old result after a reload, and the cached session list
+    would not list the new run (#2440)."""
+    ref = _session(tmp_path, "10-00-00", [True])
+    page = client.get(f"/session/{ref}/0").text
+    rerun = page.split("function rerunScenario()", 1)[1].split("\n  }\n", 1)[0]
+    assert "() => refreshAndReload('/')" in rerun
+    assert "location.reload()" not in rerun
+    start = page.index("    function refreshAndReload(url)")
+    end = page.index("\n    }\n", start) + 7
+    harness = tmp_path / "reload.js"
+    harness.write_text(
+        _RELOAD_HARNESS.replace("__SCRIPT__", page[start:end]), encoding="utf-8"
+    )
+    done = subprocess.run(
+        ["node", str(harness)], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [
+        ["fetch", "/api/refresh", "POST"],
+        ["reload"],
+        ["fetch", "/api/refresh", "POST"],
+        ["assign", "/"],
+    ]
+
+
+#: Runs base.html's updateProgress on one progress event, its elements stubbed.
+_UPDATE_HARNESS = """
+const els = {};
+globalThis.document = {getElementById: (id) =>
+  (els[id] = els[id] || {textContent: '', className: '', style: {}})};
+const STATUS = {RUNNING: 'running', PASSED: 'passed', FAILED: 'failed',
+  DONE: 'done', IDLE: 'idle'};
+__SCRIPT__
+updateProgress(__EVENT__);
+console.log(JSON.stringify({text: els['progress-text'].textContent,
+  count: els['progress-count'].textContent,
+  red: els['progress-fill'].className.includes('bg-red-500'),
+  green: els['progress-fill'].className.includes('bg-green-600')}));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        pytest.param(
+            {"current": 3, "total": 3, "status": "done", "message": "", "failed": 0},
+            {"text": "Completed!", "count": "3/3", "red": False, "green": True},
+            id="none-failed",
+        ),
+        pytest.param(
+            {
+                "current": 3,
+                "total": 3,
+                "status": "done",
+                "message": "2 of 3 failed",
+                "failed": 2,
+            },
+            {"text": "2 of 3 failed", "count": "3/3", "red": True, "green": False},
+            id="some-failed",
+        ),
+        pytest.param(
+            {"current": 3, "total": 3, "status": "done", "failed": 1},
+            {"text": "1 of 3 failed", "count": "3/3", "red": True, "green": False},
+            id="a-count-without-a-message",
+        ),
+        pytest.param(
+            {"current": 0, "total": 2, "status": "done", "message": "The run failed"},
+            {"text": "The run failed", "count": "0/2", "red": True, "green": False},
+            id="failed-as-a-whole",
+        ),
+    ],
+)
+def test_a_done_with_failed_jobs_is_shown_as_failed(
+    client: TestClient, tmp_path: Path, event: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """ "Completed!" was green even when every job failed (#2440)."""
+    page = client.get("/").text
+    start = page.index("    function updateProgress(data)")
+    end = page.index("\n    }\n", start) + 7
+    harness = tmp_path / "update.js"
+    harness.write_text(
+        _UPDATE_HARNESS.replace("__SCRIPT__", page[start:end]).replace(
+            "__EVENT__", json.dumps(event)
+        ),
+        encoding="utf-8",
+    )
+    done = subprocess.run(
+        ["node", str(harness)], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == expected
 
 
 #: Runs the progress-stream script of base.html against stubbed browser APIs:

@@ -393,6 +393,73 @@ def test_a_job_that_cannot_be_collected_fails_alone(
     assert not runner.is_running()
 
 
+# ── The failed jobs a run's done reports (#2440) ──────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("codes", "failed", "message"),
+    [
+        ([0, 0, 0], 0, ""),
+        ([0, 1, 0], 1, "1 of 3 failed"),
+        ([1, 1, 1], 3, "3 of 3 failed"),
+    ],
+)
+def test_done_reports_how_many_jobs_failed(
+    codes: list[int], failed: int, message: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published = _record_progress(monkeypatch)
+    exits = iter(codes)
+    monkeypatch.setattr(runner, "_run_job", lambda cmd, cwd, log: next(exits))
+    runner._run_worker(
+        [["scenario=a"], ["scenario=b"], ["scenario=c"]], None, [], False
+    )
+    done = published[-1]
+    assert (done.status, done.current, done.total) == ("done", 3, 3)
+    assert (done.failed, done.message) == (failed, message)
+    progress = runner.get_progress()
+    assert progress is not None and progress.model_dump()["failed"] == failed
+    # Only the done counts them.
+    assert all(p.failed == 0 for p in published[:-1])
+
+
+def test_a_job_that_cannot_be_launched_counts_as_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
+        raise OSError("the job cannot be launched")
+
+    monkeypatch.setattr(runner, "_run_job", run)
+    runner._run_worker([["scenario=a"], ["scenario=b"]], None, [], False)
+    progress = runner.get_progress()
+    assert progress is not None
+    assert (progress.status, progress.failed, progress.message) == (
+        "done",
+        2,
+        "2 of 2 failed",
+    )
+
+
+def test_a_stopped_run_reports_the_jobs_that_failed_before_the_stop(
+    unstarted_threads: list[_UnstartedThread], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
+        if "scenario=a" in cmd:
+            return 1
+        # Stopped while the second job runs, which a stop ends with failure:
+        # it is not one of the failed jobs.
+        runner.stop_run()
+        return -15
+
+    monkeypatch.setattr(runner, "_run_job", run)
+    assert runner.start_run([["scenario=a"], ["scenario=b"], ["scenario=c"]])
+    unstarted_threads[0].run()
+    running, progress = runner.get_status()
+    assert not running
+    assert progress is not None
+    assert (progress.current, progress.status, progress.failed) == (2, "done", 1)
+    assert progress.message == "1 of 3 failed"
+
+
 # ── Stopping a run (#1351) ─────────────────────────────────────────────────
 
 

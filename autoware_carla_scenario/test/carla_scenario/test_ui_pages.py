@@ -380,6 +380,26 @@ def test_the_run_panel_keeps_delete_overrides(
     assert json.loads(done.stdout) == ["a=1", "~b", "~c=2", "~d"]
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_run_panel_sends_flag_lines_for_the_server_to_refuse(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A line starting with '-' is sent, not dropped, so the server's 400
+    says why in the preview and the run (#2440)."""
+    script = _function(client.get("/").text, "overrideLines") + (
+        "console.log(JSON.stringify(overrideLines("
+        + json.dumps("a=1\n--multirun\n --cfg=job \nnot an override")
+        + ")));\n"
+    )
+    harness = tmp_path / "overrides.js"
+    harness.write_text(script, encoding="utf-8")
+    done = subprocess.run(
+        ["node", str(harness)], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == ["a=1", "--multirun", "--cfg=job"]
+
+
 def test_the_server_accepts_delete_overrides() -> None:
     body = app_module.parse_run_body({"scenario": "a/b", "extra_overrides": ["~k"]})
     assert body.extra_overrides == ["~k"]

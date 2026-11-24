@@ -2060,8 +2060,12 @@ is recorded as failed, and the jobs after it do not start.
 
 !!! warning "The viewer listens on this machine only by default"
     The viewer has no authentication, and its API starts scenario runs
-    (`POST /api/run`) and SLURM submissions (`/api/slurm/...`). It therefore
-    binds `127.0.0.1` unless told otherwise. It used to bind `0.0.0.0`, every
+    (`POST /api/run`) and SLURM submissions (`/api/slurm/...`). `POST
+    /api/run` passes its `extra_overrides` to Hydra unvalidated (only a line
+    starting with `-`, a flag, is refused): an override such as
+    `hydra.run.dir=...` or a Hydra callback can make the job run any command,
+    so anyone who can reach the viewer's port can run commands as the user
+    the viewer runs as. It therefore binds `127.0.0.1` unless told otherwise. It used to bind `0.0.0.0`, every
     interface; to serve other machines as before, pass `--host 0.0.0.0` (or set
     `VIEWER_HOST=0.0.0.0`) on a network you trust. The viewer prints a warning
     when it listens on anything but a loopback address.
@@ -2331,7 +2335,7 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 | `POST` | `/api/refresh` | Clear result cache and return updated session table HTML |
 | `GET` | `/api/scenarios` | List all available scenario config names |
 | `POST` | `/api/run/preview` | Preview the CLI command that would be executed (400 for an invalid SLURM option value) |
-| `POST` | `/api/run` | Start a scenario execution in the background (400 `{"status": "error"}` for a body that is not a JSON object or names no `scenario`, a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available) |
+| `POST` | `/api/run` | Start a scenario execution in the background (400 `{"status": "error"}` for a body that is not a JSON object or names no `scenario`, an extra override starting with `-` (a flag of `scenario`, not an override), a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available) |
 | `GET` | `/api/run/status` | Get current run status (non-streaming) |
 | `GET` | `/api/run/progress` | SSE (Server-Sent Events) stream for real-time progress |
 | `GET` | `/api/launchers` | The launchers a run can use here (`slurm` only where `sbatch` and `squeue` are, with the partitions) |
@@ -2371,7 +2375,8 @@ lines, or a mapping, each value exported as written, so without `${...}` either
   "total": 5,
   "scenario_name": "intersection_passing/straight",
   "status": "running",
-  "message": ""
+  "message": "",
+  "failed": 0
 }
 ```
 
@@ -2386,7 +2391,11 @@ Each event is a `data:` line holding one such object. `status` is one of:
   ends here.
 
 `message` is empty but on a `"done"` of a run that failed as a whole before
-any job ran (its multirun directory could not be created), where it says why.
+any job ran (its multirun directory could not be created), where it says why,
+and on a `"done"` of a run some of whose jobs failed, where it says how many
+(`"2 of 5 failed"`). `failed` is that count on a `"done"` (0 otherwise; a job
+a stop ended is not counted); the Run panel shows a `"done"` with a `message`
+in red, else "Completed!" in green.
 
 ---
 

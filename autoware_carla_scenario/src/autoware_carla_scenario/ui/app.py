@@ -45,7 +45,7 @@ from .models import RunProgress, SessionSummary
 from .request_values import _attribute as _attribute
 from .request_values import _is_json_type as _is_json_type
 from .request_values import _session_ref as _session_ref
-from .request_values import wants_page
+from .request_values import check_extra_overrides, wants_page
 
 logger = logging.getLogger(__name__)
 
@@ -313,7 +313,9 @@ def parse_run_body(body: dict[str, Any]) -> RunBody:
 
     ``extra_overrides`` must be a list of strings (null or absent: none) --
     a string would otherwise be extended into the command one character at a
-    time (#1500); ``scenario`` a string, ``sweeper`` a string or null,
+    time (#1500) -- and none may start with ``-``, a flag of ``scenario``
+    rather than an override (:func:`check_extra_overrides`, #2440);
+    ``scenario`` a string, ``sweeper`` a string or null,
     ``launcher`` ``"local"``, ``"slurm"`` or null, ``slurm`` an object or
     null.  Other fields are ignored.
 
@@ -328,6 +330,10 @@ def parse_run_body(body: dict[str, Any]) -> RunBody:
         extra = []
     if not isinstance(extra, list) or not all(isinstance(x, str) for x in extra):
         raise BodyError("extra_overrides must be a list of strings")
+    try:
+        check_extra_overrides(extra)
+    except ValueError as exc:
+        raise BodyError(str(exc)) from exc
     sweeper = body.get("sweeper")
     if sweeper is None:
         sweeper = ""

@@ -303,9 +303,12 @@
     });
     if (!scenario) return;
 
+    // The Re-run writes a new session: clear the viewer's cache, as the Run
+    // panel does, and go to the session list, which lists it first; this
+    // page would still show the old result (#2440).
     executeRunWithProgress(
       { scenario: scenario, extra_overrides: extra, sweeper: '' },
-      () => window.location.reload()
+      () => refreshAndReload('/')
     );
   }
   {% endif %}
