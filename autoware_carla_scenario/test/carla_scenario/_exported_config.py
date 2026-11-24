@@ -1,7 +1,7 @@
 """An exported scenario config as a run reads it.
 
 An export's ``ego.*`` keys read the package's document through
-``${scenario_document:<id>,<path>}`` (``registry.SCENARIO_DOCUMENT_RESOLVER``),
+``${scenario_document:'<id>',<path>}`` (``registry.SCENARIO_DOCUMENT_RESOLVER``),
 which needs the document registered, as a package's ``register()`` does.
 """
 

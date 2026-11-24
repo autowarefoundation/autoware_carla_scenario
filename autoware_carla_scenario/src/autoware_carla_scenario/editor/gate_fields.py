@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from ..value_text import shown as shown_value
+
 __all__ = [
     "GATE_CONSISTENCY_FIELDS",
     "GATE_FIELDS",
@@ -52,10 +54,21 @@ class GateField:
 
     def shown(self, stored: Optional[float]) -> str:
         """*stored* as the number edited (a share as a percentage), its
-        default when unset."""
+        default when unset.
+
+        Every digit stored is shown (#2442): ``:g`` rounded ``0.1234567`` to
+        ``12.3457`` %, ``0.9999999`` to ``100`` % and a count of ``1234567``
+        to ``1.23457e+06``, which the form then saved, or refused as no whole
+        number.  A share is rounded to nine decimals of a percent only to drop
+        the float noise of the scaling (``0.1234567 * 100`` is
+        ``12.345670000000002``); posting the text back unchanged keeps the
+        value stored (``editor.service._gate_number``).  A whole number shows
+        no ``.0``.
+        """
         if stored is None:
             return f"{self.default:g}"
-        return f"{round(stored * 100.0, 6) if self.percent else stored:g}"
+        text = shown_value(round(stored * 100.0, 9) if self.percent else stored)
+        return text[:-2] if text.endswith(".0") else text
 
 
 #: The gate's thresholds the inspector edits, in the order it lists them.

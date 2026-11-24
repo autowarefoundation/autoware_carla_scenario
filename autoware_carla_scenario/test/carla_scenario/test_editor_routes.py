@@ -4705,6 +4705,34 @@ class TestDerivedLanelets:
         assert spawn.heading == pytest.approx(math.pi / 2)
         assert spawn.heading_deg == pytest.approx(90.0)
 
+    def test_the_ego_spawn_stands_off_the_lane_and_turned_too(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The run reads ``ego.spawn_t`` / ``ego.spawn_heading`` from the
+        document, so the inspector edits them for the ego as for any entity
+        (#2442) -- but offers no hidden spawn, which an ego cannot have."""
+        body = client.get(f"/draft/{draft_id}/inspector/ego").text
+        assert 'name="spawn_t"' in body
+        assert 'name="spawn_heading_deg"' in body
+        assert 'name="spawn_hidden"' not in body
+        client.post(
+            f"/draft/{draft_id}/entity/ego",
+            data={"spawn_t": "0.75", "spawn_heading_deg": "-5"},
+        )
+        document = _document(store, draft_id)
+        assert document.ego is not None
+        assert document.ego.spawn.t == 0.75
+        assert document.ego.spawn.heading_deg == pytest.approx(-5.0)
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_scenario_config,
+        )
+
+        from ._exported_config import resolved_config
+
+        ego = resolved_config(document, build_scenario_config(document))["ego"]
+        assert ego["spawn_t"] == 0.75
+        assert ego["spawn_heading"] == pytest.approx(math.radians(-5.0))
+
     def test_editing_a_spawn_does_not_round_its_heading(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -5769,3 +5797,81 @@ class TestTheGate:
         response = self._on(client, draft_id, gate_item_new="speed at")
         assert "has no spaces" in response.text
         assert _document(store, draft_id).gate is None
+
+    @staticmethod
+    def _stored_gate(store: DraftStore, draft_id: str) -> Any:
+        """A gate whose thresholds :g used to round, stored as a run reads it."""
+        from autoware_carla_scenario.authoring.models import (
+            GateCoverageItem,
+            GateSpec,
+        )
+
+        draft = _draft(store, draft_id)
+        draft.document.gate = GateSpec(
+            min_runs=1234567,
+            min_success_rate=0.1234567,
+            min_case_coverage=0.9999999,
+            max_lateral_spread_m=0.123456789,
+            coverage_items=[GateCoverageItem(item="gap", min=0.9999999)],
+        )
+        store.save(draft)
+        return draft.document.gate
+
+    def test_the_form_shows_every_digit_stored(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """#2442: ``:g`` showed 12.3457 %, 100 % and 1.23457e+06."""
+        self._stored_gate(store, draft_id)
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        for name, shown in (
+            ("gate_min_runs", "1234567"),
+            ("gate_min_success_rate", "12.34567"),
+            ("gate_min_case_coverage", "99.99999"),
+            ("gate_max_lateral_spread_m", "0.123456789"),
+            ("gate_item_min_0", "99.99999"),
+        ):
+            assert re.search(
+                rf'name="{name}"\s+min="0" step="[^"]*" value="{re.escape(shown)}"',
+                body,
+            ), name
+
+    def test_posting_the_form_unchanged_keeps_every_threshold(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """An edit of one row posts every other row as shown; none of them
+        may move (#2442)."""
+        before = self._stored_gate(store, draft_id)
+        response = self._on(
+            client,
+            draft_id,
+            gate_min_runs="1234567",
+            gate_on_min_success_rate="1",
+            gate_min_success_rate="12.34567",
+            gate_on_min_case_coverage="1",
+            gate_min_case_coverage="99.99999",
+            gate_on_max_lateral_spread_m="1",
+            gate_max_lateral_spread_m="0.123456789",
+            gate_consistency_stations="20",
+            gate_consistency_min_runs="2",
+            gate_item_name_0="gap",
+            gate_item_on_0="1",
+            gate_item_min_0="99.99999",
+        )
+        assert "Gate:" not in response.text
+        assert _document(store, draft_id).gate == before
+
+    def test_a_changed_threshold_is_saved(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._stored_gate(store, draft_id)
+        self._on(
+            client,
+            draft_id,
+            gate_min_runs="1234568",
+            gate_on_min_success_rate="1",
+            gate_min_success_rate="12.5",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert gate.min_runs == 1234568
+        assert gate.min_success_rate == pytest.approx(0.125)

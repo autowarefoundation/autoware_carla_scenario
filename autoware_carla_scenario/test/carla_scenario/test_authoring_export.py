@@ -37,6 +37,7 @@ from autoware_carla_scenario.authoring.framework_pin import (
 )
 from autoware_carla_scenario.authoring.hydra_config import (
     build_scenario_config,
+    dump_scenario_config,
     spawn_lanelet_key,
     spawn_s_key,
     swept_entity,
@@ -190,6 +191,47 @@ class TestHydraConfig:
 
         assert config["ego"]["goal_lanelet_id"] is None
         assert config["ego"]["goal_s"] is None
+
+    @pytest.mark.parametrize(
+        "scenario_id", ["true", "false", "null", "none", "yes", "nan", "inf"]
+    )
+    def test_an_id_omegaconf_would_read_as_no_string_still_resolves(
+        self, scenario_id: str
+    ) -> None:
+        """The id is quoted in the interpolation, so OmegaConf hands the
+        resolver the string, not ``True``, ``None`` or a float (#2442)."""
+        document = _document_with_goal(265, 12.5)
+        document.id = scenario_id
+        config = build_scenario_config(document)
+        assert config["ego"]["goal_lanelet_id"] == (
+            f"${{scenario_document:'{scenario_id}',ego.goal.lanelet_id}}"
+        )
+        # As a run reads it: the YAML the package ships, then OmegaConf.
+        shipped = yaml.safe_load(dump_scenario_config(document))
+        ego = resolved_config(document, shipped)["ego"]
+        assert (ego["goal_lanelet_id"], ego["goal_s"]) == (265, 12.5)
+
+    @pytest.mark.parametrize("scenario_id", ["123", "1e3", "it's", "a,b", "a}"])
+    def test_an_id_the_quote_could_not_hold_is_refused(self, scenario_id: str) -> None:
+        """The model's pattern leaves no digit-led id (which no quote would
+        need) and nothing that could close the quote or the interpolation."""
+        document = new_document()
+        with pytest.raises(ValueError):
+            document.id = scenario_id
+
+    def test_an_export_from_before_the_quote_still_resolves(self) -> None:
+        """A package exported with ``${scenario_document:<id>,<path>}``."""
+        document = _document_with_goal(265, 12.5)
+        config = build_scenario_config(document)
+        config["ego"] = {
+            key: value.replace(f"'{document.id}'", document.id)
+            for key, value in config["ego"].items()
+        }
+        assert config["ego"]["goal_lanelet_id"] == (
+            f"${{scenario_document:{document.id},ego.goal.lanelet_id}}"
+        )
+        ego = resolved_config(document, config)["ego"]
+        assert (ego["goal_lanelet_id"], ego["goal_s"]) == (265, 12.5)
 
     def test_empty_map_fields_are_left_to_the_map_group(self) -> None:
         """An empty exclusion list must fall through, not shadow the group's."""
@@ -944,10 +986,10 @@ class TestTheDocumentDecides:
             "npc1": {"lanelet_id": None, "s": None}
         }
         assert config["ego"]["spawn_lanelet_id"] == (
-            "${scenario_document:my_cut_in,ego.spawn.lanelet_id}"
+            "${scenario_document:'my_cut_in',ego.spawn.lanelet_id}"
         )
         assert config["ego"]["goal_lanelet_id"] == (
-            "${scenario_document:my_cut_in,ego.goal.lanelet_id}"
+            "${scenario_document:'my_cut_in',ego.goal.lanelet_id}"
         )
 
     def test_an_edited_document_is_the_one_run(
