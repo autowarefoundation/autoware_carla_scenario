@@ -3158,6 +3158,14 @@ those lights.</p>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">state</span><span class="p">:</span><span class="w"> </span><span class="nv">Red</span><span class="p p-Indicator">,</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="nv">route</span><span class="p p-Indicator">,</span><span class="nt"> route_junction</span><span class="p">:</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="nt"> route_approach</span><span class="p">:</span><span class="w"> </span><span class="nv">same</span><span class="p p-Indicator">,</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">           route_turn</span><span class="p">:</span><span class="w"> </span><span class="nv">any</span><span class="p p-Indicator">,</span><span class="nt"> freeze</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span>
 </code></pre></div>
+<p>On a light one of the scenario's signal controllers drives, a card's state
+lasts only until that controller's <strong>next phase change</strong>: a phase sets every
+light it names. A controller that starts with the run shows its phase 0 from
+the initialization phase (its cycle still starts on the first tick), so an
+init-phase or untriggered card there shows over phase 0 until phase 0 ends.
+The validator warns about one whose target is <code>all</code>, or <code>ids</code> naming a
+controlled light; a <code>route</code> card's lights are found only when it fires, so it is
+not judged.</p>
 <h3 id="bringing-an-entity-in-the-spawn-card">Bringing an entity in: the <code>spawn</code> card<a class="headerlink" href="#bringing-an-entity-in-the-spawn-card" title="Permanent link">&para;</a></h3>
 <p>An entity spawned <code>hidden</code> is brought into the scene by a <strong>Spawn</strong> card
 (<code>SpawnAction</code>, the counterpart of <code>despawn</code>; <code>appear_on_start</code> until 1.0):
@@ -3471,7 +3479,7 @@ so a hand-written scenario using them passes the <a href="../typecheck/">static 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 14:32:43 UTC"><span class="timeago" datetime="2026-11-24T14:32:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 14:32:43 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 18:07:59 UTC"><span class="timeago" datetime="2026-11-24T18:07:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 18:07:59 UTC">2026-11-24</span>
   </span>
 
     
