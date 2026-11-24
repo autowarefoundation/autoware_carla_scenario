@@ -2626,7 +2626,8 @@ def _check_signal_cards_on_controlled_lights(
             f"regulatory element(s) {', '.join(str(i) for i in hit)}, which "
             f"signal controller(s) {', '.join(repr(n) for n in controllers)} "
             "drive: the state lasts only until that controller's next phase "
-            "change, when its phase sets every light it names. Leave those "
+            "change (or, for one with a start delay, until it starts), when "
+            "its phase sets every light it names. Leave those "
             "lights to the controller (jump it to a phase with a Set Junction "
             "Phase card), or trigger the card later.",
             action.id,

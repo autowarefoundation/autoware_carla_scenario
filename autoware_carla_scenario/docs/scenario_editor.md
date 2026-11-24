@@ -824,9 +824,10 @@ than something quietly dropped at export.
 A **Set Traffic Signal** card on a light one of the scenario's signal
 controllers drives (`map.traffic_signal_controllers`) lasts only until that
 controller's next phase change, which sets every light the phase names. A
-controller shows its first phase from the initialization phase, so a card left
-in the initialization phase, or with no trigger, shows over phase 0 until phase
-0 ends; such a card is warned about when its target is `all`, or `ids` naming a
+controller that starts with the run (no start delay) shows its first phase from
+the initialization phase, so a card left in the initialization phase, or with no
+trigger, shows over phase 0 until phase 0 ends (on a delayed controller's
+lights, until the controller starts); such a card is warned about when its target is `all`, or `ids` naming a
 light a controller's phases drive (`route` finds its lights only when it fires,
 and is not judged). To change a controlled junction, jump its controller to a
 phase with a *Set Junction Phase* card instead.
