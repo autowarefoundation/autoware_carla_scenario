@@ -102,6 +102,7 @@ dependencies = [
     # Rust JSON encoder, several times faster than the stdlib's, writing the
     # same floats byte for byte.
     "orjson>=3.13.0",
+    "scipy>=1.10",
 ]
 
 [project.urls]
