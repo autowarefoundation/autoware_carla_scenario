@@ -3192,12 +3192,23 @@ small, asks for reverse: there is no deadband, so an ECU that means "stop" sends
 <p>A value that is not finite (NaN or an infinity: a decoded IEEE-float signal, a
 scale that overflows), or larger in magnitude than a 32-bit float holds (CARLA's
 controls would make it an infinity), is dropped with a warning, as a missing
-field is: the command keeps the field's previous value. The run drops one it
-receives too, and the field takes its default. A constant, <code>scale</code> or <code>offset</code>
-must be finite. The run clamps <code>gear</code> to a 32-bit integer.</p>
+field is: the command keeps the field's previous value. A message none of
+whose message fields gives a value (all NaN, say) refreshes nothing, its
+constants included, so a constant does not keep the command fresh while the
+ECU sends NaN; a message whose command is all constants still refreshes it
+when it arrives. The run drops a non-finite field it receives too, and the
+field takes its default. A constant, <code>scale</code> or <code>offset</code> must be finite. The
+run clamps <code>gear</code> to a 32-bit integer.</p>
 <p>The run applies the newest command every tick. One older than <code>hils.stale_s</code>
 (the ECUs stopped sending) is stale: the ego brakes, or with
-<code>hils.on_stale=hold</code> keeps the last command.</p>
+<code>hils.on_stale=hold</code> keeps the last command. The command is one, merged from
+every input message: it is fresh while any of them arrives, so only a loss of
+every command message makes it stale. When one message stops (cut, or its ECU
+dead) while others still arrive, its fields keep their last values and the
+others refresh. A command's age is measured from when the run reads it, at the
+start of its tick's work after <code>world.tick()</code>: one that arrived during a slow
+tick counts as up to a tick younger than it is, so a command goes stale up to
+one tick period after <code>hils.stale_s</code>.</p>
 <h3 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h3>
 <p><code>lifecycle</code> lists steps for five moments:</p>
 <table>
@@ -3353,10 +3364,16 @@ whichever comes first; with neither, until the scenario ends. Several actions
 add up: a device stops what any running action names. While data is stopped,
 the periodic messages are still encoded and only their frames are dropped, so
 an E2E counter or a sequence number moves on as an ECU's would on a cut bus.
-Stopping an ECU's command messages (<code>from_ecu</code>) makes the run's command go
-stale after <code>hils.stale_s</code>, and the ego brakes or holds it (<code>hils.on_stale</code>).
+Stopping every one of an ECU's command messages (<code>from_ecu</code>) makes the run's
+command go stale after <code>hils.stale_s</code>, and the ego brakes or holds it
+(<code>hils.on_stale</code>). Stopping some of them does not: the command is merged from
+every input message, so the fields of the stopped ones stay at their last
+values while the others keep the command fresh.
 The bridge carries everything again when the scenario ends, before its
-<code>scenario_end</code> steps, so they reach the ECUs. A device the bridge
+<code>scenario_end</code> steps, so they reach the ECUs; a channel that fails to is
+logged, the others are still carried again, and the next scenario's <code>start</code>
+tries it again and fails with an error if it still stops data, rather than run
+with it cut. A device the bridge
 does not have ends the run with an error; on any ego but <code>ego.entity=hils</code> the
 action only logs a warning, so one scenario serves HILS and simulation runs
 alike.</p>
@@ -3395,7 +3412,8 @@ each frame the runner ticks. carla_canvas's client is installed with
   the ego's state, without CARLA's sensor noise.</li>
 <li>A sensor's data reaches the devices on the tick after the one it was
   measured on when it arrives after that tick; an ECU command reaches the ego
-  on the run's next tick after it arrives.</li>
+  on the run's next tick after it arrives, and its age (<code>hils.stale_s</code>) is
+  counted from then.</li>
 </ul>
 
 
@@ -3419,7 +3437,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 10:11:44 UTC"><span class="timeago" datetime="2026-11-22T10:11:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 10:11:44 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 14:58:30 UTC"><span class="timeago" datetime="2026-11-24T14:58:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 14:58:30 UTC">2026-11-24</span>
   </span>
 
     
