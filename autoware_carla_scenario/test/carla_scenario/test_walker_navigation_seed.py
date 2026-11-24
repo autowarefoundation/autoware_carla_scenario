@@ -10,6 +10,7 @@ before seeding, so every run draws the same sequence after its seed.
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import Iterator, Optional
 
@@ -47,8 +48,10 @@ class _NavigationWorld:
 @pytest.fixture(autouse=True)
 def _forget() -> Iterator[None]:
     _walker_ai._NAVMESH.clear()
+    _walker_ai._NAVMESH_SAID.clear()
     yield
     _walker_ai._NAVMESH.clear()
+    _walker_ai._NAVMESH_SAID.clear()
 
 
 def _run(world: _NavigationWorld, seed: int) -> list[Optional[float]]:
@@ -80,3 +83,30 @@ def test_the_probe_draws_before_the_seed() -> None:
     # Probed (one draw), then seeded: the next draw is the seed's first.
     assert world.draws == 1 and world.seeds == [11]
     assert world.get_random_location_from_navigation() == random.Random(11).random()
+
+
+def test_a_reloaded_world_is_probed_again_before_its_seed() -> None:
+    world = _NavigationWorld()
+    _walker_ai.seed_navigation(world, 3)  # type: ignore[arg-type]
+    # A reload: a new episode, a new world id.
+    reloaded = _NavigationWorld()
+    reloaded.id = 2449  # type: ignore[misc]
+    _walker_ai.seed_navigation(reloaded, 3)  # type: ignore[arg-type]
+    assert reloaded.draws == 1 and reloaded.seeds == [3]
+    assert reloaded.get_random_location_from_navigation() == random.Random(3).random()
+
+
+def test_a_missing_mesh_is_said_only_when_a_walker_needs_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Every probe misses: the map has no mesh.
+    world = _NavigationWorld(misses=_walker_ai._NAVMESH_PROBES)
+    with caplog.at_level(logging.WARNING):
+        _walker_ai.seed_navigation(world, 5)  # type: ignore[arg-type]
+        _walker_ai.seed_navigation(world, 5)  # type: ignore[arg-type]
+        assert world.draws == _walker_ai._NAVMESH_PROBES  # probed once
+        assert not any("navigation mesh" in r.getMessage() for r in caplog.records)
+        # A walker asks (drive()): said once.
+        assert not _walker_ai.has_navmesh(world)  # type: ignore[arg-type]
+        assert not _walker_ai.has_navmesh(world)  # type: ignore[arg-type]
+    assert sum("navigation mesh" in r.getMessage() for r in caplog.records) == 1

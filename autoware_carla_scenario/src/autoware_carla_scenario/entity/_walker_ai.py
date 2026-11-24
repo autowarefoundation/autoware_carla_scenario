@@ -184,6 +184,8 @@ _GIVING_WAY: dict[int, float] = {}
 
 #: Whether each episode's map has a navigation mesh, by world id.
 _NAVMESH: dict[int, bool] = {}
+#: The worlds whose missing navigation mesh has been said, by world id.
+_NAVMESH_SAID: set[int] = set()
 #: The walkers' velocities, measured from where they stand: a walker on its
 #: controller is placed, and its ``get_velocity()`` reads 0.
 _WALKING = WalkerVelocities()
@@ -264,9 +266,9 @@ class _Driven:
 _DRIVEN: dict[int, _Driven] = {}
 
 
-def has_navmesh(world: "carla.World") -> bool:
-    """Whether *world*'s map has a pedestrian navigation mesh (asked once per
-    episode; a map without one is said once)."""
+def _probe_navmesh(world: "carla.World") -> bool:
+    """Whether *world*'s map has a pedestrian navigation mesh, drawing
+    navigation locations only the first time a world is asked; silent."""
     key = int(world.id) if hasattr(world, "id") else 0
     if key not in _NAVMESH:
         found = False
@@ -275,18 +277,28 @@ def has_navmesh(world: "carla.World") -> bool:
                 found = True
                 break
         _NAVMESH[key] = found
-        if not found:
-            logger.warning(
-                "The map has no pedestrian navigation mesh: routed walkers are "
-                "stepped along their routes, not walked by CARLA's walker "
-                "controller (build one when importing the map)"
-            )
     return _NAVMESH[key]
 
 
+def has_navmesh(world: "carla.World") -> bool:
+    """Whether *world*'s map has a pedestrian navigation mesh (asked once per
+    episode; a map without one is said once, when a walker first needs it)."""
+    found = _probe_navmesh(world)
+    key = int(world.id) if hasattr(world, "id") else 0
+    if not found and key not in _NAVMESH_SAID:
+        _NAVMESH_SAID.add(key)
+        logger.warning(
+            "The map has no pedestrian navigation mesh: routed walkers are "
+            "stepped along their routes, not walked by CARLA's walker "
+            "controller (build one when importing the map)"
+        )
+    return found
+
+
 def seed_navigation(world: "carla.World", seed: int) -> None:
-    """Seed *world*'s pedestrian navigation for a run, after
-    :func:`has_navmesh` has asked whether its map has a mesh.
+    """Seed *world*'s pedestrian navigation for a run, after asking (silently;
+    :func:`has_navmesh` says a missing mesh when a walker needs it) whether
+    its map has a mesh.
 
     The seed decides ``get_random_location_from_navigation()``, the cross
     factor's draw as a controller starts and random routes.  The probe draws
@@ -296,7 +308,7 @@ def seed_navigation(world: "carla.World", seed: int) -> None:
     from the ones after it, and every draw after it would depend on the run's
     place in a batch (#2448).  Probed here, before the seed, its draws come
     before the run's sequence starts, whichever run it is."""
-    has_navmesh(world)
+    _probe_navmesh(world)
     world.set_pedestrians_seed(seed)
 
 
