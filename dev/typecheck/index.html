@@ -5103,9 +5103,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-361 of the package's 492
+361 of the package's 493
 modules (73%; about 114,100 of
-189,300 lines) are <code>CHECKED</code>: the kinematics, the
+190,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6898,7 +6898,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked number_settings' number_setting(), finite_number_setting() and check_port() (a number or a port setting, #2398), traffic.fidelity._number (the traffic options), traffic.sumo.config's option checks (the SUMO backend's), traffic.authoring._number and _spread (the traffic-parameter form's fields), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 131 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 132 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6928,7 +6928,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 131 EXCLUDED modules, and why</summary>
+<summary>The 132 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6962,6 +6962,7 @@ the first:</p>
 <li><code>coverage.report</code>: re-exports openodd's coverage merge and report (a Rust extension)</li>
 <li><code>crash_report</code>: imports sentry_sdk and faulthandler, which are neither checked nor modelled; subclasses a log handler and sentry_sdk's transport, and walks an exception's <code>__cause__</code> and <code>__context__</code>, which Codon cannot express; reads its settings off the environment into <code>dict[str, Any]</code> of mixed value types and builds them with <code>dataclasses.replace(..., **values)</code> (<code>read_settings()</code>); the command and script that run a crashed case again (<code>repro_command()</code>, <code>repro_script()</code>) are the checked crash_report_settings's (#2364), the reporter passing its argv, overrides, directory and kept environment; the settings, their environment variables and parsers, the size cut, a file's safe name and the environment variables a report keeps (<code>Settings</code>, <code>ITEMS</code>, the <code>*_ENV</code> names, <code>_parse_items()</code>, <code>_parse_size()</code>, <code>_parse_count()</code>, <code>_truncate()</code>, <code>_safe_name()</code>, <code>_ENV_PATTERNS</code>) are the checked crash_report_settings's (#2354), which it re-exports</li>
 <li><code>declarative</code>: imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (yaml), which are not checked and have no model</li>
+<li><code>driver.autoware_lateral</code>: imports scipy (interpolate.CubicSpline, optimize.least_squares, special.expit), which Codon cannot compile, and yaml inside a function; holds the TSO's optional temporal-consistency weights and the MPC's diagnostics as <code>Dict[str, float]</code> built with <code>**</code> and reads its config's fields by a name held in a variable, through getattr() and dataclasses.fields()</li>
 <li><code>driver.egodriver_client</code>: imports grpc, google.protobuf, numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and carla_driver_interface's contract, policies, server, service, driver, inprocess and protocol, which its model (geometry only) does not declare</li>
 <li><code>driver.hdmap_export</code>: hands the converter's module around as a value (<code>_import_roadgen()</code> returns it, typed <code>Any</code>, or <code>None</code> beside it) and the map it reads as <code>world_map: Any</code>, which Codon cannot express (the model of <code>roadgen</code>, #2312, declares read_opendrive() and the map's read_warnings(), export_ir() and write_read_trace(), which it calls, but not export_clipgt()); export_map() names its scratch directory <code>with tempfile.TemporaryDirectory(...) as scratch</code>, which Codon binds to the manager, not to the directory's name; _can_export() and _export() test for and call the map's exporter by a name held in a variable, through hasattr() and getattr() (<code>export_{name}</code>), which Codon does not compile; _file_digest() reads the file in chunks with the two-argument <code>iter(callable, sentinel)</code>, and Codon's <code>iter()</code> takes one argument; builds the manifest and its format records as <code>Dict[str, Any]</code> of mixed value types, and _known() reads them as <code>Mapping[str, Any]</code>, which Codon cannot express; the file names of a map set, where each format is written (<code>MAP_FORMATS</code>) and map_id_for() are the checked driver.hdmap_files's (#1728), which it re-exports</li>
 <li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds and reads: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, LidarSweep, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare; and _weather() reads the weather's fields by a name held in a variable, through getattr(), and passes them to CarlaWeather as ** a dict, neither of which Codon compiles; and the velocity it reports for an actor is a measured Vector3 or CARLA's Vector3D in one conditional expression, which Codon cannot type; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
