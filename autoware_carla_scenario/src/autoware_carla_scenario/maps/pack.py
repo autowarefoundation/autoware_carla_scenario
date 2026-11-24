@@ -91,6 +91,15 @@ class PackAccessError(MapPackError):
         self.code = code
 
 
+#: carla-pack's codes for a refusal by a pack repository's Google Drive
+#: storage (read through rclone with the user's own Google account): no
+#: rclone, no valid Google credentials, a drive not shared with the account.
+STORAGE_REFUSALS = (
+    "rclone_unavailable",
+    "storage_unauthenticated",
+    "storage_no_access",
+)
+
 #: Where carla-pack looks for a GitHub token, in order.
 _TOKEN_SOURCES = (
     "CARLA_PACK_TOKEN, GH_TOKEN, GITHUB_TOKEN, the token `carla-pack login` "
@@ -242,31 +251,13 @@ def _failure(
             f"workflow has to run (ask the owner of {repository}). ({message})",
             code,
         )
-    # A pack repository on Google Drive (carla-pack's `type = "rclone"`
-    # storage): GitHub let the user read the list of packs, and the drive,
-    # read with their own Google account through rclone, decides the rest.
-    # carla-pack's message already names the remote and the fix.
-    if code == "rclone_unavailable":
+    # The pack's storage refused the user after GitHub let them in: a pack
+    # repository on Google Drive, read through rclone with their own Google
+    # account. carla-pack's message names the cause and the fix.
+    if code in STORAGE_REFUSALS:
         return PackAccessError(
-            f"{action}: {repository} keeps its packs on Google Drive, which "
-            f"carla-pack reads through rclone, and rclone cannot run here. "
-            f"({message})",
-            code,
-        )
-    if code == "storage_unauthenticated":
-        return PackAccessError(
-            f"{action}: Google Drive authentication failed. Your GitHub access "
-            f"to {repository} is fine; carla-pack has no valid Google "
-            f"credentials: run `carla-pack drive login`. ({message})",
-            code,
-        )
-    if code == "storage_no_access":
-        return PackAccessError(
-            f"{action}: Google Drive access denied. Your GitHub access to "
-            f"{repository} is fine, but the pack's shared drive is not shared "
-            f"with your Google account (or the file is missing): ask the owner "
-            f"of {repository} to share it. `carla-pack credentials "
-            f"{repository}` checks it. ({message})",
+            f"{action}: the pack's storage refused access. Your GitHub access "
+            f"to {repository} is fine. {message}",
             code,
         )
     if code == "storage_error" and "refused" in message:

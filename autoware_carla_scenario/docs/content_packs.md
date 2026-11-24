@@ -33,8 +33,8 @@ carla-pack ls tier4/carla-packs   # the packs you can download
 ```
 
 If the pack repository keeps its packs on Google Drive (`carla-pack
-credentials OWNER/REPO` says "Google Drive"), also install rclone (v1.64 or
-later) and sign in with the Google account the drive is shared with, once:
+credentials OWNER/REPO` says "Google Drive"), also install rclone (a current
+release) and sign in with the Google account the drive is shared with, once:
 
 ```bash
 carla-pack drive login                     # opens the browser; --headless on a server
@@ -183,9 +183,9 @@ token was taken from, and what to do. Its `code` is carla-pack's:
 | `access denied. OWNER/REPO does not exist, or the GitHub user <login> ... cannot read it` | `no_access` | The token works but its user has no Read access to the pack repository (GitHub answers a private repository with *not found*): ask its owner for access, or use another user's token in `CARLA_PACK_TOKEN` |
 | `the storage credentials of OWNER/REPO could not be read. Your GitHub access is fine ...` | `credentials_unavailable` | The pack repository's read-only storage key expired: its credential workflow has to run (the owner's to fix) |
 | `the pack's storage refused the download ...` | `storage_error` | The storage key was rotated while downloading: retry |
-| `... keeps its packs on Google Drive, which carla-pack reads through rclone, and rclone cannot run here` | `rclone_unavailable` | rclone is not installed (or older than v1.64): install it, or set `CARLA_PACK_RCLONE` to its path |
-| `Google Drive authentication failed ...` | `storage_unauthenticated` | No rclone remote for your Google account, or Google rejected its token: run `carla-pack drive login` |
-| `Google Drive access denied ...` | `storage_no_access` | GitHub let you read the pack repository, but its shared drive is not shared with your Google account (Google Drive answers that like a missing file): ask the owner to share it |
+| `the pack's storage refused access. Your GitHub access ... is fine. ...` | `rclone_unavailable` | The pack repository keeps its packs on Google Drive, read through rclone, and rclone is not installed: install it, or set `CARLA_PACK_RCLONE` to its path |
+| (the same) | `storage_unauthenticated` | No rclone remote for your Google account, or Google rejected its token: run `carla-pack drive login` |
+| (the same) | `storage_no_access` | The shared drive is not shared with your Google account (Google Drive answers that like a missing file): ask the owner to share it |
 
 `carla-pack whoami` shows which user and token carla-pack uses, and
 `carla-pack ls OWNER/REPO` what it can read.
