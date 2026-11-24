@@ -22,10 +22,12 @@ manifests cannot be read, whose cases have no index ``int()`` reads, labels,
 scenarios and stems of every JSON type, and outcomes that passed, failed,
 errored, hold no verdict or are missing.
 
-One change is pinned in the oracle: a summary holding an entry that is no
+Two changes are pinned in the oracle: a summary holding an entry that is no
 JSON object raised ``AttributeError`` out of ``scenario-gate``; it cannot be
 read (``not a JSON array of objects``), as ``batch_resume`` refuses it
-(#2231).
+(#2231).  And a marker beside a gate record older than the marker's attempt
+(its ``since``, else its own modification time) counts: the record is an
+earlier run's in the same directory (#2416).
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ import json
 import os
 import random
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import pytest
 
@@ -234,11 +236,38 @@ def _old_unstarted_jobs(path: Path) -> tuple[list[str], list[str]]:
     return lines, unreadable
 
 
+def _old_has_gate_record_since(marker: Path) -> bool:
+    """The change pinned (#2416): a gate record counts only when it is no
+    older than the marker's attempt, its ``since`` or else its own time."""
+    data = read_case_errored(marker)
+    since: Optional[float] = None
+    value = data.get("since") if data is not None else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            since = float(value)
+        except OverflowError:
+            since = None
+    if since is None:
+        try:
+            since = marker.stat().st_mtime
+        except OSError:
+            return _old_has_gate_record(marker.parent)
+    try:
+        return any(
+            p.name.endswith(GATE_RECORD_SUFFIX)
+            and p.is_file()
+            and p.stat().st_mtime >= since
+            for p in marker.parent.iterdir()
+        )
+    except OSError:
+        return False
+
+
 def _old_errored_jobs(path: Path) -> list[str]:
     by_sweep: dict[Path, list[str]] = {}
     for marker in find_case_errored(path):
         job = marker.parent
-        if _old_has_gate_record(job):
+        if _old_has_gate_record_since(marker):
             # The run wrote its record before the job failed: it is judged.
             continue
         data = read_case_errored(marker)
@@ -703,6 +732,46 @@ def test_a_marker_beside_results_is_read_as_before(tmp_path: Path) -> None:
     _same(_old_scan_batches, evaluate._scan_batches, tmp_path)
     lines = evaluate._errored_jobs(tmp_path)
     assert len(lines) == 1 and ", and " in lines[0]
+
+
+def test_a_marker_beside_gate_records_is_read_as_pinned(tmp_path: Path) -> None:
+    # Each marker's unfinished flag and "since", beside a gate record older
+    # than its attempt, as old and newer (#2416).
+    sweep = tmp_path / "sweep"
+    n = 0
+    for flag in _FLAGS:
+        for since in (None, -5.0, 5, True, "x", 10**400):
+            for offset in (None, -1.0, 0.0, 1.0):
+                job = sweep / f"job{n}"
+                n += 1
+                job.mkdir(parents=True)
+                marker = job / CASE_ERRORED
+                data: dict[str, Any] = {"unfinished": flag, "reason": "r"}
+                if since is not None:
+                    data["since"] = since
+                marker.write_text(json.dumps(data), "utf-8")
+                if isinstance(since, float):
+                    # A "since" before the marker was written, as a marker
+                    # of a job given up keeps it.
+                    data["since"] = marker.stat().st_mtime + since
+                    marker.write_text(json.dumps(data), "utf-8")
+                if offset is not None:
+                    record = job / f"x{GATE_RECORD_SUFFIX}"
+                    record.write_text("{}", encoding="utf-8")
+                    at = marker.stat().st_mtime + offset
+                    os.utime(record, (at, at))
+                _same(
+                    _old_has_gate_record_since,
+                    unrecorded._has_gate_record_since,
+                    marker,
+                )
+    _same(_old_errored_jobs, evaluate._errored_jobs, tmp_path)
+    _same(_old_scan_batches, evaluate._scan_batches, tmp_path)
+    # A record older than the marker counts it; as old or newer does not.
+    older, same, newer = (sweep / f"job{i}" / CASE_ERRORED for i in (1, 2, 3))
+    assert not unrecorded._has_gate_record_since(older)
+    assert unrecorded._has_gate_record_since(same)
+    assert unrecorded._has_gate_record_since(newer)
 
 
 def test_a_marker_that_cannot_be_read_is_read_as_before(tmp_path: Path) -> None:

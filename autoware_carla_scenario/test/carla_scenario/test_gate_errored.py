@@ -10,6 +10,7 @@ or UTF-8 cannot hold.
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 from typing import Any
@@ -20,9 +21,11 @@ from autoware_carla_scenario.gate.errored import (
     CASE_ERRORED,
     CASE_ERRORED_SCHEMA,
     UNFINISHED_REASON,
+    marker_since,
     read_case_errored,
     write_case_errored,
     write_case_unfinished,
+    written_since,
 )
 
 
@@ -32,6 +35,7 @@ def _expected(
     attempts: Any,
     reason: Any,
     unfinished: Any = False,
+    since: Any = None,
 ) -> str:
     """What the marker held when it was written as one dict."""
     data: dict[str, Any] = {
@@ -43,6 +47,8 @@ def _expected(
     }
     if unfinished:
         data["unfinished"] = True
+    if since is not None:
+        data["since"] = since
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
@@ -93,8 +99,58 @@ def test_a_marker_replaces_the_one_there(tmp_path: Path) -> None:
     path = write_case_errored(
         tmp_path, overrides=["a"], exit_code=None, attempts=1, reason="timed out"
     )
-    assert path.read_text(encoding="utf-8") == _expected(["a"], None, 1, "timed out")
     assert '"unfinished"' not in path.read_text(encoding="utf-8")
+
+
+def test_a_given_up_marker_keeps_when_its_attempt_started(tmp_path: Path) -> None:
+    # The marker of a job given up that replaces the unfinished one keeps that
+    # one's modification time, the attempt's start (#2416).
+    unfinished = write_case_unfinished(tmp_path, overrides=["a"], attempt=1)
+    os.utime(unfinished, (1000.5, 1000.5))
+    path = write_case_errored(
+        tmp_path, overrides=["a"], exit_code=None, attempts=1, reason="timed out"
+    )
+    assert path.read_text(encoding="utf-8") == _expected(
+        ["a"], None, 1, "timed out", since=1000.5
+    )
+    assert marker_since(path) == 1000.5
+    # One that replaces a marker of a job given up, or none, has no "since":
+    # it is dated itself.
+    again = write_case_errored(
+        tmp_path, overrides=["a"], exit_code=1, attempts=2, reason="x"
+    )
+    assert again.read_text(encoding="utf-8") == _expected(["a"], 1, 2, "x")
+    assert marker_since(again) == again.stat().st_mtime
+    # Nor does the unfinished marker itself.
+    unfinished = write_case_unfinished(tmp_path, overrides=["a"], attempt=2)
+    assert '"since"' not in unfinished.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("since", "expected"),
+    [(5, 5.0), (5.5, 5.5), (True, None), ("5", None), (None, None), (10**400, None)],
+)
+def test_marker_since_reads_only_a_number(
+    tmp_path: Path, since: Any, expected: Any
+) -> None:
+    marker = tmp_path / CASE_ERRORED
+    marker.write_text(json.dumps({"since": since}), encoding="utf-8")
+    os.utime(marker, (7.0, 7.0))
+    assert marker_since(marker) == (7.0 if expected is None else expected)
+    marker.write_text("not json", encoding="utf-8")
+    os.utime(marker, (7.0, 7.0))
+    assert marker_since(marker) == 7.0
+    assert marker_since(tmp_path / "missing") is None
+
+
+def test_written_since(tmp_path: Path) -> None:
+    path = tmp_path / "x"
+    path.write_text("", encoding="utf-8")
+    os.utime(path, (10.0, 10.0))
+    assert written_since(path, 10.0) and written_since(path, 9.0)
+    assert not written_since(path, 10.5)
+    assert not written_since(tmp_path / "missing", 0.0)
+    assert not written_since(tmp_path, 0.0)
 
 
 _ODD_TEXT = [

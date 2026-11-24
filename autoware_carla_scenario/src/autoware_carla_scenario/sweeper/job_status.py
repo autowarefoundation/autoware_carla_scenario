@@ -67,7 +67,9 @@ REFUSED_EXIT_CODE = 2
 #: :class:`~autoware_carla_scenario.scenario_queue.ScenarioQueue`, which
 #: retries a run that raised but not one that completed: only a case exiting
 #: 1 (it raised, or wrote no result), timing out or dying of a signal is
-#: retried (``server.cooldown_max_retries``).
+#: retried (``server.cooldown_max_retries``), and only when its attempt wrote
+#: no verdict: a run that wrote its result and died winding down keeps it
+#: (#2416).
 FAILED_VERDICT_EXIT_CODE = 3
 
 #: The environment variable ``scenario --resume-from N`` passes the sweeper
@@ -267,20 +269,26 @@ def _remove_marker(directory: Path) -> None:
 
 def _write_unfinished_marker(
     job_dir: tuple[Path, str | None] | None, batch: tuple[str, ...], attempt: int
-) -> None:
+) -> Optional[float]:
     """Give a job the marker saying it did not finish
     (:func:`..gate.errored.write_case_unfinished`) before its attempt
-    *attempt* (from 1); logged, never raised, when it cannot be.  Nothing
-    when its directory is not known (the sweeper's
+    *attempt* (from 1), and return when it was written (its modification
+    time): what the attempt writes is no older (#2416).  Logged, never
+    raised, when it cannot be, and ``None``; ``None`` too when the job's
+    directory is not known (the sweeper's
     ``LaneletConstraintSweeper._job_output_dir`` logged why)."""
     if job_dir is None:
-        return
+        return None
     try:
-        write_case_unfinished(job_dir[0], overrides=list(batch), attempt=attempt)
+        marker = write_case_unfinished(
+            job_dir[0], overrides=list(batch), attempt=attempt
+        )
+        return marker.stat().st_mtime
     except OSError as exc:
         logger.warning(
             "Cannot write the unfinished-job marker in %s (%s).", job_dir[0], exc
         )
+        return None
 
 
 def _write_marker(

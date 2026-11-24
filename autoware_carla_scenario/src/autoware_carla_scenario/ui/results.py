@@ -425,13 +425,13 @@ def load_results(
                     if isinstance(scenario, str) and scenario
                     else "unknown",
                     passed=_passed(entry.get("passed")),
-                    errored=bool(entry.get("error")),
+                    errored=entry.get("error") is True,
                     elapsed_seconds=_seconds(entry.get("elapsed_seconds")),
                     message=str(entry.get("message") or ""),
                     overrides=_strings(entry.get("overrides")),
                     files=files,
                     coverage=_own_json(files.coverage) if files else None,
-                    pending=bool(entry.get("pending")),
+                    pending=entry.get("pending") is True,
                 )
             )
     else:

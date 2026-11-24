@@ -523,7 +523,13 @@ The sweeper runs each case in a forked process of its own. With
 `server.cooldown_max_retries` it runs a case again only when it could not run:
 its run raised (CARLA went away, a spawn failed), timed out
 (`sweep.job_timeout_seconds`) or crashed. A case whose scenario ran to a
-FAILED verdict is final and is not retried, as in a batch. The sweeper owns
+FAILED verdict is final and is not retried, as in a batch. So is a case
+whose run wrote its result and then died while it wound down (converting its
+Rerun recordings, stopping Autoware, the backends or the server): when a
+case exits 1, times out or crashes, the sweeper first reads the result its
+attempt wrote (none older than the attempt counts), and if there is one,
+that verdict stands -- PASS or FAIL, logged as a late crash, not retried and
+its outputs kept. The sweeper owns
 these retries: the case's own queue does not retry it as well, so a case runs
 at most `1 + server.cooldown_max_retries` times, as in a batch.
 A retry runs in the case's job directory, and before it starts the sweeper

@@ -17,7 +17,10 @@ the one saying why it was given up.  So a job whose process died with it --
 CARLA segfaulting the sweep, the OOM killer, ``SIGKILL``, a Ctrl-C -- leaves
 the marker too (#1833), and a job run again in the same directory
 (``hydra.sweep.dir=`` naming it again) decides afresh, and a retry that
-passes leaves none.  Its name ends in neither a run output's suffix
+passes leaves none.  The marker of a job given up that replaces the one
+saying it did not finish keeps when that one was written (``"since"``, the
+attempt's start, :func:`marker_since`): a gate record or result in the job's
+directory older than that is an earlier run's (#2416).  Its name ends in neither a run output's suffix
 (``run_outputs.RUN_SUFFIXES``) nor ``_result.json``: the viewer, the retry's
 clean-up and the coverage merge do not take it for a run's file.
 
@@ -40,11 +43,13 @@ __all__ = [
     "CASE_ERRORED",
     "CASE_ERRORED_SCHEMA",
     "find_case_errored",
+    "marker_since",
     "read_case_errored",
     "UNFINISHED_REASON",
     "remove_case_errored",
     "write_case_errored",
     "write_case_unfinished",
+    "written_since",
 ]
 
 #: The marker's file name, in the job's directory.
@@ -75,10 +80,14 @@ def write_case_errored(
     has not ended, a negative number for the signal it died of); *reason*
     says why in words.  *unfinished* marks the marker a job is given before
     an attempt (:func:`write_case_unfinished`) with ``"unfinished": true``;
-    the others have no such key.
+    the others have no such key.  One that replaces such a marker keeps when
+    that one was written, the attempt's start, as ``"since"`` (its
+    modification time, :func:`marker_since`), so that the run's gate record,
+    written before the job was given up, is still the attempt's (#2416).
     """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / CASE_ERRORED
+    since: Optional[float] = None if unfinished else _unfinished_since(path)
     # The object `json.dumps(..., indent=2, ensure_ascii=False)` writes, a
     # member at a time: each value is of its own type, which one dict of them
     # all could not be in Codon (docs/typecheck.md).  The overrides, the one
@@ -107,6 +116,10 @@ def write_case_errored(
     if unfinished:
         members.append(
             _member(json.dumps({"unfinished": True}, indent=2, ensure_ascii=False))
+        )
+    if since is not None:
+        members.append(
+            _member(json.dumps({"since": since}, indent=2, ensure_ascii=False))
         )
     write_text_atomically(path, "{\n" + ",\n".join(members) + "\n}")
     return path
@@ -169,6 +182,59 @@ def read_case_errored(path: Path) -> Optional[dict[str, Any]]:
     except (OSError, RecursionError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _unfinished_since(path: Path) -> Optional[float]:
+    """When the marker at *path* was written, if it says its job did not
+    finish (``"unfinished": true``); ``None`` when it does not, or cannot be
+    read."""
+    data = read_case_errored(path)
+    if data is None:
+        return None
+    # `x is True` written as the gate reads it (gate.unrecorded), which Codon
+    # compiles for a JSON value.
+    unfinished = data.get("unfinished")
+    if not (isinstance(unfinished, bool) and bool(unfinished)):
+        return None
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def marker_since(marker: Path) -> Optional[float]:
+    """When the attempt of the marker at *marker* started: its ``"since"`` (a
+    marker of a job given up that replaced the one saying it did not finish,
+    :func:`write_case_errored`), else the marker's own modification time;
+    ``None`` when that cannot be read either.  A run's file older than this
+    is an earlier run's (:func:`written_since`)."""
+    data = read_case_errored(marker)
+    if data is not None:
+        since = data.get("since")
+        # A JSON number other than a bool (True is an int): json.dumps()
+        # writes a float with its point, but a hand-written one may be whole,
+        # or an integer too long for a float, which float() overflows on.
+        if not isinstance(since, bool) and (
+            isinstance(since, int) or isinstance(since, float)
+        ):
+            try:
+                return float(since)
+            except OverflowError:
+                pass
+    try:
+        return marker.stat().st_mtime
+    except OSError:
+        return None
+
+
+def written_since(path: Path, since: float) -> bool:
+    """Whether *path* is a file written no earlier than *since* (a
+    modification time, as :func:`marker_since` gives it); ``False`` when it
+    cannot be read."""
+    try:
+        return path.is_file() and path.stat().st_mtime >= since
+    except OSError:
+        return False
 
 
 def find_case_errored(path: Path) -> list[Path]:
