@@ -17,7 +17,9 @@ SIGTERM (``scancel``, or ``--signal`` before the time limit) ends the case
 running and stops CARLA; if the worker is killed before it has (the SIGKILL
 after the scheduler's grace period), :class:`.ports.CarlaWatchdog` stops it.
 The cases not run by then have no outcome and are run again by
-``scenario-slurm resubmit``.
+``scenario-slurm resubmit``: as it starts, the task removes the outcome and
+outputs an earlier submission left for each of its cases, so a task killed
+outright (a node failure, a SIGKILL) leaves none of them counted as current.
 """
 
 from __future__ import annotations
@@ -414,6 +416,32 @@ def _remove_outputs(batch_dir: Path, stem: str) -> None:
     remove_run_outputs(batch_dir, stem)
 
 
+def _clear_earlier_outcomes(
+    layout: BatchLayout, submission: int, cases: list[dict[str, Any]]
+) -> None:
+    """Remove the outcome (``results/<i>.json``) and the run outputs
+    (:func:`_remove_outputs`) of each of *cases*, the task's chunk, that an
+    earlier submission than *submission* recorded, as the task starts
+    (#2418): a task killed outright before it reaches a case (a node
+    failure, a SIGKILL for memory, ``scancel -s KILL``) then leaves it no
+    outcome rather than the earlier submission's, counted as current.
+
+    An outcome naming this submission or a later one (a ``--force``
+    resubmit's, running beside this one) is left, and so is one naming no
+    submission; a case with no outcome keeps its outputs, which may be a
+    later submission's case running.  Each case's outcome and outputs are
+    removed again right before it runs."""
+    for case in cases:
+        index = int(case["index"])
+        record = layout.read_result(index)
+        if record is None or not any(
+            record.names_submission(earlier) for earlier in range(submission)
+        ):
+            continue
+        layout.result(index).unlink(missing_ok=True)
+        _remove_outputs(layout.batch_dir, str(case["stem"]))
+
+
 def _raise_interrupt(signum: int, _frame: object) -> None:
     """End the task: the case running, then CARLA (``with queue``).
 
@@ -682,6 +710,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     sampler = _RssSampler()
     exit_status = 0
     try:
+        # First, so a task killed from here on leaves its cases no earlier
+        # submission's outcome (#2418).
+        _clear_earlier_outcomes(layout, submission_index, cases)
         from ..examples import run  # noqa: PLC0415 - CARLA, Hydra, the scenarios
 
         # Before any thread of this process starts (see _cap_malloc_arenas).

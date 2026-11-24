@@ -5,7 +5,8 @@ outcome each task wrote for each of its cases (``slurm/results/<i>.json``), in
 the batch's order -- the same table, the same JSON, whichever task ran a case
 and when.  A case with no outcome is reported as one: ``ERROR``, with a message
 saying it has none and what to do about it (#1803): wait for its task where
-that may still be queued or running (``scenario-slurm wait``), try again once
+that may still be queued or running (``scenario-slurm wait``) -- or, cancelled,
+requeued after a preemption (#2418) -- try again once
 sbatch returns where its submission is in flight, and run it again
 (``scenario-slurm resubmit``) otherwise -- saying, where its sbatch timed out
 less than ``SBATCH_IN_FLIGHT_SECONDS`` ago, that a resubmit is refused until
@@ -152,16 +153,23 @@ _UNFINISHED_TASK_STATES = frozenset({"starting", "waiting", "building", "running
 #: cases (``slurm/worker.py``): the cases it had not reached never ran.
 _STOPPED_TASK_STATES = frozenset({"failed", "cancelled"})
 
+#: The state a task's status records when it was signalled
+#: (``slurm/worker.py``): ``scancel``, its time limit -- or a preemption,
+#: after which SLURM may requeue it to run again (#2418).
+_CANCELLED = "cancelled"
+
 
 def stale_reason(layout: BatchLayout, case: int, record: CaseOutcome) -> str | None:
     """Why *record*, the outcome *case* has, is not its current one, if it
     is not (#2247).
 
     The last submission that gave the case runs it again, and its task
-    removes the outcome only right before it runs the case: a task that
-    failed or was cancelled before reaching it leaves an earlier
-    submission's outcome there, which is then stale -- the case was asked to
-    run again and did not.  Only a record naming an earlier submission of
+    removes an earlier submission's outcome as it starts (#2418), and the
+    case's again right before it runs it: a task that failed or was
+    cancelled before that -- or one of an earlier version, which removed it
+    only before the case ran -- leaves an earlier submission's outcome
+    there, which is then stale -- the case was asked to run again and did
+    not.  Only a record naming an earlier submission of
     the batch (as the worker's ``submission``) is: one naming the last is its
     outcome, and one naming none (a hand's, another version's) is not known
     to predate it; while the task is queued or running, or has no status,
@@ -367,7 +375,10 @@ def _advice(
 
     The advice is chosen from what the batch's records say, asking SLURM
     nothing, as ``wait`` words it (#1801): a resubmit is advised only where
-    ``resubmit`` takes it, or with the reason it is refused for now."""
+    ``resubmit`` takes it, or with the reason it is refused for now.  A
+    task whose *state* is ``cancelled`` may have been preempted and
+    requeued, which SLURM then lists: it is waited for as a running one is
+    (#2418)."""
     resubmit = f"Run it again with: scenario-slurm resubmit {target}"
     advice = _RESUBMIT
     about: int | None = None
@@ -390,6 +401,17 @@ def _advice(
                 "If `squeue --me` still lists the task, it is still queued or "
                 f"running: wait for it with: {_wait_command(layout, index, target)}; "
                 "once it has ended, run the case again with: "
+                f"scenario-slurm resubmit {target}"
+            )
+        elif has_job and state == _CANCELLED:
+            # A task preempted and requeued says `cancelled` too, while SLURM
+            # lists it to run again: only squeue can tell, and resubmit
+            # refuses while it does (#2418).
+            advice, about = _RUNNING, index
+            then = (
+                "If `squeue --me` still lists the task, it was requeued: wait "
+                f"for it with: {_wait_command(layout, index, target)}; once it "
+                "has ended, run the case again with: "
                 f"scenario-slurm resubmit {target}"
             )
         elif not has_job and timed_out:

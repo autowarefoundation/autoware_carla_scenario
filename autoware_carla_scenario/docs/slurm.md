@@ -152,9 +152,15 @@ report (`crash_report`).
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
 saying so, and `collect` lists them, saying what to do about them, chosen from
-the batch's records alone (#1803): where the case's task may still be queued
+the batch's records alone (#1803). A task killed outright (a node failure
+without requeue, a `SIGKILL` for memory, `scancel -s KILL`, a hang past
+`KillWait`) writes no final state, and its status still says `running`; but
+as it starts, a task removes the outcome and outputs an earlier submission
+left for each of its cases (#2418), so such a case has none, not the earlier
+one counted as current. Where the case's task may still be queued
 or running (it has a job, and it has no status yet, or its status says
-`starting`, `waiting`, `building` or `running`), to wait for it with
+`starting`, `waiting`, `building` or `running` -- or `cancelled`, which a
+task preempted and requeued says too), to wait for it with
 `scenario-slurm wait` (with `--submission <k>` when its submission is not the
 latest) if `squeue --me` still lists it and to `resubmit` once it has ended;
 where its submission is in flight, to try again once sbatch returns; where its
@@ -173,10 +179,16 @@ pass, and `collect` reports it as `ERROR` naming its file; a `rerun_error` the
 task recorded for it is kept in `batch_results.json`. `status`, `wait` and the
 viewer count it as not passed: the results pages show it as an error.
 An outcome is stale when the last submission that gave the case was to run
-it again and its task stopped (`failed` or `cancelled`) before it reached the
-case: the task removes a case's outcome only right before it runs the case,
-so the one there names an earlier submission. `collect` reports it as `ERROR`
-saying so, and `status` and the viewer count it as without a result (#2247).
+it again and its task stopped (`failed` or `cancelled`) before it removed it,
+so the one there names an earlier submission: a task removes an earlier
+submission's outcome as it starts, and a case's outcome again right before it
+runs the case, but one stopped before that -- or one of an earlier version,
+which removed it only before the case ran -- leaves it. Only an earlier
+submission's outcome is removed as the task starts: one naming the task's own
+submission or a later one (a `--force` resubmit running beside it) is kept.
+`collect` reports a stale outcome as `ERROR` saying so, `status` and the
+viewer count it as without a result (#2247), and `scenario-gate` counts it as
+unrecorded whatever gate record is at its stem (#2418, [gate](gate.md)).
 `resubmit` submits again the cases with no outcome, no verdict or a stale
 one and those that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
 failed, `--cases a,b` names them (labels or indices; a case named twice runs

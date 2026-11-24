@@ -1116,3 +1116,51 @@ def test_a_stale_outcome_past_a_later_submission_that_left_the_case_alone(
     second = layout.read_result(1)
     assert second is not None
     assert stale_reason(layout, 1, second) is None
+
+
+def test_a_case_of_a_cancelled_task_is_waited_for_as_it_may_be_requeued(
+    tmp_path: Path, clock: _Clock
+) -> None:
+    """#2418: a preempted task records ``cancelled``, and SLURM may requeue
+    it, listing it to run again, while ``resubmit`` refuses: its case is
+    advised to be waited for while ``squeue`` lists the task, as a running
+    one's is, never a resubmit outright."""
+    layout = _layout(tmp_path)
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0]]})
+    _set_task(layout, {"state": "cancelled", "error": "signal SIGTERM"})
+    assert _message(layout, clock) == (
+        "No result: the case did not finish under SLURM (task 0 of job 70 "
+        "cancelled: signal SIGTERM). If `squeue --me` still lists the task, it "
+        f"was requeued: wait for it with: {_WAIT}; once it has ended, run the "
+        "case again with: scenario-slurm resubmit /b",
+        "running",
+        0,
+        clock.reads,
+    )
+    # A cancelled task of a submission with no job id is no job to wait for.
+    write_json(layout.submission(0), {"index": 0, "job_id": None, "chunks": [[0]]})
+    message, advice, _about, _reads = _message(layout, clock)
+    assert advice != "running" and "requeued" not in message
+
+
+def test_collect_hints_a_cancelled_tasks_cases_to_wait(
+    tmp_path: Path,
+    clock: _Clock,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2418: the hint on the cases with no outcome, for a cancelled task,
+    is the running one's: wait while ``squeue`` lists it, then resubmit."""
+    from autoware_carla_scenario.slurm import collect as collect_module
+
+    monkeypatch.setattr(collect_module, "resubmit_target", lambda *_a: _TARGET)
+    layout = _layout(tmp_path)
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0]]})
+    _set_task(layout, {"state": "cancelled"})
+    assert collect(layout) == 1
+    out = capsys.readouterr().out
+    assert (
+        "1 case(s) have no result: s#1\nSome may still be queued or running: if "
+        f"`squeue --me` lists their tasks, wait for them with: {_WAIT}; once "
+        "they have ended, run them again with: scenario-slurm resubmit /b"
+    ) in out

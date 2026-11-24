@@ -129,9 +129,13 @@ def _summary_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
 
 def _slurm_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     """The labels of a SLURM batch's cases that errored, have no outcome or
-    one holding no verdict, and left no gate record at their stem; how many
-    cases it has; and ``None``.  Or no labels, ``0`` and why the manifest
-    cannot be read, instead (:func:`_summary_cases`'s triple).
+    one holding no verdict, and left no gate record at their stem, and of
+    those whose outcome is stale (:func:`..slurm.collect.stale_reason`):
+    an earlier submission's, which the last one to give the case did not
+    reach, so the gate record at its stem is that earlier run's and does not
+    count (#2418); how many cases it has; and ``None``.  Or no labels,
+    ``0`` and why the manifest cannot be read, instead
+    (:func:`_summary_cases`'s triple).
 
     A case is named by its ``label``, or its ``scenario``, when true, else
     by its index (:meth:`.ManifestCase.name`).  Only a stem of its own
@@ -141,8 +145,15 @@ def _slurm_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     whose ``cases`` cannot be iterated, cannot be read
     (:meth:`.Manifest.cases`), nor can one with a case without an index
     that ``int()`` reads, which the error shows
-    (:meth:`.ManifestCase.case_repr`)."""
-    from ..slurm.manifest import BatchLayout, recorded_verdict  # noqa: PLC0415
+    (:meth:`.ManifestCase.case_repr`), nor one whose submission records
+    cannot be read to tell whether an outcome is stale (``chunks`` of the
+    wrong type, :meth:`.SubmissionRecord.task_of`)."""
+    from ..slurm.collect import stale_reason  # noqa: PLC0415
+    from ..slurm.manifest import (  # noqa: PLC0415
+        BatchLayout,
+        CaseOutcome,
+        recorded_verdict,
+    )
 
     layout = BatchLayout(directory)
     # Each part of the result held in a local of its type (_summary_cases()).
@@ -163,12 +174,30 @@ def _slurm_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
             none: list[str] = []
             return none, 0, unreadable
         record = layout.read_result(index)
-        if (
-            record is not None
-            and recorded_verdict(record) is not None
-            and not record.errored
-        ):
-            continue
+        stale = False
+        if record is not None:
+            # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+            outcome: CaseOutcome = record
+            try:
+                stale = stale_reason(layout, index, outcome) is not None
+            except (OSError, TypeError, ValueError) as exc:
+                # Named by their directory, not the manifest: the line
+                # says to repair the file it names.
+                records = layout.root / "submissions"
+                unreadable = (
+                    f"{records}: the batch's SLURM submission records "
+                    f"cannot be read ({exc})"
+                )
+                none_read: list[str] = []
+                return none_read, 0, unreadable
+            if stale:
+                # An earlier submission's outcome, and the gate record at
+                # its stem that run's: the case was to run again and did
+                # not (#2418).
+                unrecorded.append(case.name(index))
+                continue
+            if recorded_verdict(outcome) is not None and not outcome.errored:
+                continue
         # A stem of its own only, as a local batch's (#2265).
         stem = case.string_stem()
         if stem is not None and _recorded_at(directory, stem):

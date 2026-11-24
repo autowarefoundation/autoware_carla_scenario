@@ -1091,6 +1091,79 @@ def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
     assert released == [False]
 
 
+def test_a_starting_task_clears_its_chunks_earlier_outcomes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2418: as a task starts -- before anything that could kill it
+    outright, a node failure or a SIGKILL that leaves its status `running`
+    -- it removes the outcome and run outputs an earlier submission left for
+    each of its cases, so a case it never reaches has no outcome, not the
+    earlier one counted as current.  Its own submission's outcome, a later
+    (``--force``) submission's and the outputs of a case with no outcome
+    (perhaps a later submission's run) are left."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.gate.record import GATE_RECORD_SUFFIX
+    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm.collect import _missing_message
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path, cases=4)
+    manifest = read_json(layout.manifest)
+    for case in manifest["cases"]:
+        case["stem"] = f"S{case['index']}"
+    write_json(layout.manifest, manifest)
+    write_json(layout.task(0, 0), {"state": "done"})
+    write_json(
+        layout.submission(1), {"index": 1, "job_id": "78", "chunks": [[0, 1, 2, 3]]}
+    )
+    write_json(layout.submission(2), {"index": 2, "job_id": "79", "chunks": [[3]]})
+    passed = {
+        "passed": True,
+        "message": "ok",
+        "elapsed_seconds": 1.0,
+        "condition_statuses": [],
+    }
+    for index, submission in ((0, 0), (1, 1), (3, 2)):
+        write_json(
+            layout.result(index),
+            {"index": index, "result": passed, "submission": submission},
+        )
+    for index in range(4):
+        for suffix in ("_result.json", GATE_RECORD_SUFFIX):
+            (layout.batch_dir / f"S{index}{suffix}").write_text("{}")
+
+    seen: dict[str, Any] = {}
+
+    def killed() -> None:
+        # What a task killed here would leave: what is there as it starts.
+        seen["results"] = [layout.result(i).is_file() for i in range(4)]
+        seen["outputs"] = sorted(p.name for p in layout.batch_dir.glob("S*"))
+        raise RuntimeError("killed")
+
+    monkeypatch.setattr(run, "_cap_malloc_arenas", killed)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGUSR1)}
+    try:
+        assert worker.run_task(layout.manifest, 1, 0) == 1
+    finally:
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    assert seen["results"] == [False, True, False, True]
+    assert seen["outputs"] == sorted(
+        f"S{i}{suffix}"
+        for i in (1, 2, 3)
+        for suffix in ("_result.json", GATE_RECORD_SUFFIX)
+    )
+    # Killed outright, its status would still say `running`: case 0 has no
+    # outcome, to run again once squeue no longer lists the task.
+    write_json(layout.task(1, 0), {"state": "running", "cases": [0, 1, 2, 3]})
+    assert 0 in unfinished_cases(layout)
+    message, advice, about = _missing_message(layout, 0, "/b")
+    assert (advice, about) == ("running", 1)
+    assert "task 0 of job 78 running" in message
+
+
 def test_the_worker_refuses_a_case_off_its_documents_map(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
