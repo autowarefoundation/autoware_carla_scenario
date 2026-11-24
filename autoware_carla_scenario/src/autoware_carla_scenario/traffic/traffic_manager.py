@@ -746,10 +746,19 @@ class TrafficManagerBackend(TrafficBackend):
         Resets its ``InMemoryMap`` cache and internal state.  Safe to call twice
         and safe to call after a failed :meth:`prepare`, because teardown runs
         whatever happened during the run.
+
+        A step that fails is logged and the rest still runs: above all the
+        parameters are put back (or the next case would draw this one's
+        overrides) and the TrafficManager is shut down.
         """
         # First: nothing below may keep a finished run's map on its vehicles.
         for entity in self._lane_changed:
-            entity.forget_lane_change()
+            try:
+                entity.forget_lane_change()
+            except Exception:  # noqa: BLE001 - teardown must go on
+                logger.warning(
+                    "TrafficManager: forgetting a lane change failed", exc_info=True
+                )
         self._lane_changed = []
         self._lane_change_requests = []
         for actor in self._background.values():
@@ -786,7 +795,12 @@ class TrafficManagerBackend(TrafficBackend):
         self._paused = {}
         self._lead_from = {}
         self._lead_route = {}
-        self._restore_parameters()
+        try:
+            self._restore_parameters()
+        except Exception:  # noqa: BLE001 - the shut-down must still run
+            logger.warning(
+                "TrafficManager: restoring the parameters failed", exc_info=True
+            )
         if self._closed or self._client is None:
             return
         self._closed = True

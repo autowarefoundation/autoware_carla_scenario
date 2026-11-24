@@ -57,6 +57,9 @@ class _Actor:
         #: A destroy the server refuses (returns False and the actor stays).
         self.stuck = False
 
+    def stop(self) -> None:
+        self.world.events.append(("stop", self.type_id))
+
     def destroy(self) -> bool:
         if self.stuck:
             return False
@@ -283,7 +286,12 @@ class TestSoftResetOnTheSameMap:
 
         runner.reset_world("Case0")
 
-        destroyed = [t for kind, t in server.world.events if kind == "destroy"]
+        events = server.world.events
+        destroyed = [t for kind, t in events if kind == "destroy"]
+        # CARLA's order (#2426): the walker's controller is stopped first.
+        assert events.index(("stop", "controller.ai.walker")) < events.index(
+            ("destroy", "sensor.camera.rgb")
+        )
         assert destroyed[:3] == [
             "sensor.camera.rgb",
             "sensor.other.collision",

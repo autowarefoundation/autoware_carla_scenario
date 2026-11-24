@@ -509,8 +509,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         withdraw_driver_sensors()
         clear_ego_base_link()
         if self._warmup is not None:
-            self._warmup.restore()
-            self._warmup = None
+            # A dead server times out every freeze RPC: the session, the stack
+            # and the sensors must still go.
+            try:
+                self._warmup.restore()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.warning(
+                    "Failed to thaw the lights the warm-up froze", exc_info=True
+                )
+            finally:
+                self._warmup = None
         if self._session_open:
             try:
                 self._client.close_session()

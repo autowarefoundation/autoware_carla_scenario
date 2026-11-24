@@ -175,14 +175,28 @@ class TestTickPacing:
 class _FakeActor:
     """The parts of a CARLA actor the cleanup looks at."""
 
-    def __init__(self, actor_id: int, role_name: str = "", parent=None) -> None:
+    def __init__(
+        self,
+        actor_id: int,
+        role_name: str = "",
+        parent=None,
+        type_id: str = "vehicle.tesla.model3",
+        events: list | None = None,
+    ) -> None:
         self.id = actor_id
+        self.type_id = type_id
         self.attributes = {"role_name": role_name} if role_name else {}
         self.parent = parent
         self.destroyed = False
+        #: What happened to the actors of one world, in order.
+        self.events = events if events is not None else []
+
+    def stop(self) -> None:
+        self.events.append(("stop", self.type_id))
 
     def destroy(self) -> None:
         self.destroyed = True
+        self.events.append(("destroy", self.type_id))
 
 
 class _FakeActorList:
@@ -251,6 +265,46 @@ class TestCleanupExemption:
         )
         _destroy_all_dynamic_actors(world, "S")
         assert controller.destroyed
+
+    def test_walker_controllers_are_stopped_and_destroyed_before_their_walkers(
+        self,
+    ):
+        # CARLA's order (#2426): controller.stop(), destroy the controller,
+        # then the walker; sensors and controllers before what they are on,
+        # as the soft reset destroys.
+        events: list = []
+        car = _FakeActor(1, "npc1", events=events)
+        camera = _FakeActor(2, parent=car, type_id="sensor.camera.rgb", events=events)
+        walker = _FakeActor(
+            3, "walker1", type_id="walker.pedestrian.0001", events=events
+        )
+        controller = _FakeActor(
+            4, parent=walker, type_id="controller.ai.walker", events=events
+        )
+        world = MagicMock()
+        world.get_actors.return_value = _FakeActorList(
+            [car], [camera], walkers=[walker], controllers=[controller]
+        )
+        _destroy_all_dynamic_actors(world, "S")
+        assert events == [
+            ("stop", "controller.ai.walker"),
+            ("destroy", "sensor.camera.rgb"),
+            ("destroy", "controller.ai.walker"),
+            ("destroy", "walker.pedestrian.0001"),
+            ("destroy", "vehicle.tesla.model3"),
+        ]
+
+    def test_a_controller_already_gone_does_not_stop_the_sweep(self):
+        walker = _FakeActor(1, "walker1", type_id="walker.pedestrian.0001")
+        controller = _FakeActor(2, parent=walker, type_id="controller.ai.walker")
+        controller.stop = MagicMock(side_effect=RuntimeError("actor not found"))
+        world = MagicMock()
+        world.get_actors.return_value = _FakeActorList(
+            [], [], walkers=[walker], controllers=[controller]
+        )
+        _destroy_all_dynamic_actors(world, "S")
+        assert controller.destroyed
+        assert walker.destroyed
 
     def test_a_kept_ego_survives_with_its_sensors(self):
         # The interface node spawns this ego and drives it; destroying it would

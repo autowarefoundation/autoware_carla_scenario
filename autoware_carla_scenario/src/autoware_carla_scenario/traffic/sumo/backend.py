@@ -1592,14 +1592,27 @@ class SumoTrafficBackend(TrafficBackend):
         self._persons = {}
 
     def close(self) -> None:
-        """Stop SUMO, destroy the ambient actors and forget the run."""
-        self._tm.close()
+        """Stop SUMO, destroy the ambient actors and forget the run.
+
+        A step that fails is logged and the rest still runs: the parameters
+        are put back and SUMO is always disconnected and stopped.
+        """
+        try:
+            self._tm.close()
+        except Exception:  # noqa: BLE001 - teardown must go on
+            logger.warning("SUMO: closing the TrafficManager failed", exc_info=True)
         # The next run starts from its config, not from this one's overrides.
-        self._restore_parameters()
+        try:
+            self._restore_parameters()
+        except Exception:  # noqa: BLE001 - teardown must go on
+            logger.warning("SUMO: restoring the parameters failed", exc_info=True)
         self._pedestrian_overrides = None
         self._bicycle_overrides = None
         if self._clock_log is not None:
-            self._clock_log.close()
+            try:
+                self._clock_log.close()
+            except Exception:  # noqa: BLE001 - teardown must go on
+                logger.warning("SUMO: closing the clock log failed", exc_info=True)
             self._clock_log = None
         # Also after tick gave up stepping it: an open connection would leave
         # SUMO orphaned and the next start refused ("already active").

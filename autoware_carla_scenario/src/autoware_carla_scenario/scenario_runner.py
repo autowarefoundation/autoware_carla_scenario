@@ -72,6 +72,7 @@ from .world_reset import (
     capture_baseline,
     check_world_reset,
     episode_of,
+    ready_to_destroy,
     reload_current_map,
     same_episode,
     short_map_name,
@@ -858,6 +859,10 @@ def _destroy_all_dynamic_actors(
     the last one is a pedestrian the next one did not put there.  The
     ``keep`` set is matched on vehicles only, because everything spared is an
     externally owned ego.
+
+    Each walker AI controller is stopped first, and everything is destroyed
+    in the soft reset's order (:func:`~autoware_carla_scenario.world_reset.ready_to_destroy`):
+    sensors and controllers before the walkers and vehicles they are on.
     """
     actors = world.get_actors()
     kept_ids = {
@@ -865,7 +870,7 @@ def _destroy_all_dynamic_actors(
         for actor in actors.filter("vehicle.*")
         if _kept_by_role(actor, keep_role_names)
     }
-    destroyed = 0
+    doomed: list[carla.Actor] = []
     for actor in [
         *actors.filter("vehicle.*"),
         *actors.filter("walker.*"),
@@ -880,6 +885,9 @@ def _destroy_all_dynamic_actors(
             parent = None
         if parent is not None and parent.id in kept_ids:
             continue
+        doomed.append(actor)
+    destroyed = 0
+    for actor in ready_to_destroy(doomed):
         try:
             actor.destroy()
             destroyed += 1
