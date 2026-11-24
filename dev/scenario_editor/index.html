@@ -3613,6 +3613,21 @@ a failure, and <code>Persistent</code> counts only the ticks its child passes, s
 never fire. Use a Collision or Timeout on its own: it keeps its failure once
 it has fired, so under a <code>NOT</code> it would only fail the run later. Put Off the
 road or Exists, which check again on every tick, under a <code>NOT</code> first.</p>
+<p><code>NOT</code> is not a plain inverter by default: it reports a result only when its
+child does, and flips that result's verdict. A trigger, a pass condition, a
+fail condition and a waypoint condition count any result, so
+<code>NOT(Distance &lt; 10 m)</code> there fires when the entity <em>is</em> within 10 m. <code>ALL</code>,
+<code>ANY</code> and <code>Sticky</code> (which latches only a pass, and hands a failure on) do not
+change that. Most conditions report only a pass, so such a <code>NOT</code> never passes,
+and under <code>Persistent</code>, which counts only passes, it never helps that fire.
+The default is what a <code>NOT</code> around a Collision, Off the road, Exists or
+Timeout card wants: it turns their failure into a pass. Tick <strong>Holds while the
+child does not</strong> (<code>holds_when_pending: true</code>) for a logical NOT: it holds on
+every tick its child has not fired, and says nothing while it has. The
+validator warns on a <code>NOT</code> without it in either place -- standing in a
+trigger, a pass, fail or waypoint condition (on its own or under <code>ALL</code>, <code>ANY</code>
+or <code>Sticky</code>), or under a <code>Persistent</code> -- unless its child only ever reports a
+failure (one of those four cards, or an <code>ALL</code> with one of them).</p>
 <h2 id="fixed-or-searched-every-lanelet-one-question">Fixed or searched: every lanelet, one question<a class="headerlink" href="#fixed-or-searched-every-lanelet-one-question" title="Permanent link">&para;</a></h2>
 <p><strong>Edit</strong> on any lanelet field opens the map, and the panel beside it asks the
 same thing wherever you opened it from — <strong>Fixed</strong> or <strong>Constraint search</strong>:</p>
@@ -4645,7 +4660,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 04:25:44 UTC"><span class="timeago" datetime="2026-11-24T04:25:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 04:25:44 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 09:48:36 UTC"><span class="timeago" datetime="2026-11-24T09:48:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 09:48:36 UTC">2026-11-24</span>
   </span>
 
     
