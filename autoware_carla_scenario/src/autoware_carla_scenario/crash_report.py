@@ -69,6 +69,7 @@ import copy
 import dataclasses
 import faulthandler
 import functools
+import inspect
 import json
 import logging
 import os
@@ -87,6 +88,7 @@ from pathlib import Path
 from typing import IO, Any
 
 import sentry_sdk
+from sentry_sdk.consts import ClientConstructor
 from sentry_sdk.envelope import Envelope, Item
 from sentry_sdk.integrations.argv import ArgvIntegration
 from sentry_sdk.integrations.dedupe import DedupeIntegration
@@ -562,6 +564,36 @@ def installed() -> bool:
     return _REPORTER[0] is not None
 
 
+def _locals_option(include: bool) -> dict[str, Any]:
+    """The ``sentry_sdk.init()`` option that turns a frame's local variables
+    on or off, for the installed SDK (#2429).
+
+    sentry-sdk 2.x takes ``include_local_variables``; 3.x refuses it and
+    takes ``data_collection={"stack_frame_variables": ...}`` instead.  3.x
+    also collects user identity by default, which 2.x leaves off
+    (``send_default_pii``): it is turned off here, as before.
+    """
+    if "data_collection" in inspect.signature(ClientConstructor.__init__).parameters:
+        return {
+            "data_collection": {"stack_frame_variables": include, "user_info": False}
+        }
+    return {"include_local_variables": include}
+
+
+def _breadcrumbs_integration() -> LoggingIntegration:
+    """The logging integration that makes INFO records and up breadcrumbs,
+    and nothing else, for the installed SDK (#2429).
+
+    In sentry-sdk 2.x ``level`` is the breadcrumbs' level.  In 3.x it is
+    the level of Sentry Logs, which 3.x sends without being asked, and
+    ``breadcrumb_level`` is the breadcrumbs'.
+    """
+    options: dict[str, Any] = {"level": logging.INFO, "event_level": None}
+    if "breadcrumb_level" in inspect.signature(LoggingIntegration.__init__).parameters:
+        options = {"level": None, "event_level": None, "breadcrumb_level": logging.INFO}
+    return LoggingIntegration(**options)
+
+
 def install(argv: Sequence[str] | None = None) -> bool:
     """Install the crash reporter for this process.
 
@@ -584,7 +616,7 @@ def install(argv: Sequence[str] | None = None) -> bool:
     if "log" in settings.items:
         # Log records become breadcrumbs, never events of their own: the
         # framework logs errors it handles.
-        integrations.append(LoggingIntegration(level=logging.INFO, event_level=None))
+        integrations.append(_breadcrumbs_integration())
     if "packages" in settings.items:
         integrations.append(ModulesIntegration())
     sentry_sdk.init(
@@ -597,8 +629,8 @@ def install(argv: Sequence[str] | None = None) -> bool:
         default_integrations=False,
         auto_enabling_integrations=False,
         integrations=integrations,
-        include_local_variables="locals" in settings.items,
         max_breadcrumbs=200 if "log" in settings.items else 0,
+        **_locals_option("locals" in settings.items),
     )
     # Not the breadcrumbs of an earlier reporter in this process.
     for scope in (sentry_sdk.get_global_scope(), sentry_sdk.get_isolation_scope()):

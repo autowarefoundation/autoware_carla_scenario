@@ -114,7 +114,11 @@ dependencies = [
     # same floats byte for byte.
     "orjson>=3.13.0",
     "scipy>=1.10",
-    "sentry-sdk>=2.20",
+    # crash_report.install() passes the options each major names: 3.x
+    # renamed the frame-variables option and made the logging integration's
+    # `level` that of Sentry Logs (#2429). The ceiling is the newest major
+    # tested (CI runs test_crash_report.py on the floor and on 3.x).
+    "sentry-sdk>=2.20,<4",
 ]
 
 [project.urls]

@@ -168,6 +168,21 @@ jobs:
         pytest_shard -n logical --dist worksteal -m "${markers}" \
           --deselect "${LIBRARY_COMPILE}" --deselect "${MODULE_COMPILES}"
 
+    # The lock pins one sentry-sdk, but an install that resolves on its own
+    # gets any in `sentry-sdk>=2.20,<4`, and crash reporting runs on every
+    # `scenario` start (#2429). The crash reporter's tests run again against
+    # the floor and the newest 3.x, once a leg.
+    - name: Run the crash reporter's tests against each sentry-sdk major
+      if: matrix.shard == '1/1'
+      run: |
+        for sdk in "sentry-sdk==2.20.0" "sentry-sdk>=3,<4"; do
+          echo "::group::${sdk}"
+          uv run --with "${sdk}" python -c "import sentry_sdk; print('sentry-sdk', sentry_sdk.VERSION)"
+          uv run --with "${sdk}" pytest -v --tb=short -o addopts= \
+            autoware_carla_scenario/test/carla_scenario/test_crash_report.py
+          echo "::endgroup::"
+        done
+
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache. Only after a
     # run of every Codon test of the shard: one without the self-tests would
