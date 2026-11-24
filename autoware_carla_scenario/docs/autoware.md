@@ -545,7 +545,10 @@ localization again at the new initial pose (the ego is spawned there afresh;
 with `initialize_localization:=false`, the stack's own localization follows
 it), routes the new mission, engages, and reports in and ready to the new
 session, within its `ready_timeout_ticks`. Only a new
-version within a session is a re-route. What a fresh stack would not carry
+version within a session is a re-route. Once Autoware is ready, the node sees
+the next session only through its re-route watch: with `route_watch_period_s`
+of 0 or less it never asks again and never starts the next scenario, so keep
+the watch on for a hand-started node that serves more than one. What a fresh stack would not carry
 over -- the planner's memory of the last run, a localization that drifted --
 a hand-started one does; start a stack per scenario (a launcher) when a batch
 has to be independent of its order. A bridge server that predates the session
