@@ -118,3 +118,20 @@ driver:
     standstill_speed_mps: 0.5
     # Brake with no plan to track.
     stop_brake: 0.6
+  # The lateral chain that steers the plan. pure_pursuit: `control`'s pure pursuit.
+  # mpc: Autoware's chain behind an end-to-end planner, as tier4/OnePlanner's
+  # closed-loop replay runs it on the X2 -- the plan through the
+  # TrajectoryTimeSequenceRawOptimizer (trajectory_optimizer: tso), published
+  # publish_delay_s after its stamp, steered by autoware_mpc_lateral_controller
+  # (temporal mode, every ctrl_period_s) reading a localization localization_lag_s
+  # behind; `control`'s longitudinal controller follows the published trajectory.
+  # Empty param files are the bundled X2 ones (docs/driver_interface.md).
+  lateral:
+    controller: pure_pursuit
+    trajectory_optimizer: tso
+    mpc_param_file: ""
+    tso_param_file: ""
+    wheelbase_m: 2.75
+    publish_delay_s: 0.078
+    localization_lag_s: 0.03
+    ctrl_period_s: 0.03

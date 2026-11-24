@@ -323,7 +323,8 @@ behind an end-to-end planner:
   `enable_velocity_lookahead_feedback: false`, its PID and feedforward), within the
   acceleration and jerk limits.
 - **Lateral.** Pure pursuit on the plan's points, with an integral trim on the
-  measured yaw rate.
+  measured yaw rate -- or, with `driver.lateral.controller: mpc`, Autoware's TSO and
+  MPC (below).
 - **Vehicle interface.** The asked acceleration becomes pedals through the ego's
   powertrain model, read from its CARLA physics control, as Autoware's
   `raw_vehicle_cmd_converter` does with its accel and brake maps. The model lets a
@@ -379,6 +380,58 @@ on the speed it has the ego at *now* and a pull towards where it has it (`speed_
 `speed_ki`, `integral_limit`, `position_gain`, `max_position_correction_mps`,
 `speed_preview_s`, `stop_distance_m`); `RoutingAction` in `follow` mode drives timed
 trajectories with it. Those keys are ignored, with a warning, for `pid`.
+
+### Autoware's lateral chain: `driver.lateral`
+
+`driver.lateral.controller: mpc` steers the plan the way the X2 does behind an
+end-to-end planner, and the way tier4/OnePlanner's closed-loop replay emulates it
+(`projects/resworld/closed_loop_control_chain`): `driver/autoware_lateral.py` ports
+that chain's software half, so a policy sees the same controller in CARLA as in the
+replay.
+
+```text
+the policy's plan (an ego point at its stamp first, as the e2e node publishes it)
+  -> TrajectoryTimeSequenceRawOptimizer (trajectory_optimizer: tso): the plan
+     re-solved as an OCP from the ego's measured speed, tire angle and
+     acceleration at the stamp; warm start, temporal consistency, the previous
+     trajectory on a failed solve, the steer hold of a stopped ego
+  -> published publish_delay_s (0.078 s) after its stamp
+  -> autoware_mpc_lateral_controller, temporal mode, every ctrl_period_s (0.03 s),
+     with the node's stop handling, on a localization localization_lag_s (0.03 s)
+     behind the ego, and the ego's measured tire angle (CARLA's front wheels)
+  -> the tire angle, through `control`'s steering map to CARLA's steer
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `controller` | `pure_pursuit` | `pure_pursuit`: `control`'s pure pursuit, the rest unread. `mpc`: this chain |
+| `trajectory_optimizer` | `tso` | `tso` or `none` (the plan published as the node publishes it) |
+| `mpc_param_file` | `""` | The MPC's ROS parameter file; empty: the bundled X2 file (`driver/params/mpc.param.yaml`) |
+| `tso_param_file` | `""` | The TSO's; empty: the bundled X2 file (`driver/params/tso.param.yaml`) |
+| `wheelbase_m` | `2.75` | The wheelbase the MPC and the TSO model (JPNTAXI's vehicle_info) |
+| `publish_delay_s` | `0.078` | Stamp to `/planning/trajectory` (`PLANT_PUB_S`) |
+| `localization_lag_s` | `0.03` | The EKF pose behind the vehicle (`PLANT_EKF_LAG_S`) |
+| `ctrl_period_s` | `0.03` | The MPC's period |
+| `mpc_companion` | `true` | `MPC_COMPANION=1`: no steer hold on stop, no confidence slew limit |
+| `tso_v0_from_ego` | `true` | `TSO_V0=ego` |
+| `tso_upstream_semantics` | `true` | `TSO_SEMANTICS=upstream` |
+| `tso_bounds` | `true` | `TSO_BOUNDS=1` |
+| `tso_t0_point` | `true` | `OPT_T0=1` |
+
+The defaults are the replay README's command line. The longitudinal controller is
+still `control`'s `autoware_pid_longitudinal_controller` port; it follows the
+published trajectory -- the TSO's, on the TSO's own speeds and accelerations -- as
+Autoware's does. Where the chain differs from the replay:
+
+- The steering actuator and the yaw response are CARLA's vehicle physics, not the
+  replay's identified X2 plant (`PLANT_SCHED`, `PLANT_CENTRE`, `PLANT_FRICTION`,
+  `PLANT_YAW`); the MPC's command reaches CARLA through `control`'s steering map
+  (`max_steer_angle_deg`, `steer_exponent`).
+- The MPC ticks on its own 0.03 s clock, but CARLA steps every 0.05 s: a step runs
+  the ticks that fell due within it, all on the pose at the step.
+- The localization lag delays only what the controller reads; the policy is told
+  the ego's own pose.
+- The TSO's goal steer-zero mode is left out: the chain is not given the route goal.
 
 ### Warming up a policy
 

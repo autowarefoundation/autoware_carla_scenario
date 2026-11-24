@@ -318,7 +318,8 @@ class EgoVehicle:
 # scenario ("LLVM: error: value doesn't match function result type").
 class CarlaDriverEntity:
     def __init__(self, config=None, control_config=None, client=None, *_kw, bridge=None,
-                 bridge_config=None, launcher=None, episode_name: str = ""):
+                 bridge_config=None, launcher=None, episode_name: str = "",
+                 lateral_config=None):
         compile_error("CarlaDriverEntity is not modelled: the static check cannot "
                       "build one (typecheck/codon/autoware_carla_scenario/entity.codon)")
 

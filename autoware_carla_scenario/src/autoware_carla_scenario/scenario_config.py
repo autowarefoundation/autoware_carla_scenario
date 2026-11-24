@@ -49,6 +49,7 @@ __all__ = [
     "DriverCameraSpec",
     "DriverLidarSpec",
     "DriverControlSpec",
+    "DriverLateralSpec",
     "DriverConfig",
     "SweepConfig",
     # Re-exported from `traffic.config` so that a scenario package importing
@@ -446,6 +447,33 @@ class DriverLidarSpec:
 
 
 @dataclass
+class DriverLateralSpec:
+    """The lateral control chain that steers the policy's plan (``driver.lateral``).
+
+    Mirrors :class:`~autoware_carla_scenario.driver.autoware_lateral.LateralChainConfig`;
+    see that class for the meaning of each field.  ``controller: pure_pursuit`` (the
+    default) leaves the steering to :class:`DriverControlSpec`'s pure pursuit;
+    ``controller: mpc`` puts Autoware's chain -- the TSO, the publish delay and the
+    MPC lateral controller, with the X2's parameters by default -- between the plan
+    and the steering, as tier4/OnePlanner's closed-loop replay does.
+    """
+
+    controller: str = "pure_pursuit"
+    trajectory_optimizer: str = "tso"
+    mpc_param_file: str = ""
+    tso_param_file: str = ""
+    wheelbase_m: float = 2.75
+    publish_delay_s: float = 0.078
+    localization_lag_s: float = 0.03
+    ctrl_period_s: float = 0.03
+    mpc_companion: bool = True
+    tso_v0_from_ego: bool = True
+    tso_upstream_semantics: bool = True
+    tso_bounds: bool = True
+    tso_t0_point: bool = True
+
+
+@dataclass
 class DriverControlSpec:
     """Gains for the controller that tracks the policy's plan.
 
@@ -677,6 +705,9 @@ class DriverConfig:
 
     #: Trajectory-following gains.
     control: DriverControlSpec = field(default_factory=DriverControlSpec)
+
+    #: The lateral control chain (pure pursuit, or Autoware's TSO and MPC).
+    lateral: DriverLateralSpec = field(default_factory=DriverLateralSpec)
 
 
 # ---------------------------------------------------------------------------
