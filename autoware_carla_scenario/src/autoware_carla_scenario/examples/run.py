@@ -3250,6 +3250,8 @@ def run_batch(
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
+    # The commit a branch resolved to, for the batch's crash reports (#2460).
+    crash_report.note_run(map_paths=map_paths)
 
     # Each case's file stem, given before it runs and recorded in the summary
     # (#1957): a batch resumed into its own directory keeps those of the
@@ -4372,6 +4374,9 @@ def _run_scenario(
     check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     map_paths = resolve_map_paths(cfg.map)
+    # The commit a branch resolved to and the scenario's package, for the
+    # run's crash reports (#2460).
+    crash_report.note_run(map_paths=map_paths, scenario=scenario)
     cooldown = _cooldown_seconds(cfg)
     cooldown_max_retries = _queue_retries(cfg)
     world_reset, reload_every = world_reset_settings(cfg)

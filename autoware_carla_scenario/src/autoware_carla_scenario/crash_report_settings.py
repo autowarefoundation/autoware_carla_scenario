@@ -6,8 +6,10 @@ the items a report can hold (:data:`ITEMS`), the :class:`Settings` read from
 them and the parsers of their values (a list of items, a size, a count), the
 cut of a file to the size limit (:func:`_truncate`), a name made safe for a
 file (:func:`_safe_name`), the environment variables a report keeps
-(:data:`_ENV_PATTERNS`), and the command and script that run a crashed case
-again (:func:`repro_command`, :func:`repro_script`, #2364).
+(:data:`_ENV_PATTERNS`) and those ``repro.sh`` exports of them
+(:func:`repro_environment`, #2460), and the command and script that run a
+crashed case again (:func:`repro_command`, :func:`pin_map_source`,
+:func:`repro_script`, #2364).
 
 Split out of :mod:`.crash_report`, which re-exports every name moved here and
 keeps what reads the environment (``read_settings()``) and writes and sends
@@ -183,6 +185,45 @@ _ENV_PATTERNS = (
 )
 
 
+#: Variables the framework sets for the processes of a run (a forked case of
+#: the lanelet sweeper, the runs a batch starts), never the user's:
+#: ``repro.sh`` does not export them, so that a case run again decides them
+#: again (``sweeper.isolation.SWEEPER_OWNS_RETRIES_ENV``,
+#: ``heavy_metrics.HEAVY_METRICS_DECIDED_ENV``; #2460).
+_FRAMEWORK_ENV_NAMES = (
+    "AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES",
+    "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED",
+)
+#: Variables a SLURM task's are not the user's: the static check its worker
+#: turns off (``typecheck.mode.TYPECHECK_ENV``, checked by the submitting
+#: process) and the GPUs SLURM gave the task.  ``repro.sh`` of a report
+#: written in a SLURM task does not export them (#2460).
+_SLURM_TASK_ENV_NAMES = ("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "CUDA_VISIBLE_DEVICES")
+#: The prefix of the variables SLURM sets for a job: its port slot and log
+#: names, stale in a run again elsewhere (#2460).
+_SLURM_ENV_PREFIX = "SLURM_"
+
+
+def repro_environment(env: dict[str, str]) -> dict[str, str]:
+    """What of the kept environment *env* ``repro.sh`` exports: not
+    ``SLURM_*`` nor what the framework sets (:data:`_FRAMEWORK_ENV_NAMES`),
+    nor, from a SLURM task (*env* holds ``SLURM_*``), the variables its
+    worker and SLURM set (:data:`_SLURM_TASK_ENV_NAMES`).  ``context.json``
+    keeps them all."""
+    in_slurm = False
+    for name in env:
+        if name.startswith(_SLURM_ENV_PREFIX):
+            in_slurm = True
+    kept: dict[str, str] = {}
+    for name, value in env.items():
+        if name.startswith(_SLURM_ENV_PREFIX) or name in _FRAMEWORK_ENV_NAMES:
+            continue
+        if in_slurm and name in _SLURM_TASK_ENV_NAMES:
+            continue
+        kept[name] = value
+    return kept
+
+
 def _safe_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("._") or "file"
 
@@ -195,6 +236,32 @@ def repro_command(argv: list[str], overrides: Optional[list[str]]) -> list[str]:
     # Overrides are the `scenario` CLI's, whatever runs them here (a SLURM
     # task's worker, a script calling main()).
     return ["scenario"] + overrides
+
+
+#: The key of the override that names the map's source.
+_MAP_SOURCE_KEY = "map.source"
+
+
+def pin_map_source(command: list[str], uri: str) -> list[str]:
+    """*command* (:func:`repro_command` of a case's overrides) reading the
+    map from *uri*, its source pinned to the commit it resolved to: every
+    ``map.source`` override of it (``+``/``++`` ones too) replaced by one
+    ``map.source=<uri>``, or that one added (#2460).  The value is quoted
+    for Hydra, as a URI with ``@`` and ``#`` must be."""
+    quote = "'" if "'" not in uri else '"'
+    pinned = f"{_MAP_SOURCE_KEY}={quote}{uri}{quote}"
+    kept: list[str] = []
+    placed = False
+    for i, arg in enumerate(command):
+        name = arg.lstrip("+~").partition("=")[0]
+        if i == 0 or name != _MAP_SOURCE_KEY:
+            kept.append(arg)
+        elif not placed:
+            kept.append(pinned)
+            placed = True
+    if not placed:
+        kept.append(pinned)
+    return kept
 
 
 def repro_overrides(scenario: str, overrides: list[str]) -> list[str]:
@@ -210,19 +277,27 @@ def repro_overrides(scenario: str, overrides: list[str]) -> list[str]:
 
 
 def repro_script(
-    argv: list[str], cwd: str, env: dict[str, str], command: list[str]
+    argv: list[str],
+    cwd: str,
+    env: dict[str, str],
+    command: list[str],
+    notes: Optional[list[str]] = None,
 ) -> bytes:
-    """``repro.sh``: from *cwd*, with the kept environment *env*, run
-    *command* (:func:`repro_command`), naming the original command line
-    *argv* in a comment: each of its lines a comment line, so that an
-    argument holding a newline does not end the comment."""
+    """``repro.sh``: from *cwd*, with the environment *env*
+    (:func:`repro_environment`), run *command* (:func:`repro_command`),
+    naming the original command line *argv* and each of *notes* in a
+    comment: each of their lines a comment line, so that an argument
+    holding a newline does not end the comment."""
     command_line = "\n# ".join(shlex.join(argv).split("\n"))
     lines = [
         "#!/bin/sh",
         "# Runs the case this crash report comes from again.",
         f"# Command line: {command_line}",
-        f"cd {shlex.quote(cwd)} || exit 1",
     ]
+    if notes is not None:
+        for note in notes:
+            lines.append("# " + "\n# ".join(note.split("\n")))
+    lines.append(f"cd {shlex.quote(cwd)} || exit 1")
     for name, value in env.items():
         lines.append(f"export {name}={shlex.quote(value)}")
     lines.append(f'exec {shlex.join(command)} "$@"')
