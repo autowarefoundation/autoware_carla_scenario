@@ -3389,8 +3389,24 @@ and emit, per match:</p>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>scenario.route.case_count=4                             # cases on this map, for the gate
 </code></pre></div>
 <p>A match the ego cannot be placed on (spawn past the end, goal not ahead of the
-spawn) is skipped and logged. The exported Hydra config declares every
-<code>scenario.route.*</code> key, empty, so struct mode accepts them.
+spawn) is skipped and logged. So is a match that holds a value <code>sweep.exclude</code>
+names: on the spawn or goal lanelet, or on any lanelet of
+<code>scenario.route.lanelet_ids</code> (a list key is excluded when any one of its
+elements is named). Neither is counted in <code>scenario.route.case_count</code>. The
+export writes the map's exclusion list for those three keys, so a logical
+scenario does not spawn on, drive through or end on a lanelet CARLA does not
+draw:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">sweep</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">route</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">...</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">exclude</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">ego.spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${map.no_3d_model_lanelet_ids}</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">ego.goal_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${map.no_3d_model_lanelet_ids}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="nt">scenario.route.lanelet_ids</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${map.no_3d_model_lanelet_ids}</span>
+</code></pre></div>
+<p>A route search places the ego itself and derives nothing from a pick, so
+<code>sweep.bindings</code> beside <code>sweep.route</code> is refused, as <code>sweep.constraints</code> is.
+The exported Hydra config declares every <code>scenario.route.*</code> key, empty, so
+struct mode accepts them.
 So after changing the route search of an exported package's document,
 re-export the package: until then an expansion still enumerates the old
 pattern's matches, while an unexpanded run (below) searches with the new one.</p>
@@ -3421,20 +3437,20 @@ and how consistently the ego drives the pattern. Each run records what the
 gate needs (<code>{stem}_gate.json</code>) and <code>scenario-gate</code> judges it afterwards: see
 <a href="../gate/">Gates for Logical Scenarios</a>.</p>
 <h2 id="python-api">Python API<a class="headerlink" href="#python-api" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">RouteLanePose</span><span class="p">,</span> <span class="n">RouteOppositePose</span><span class="p">,</span> <span class="n">RouteCrossingPose</span><span class="p">,</span> <span class="n">RouteCrosswalkPose</span><span class="p">,</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">RouteRoadsidePose</span><span class="p">,</span> <span class="n">RouteProgressCondition</span><span class="p">,</span> <span class="n">RoutingAction</span><span class="p">,</span> <span class="n">RoutingMode</span><span class="p">,</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">parse_route_search</span><span class="p">,</span> <span class="n">RouteMatch</span><span class="p">,</span> <span class="n">set_scenario_route</span><span class="p">,</span> <span class="n">scenario_route</span><span class="p">,</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="p">)</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.search</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_route_matches</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.frame</span><span class="w"> </span><span class="kn">import</span> <span class="n">RouteFrame</span><span class="p">,</span> <span class="n">ego_placement</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.positions</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_route_pose</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">parse_route_search</span><span class="p">({</span><span class="s2">"segments"</span><span class="p">:</span> <span class="p">[</span><span class="o">...</span><span class="p">]})</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="n">matches</span> <span class="o">=</span> <span class="n">find_route_matches</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="p">,</span> <span class="n">routing_graph</span><span class="p">)</span>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="n">set_scenario_route</span><span class="p">(</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>          <span class="c1"># laid on the loaded map when first used</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">RouteLanePose</span><span class="p">,</span> <span class="n">RouteOppositePose</span><span class="p">,</span> <span class="n">RouteCrossingPose</span><span class="p">,</span> <span class="n">RouteCrosswalkPose</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">RouteRoadsidePose</span><span class="p">,</span> <span class="n">RouteProgressCondition</span><span class="p">,</span> <span class="n">RoutingAction</span><span class="p">,</span> <span class="n">RoutingMode</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">parse_route_search</span><span class="p">,</span> <span class="n">RouteMatch</span><span class="p">,</span> <span class="n">set_scenario_route</span><span class="p">,</span> <span class="n">scenario_route</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.search</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_route_matches</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.frame</span><span class="w"> </span><span class="kn">import</span> <span class="n">RouteFrame</span><span class="p">,</span> <span class="n">ego_placement</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.route.positions</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_route_pose</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">parse_route_search</span><span class="p">({</span><span class="s2">"segments"</span><span class="p">:</span> <span class="p">[</span><span class="o">...</span><span class="p">]})</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="n">matches</span> <span class="o">=</span> <span class="n">find_route_matches</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">lanelet_map</span><span class="p">,</span> <span class="n">routing_graph</span><span class="p">)</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="n">set_scenario_route</span><span class="p">(</span><span class="n">matches</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>          <span class="c1"># laid on the loaded map when first used</span>
 </code></pre></div>
 <p>Every name imported from the top-level package is mirrored in the Codon model,
 so a hand-written scenario using them passes the <a href="../typecheck/">static check</a>.</p>
@@ -3479,7 +3495,7 @@ so a hand-written scenario using them passes the <a href="../typecheck/">static 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 18:07:59 UTC"><span class="timeago" datetime="2026-11-24T18:07:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 18:07:59 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 20:13:42 UTC"><span class="timeago" datetime="2026-11-24T20:13:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 20:13:42 UTC">2026-11-24</span>
   </span>
 
     

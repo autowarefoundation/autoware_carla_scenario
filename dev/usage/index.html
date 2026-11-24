@@ -4522,6 +4522,14 @@ draw:</p>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">exclude</span><span class="p">:</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">ego.spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${map.no_3d_model_lanelet_ids}</span>
 </code></pre></div>
+<p>A key whose value is a list -- the lanelets a <code>route_through</code> binding writes to
+<code>scenario.expected_route_lanelet_ids</code>, say -- drops a case when any one of its
+elements is listed, or when the whole list is (<code>[[6, 7]]</code> names the list
+<code>[6,7]</code>). So <code>scenario.expected_route_lanelet_ids:
+${map.no_3d_model_lanelet_ids}</code> drops a route through a lanelet CARLA does not
+draw. A route search (<code>sweep.route</code>, <a href="../logical_scenarios/">Logical Scenarios from Routes</a>)
+honours <code>sweep.exclude</code> too, on the spawn and goal it places and on
+<code>scenario.route.lanelet_ids</code>, before it counts its cases.</p>
 <p>A <code>route_through</code> binding gives the pick and the <code>depth</code> lanelets after it.
 Where the graph forks, it follows the lowest id. With <code>through_junction: true</code>
 it keeps going while the route's last lanelet is still in a junction, so a turn
@@ -7659,7 +7667,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 19:06:35 UTC"><span class="timeago" datetime="2026-11-24T19:06:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 19:06:35 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 20:13:42 UTC"><span class="timeago" datetime="2026-11-24T20:13:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 20:13:42 UTC">2026-11-24</span>
   </span>
 
     
