@@ -151,9 +151,6 @@ class RouteFrame:
     def reference(self, s: float) -> Tuple[float, float, float]:
         raise NotImplementedError()
 
-    def lanelet_at(self, s: float) -> lanelet2.core.Lanelet:
-        raise NotImplementedError()
-
     def junction_way(self, index: int) -> Tuple[List[lanelet2.core.ConstLanelet],
                                                 Optional[lanelet2.core.ConstLanelet],
                                                 Optional[lanelet2.core.ConstLanelet]]:

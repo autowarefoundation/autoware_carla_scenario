@@ -1306,3 +1306,72 @@ def test_main_shuts_rclpy_down_when_the_node_cannot_be_made(
     with pytest.raises(RuntimeError, match="no node"):
         node_module.main()
     assert record == ["init", "rclpy.shutdown"]
+
+
+# ---------------------------------------------------------------------------
+# #2405: the node ends with the shell that started the stack
+# ---------------------------------------------------------------------------
+
+
+def test_a_process_is_alive_until_it_has_ended(node_module: types.ModuleType) -> None:
+    import os
+    import subprocess
+
+    assert node_module._process_alive(os.getpid())  # noqa: SLF001
+    child = subprocess.Popen(["true"])
+    child.wait()  # reaped: its pid names no process now
+    assert not node_module._process_alive(child.pid)  # noqa: SLF001
+
+
+def test_a_process_of_another_user_is_alive(
+    node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def kill(pid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(node_module.os, "kill", kill)
+    assert node_module._process_alive(1)  # noqa: SLF001
+
+
+def test_a_node_without_a_parent_pid_watches_none(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    node = _node(node_module, bridge)
+    assert not any(
+        t.callback == node._watch_parent  # noqa: SLF001
+        for t in node.timers
+    )
+
+
+def test_the_node_shuts_down_once_its_parent_is_gone(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutdowns: list[bool] = []
+    monkeypatch.setattr(
+        node_module.rclpy, "try_shutdown", lambda: shutdowns.append(True), raising=False
+    )
+    alive = {"value": True}
+    checked: list[int] = []
+
+    def process_alive(pid: int) -> bool:
+        checked.append(pid)
+        return alive["value"]
+
+    monkeypatch.setattr(node_module, "_process_alive", process_alive)
+    node = _node(node_module, bridge, parent_pid=4321)
+    (watch,) = [t for t in node.timers if t.callback == node._watch_parent]  # noqa: SLF001
+    assert watch.period == node_module._PARENT_WATCH_PERIOD_S  # noqa: SLF001
+    assert watch.clock.clock_type == "steady"
+
+    watch.callback()
+    assert checked == [4321]
+    assert shutdowns == []
+    assert not watch.cancelled
+
+    alive["value"] = False
+    watch.callback()
+    assert shutdowns == [True]
+    assert watch.cancelled
+    assert any("4321" in message for _, message in node.logger.records)

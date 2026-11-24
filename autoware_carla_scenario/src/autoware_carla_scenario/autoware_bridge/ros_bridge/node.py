@@ -56,6 +56,12 @@ Throughout the run it also forwards Autoware's turn-indicator command
 ``ReportTurnIndicators`` whenever it changes, so the framework lights the CARLA
 ego's indicators, which its scenarios read; an empty topic turns that off.
 
+Given a ``parent_pid`` (the launcher passes the pid of the shell that starts
+the stack, which ``exec``s ``ros2 launch``), it shuts itself down once that
+process is gone.  Started in the background with ``(... &)``, it is not the
+stack's child, and nothing else would end it when the run that started the
+stack is killed outright (#2405).
+
 The startup runs as an **idempotent reconciliation loop**: a periodic tick (and
 every AD API state change) re-drives whichever step is still outstanding, so a
 step that cannot complete yet -- the AD API services are not up, the mission
@@ -70,6 +76,7 @@ bridge; it stays on ROS 2 topics and direct CARLA control in the interface node.
 from __future__ import annotations
 
 from functools import partial
+import os
 import threading
 import time
 from typing import Optional
@@ -119,6 +126,23 @@ _INITIAL_POSE_COVARIANCE = [0.0] * 36
 _INITIAL_POSE_COVARIANCE[0] = 0.25  # x
 _INITIAL_POSE_COVARIANCE[7] = 0.25  # y
 _INITIAL_POSE_COVARIANCE[35] = 0.06853891909122467  # yaw
+
+#: How often, in wall-clock seconds, the node checks that ``parent_pid`` lives.
+_PARENT_WATCH_PERIOD_S = 1.0
+
+
+def _process_alive(pid: int) -> bool:
+    """Whether process *pid* still exists.
+
+    One that exists but is not this user's (``PermissionError``) is alive.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _to_ros_pose(pose: pb2.Pose) -> Pose:
@@ -257,6 +281,13 @@ class ScenarioBridgeNode(Node):
         # not up yet is retried; it stops only after readiness is reported.
         self._tick_timer = self._steady_timer(tick_period_s, self._tick)
 
+        # Ends the node with the shell that started the stack (#2405).
+        self._parent_watch_timer = None
+        if self._parent_pid > 0:
+            self._parent_watch_timer = self._steady_timer(
+                _PARENT_WATCH_PERIOD_S, self._watch_parent
+            )
+
         self.get_logger().info(
             f"scenario_bridge dialling scenario server at {self._bridge_address} "
             f"(auto_engage={self._auto_engage})"
@@ -339,6 +370,11 @@ class ScenarioBridgeNode(Node):
             self.declare_parameter("reroute_max_attempts", 10)
             .get_parameter_value()
             .integer_value
+        )
+        # The process the node lives as long as: the shell that starts the
+        # stack.  0 (or less) watches none.
+        self._parent_pid = (
+            self.declare_parameter("parent_pid", 0).get_parameter_value().integer_value
         )
         return (
             self.declare_parameter("tick_period_s", 0.5)
@@ -455,11 +491,25 @@ class ScenarioBridgeNode(Node):
                 self._route_watch_period_s, self._watch_route
             )
 
+    def _watch_parent(self) -> None:
+        """Shut down once ``parent_pid`` is gone: the stack it started is."""
+        if _process_alive(self._parent_pid):
+            return
+        if self._parent_watch_timer is not None:
+            self._parent_watch_timer.cancel()
+            self._parent_watch_timer = None
+        self.get_logger().warning(
+            f"process {self._parent_pid}, which started the stack, is gone: "
+            "scenario_bridge shuts down"
+        )
+        # Ends main()'s executor.spin(), which then cleans up.
+        rclpy.try_shutdown()
+
     def _steady_timer(self, period_s: float, callback):  # noqa: ANN001, ANN202
         """A timer on the steady (wall) clock, whatever ``use_sim_time`` says.
 
-        Both timers poll the scenario's gRPC server, which lives in wall-clock
-        time: the scenario judges the stack alive by how long, in wall-clock
+        The tick and the route watch poll the scenario's gRPC server, which
+        lives in wall-clock time (as does the parent watch's one-second check): the scenario judges the stack alive by how long, in wall-clock
         seconds, it has gone without a ``GetMission`` (``liveness_timeout_s``),
         and a world ticking slower than real time -- or stalled between
         ticks -- would otherwise stretch the polls on the ROS clock, which

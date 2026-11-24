@@ -30,6 +30,7 @@ __all__ = [
     "DOUBLE_PARAMETERS",
     "INTEGER_PARAMETERS",
     "MISSION_POLL_TIMEOUT_S",
+    "PARENT_PID_PARAMETER",
     "POSITIVE_PARAMETERS",
     "ROUTE_WATCH_PERIOD_S",
     "bridge_command",
@@ -85,6 +86,12 @@ DOUBLE_PARAMETERS: tuple[str, ...] = (
 #: float is passed as the int (``10``), and any other float refused (#2217).
 INTEGER_PARAMETERS: tuple[str, ...] = ("reroute_max_attempts",)
 
+#: The node's parameter :func:`bridge_command` sets, to the pid of the shell
+#: that starts the stack (``$$``): the node shuts down once that process is
+#: gone, as a node started in the background with ``(... &)`` is no child of
+#: the stack and would otherwise outlive a run killed outright (#2405).
+PARENT_PID_PARAMETER: str = "parent_pid"
+
 #: The double parameters that must be positive: the node waits on, or ticks
 #: at, each.  A NaN, zero or negative one would never let a readiness report
 #: through (``rpc_timeout_s``), expire every startup request as soon as it is
@@ -122,12 +129,18 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
             integer or a string) for a number; a NaN or an infinity for a
             double; one that is not positive for a
             :data:`POSITIVE_PARAMETERS` one; a float that is not a whole
-            number for an integer parameter.
+            number for an integer parameter; any :data:`PARENT_PID_PARAMETER`,
+            which :func:`bridge_command` sets.
     """
     args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
     for name, value in parameters.items():
         if value is None:
             continue
+        if name == PARENT_PID_PARAMETER:
+            raise ValueError(
+                f"{name} is not a bridge parameter to set: the launcher sets it "
+                f"to the pid of the shell that starts the stack, got {value!r}"
+            )
         number = name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS
         if number and (isinstance(value, bool) or not isinstance(value, (int, float))):
             # A bool is passed as ``:=true`` and a string as itself, which
@@ -159,7 +172,13 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
 def bridge_command(
     python_root: str, bridge_address: str, parameters: Mapping[str, Any]
 ) -> str:
-    """A shell command running the node, with *python_root* put on ``PYTHONPATH``."""
+    """A shell command running the node, with *python_root* put on ``PYTHONPATH``.
+
+    The node is given the pid of the shell the command runs in
+    (:data:`PARENT_PID_PARAMETER`, ``$$``, which a ``( ... &)`` subshell
+    expands to its parent's pid) and shuts down once that shell is gone: the
+    ``bash -c`` that ``exec``s ``ros2 launch``, whose pid is the stack's.
+    """
     root = shlex.quote(python_root)
     argv = [
         "python3",
@@ -168,7 +187,16 @@ def bridge_command(
         *bridge_ros_args(bridge_address, parameters),
     ]
     # Concatenated: Codon 0.19 cannot parse `{{` in an f-string.
-    return "PYTHONPATH=" + root + '"${PYTHONPATH:+:$PYTHONPATH}" ' + shlex.join(argv)
+    # `$$` left unquoted, for the shell to expand.
+    return (
+        "PYTHONPATH="
+        + root
+        + '"${PYTHONPATH:+:$PYTHONPATH}" '
+        + shlex.join(argv)
+        + " -p "
+        + PARENT_PID_PARAMETER
+        + ":=$$"
+    )
 
 
 def host_python_root(cache_dir: Path | None = None) -> Path:
