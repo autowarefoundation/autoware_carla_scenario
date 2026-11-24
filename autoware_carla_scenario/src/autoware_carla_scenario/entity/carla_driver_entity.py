@@ -565,6 +565,13 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         """Spawn and attach every configured camera to the ego actor."""
         from ..sensor.carla_camera import CarlaCameraSensor  # noqa: PLC0415
 
+        # An F-theta lens's frames are no pinhole: Rerun gets no camera model
+        # for them rather than a wrong one, as the T4 writer gets the lens's.
+        lenses = {
+            camera.logical_id
+            for camera in self._config.cameras
+            if camera.lens is not None
+        }
         for logical_id, sensor_config in self._client.camera_sensor_configs():
             camera = CarlaCameraSensor(sensor_config)
             camera.attach(world, actor)
@@ -579,6 +586,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                     sensor_config.position_z,
                 ),
                 (sensor_config.roll, sensor_config.pitch, sensor_config.yaw),
+                pinhole=logical_id not in lenses,
             )
         logger.info("Attached %d driver camera(s) to the ego", len(self._cameras))
 

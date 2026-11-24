@@ -25,7 +25,8 @@ Where the data comes from:
   before its step (a LiDAR sweeps once a policy step); the key frame is then
   that tick's, with its ego pose and boxes, as with the recorder's own LiDARs.
   A sweep from before the recording started, or older than the ticks the
-  recorder keeps, is dropped (logged at debug level). A camera frame carries
+  recorder keeps, is dropped (logged at debug level); one taken on the tick
+  the recording starts on is kept, as Rerun's sensor recording keeps it. A camera frame carries
   the tick it was rendered on too (#951). Without a LiDAR, the oldest camera
   frame's tick is the key frame. With one, a camera frame rendered on another
   tick than the sweep (a camera faster than the LiDAR, or on the other ticks
@@ -115,7 +116,7 @@ costs the run's thread about 0.3 ms.
 | `instance`, `sample_annotation` | Each road user, and its box at each key frame, with its velocity and `num_lidar_pts` |
 | `category` | `car`, `truck`, `bus`, `motorcycle`, `bicycle`, `pedestrian` (from the blueprint's `base_type`), with a null `index` |
 | `visibility` | One level, `unavailable`: the boxes are ground truth, their occlusion is not measured |
-| `vehicle_state` | The ego's pedals and steering (in %), its gear and speed, at each key frame |
+| `vehicle_state` | The ego's pedals and steering (in %), its gear and speed, at each key frame (the control and the speed both read on the key frame's tick) |
 | `attribute`, `map` | No attributes; the map record names `map/lanelet2_map.osm` |
 
 A sweep is T4's default layout: `float32` `(x, y, z, intensity, ring = -1)`
@@ -125,8 +126,11 @@ The intensity is on T4's 0-255 scale, as Autoware's point clouds and the
 (`t4.INTENSITY_SCALE`), applied once as the sweep is written, whether the
 recorder's own LiDAR took it or a driver policy's ego fed it.
 Timestamps are Unix microseconds: the wall-clock time the run's clock
-started, plus the simulated time since, so key frames are exactly one policy
-step apart.
+started, plus the simulated time since, so key frames are on the policy-step
+grid, normally one step apart: a slow camera's older frame can pull a
+key frame back onto its own tick (samples 150 and 50 ms apart, see above), and
+a step is no key frame when nothing it took can be written (every fed item
+dropped, or the recorder's own sweep not delivered in time).
 
 ## Frames
 

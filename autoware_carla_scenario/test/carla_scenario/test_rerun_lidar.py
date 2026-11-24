@@ -500,6 +500,24 @@ def test_a_camera_frame_is_drawn_in_its_frustum_on_the_ego(tmp_path: Path) -> No
     recorder.close()
 
 
+def test_a_lens_camera_is_drawn_without_a_pinhole(tmp_path: Path) -> None:
+    """Rerun's camera model is a pinhole alone: an F-theta lens camera gets its
+    mount and its frames, not a pinhole of its ``fov`` that would misplace its
+    frustum and its image (#2452)."""
+    from autoware_carla_scenario.rerun_lidar import CameraMount, SensorRecorder
+
+    sdk = _Sdk()
+    recorder = SensorRecorder(
+        tmp_path / "Run-6.sensors.rrd", "Run-6", 100, sdk=sdk, lidar=False, cameras=True
+    )
+    mount = CameraMount(832, 480, 120.0, (1.5, 0.0, 1.6), pinhole=False)
+    assert recorder.log_camera_frame("wide", 101, b"JPEG1", mount)
+    assert recorder.log_camera_frame("wide", 102, b"JPEG2", mount)
+    kinds = [a.kind for _, _, a in sdk.streams[0].logged]
+    assert kinds == ["transform", "image", "image"]
+    recorder.close()
+
+
 def test_a_converter_records_cameras_without_the_lidar(tmp_path: Path) -> None:
     sdk = _Sdk()
     converter = RerunConverter(converter=_Converter(), cameras=True, lidar_sdk=sdk)

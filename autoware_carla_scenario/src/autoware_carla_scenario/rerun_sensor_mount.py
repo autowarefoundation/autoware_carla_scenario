@@ -72,7 +72,12 @@ def chunk_entities(
 
 class CameraMount:
     """A camera's mount on the ego, as ``driver.cameras`` gives it (CARLA's
-    convention: x forward, y right, z up, degrees), and its image."""
+    convention: x forward, y right, z up, degrees), and its image.
+
+    *pinhole* is whether the image is CARLA's pinhole of *fov*: a camera with
+    an F-theta ``lens`` is not, and Rerun, whose camera model is a pinhole
+    alone, is given no camera model for it rather than a wrong one.
+    """
 
     width: int
     height: int
@@ -81,6 +86,7 @@ class CameraMount:
     roll: float
     pitch: float
     yaw: float
+    pinhole: bool
 
     def __init__(
         self,
@@ -89,12 +95,14 @@ class CameraMount:
         fov: float,
         position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        pinhole: bool = True,
     ) -> None:
         self.width = int(width)
         self.height = int(height)
         self.fov = float(fov)
         self.position = position
         self.roll, self.pitch, self.yaw = rotation_deg
+        self.pinhole = bool(pinhole)
 
     def translation(self) -> list[float]:
         """In the recording's right-handed frame: CARLA's ``y`` negated."""

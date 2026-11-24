@@ -1191,6 +1191,90 @@ def test_a_fed_sweep_from_before_the_recording_is_dropped(
     assert all(s["fileformat"] == "jpg" for s in _table(root, "sample_data"))
 
 
+def test_a_fed_sweep_taken_on_the_start_frame_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The runner starts the recording on the clock's first frame and records
+    from the tick after it: a sweep taken on the start frame, fed on the next
+    tick, is the first key frame's, on the start frame's pose (#2452)."""
+    world = _World()
+    jpeg = _jpeg()
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    with caplog.at_level("DEBUG", logger=t4.logger.name):
+        # No record() on frame 100, as in the runner.
+        for frame in range(101, 106):
+            world.frame = frame
+            if frame % 2 == 1:
+                recording.feed_lidar(
+                    frame,
+                    np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                    taken_on=frame - 1,
+                )
+                recording.feed_camera_jpeg(frame, "cam_front", jpeg)
+            recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    assert "no snapshot" not in caplog.text
+    poses = sorted(_table(root, "ego_pose"), key=lambda p: p["timestamp"])
+    assert len(poses) == 3
+    np.testing.assert_allclose(
+        poses[0]["translation"][0], world.ego_x(100) - 1.25 + OFFSETS[0], atol=1e-9
+    )
+    lidar = [s for s in _table(root, "sample_data") if s["fileformat"] != "jpg"]
+    assert len(lidar) == 3
+
+
+class _SteeringActor(_Actor):
+    """An ego whose control changes every tick: its throttle is the frame's
+    hundredth part past frame 100."""
+
+    def __init__(self, world: "_World") -> None:
+        super().__init__(
+            1, "vehicle.lincoln.mkz", (2.4, 1.0, 0.75), {"role_name": "ego"}
+        )
+        self._world = world
+
+    def get_control(self) -> SimpleNamespace:
+        throttle = 0.01 * (self._world.frame - 100)
+        return SimpleNamespace(throttle=throttle, brake=0.0, steer=0.0, reverse=False)
+
+
+def test_vehicle_state_is_the_key_frames_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key frame from a tick before it is written has the pedals of its own
+    tick, as its speed and pose are, not the ego's control when it is written
+    (#2452)."""
+    world = _World()
+    world.ego = _SteeringActor(world)
+    world.actors[1] = world.ego
+    t4.offer_driver_sensors(-1.25)
+    try:
+        recording = _start(tmp_path, monkeypatch, world)
+    finally:
+        t4.withdraw_driver_sensors()
+    for frame in range(101, 108):
+        world.frame = frame
+        if frame % 2 == 1:
+            recording.feed_lidar(
+                frame,
+                np.array([[11.25, -3.5, 0.7, 0.9]], dtype=np.float32),
+                taken_on=frame - 1,
+            )
+        recording.record(world)  # type: ignore[arg-type]
+    root = recording.close()
+    assert root is not None
+    states = sorted(_table(root, "vehicle_state"), key=lambda v: v["timestamp"])
+    # Key frames 100, 102, 104 and 106, written on frames 101, 103, 105, 107.
+    assert [state["accel_pedal"] for state in states] == pytest.approx(
+        [0.0, 2.0, 4.0, 6.0]
+    )
+
+
 def test_a_sweep_fed_again_after_its_key_frame_is_not_new(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -339,8 +339,13 @@ class T4Recording:
         self._walkers = WalkerVelocities()
         #: World snapshots of the last ticks, by frame: a sweep (the recorder's
         #: own LiDARs', or one a driver entity feeds) can be from a tick before
-        #: it is read on.
+        #: it is read on.  The start frame's is kept from the start: the
+        #: first :meth:`record` is the tick after it, whose sweep can be the
+        #: start frame's.
         self._snapshots: dict[int, Any] = {}
+        #: The ego's control on each of those frames, pruned with them: a
+        #: key frame's ``vehicle_state`` is that frame's, as its speed is.
+        self._controls: dict[int, Any] = {}
         self._last_frame = -1
         #: The frame each fed camera's frame written last was rendered on, by
         #: logical id: a camera slower than the policy hands it that frame
@@ -360,6 +365,9 @@ class T4Recording:
         self._fed: Optional[
             tuple[int, list[tuple[int, Any]], list[tuple[int, str, bytes]]]
         ] = None
+        # The start frame's world, which no record() call is made on: a sweep
+        # taken on it (fed on the next tick) is the first key frame's.
+        self._keep_tick(world.get_snapshot())
 
         with _lock:
             driver_rear_axle = _driver_rear_axle
@@ -612,13 +620,23 @@ class T4Recording:
             logger.exception("T4 dataset: recording stopped (%s)", self.path)
             self._active = False
 
-    def _record(self, world: "carla.World") -> None:
-        snapshot = world.get_snapshot()
+    def _keep_tick(self, snapshot: Any) -> int:
+        """Keep *snapshot* and the ego's control on its frame, drop those
+        older than two intervals, and return the frame."""
         frame = int(snapshot.frame)
         self._snapshots[frame] = snapshot
+        try:
+            self._controls[frame] = self._ego.get_control()
+        except Exception:  # noqa: BLE001 - a gone ego has none
+            self._controls.pop(frame, None)
         horizon = frame - 2 * self._settings.interval_ticks
         for old in [f for f in self._snapshots if f < horizon]:
             del self._snapshots[old]
+            self._controls.pop(old, None)
+        return frame
+
+    def _record(self, world: "carla.World") -> None:
+        frame = self._keep_tick(world.get_snapshot())
         if self.fed_by_driver:
             self._record_fed(world, frame)
             return
@@ -815,7 +833,9 @@ class T4Recording:
                     )
             for channel, image in raw_frames:
                 writer.add_camera(channel, image, "bgra")
-            self._vehicle_state(float(np.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)))
+            self._vehicle_state(
+                frame, float(np.sqrt(v.x * v.x + v.y * v.y + v.z * v.z))
+            )
         finally:
             writer.end_frame()
 
@@ -892,11 +912,18 @@ class T4Recording:
         )
         return True
 
-    def _vehicle_state(self, speed: float) -> None:
-        try:
-            control = self._ego.get_control()
-        except Exception:  # noqa: BLE001 - a gone ego has none
-            return
+    def _vehicle_state(self, frame: int, speed: float) -> None:
+        """The ego's pedals and steering on key frame *frame*, beside its
+        *speed* there."""
+        control = self._controls.get(frame)
+        if control is None:
+            # Every written key frame has its snapshot, so its control too,
+            # unless reading it failed then; the live control is the closest
+            # left (a tick or two late), and none at all for a gone ego.
+            try:
+                control = self._ego.get_control()
+            except Exception:  # noqa: BLE001 - a gone ego has none
+                return
         self._writer.add_vehicle_state(
             accel_pedal=100.0 * float(control.throttle),
             brake_pedal=100.0 * float(control.brake),
@@ -932,6 +959,7 @@ class T4Recording:
         self._active = False
         self._destroy_sensors()
         self._snapshots = {}
+        self._controls = {}
         self._fed = None
         self._walkers.clear()
         try:
