@@ -503,8 +503,19 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                     # so it takes the magnitude.
                     self._note_negative_jerk(control_jerk)
                     jerk_mps3 = -control_jerk
-        # The arbiter took only finite commands (command_is_finite), so CARLA
-        # is never handed a NaN steering or speed.
+        # The arbiter took only finite commands (command_is_finite), but a
+        # finite steer_accel command can still overflow its target speed
+        # (``speed + acceleration * speed_horizon_s``) to infinity: CARLA would
+        # take that as given, so the ego brakes instead.
+        if not (
+            math.isfinite(steer_rad)
+            and math.isfinite(speed_mps)
+            and math.isfinite(acceleration_mps2)
+            and math.isfinite(jerk_mps3)
+        ):
+            self._refuse_non_finite(source.name)
+            actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
+            return
         import typesafe_carla.carla as _carla  # noqa: PLC0415
 
         actor.apply_ackermann_control(

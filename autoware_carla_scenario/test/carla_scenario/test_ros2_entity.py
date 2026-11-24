@@ -579,6 +579,17 @@ def test_a_first_non_finite_steer_accel_command_brakes(bad: SteerAccelCommand) -
     actor.apply_ackermann_control.assert_not_called()
 
 
+def test_a_steer_accel_target_speed_overflowing_to_infinity_brakes() -> None:
+    """A finite acceleration can still overflow ``speed + acceleration *
+    speed_horizon_s``: CARLA must not be handed an infinite target speed."""
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    transport.deliver("vp", SteerAccelCommand(0.1, 1e308))
+    _tick(entity, clock)
+    assert entity.active_source == "vp"
+    assert _last_control(actor).brake == pytest.approx(1.0)
+    actor.apply_ackermann_control.assert_not_called()
+
+
 def test_a_refused_command_does_not_take_over_from_a_lower_priority_source() -> None:
     entity, transport, actor, clock = _started()
     transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
