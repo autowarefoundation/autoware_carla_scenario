@@ -38,7 +38,11 @@ from autoware_carla_scenario.authoring.builders import (
     instantiate_condition,
 )
 from autoware_carla_scenario.authoring.compiler import BuildContext, compile_document
-from autoware_carla_scenario.authoring.hydra_config import build_scenario_config
+from autoware_carla_scenario.authoring.hydra_config import (
+    MAP_EXCLUSION_REF,
+    ROUTE_EXCLUDED_KEYS,
+    build_scenario_config,
+)
 from autoware_carla_scenario.authoring.models import (
     JunctionSegment,
     LaneSegment,
@@ -522,7 +526,11 @@ class TestBuild:
 
     def test_the_hydra_config(self) -> None:
         config = build_scenario_config(_document())
-        assert config["sweep"] == {"route": _document().route.to_sweep_dict()}  # type: ignore[union-attr]
+        assert config["sweep"] == {
+            "route": _document().route.to_sweep_dict(),  # type: ignore[union-attr]
+            # The map's exclusion list, as a constraint would name it (#2454).
+            "exclude": {key: MAP_EXCLUSION_REF for key in ROUTE_EXCLUDED_KEYS},
+        }
         assert config["scenario"]["route"]["lanelet_ids"] == []
         assert "constraints" not in config["sweep"]
         # The keys the expansion writes are declared, so struct mode takes them.

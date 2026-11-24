@@ -215,6 +215,70 @@ class TestExpandSweep:
             ["ego.spawn_lanelet_id=5", "scenario.expected_route_lanelet_ids=[5,6]"]
         ]
 
+    def test_exclude_drops_a_list_holding_one_value_it_names(self, _matching) -> None:
+        # A route_through list is dropped for any lanelet of it the map does
+        # not draw, not only for the whole list (#2454).
+        _matching(
+            [5, 6, 9],
+            {
+                "scenario.expected_route_lanelet_ids": lambda lid,
+                m,
+                g: SimpleNamespace(value=[lid, lid + 1], lanelet_id_override=None)
+            },
+        )
+
+        cases = expand_sweep(
+            {
+                "constraints": {"ego.spawn_lanelet_id": [{}]},
+                "bindings": {"scenario.expected_route_lanelet_ids": {}},
+                "exclude": {"scenario.expected_route_lanelet_ids": [7, 99]},
+            },
+            lanelet_map=object(),
+        )
+
+        assert cases == [
+            ["ego.spawn_lanelet_id=5", "scenario.expected_route_lanelet_ids=[5,6]"],
+            ["ego.spawn_lanelet_id=9", "scenario.expected_route_lanelet_ids=[9,10]"],
+        ]
+
+    def test_each_case_keeps_its_pick_for_the_odd_to_read(
+        self, _matching, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 29 and 30 walk back to 40 and 41: the ODD reads the road on the
+        # picks, not on where the spawn moved to (#2454).  31 walks back onto
+        # 40 too, so its case is 29's and runs once, as 29's.
+        _matching(
+            [29, 30, 31],
+            {
+                "ego.spawn_s": lambda lid, m, g: SimpleNamespace(
+                    value=3.0, lanelet_id_override=40 if lid == 31 else lid + 11
+                )
+            },
+        )
+        sweep = {
+            "constraints": {"ego.spawn_lanelet_id": [{}]},
+            "bindings": {"ego.spawn_s": {}},
+        }
+
+        cases, picks = expand_module._lanelet_cases(sweep, object())
+
+        assert cases == [
+            ["ego.spawn_lanelet_id=40", "ego.spawn_s=3.0"],
+            ["ego.spawn_lanelet_id=41", "ego.spawn_s=3.0"],
+        ]
+        assert picks == [29, 30]
+
+        read: list[list[int | None]] = []
+
+        def _readings(lanelets, definition, lanelet_map):
+            read.append(list(lanelets))
+            raise RuntimeError("read")
+
+        monkeypatch.setattr(expand_module, "_case_readings", _readings)
+        with pytest.raises(RuntimeError, match="read"):
+            expand_sweep({**sweep, "odd_sample": {"count": 2}}, object(), odd="default")
+        assert read == [[29, 30]]
+
     def test_the_ego_walk_back_moves_its_lanelet_when_another_slot_is_swept(
         self, _matching
     ) -> None:

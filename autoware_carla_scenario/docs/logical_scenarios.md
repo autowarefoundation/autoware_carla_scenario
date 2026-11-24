@@ -550,8 +550,27 @@ scenario.route.case_count=4                             # cases on this map, for
 ```
 
 A match the ego cannot be placed on (spawn past the end, goal not ahead of the
-spawn) is skipped and logged. The exported Hydra config declares every
-`scenario.route.*` key, empty, so struct mode accepts them.
+spawn) is skipped and logged. So is a match that holds a value `sweep.exclude`
+names: on the spawn or goal lanelet, or on any lanelet of
+`scenario.route.lanelet_ids` (a list key is excluded when any one of its
+elements is named). Neither is counted in `scenario.route.case_count`. The
+export writes the map's exclusion list for those three keys, so a logical
+scenario does not spawn on, drive through or end on a lanelet CARLA does not
+draw:
+
+```yaml
+sweep:
+  route: {...}
+  exclude:
+    ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
+    ego.goal_lanelet_id: ${map.no_3d_model_lanelet_ids}
+    scenario.route.lanelet_ids: ${map.no_3d_model_lanelet_ids}
+```
+
+A route search places the ego itself and derives nothing from a pick, so
+`sweep.bindings` beside `sweep.route` is refused, as `sweep.constraints` is.
+The exported Hydra config declares every `scenario.route.*` key, empty, so
+struct mode accepts them.
 So after changing the route search of an exported package's document,
 re-export the package: until then an expansion still enumerates the old
 pattern's matches, while an unexpanded run (below) searches with the new one.

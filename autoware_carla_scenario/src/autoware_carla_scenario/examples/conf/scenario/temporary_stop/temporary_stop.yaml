@@ -59,3 +59,9 @@ sweep:
       type: route_through
       depth: 1
       last_only: true
+  # The constraints see the pick, not the lane stop_line_offset walks the
+  # spawn back onto or the goal past the line: keep both off the lanelets
+  # CARLA does not draw.
+  exclude:
+    ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
+    ego.goal_lanelet_id: ${map.no_3d_model_lanelet_ids}

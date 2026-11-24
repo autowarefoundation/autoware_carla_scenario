@@ -156,8 +156,9 @@ def expand_sweep(
 
     Raises:
         ValueError: If ``sweep`` has none of constraints, a route search and
-            ``odd_sample``, or both constraints and a route search, or
-            constraints for more than one target key, or a ``case_index``
+            ``odd_sample``, or both constraints and a route search, or a
+            route search and bindings, or constraints for more than one
+            target key, or a ``case_index``
             that is not a non-negative whole number or is past the cases it
             expands to, or an argument sets a key a drawn case sets.
     """
@@ -176,11 +177,19 @@ def expand_sweep(
                 "sweep has both a route search and constraints; a scenario is "
                 "expanded by one of them"
             )
-        base_cases = expand_route(sweep["route"], lanelet_map)
+        base_cases = expand_route(
+            sweep["route"], lanelet_map, exclude=sweep.get("exclude")
+        )
+        # A route case is on its spawn.
+        lanelets = [_case_lanelet(case) for case in base_cases]
     elif sweep.get("constraints"):
-        base_cases = _expand_lanelets(sweep, lanelet_map)
+        base_cases, picks = _lanelet_cases(sweep, lanelet_map)
+        # A lanelet case is on its pick, wherever a walk-back moved its
+        # spawn (docs/odd.md, "The road a case is on").
+        lanelets = list(picks)
     elif odd_sample:
         base_cases = [[]]
+        lanelets = [None]
     else:
         raise ValueError("sweep.constraints is empty; nothing to expand.")
     if odd_sample and base_cases:
@@ -191,6 +200,7 @@ def expand_sweep(
             controls,
             drawn,
             lanelet_map=lanelet_map if base_cases != [[]] else None,
+            lanelets=lanelets,
             rules=rules,
             environment_rules=environment_rules,
             arguments=[*arguments, *composed],
@@ -211,16 +221,16 @@ _MAP_KNOB_PREFIX = "_odd_map."
 
 
 def _case_readings(
-    base_cases: list[list[str]], definition: Any, lanelet_map: Any
+    lanelets: Sequence[int | None], definition: Any, lanelet_map: Any
 ) -> list[dict[str, tuple[str, Any]]]:
     """Each base case's ``(bucket, value)`` of every attribute the map decides
-    on its lanelet (:func:`~autoware_carla_scenario.odd.route.lanelet_readings`)."""
+    on its lanelet (:func:`~autoware_carla_scenario.odd.route.lanelet_readings`),
+    given by id (*lanelets*: a lanelet case's pick, a route case's spawn)."""
     from ..odd.route import lanelet_readings  # noqa: PLC0415
 
     graph = create_routing_graph(lanelet_map)
     found: list[dict[str, tuple[str, Any]]] = []
-    for case in base_cases:
-        lanelet_id = _case_lanelet(case)
+    for lanelet_id in lanelets:
         if lanelet_id is None:
             found.append({})
             continue
@@ -333,6 +343,7 @@ def _with_odd_samples(
     drawn: OddDraws | None = None,
     *,
     lanelet_map: Any = None,
+    lanelets: Sequence[int | None] | None = None,
     rules: Mapping[str, Any] | None = None,
     environment_rules: Any = None,
     arguments: Sequence[str] = (),
@@ -343,7 +354,10 @@ def _with_odd_samples(
     With *lanelet_map*, the attributes the map decides are drawn as well and
     each case is put on a base case in the buckets drawn (the module
     docstring), so a base case may run more than once, or not at all; without
-    it, the base cases are taken in turn.
+    it, the base cases are taken in turn.  The map reads each base case's
+    lanelet, one of *lanelets* (the constraints' pick, not the lanelet a
+    walk-back moved its spawn to), or, without them, its first
+    ``*lanelet_id`` override (:func:`.case_choice.case_lanelet`).
 
     *arguments* are the run's own overrides: one that sets a key a drawn
     case sets is refused (:func:`_refuse_overridden`); one that sets the grip
@@ -375,7 +389,9 @@ def _with_odd_samples(
     map_attributes: list[str] = []
     if lanelet_map is not None:
         definition = resolve_odd(sample_odd(raw, odd))
-        readings = _case_readings(base_cases, definition, lanelet_map)
+        if lanelets is None:
+            lanelets = [_case_lanelet(case) for case in base_cases]
+        readings = _case_readings(lanelets, definition, lanelet_map)
         buckets = [{a: b for a, (b, _v) in r.items()} for r in readings]
         given = dict(sample_knobs(raw))
         map_knobs = _map_knobs(definition, buckets, given)
@@ -583,12 +599,15 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
     ``sweep.bindings`` maps each key it sets to a binding (a mapping), and
     ``sweep.exclude`` maps each key to a list of values (or null), and
     ``sweep.route`` and ``sweep.odd_sample`` are mappings (or null).
+    A route search derives nothing from a pick, so ``sweep.bindings`` beside
+    ``sweep.route`` is refused rather than silently dropped (#2454).
     Callers run this before loading the map, so a bad config fails at once
     rather than after a clone.
 
     Raises:
         ValueError: If ``sweep.constraints`` has more than one key, or one of
-            those sections is not shaped as above (#1951).
+            those sections is not shaped as above (#1951), or a route search
+            has bindings.
     """
     # Only a missing section or null is empty: [], 0, false or "" is not a
     # mapping (#2134).
@@ -630,6 +649,13 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
                 f"sweep.bindings.{key} must be a binding ({{type: ...}}), got "
                 f"{_shape(binding_cfg)}"
             )
+    if sweep.get("route") and bindings_cfg:
+        raise ValueError(
+            "sweep has both a route search and bindings; a route search "
+            "places the ego itself (ego.spawn_*, ego.goal_*, scenario.route.*) "
+            "and derives nothing from a pick, so drop sweep.bindings "
+            f"({', '.join(str(key) for key in bindings_cfg)})"
+        )
     exclude_cfg = _section(sweep, "exclude")
     if not isinstance(exclude_cfg, Mapping):
         raise ValueError(
@@ -667,10 +693,23 @@ def _shape(value: Any) -> str:
 
 
 def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[str]]:
-    """One override list per lanelet the constraints match, bindings applied.
+    """One override list per lanelet the constraints match, bindings applied
+    (:func:`_lanelet_cases`, without the picks)."""
+    return _lanelet_cases(sweep, lanelet_map)[0]
+
+
+def _lanelet_cases(
+    sweep: Mapping[Any, Any], lanelet_map: Any
+) -> tuple[list[list[str]], list[int]]:
+    """One override list per lanelet the constraints match, bindings applied,
+    and the pick each one is for.
 
     Picks whose cases end the same -- a walk-back moving the target key to
-    the same predecessor -- give that case once, the first pick's (#1950).
+    the same predecessor -- give that case once, the first pick's (#1950),
+    which is the pick it is returned with.  The pick is the lanelet the ODD
+    reads the case's road on (docs/odd.md, "The road a case is on"): a
+    walk-back moves the target key off it, so the case's overrides do not
+    name it (#2454).
 
     *sweep* has passed :func:`check_constraint_keys`.
 
@@ -694,7 +733,7 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
     matched_ids = find_matching_lanelets(constraints, lanelet_map, routing_graph)
     if not matched_ids:
         logger.warning("No lanelets match the given constraints.")
-        return []
+        return [], []
 
     bindings: list[Binding] = [
         parse_binding(key, b_cfg)
@@ -702,6 +741,7 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
     ]
     excluded = _excluded_overrides(sweep)
     cases: list[list[str]] = []
+    case_picks: list[int] = []
     # Each distinct case, by its overrides, and the picks that end as it.
     picks_of: dict[tuple[str, ...], list[int]] = {}
     for lid in matched_ids:
@@ -710,6 +750,9 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
         # write -- a binding's value, or a walk-back moving its spawn's
         # lanelet -- must agree with any other write to the same key.
         values: dict[str, tuple[str, str | None]] = {target_key: (str(lid), None)}
+        # Each key's value as written, for sweep.exclude to read a list's
+        # elements (written in the same order as *values*, so the last wins).
+        raw: dict[str, Any] = {target_key: lid}
         for binding in bindings:
             try:
                 result = binding.resolve(lid, lanelet_map, routing_graph)
@@ -728,25 +771,21 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
                 f"binding {binding.target_key}",
                 lid,
             )
+            raw[binding.target_key] = result.value
             if result.lanelet_id_override is not None:
+                moved = _walk_back_lanelet_key(
+                    binding.target_key, result.lanelet_id_override
+                )
                 _write_override(
                     values,
-                    _walk_back_lanelet_key(
-                        binding.target_key, result.lanelet_id_override
-                    ),
+                    moved,
                     str(result.lanelet_id_override),
                     f"the walk-back of binding {binding.target_key}",
                     lid,
                 )
+                raw[moved] = result.lanelet_id_override
         else:
-            hit = next(
-                (
-                    key
-                    for key, (value, _) in values.items()
-                    if value in excluded.get(key, ())
-                ),
-                None,
-            )
+            hit = _excluded_key(raw, excluded)
             if hit is not None:
                 logger.info(
                     "Lanelet %d's case ends with %s=%s, which sweep.exclude "
@@ -763,6 +802,7 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
             picks = picks_of.setdefault(tuple(case), [])
             if not picks:
                 cases.append(case)
+                case_picks.append(lid)
             picks.append(lid)
     if not cases:
         logger.warning("All lanelets were skipped due to binding failures.")
@@ -775,7 +815,7 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
                 list(case_key),
                 picks[0],
             )
-    return cases
+    return cases, case_picks
 
 
 def _excluded_overrides(sweep: Mapping[Any, Any]) -> dict[str, frozenset[str]]:
@@ -783,7 +823,7 @@ def _excluded_overrides(sweep: Mapping[Any, Any]) -> dict[str, frozenset[str]]:
     hold them (:func:`_override_value`), so a case is checked on what it runs.
 
     Its shape -- a mapping of lists -- is checked by :func:`check_constraint_keys`,
-    which :func:`_expand_lanelets` runs first.
+    which :func:`expand_sweep` runs first.
     """
     return {
         str(key): frozenset(_override_value(v) for v in (values or ()))
@@ -791,8 +831,36 @@ def _excluded_overrides(sweep: Mapping[Any, Any]) -> dict[str, frozenset[str]]:
     }
 
 
+def _excluded_key(
+    values: Mapping[str, Any], excluded: Mapping[str, frozenset[str]]
+) -> str | None:
+    """The first key of a case's *values* (each as written, before it is
+    rendered) that holds a value ``sweep.exclude`` names (*excluded*, from
+    :func:`_excluded_overrides`), or ``None``.
+
+    A list value is excluded when the whole list is named, or any one of its
+    elements: ``scenario.route.lanelet_ids: ${map.no_3d_model_lanelet_ids}``
+    drops a route through a lanelet CARLA does not draw (#2454).
+    """
+    for key, value in values.items():
+        names = excluded.get(key)
+        if not names:
+            continue
+        if _override_value(value) in names:
+            return key
+        if isinstance(value, (list, tuple)) and any(
+            _override_value(element) in names for element in value
+        ):
+            return key
+    return None
+
+
 def expand_route(
-    route: Mapping[str, Any], lanelet_map: Any, arguments: Sequence[str] = ()
+    route: Mapping[str, Any],
+    lanelet_map: Any,
+    arguments: Sequence[str] = (),
+    *,
+    exclude: Mapping[Any, Any] | None = None,
 ) -> list[list[str]]:
     """The override list of every route of ``lanelet_map`` a route search matches.
 
@@ -803,7 +871,9 @@ def expand_route(
     ``ego_goal`` is set, the match as the ``scenario.route.*`` keys, and how
     many cases the search expanded to (``scenario.route.case_count``).  A
     match the ego cannot be placed on is skipped (and logged), and not
-    counted.
+    counted; so is one that holds a value *exclude* (``sweep.exclude``)
+    names on one of those keys -- a spawn or goal lanelet, or a lanelet of
+    ``scenario.route.lanelet_ids`` (any element of a list) -- #2454.
 
     Raises:
         ValueError: If ``route`` is not a well-formed route search.
@@ -818,6 +888,7 @@ def expand_route(
     if not matches:
         logger.warning("No route of the map matches the route search.")
         return []
+    excluded = _excluded_overrides({"exclude": exclude})
     cases: list[list[str]] = []
     for match in matches:
         frame = RouteFrame(match, lanelet_map, routing_graph)
@@ -833,20 +904,27 @@ def expand_route(
                 exc_info=True,
             )
             continue
-        overrides = [
-            f"ego.spawn_lanelet_id={spawn_id}",
-            f"ego.spawn_s={round(spawn_s, 4)}",
-        ]
+        values: dict[str, Any] = {
+            "ego.spawn_lanelet_id": spawn_id,
+            "ego.spawn_s": round(spawn_s, 4),
+        }
         if goal is not None:
-            overrides += [
-                f"ego.goal_lanelet_id={goal[0]}",
-                f"ego.goal_s={round(goal[1], 4)}",
-            ]
-        overrides += [
-            f"scenario.route.{key}={_override_value(value)}"
-            for key, value in match.to_config().items()
-        ]
-        cases.append(overrides)
+            values["ego.goal_lanelet_id"] = goal[0]
+            values["ego.goal_s"] = round(goal[1], 4)
+        for key, value in match.to_config().items():
+            values[f"scenario.route.{key}"] = value
+        hit = _excluded_key(values, excluded)
+        if hit is not None:
+            logger.info(
+                "Route match %d (%s) holds %s=%s, which sweep.exclude names; "
+                "skipping it.",
+                match.index,
+                list(match.lanelet_ids),
+                hit,
+                _override_value(values[hit]),
+            )
+            continue
+        cases.append([f"{key}={_override_value(v)}" for key, v in values.items()])
     # Every case says how many there are on this map: what a logical
     # scenario's gate counts its case coverage against (docs/gate.md).
     count = f"scenario.route.case_count={len(cases)}"

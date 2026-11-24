@@ -468,6 +468,15 @@ sweep:
     ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
 ```
 
+A key whose value is a list -- the lanelets a `route_through` binding writes to
+`scenario.expected_route_lanelet_ids`, say -- drops a case when any one of its
+elements is listed, or when the whole list is (`[[6, 7]]` names the list
+`[6,7]`). So `scenario.expected_route_lanelet_ids:
+${map.no_3d_model_lanelet_ids}` drops a route through a lanelet CARLA does not
+draw. A route search (`sweep.route`, [Logical Scenarios from Routes](logical_scenarios.md))
+honours `sweep.exclude` too, on the spawn and goal it places and on
+`scenario.route.lanelet_ids`, before it counts its cases.
+
 A `route_through` binding gives the pick and the `depth` lanelets after it.
 Where the graph forks, it follows the lowest id. With `through_junction: true`
 it keeps going while the route's last lanelet is still in a junction, so a turn
