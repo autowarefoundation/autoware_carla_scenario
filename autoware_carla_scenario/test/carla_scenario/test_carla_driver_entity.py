@@ -361,6 +361,31 @@ def test_cameras_are_attached_and_streamed(monkeypatch: pytest.MonkeyPatch) -> N
     assert client.images[0][1].startswith(b"\xff\xd8")
 
 
+def test_a_lens_camera_is_mounted_without_a_pinhole() -> None:
+    """An F-theta lens's frames are no pinhole of its ``fov``: its mount, for
+    Rerun, says so, and a pinhole camera's keeps its pinhole."""
+    from ._ftheta_lens import COSMOS3_FRONT_WIDE
+
+    config = DriverClientConfig.from_mapping(
+        {
+            "cameras": [
+                {
+                    "logical_id": "wide",
+                    "image_width": 832,
+                    "image_height": 480,
+                    "lens": COSMOS3_FRONT_WIDE,
+                },
+                {"logical_id": "front"},
+            ]
+        }
+    )
+    entity, _ = _entity(cameras=config.cameras)
+    entity._attach_cameras(MagicMock(), MagicMock())  # noqa: SLF001
+    mounts = entity._camera_mounts  # noqa: SLF001
+    assert not mounts["wide"].pinhole
+    assert mounts["front"].pinhole
+
+
 def test_a_camera_with_no_frame_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     from autoware_carla_scenario.sensor.carla_camera import CarlaCameraSensor
 

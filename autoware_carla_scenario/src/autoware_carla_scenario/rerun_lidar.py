@@ -360,6 +360,11 @@ class SensorRecorder:
     ) -> bool:
         """Write one JPEG frame of a camera at *frame*; its mount and pinhole
         the first time.  Returns whether it was written (not a warm-up frame).
+
+        A camera whose image is no pinhole (an F-theta lens,
+        :attr:`CameraMount.pinhole`) gets its mount alone: Rerun has no model
+        of such a lens, and a pinhole of its ``fov`` would draw its frustum
+        and project its image wrong.
         """
         if frame < self.start_frame:
             return False
@@ -367,20 +372,20 @@ class SensorRecorder:
         entity = f"world/ego/pose/cameras/{camera_id}"
         if camera_id not in self._mounted:
             self._mounted.add(camera_id)
-            self._stream.log(
-                entity,
-                rr.Transform3D(
-                    translation=mount.translation(), mat3x3=mount.rotation()
-                ),
-                rr.Pinhole(
-                    focal_length=mount.focal_length_px(),
-                    width=mount.width,
-                    height=mount.height,
-                    camera_xyz=rr.ViewCoordinates.FLU,
-                    image_plane_distance=2.0,
-                ),
-                static=True,
-            )
+            components: list[Any] = [
+                rr.Transform3D(translation=mount.translation(), mat3x3=mount.rotation())
+            ]
+            if mount.pinhole:
+                components.append(
+                    rr.Pinhole(
+                        focal_length=mount.focal_length_px(),
+                        width=mount.width,
+                        height=mount.height,
+                        camera_xyz=rr.ViewCoordinates.FLU,
+                        image_plane_distance=2.0,
+                    )
+                )
+            self._stream.log(entity, *components, static=True)
         self._at(frame)
         self._stream.log(
             entity, rr.EncodedImage(contents=bytes(jpeg), media_type="image/jpeg")

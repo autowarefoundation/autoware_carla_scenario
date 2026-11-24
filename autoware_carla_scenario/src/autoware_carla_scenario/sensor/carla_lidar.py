@@ -430,12 +430,22 @@ class CarlaLidarSensor:
     def _weathered_sweep(
         self, sweep: Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
     ) -> Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
-        """*sweep* (:attr:`_newest`) with the weather on it, put on once."""
+        """*sweep* (:attr:`_newest`) with the weather on it, put on once.
+
+        The sweep counts as weathered only once the weather was read and put
+        on (or none is to be): a failed read leaves it as it came, and the
+        next read of the same sweep tries again.
+        """
         if self._weathered_frame == sweep[0]:
             return sweep
-        self._weathered_frame = sweep[0]
-        weather = self._weather()
+        world = self._world
+        if world is None or self._config.weather_noise <= 0.0:
+            # No noise to put on: the sweep is as it should be.
+            self._weathered_frame = sweep[0]
+            return sweep
+        weather = self._weather(world)
         if weather is None:
+            # Not marked: the next read of this sweep reads the weather again.
             return sweep
         result = (
             sweep[0],
@@ -448,14 +458,13 @@ class CarlaLidarSensor:
                 self._noise_stream,
             ),
         )
+        # Marked once it is on: a sweep left as it came is tried again.
+        self._weathered_frame = sweep[0]
         self._newest = result
         return result
 
-    def _weather(self) -> Optional[LidarWeather]:
-        """The world's rain and fog now; ``None`` when no noise is to be put on."""
-        world = self._world
-        if world is None or self._config.weather_noise <= 0.0:
-            return None
+    def _weather(self, world: "carla.World") -> Optional[LidarWeather]:
+        """*world*'s rain and fog now; ``None`` when reading them failed."""
         try:
             weather = world.get_weather()
         except Exception:  # noqa: BLE001 - a lost reading costs the noise, not the sweep

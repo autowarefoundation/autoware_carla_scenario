@@ -1191,7 +1191,9 @@ The trajectory log holds no sensor data. With `rerun.enabled=true` and:
   (`driver.cameras`) are recorded as `world/ego/pose/cameras/<logical id>`:
   the camera's mount on the ego and a pinhole of its field of view, so the 3D
   view draws its frustum with the frame in it, and the JPEG frames the policy
-  got (a 2D view of the entity shows them).
+  got (a 2D view of the entity shows them). A camera with an F-theta `lens`
+  gets its mount and frames but no pinhole: Rerun's camera model is a pinhole
+  alone, and one of its `fov` would draw the frustum and the frame wrong.
 
 They are written during the run into `{ScenarioName}.sensors.rrd`; once the log
 is converted they are merged into `{ScenarioName}.rrd` (`rerun rrd merge`) and

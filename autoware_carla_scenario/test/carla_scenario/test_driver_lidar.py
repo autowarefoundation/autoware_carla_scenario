@@ -718,6 +718,36 @@ def test_the_sensor_puts_the_worlds_weather_on_its_sweeps(
     assert clear is not None and len(clear) == 2000
 
 
+def test_a_failed_weather_read_is_retried_on_the_next_read_of_the_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A weather read that fails once leaves the sweep as it came, and the next
+    read of the same sweep reads the weather again and puts it on: the sweep
+    is not left unweathered for good (#2452)."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    weather = SimpleNamespace(precipitation=0.0, fog_density=80.0, fog_distance=0.0)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    _attached(lidar, weather)
+    reads = []
+
+    def get_weather() -> SimpleNamespace:
+        reads.append(1)
+        if len(reads) == 1:
+            raise RuntimeError("CARLA hiccup")
+        return weather
+
+    lidar._world.get_weather = get_weather  # type: ignore[union-attr]  # noqa: SLF001
+    lidar._receive(_ring_measurement(10))  # noqa: SLF001
+    unweathered = lidar.get_sweep(10)
+    assert unweathered is not None and len(unweathered) == 2000
+    weathered = lidar.get_sweep(10)
+    assert weathered is not None and len(weathered) < 2000
+    # Put on once: a third read neither reads the weather nor adds noise.
+    again = lidar.get_sweep(10)
+    assert again is not None and np.array_equal(weathered, again)
+    assert len(reads) == 2
+
+
 def test_the_weather_noise_repeats_with_its_seed_and_can_be_turned_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
