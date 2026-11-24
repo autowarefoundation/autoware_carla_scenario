@@ -497,6 +497,8 @@ class _Origin:
         self.etag = '"nightly-1"'
         self.cut: list[Optional[int]] = []
         self.ranges: list[Optional[str]] = []
+        self.agents: list[Optional[str]] = []
+        self.refuses_urllib = False  # 403 for urllib's own User-Agent, as CARLA's CDN
         self.honours_if_range = True
         self.gone = False  # resumes answer 404
         origin = self
@@ -508,6 +510,11 @@ class _Origin:
             def do_GET(self) -> None:  # noqa: N802
                 wanted = self.headers.get("Range")
                 origin.ranges.append(wanted)
+                agent = self.headers.get("User-Agent")
+                origin.agents.append(agent)
+                if origin.refuses_urllib and (agent or "").startswith("Python-urllib"):
+                    self.send_error(403)
+                    return
                 if wanted and origin.gone:
                     self.send_error(404)
                     return
@@ -564,6 +571,18 @@ def test_a_dropped_download_resumes_where_it_stopped(
     assert installed_executable() is not None
     assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
     assert origin.ranges == [None, f"bytes={half}-", f"bytes={half + 1000}-"]
+
+
+def test_every_request_names_the_framework_not_urllib(
+    home: Path, origin: _Origin
+) -> None:
+    """downloads.carlasim.com refuses urllib's User-Agent with 403."""
+    origin.refuses_urllib = True
+    origin.cut = [len(origin.body) // 2]
+    install(origin.url)
+    assert installed_executable() is not None
+    assert len(origin.agents) == 2  # the first request and the resume
+    assert all(agent == carla_install.USER_AGENT for agent in origin.agents)
 
 
 def test_a_download_replaced_midway_is_not_spliced(home: Path, origin: _Origin) -> None:

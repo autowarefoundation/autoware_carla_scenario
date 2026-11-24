@@ -83,6 +83,13 @@ NIGHTLY_URL = (
 )
 """CARLA's nightly Linux build, as linked from its download page."""
 
+USER_AGENT = "autoware-carla-scenario (scenario-setup)"
+"""The ``User-Agent`` every download request sends.
+
+``downloads.carlasim.com``, where CARLA's packages are served from, answers
+urllib's own (``Python-urllib/3.x``) with 403 Forbidden whatever the file, so
+a download that sent it could never start."""
+
 NIGHTLY_MACHINES = frozenset({"x86_64"})
 """The machines (``platform.machine()``) the nightly build runs on."""
 
@@ -163,7 +170,11 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
         for leftover in (_staging(target), _replaced(target)):
             shutil.rmtree(leftover, ignore_errors=True)
     request = urllib.request.Request(
-        url, headers={} if force else _conditions(target, url)
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            **({} if force else _conditions(target, url)),
+        },
     )
     try:
         response = urllib.request.urlopen(request, timeout=_TIMEOUT)  # noqa: S310 -- a URL the user chose
@@ -347,6 +358,7 @@ class _ResumingStream:
             request = urllib.request.Request(
                 self._url,
                 headers={
+                    "User-Agent": USER_AGENT,
                     "Range": f"bytes={self._offset}-",
                     "If-Range": str(self._validator),
                 },
