@@ -2669,7 +2669,9 @@ heading still jumps at the zero-length segment between them, as before.</p>
 neither are the first and last vertices of an open trajectory, nor a point
 with a <code>yaw</code> of its own: they face along the path, a vertex at a stop keeping
 the heading it arrived with, and over the stop the entity turns on the spot to
-the heading it leaves with.</p>
+the heading it leaves with: at one steady rate over the stop's whole time,
+whether it is written as one pause or as many samples on the same point (a
+recording standing still).</p>
 <p>Every number of a <code>MapPose</code>, a <code>RelativeLanePose</code> or a route pose must be
 finite: <code>nan</code> and <code>inf</code> are refused when the pose is built, a <code>yaw</code> or <code>z</code>
 given as <code>None</code> excepted. Whatever the frame, a vertex that resolves to a
@@ -2899,7 +2901,7 @@ in or take it out (<code>appear_on_start</code> and <code>hidden_outside_traject
 from it as of 1.0).  A road user that enters a recording late is spawned
 hidden and brought in by a <code>SpawnAction</code> (the <code>spawn</code> card): put on its place,
 physics on, facing its heading, moving at <code>speed</code>; its routing card is
-triggered on the spawn card completing and starts where it stands.  Triggered
+triggered on the spawn card completing.  Triggered
 by a <code>RouteProgressCondition</code> it enters when the ego has come as far as it had
 when the road user was first seen; a <code>PlaceClearCondition</code> on the same place
 in its trigger waits for the place to be clear, and <code>shift_max</code> lets it take
@@ -2907,6 +2909,28 @@ the nearest clear place further on along its lane once the trigger gives up
 waiting.  The run writes a <code>spawn</code> record to the
 <a href="../trajectory_log/">trajectory log</a> on the tick it is brought in (a prop the
 action adds has none).  One that leaves early is removed by a <code>DespawnAction</code>.</p>
+<p>Where the routing card then starts depends on its mode.  Only in <code>driver</code>
+mode does it start <strong>where the entity stands</strong>: at the nearest point of its
+path within 6 m, so a spawn moved along its lane by <code>shift_max</code> starts its
+route there.  <code>position</code> and <code>follow</code> follow the trajectory's <strong>clock</strong>
+instead, whatever the spawn did.  With <code>time_domain: absolute</code> the clock is
+the scenario's: <code>position</code> places the entity at its pose for the current
+time, and <code>follow</code> drives it to keep that time, so a spawn delayed by its
+clearance condition is put (or driven) down its track to where the
+recording has it by then -- the trajectory's start is not where it enters --
+and <code>position</code> does not keep the clear place <code>shift_max</code> found either.  With
+<code>time_domain: relative</code> the clock starts when the action does: triggered on
+the spawn card completing, with a <code>time_offset</code> that moves its own first
+vertex's time to <code>0</code>, it starts at the beginning of its trajectory however
+late the spawn was, and runs that much behind the recording from there.</p>
+<p><code>TrajectoryRun</code> itself -- the engine of <code>position</code> and <code>follow</code>, which
+<code>StalledObjectAction</code> (see <a href="../adversity/">Adversities</a>) runs with it -- still
+keeps an entity out of the world outside its trajectory's times
+(<code>hidden_outside_trajectory</code>, <code>position</code> mode with a time reference).  The
+action runs before the world ticks (its default phase) and what it places is
+observed after, so such an entity is first observable <strong>one tick after</strong> its
+first vertex is due, and last when its last vertex is due: from <code>t0 + dt</code> to
+<code>t_end</code>, <code>t0</code> and <code>t_end</code> those vertices' scenario times and <code>dt</code> the tick.</p>
 <p>Vertices may also be placed against a logical scenario's <em>route</em>
 (<code>RouteLanePose</code>, <code>RouteOppositePose</code>, <code>RouteCrossingPose</code>,
 <code>RouteCrosswalkPose</code>, <code>RouteRoadsidePose</code>; <code>path_source: route</code> in a
@@ -3246,9 +3270,19 @@ above:</p>
   with one Set Goal card: map-frame vertices, each departed at its
   recorded time (a <code>trajectory_time</code> waypoint condition) on the scenario
   clock (<code>time_domain: absolute</code>, <code>time_offset</code> moving the recording's first
-  frame to <code>t = 0</code>), in Position mode and hidden outside its trajectory;</li>
+  frame to <code>t = 0</code>), in Position mode: placed, every tick, where the
+  recording has it at that time;</li>
 <li>a road user first seen after the start spawns <strong>out of the world</strong>
-  (<code>spawn.hidden</code>) and appears at its first vertex.</li>
+  (<code>spawn.hidden</code>), is brought in at its first vertex by a <code>SpawnAction</code>, and
+  is taken out by a <code>DespawnAction</code> where its recording ends.  Its routing
+  card is triggered on the spawn card completing; on the absolute clock it is
+  placed where the recording has it at the moment it is brought in, which is
+  down its track from the first vertex if the spawn was held back by its
+  clearance condition (and not on the clear place <code>shift_max</code> found).  To
+  have it start at its first vertex instead, use <code>time_domain: relative</code>
+  with a <code>time_offset</code> moving its own first vertex's time to <code>0</code>: its clock
+  then starts when the spawn completes, at the cost of running that much
+  behind the recording.</li>
 </ul>
 <p>Open it in the editor to add the conditions the test is about -- a road
 user can wait for the ego by replacing one of its vertex times with another
@@ -3290,7 +3324,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 22, 2026 03:46:11 UTC"><span class="timeago" datetime="2026-11-22T03:46:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 22, 2026 03:46:11 UTC">2026-11-22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 12:30:14 UTC"><span class="timeago" datetime="2026-11-24T12:30:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 12:30:14 UTC">2026-11-24</span>
   </span>
 
     

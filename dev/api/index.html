@@ -3216,7 +3216,7 @@ child condition tree internally:</p>
 </tr>
 <tr>
 <td><code>RoutingAction</code>, <code>RoutingMode</code></td>
-<td>Send the ego, a vehicle or a pedestrian to a goal through waypoints (a goal with Lanelet2 waypoints, or a <code>trajectory</code>); <code>mode</code> is <code>DRIVER</code> (its own driver, Lanelet2 legs, paced by speed to the waypoints' times), <code>FOLLOW</code> or <code>POSITION</code> (straight legs, as OpenSCENARIO follows a trajectory); <code>speed</code> paces the segments no time does; <code>held_vertex</code> names the vertex a waypoint condition is holding it at; it routes an entity in the scene (bring a hidden one in with <code>SpawnAction</code>), starting where it stands. See <a href="../trajectory/">Trajectories and Recorded-Scene Replay</a>.</td>
+<td>Send the ego, a vehicle or a pedestrian to a goal through waypoints (a goal with Lanelet2 waypoints, or a <code>trajectory</code>); <code>mode</code> is <code>DRIVER</code> (its own driver, Lanelet2 legs, paced by speed to the waypoints' times), <code>FOLLOW</code> or <code>POSITION</code> (straight legs, as OpenSCENARIO follows a trajectory); <code>speed</code> paces the segments no time does; <code>held_vertex</code> names the vertex a waypoint condition is holding it at; it routes an entity in the scene (bring a hidden one in with <code>SpawnAction</code>); <code>DRIVER</code> mode starts where it stands, while <code>FOLLOW</code> and <code>POSITION</code> follow the trajectory's clock (absolute: its pose for the current time, so a delayed spawn joins its track part way; relative: counted from when the action begins, so with its first vertex at <code>0</code> it starts at the trajectory's start). See <a href="../trajectory/">Trajectories and Recorded-Scene Replay</a>.</td>
 </tr>
 <tr>
 <td><code>SetSpeedAction</code></td>
@@ -4143,7 +4143,7 @@ packages, in <code>autoware_carla_scenario.examples.run</code> unless noted:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 07:42:41 UTC"><span class="timeago" datetime="2026-11-24T07:42:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 07:42:41 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 12:30:14 UTC"><span class="timeago" datetime="2026-11-24T12:30:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 12:30:14 UTC">2026-11-24</span>
   </span>
 
     
