@@ -142,7 +142,7 @@
           "type": "string"
         },
         "source": {
-          "description": "Where the map came from, in the order the run resolves them: `map.directory`, else `carla-pack:OWNER/REPO/PACK@VERSION` for a map read from a content pack (`map.pack`, with the version it resolved to), else `map.source` as the run named it (e.g. \"git+https://huggingface.co/datasets/OWNER/NAME@REV#PATH\"); null when the config named none of them.",
+          "description": "Where the map came from, in the order the run resolves them: `map.directory`, else `carla-pack:OWNER/REPO/PACK@VERSION` for a map read from a content pack (`map.pack`, with the version it resolved to), else `map.source` as the run named it (e.g. \"git+https://huggingface.co/datasets/OWNER/NAME@REV#PATH\"), followed by \" (commit <hash>)\", the commit its ref resolved to, unless the source names that commit or no commit resolved it (a map used as unpacked under the map root); null when the config named none of them.",
           "type": [
             "string",
             "null"

@@ -328,7 +328,9 @@ task of a [SLURM batch](slurm.md) and each job of a multirun runs its own
 commits. Each run's [trajectory log](trajectory_log.md) names the commit its
 branch resolved to beside the configured ref (`"source":
 "git+https://...@main#T (commit <40-hex>)"`), as it names a content pack with
-the version it resolved to. **Pin a commit to keep a batch on one map.**
+the version it resolved to -- unless the run used the map as unpacked under
+the map root, which no commit resolved. **Pin a commit to keep a batch on one
+map.**
 
 One consequence is worth stating plainly: an already-unpacked map directory
 records no revision, so a **pinned source never uses one**. It always resolves
@@ -357,9 +359,15 @@ never replaced -- and an OpenDRIVE derived from the installation (step 2,
 not the last run's map. To give CARLA its own roads back, copy the `.orig`
 over the installed file. The install is a single rename, and is skipped when
 the file already holds the same bytes, so a task of a SLURM batch loading the
-map on the same installation meanwhile never reads half a file. (An
-installation overwritten before the `.orig` was kept has no original to go
-back to: reinstall the asset.)
+map on the same installation meanwhile never reads half a file.
+
+The `.orig` is what the installed file held at the first overwrite that
+found no `.orig`. An installation a run overwrote before the framework kept
+one has no original left, and its `.orig` -- taken at the next overwrite --
+is that run's map, which every later derived copy is then taken from. Reinstall
+the asset and **delete the `.orig`** (reinstalling alone leaves it, and it is
+never replaced), along with any `.derived/` copy fetched from the overwritten
+installation; do the same after upgrading CARLA, whose own file may change.
 
 Whatever it comes from is cached under `.derived/` beside the map, so it is
 fetched once, as `.derived/<repository>-<hash>/<path>/<MAP_NAME>.xodr`. The
