@@ -245,6 +245,41 @@ def test_the_route_rolls_forward_with_the_ego() -> None:
     assert len(client.routes) == 4
 
 
+def test_session_start_writes_driver_vehicle_to_the_ego() -> None:
+    """driver.vehicle reaches CARLA before the powertrain is read off the physics."""
+    from autoware_carla_scenario.driver.vehicle_physics import VehicleSteeringConfig
+
+    config = DriverClientConfig(send_renderer_data=False, rear_axle_offset_m=-1.4)
+    entity = CarlaDriverEntity(
+        config,
+        client=_FakeDriverClient(config),
+        vehicle_config=VehicleSteeringConfig(max_steer_angle_deg=40.0),
+    )
+    actor = _actor()
+    physics = actor.get_physics_control.return_value
+    physics.wheels = [
+        SimpleNamespace(
+            max_steer_angle=steer, affected_by_steering=steer > 0.0, **vars(wheel)
+        )
+        for wheel, steer in zip(physics.wheels, (70.0, 70.0, 0.0, 0.0))
+    ]
+    entity._vehicle = actor  # noqa: SLF001 - stands in for spawn()
+
+    entity.on_scenario_start(_world_with_route())
+
+    actor.apply_physics_control.assert_called_once()
+    (applied,), _ = actor.apply_physics_control.call_args
+    assert [w.max_steer_angle for w in applied.wheels] == [40.0, 40.0, 0.0, 0.0]
+
+
+def test_no_physics_is_applied_without_driver_vehicle() -> None:
+    entity, _ = _entity()
+    actor = entity._vehicle  # noqa: SLF001
+    assert actor is not None
+    entity.on_scenario_start(_world_with_route())
+    actor.apply_physics_control.assert_not_called()
+
+
 def test_start_opens_a_session_and_sends_a_route() -> None:
     entity, client = _entity()
     world = _world_with_route()

@@ -841,10 +841,12 @@ class DriverClientConfig:
         """Return a client config built from a plain mapping (e.g. a Hydra node).
 
         The ``cameras`` entry is converted to :class:`DriverCameraConfig` objects; a
-        ``control``, a ``lateral`` and a ``bridge`` entry, if present, are ignored --
-        the controller is configured via :meth:`ControlConfig.from_mapping` and
-        :meth:`~.autoware_lateral.LateralChainConfig.from_mapping`, and the bridge by
-        the entity's ``bridge`` arguments.
+        ``control``, a ``lateral``, a ``vehicle`` and a ``bridge`` entry, if present,
+        are ignored -- the controller is configured via
+        :meth:`ControlConfig.from_mapping` and
+        :meth:`~.autoware_lateral.LateralChainConfig.from_mapping`, the ego's steering
+        parameters via :meth:`~.vehicle_physics.VehicleSteeringConfig.from_mapping`,
+        and the bridge by the entity's ``bridge`` arguments.
 
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
@@ -855,7 +857,9 @@ class DriverClientConfig:
         from ..utils.config import checked_str_list  # noqa: PLC0415
         from ..utils.config import checked_options as _checked  # noqa: PLC0415
 
-        values = _checked(cls, mapping, ignore={"control", "bridge", "lateral"})
+        values = _checked(
+            cls, mapping, ignore={"control", "bridge", "lateral", "vehicle"}
+        )
         cameras = values.pop("cameras", None)
         if cameras is not None:
             values["cameras"] = tuple(

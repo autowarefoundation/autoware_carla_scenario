@@ -433,6 +433,37 @@ Autoware's does. Where the chain differs from the replay:
   the ego's own pose.
 - The TSO's goal steer-zero mode is left out: the chain is not given the route goal.
 
+### The ego's steering in CARLA's physics: `driver.vehicle`
+
+`driver.vehicle` sets the two parameters CARLA's vehicle physics has on the
+steering's side, written to the ego when its session starts
+(`driver/vehicle_physics.py`). `null` keeps the blueprint's:
+
+```yaml
+driver:
+  vehicle:
+    max_steer_angle_deg: null   # the wheel angle at full lock, on every steered wheel; (0, 90]
+    steering_curve: null        # [[speed km/h, factor], ...]: the share of the steer
+                                # the wheels get at each speed, e.g. [[0, 1], [120, 1]]
+```
+
+- **`max_steer_angle_deg`** is set on every wheel that is `affected_by_steering`
+  or has a `max_steer_angle` above zero. Its OpenODD knob is
+  `ego_max_steer_angle_deg` ([Built-in probes](odd.md#built-in-probes)), so a
+  sweep can draw it.
+- **`steering_curve`** replaces CARLA's: speeds zero or more and increasing,
+  factors zero or more.
+
+CARLA has no steering dead time or servo response to set: these two are all
+its physics offers. An actuator delay is not modelled.
+
+The follower's angle-to-steer map (`driver.control`'s `max_steer_angle_deg`
+and `steer_exponent`, which Autoware's MPC also steers through) is a
+measurement of how CARLA answers, not a copy of these parameters: CARLA 0.10's
+Chaos vehicles turn `56 deg * steer**2` while their wheels report 70 degrees.
+The map is not changed with `driver.vehicle`. After changing either parameter,
+measure the response again and set `driver.control` to match.
+
 ### Warming up a policy
 
 A policy that reads a history -- past LiDAR maps, the ego's past poses -- has

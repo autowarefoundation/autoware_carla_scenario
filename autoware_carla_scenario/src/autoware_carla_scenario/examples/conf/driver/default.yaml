@@ -135,3 +135,13 @@ driver:
     publish_delay_s: 0.078
     localization_lag_s: 0.03
     ctrl_period_s: 0.03
+  # The ego's steering parameters in CARLA's vehicle physics, written to the ego
+  # when its session starts; null keeps the blueprint's. max_steer_angle_deg: the
+  # wheel angle at full lock (0-90], on every steered wheel. steering_curve:
+  # [[speed km/h, factor], ...], the share of the steer the wheels get at each
+  # speed. CARLA has no steering delay to set. `control`'s angle-to-steer map is
+  # a measurement of CARLA's answer and does not follow these: measure again and
+  # set it to match (docs/driver_interface.md).
+  vehicle:
+    max_steer_angle_deg: null
+    steering_curve: null

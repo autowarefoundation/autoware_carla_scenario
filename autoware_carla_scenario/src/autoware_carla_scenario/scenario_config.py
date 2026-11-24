@@ -50,6 +50,7 @@ __all__ = [
     "DriverLidarSpec",
     "DriverControlSpec",
     "DriverLateralSpec",
+    "DriverVehicleSpec",
     "DriverConfig",
     "SweepConfig",
     # Re-exported from `traffic.config` so that a scenario package importing
@@ -474,6 +475,29 @@ class DriverLateralSpec:
 
 
 @dataclass
+class DriverVehicleSpec:
+    """The ego's steering parameters in CARLA's vehicle physics (``driver.vehicle``).
+
+    Mirrors :class:`~autoware_carla_scenario.driver.vehicle_physics.VehicleSteeringConfig`;
+    ``None`` keeps the blueprint's.  ``max_steer_angle_deg`` is the wheel angle at full
+    lock, set on every steered wheel; ``steering_curve`` is CARLA's
+    ``[[speed km/h, factor], ...]``, the share of the steer the wheels get at each
+    speed.  CARLA has no steering dead time or servo response to set.
+
+    The follower's angle-to-steer map (:class:`DriverControlSpec`'s
+    ``max_steer_angle_deg`` and ``steer_exponent``) is not changed with these: it is a
+    measurement of how CARLA answers (``56 deg * steer**2`` on CARLA 0.10, while the
+    wheels report 70 degrees), so measure again and set it to match.
+    """
+
+    max_steer_angle_deg: Optional[float] = None
+    #: ``[[speed, factor], ...]``: ``Any`` because OmegaConf types the points of a
+    #: ``List[List[float]]`` strictly and refuses ``[0, 1]``'s ints; checked when the
+    #: run builds the entity.
+    steering_curve: Optional[List[Any]] = None
+
+
+@dataclass
 class DriverControlSpec:
     """Gains for the controller that tracks the policy's plan.
 
@@ -708,6 +732,9 @@ class DriverConfig:
 
     #: The lateral control chain (pure pursuit, or Autoware's TSO and MPC).
     lateral: DriverLateralSpec = field(default_factory=DriverLateralSpec)
+
+    #: The ego's steering parameters in CARLA's vehicle physics.
+    vehicle: DriverVehicleSpec = field(default_factory=DriverVehicleSpec)
 
 
 # ---------------------------------------------------------------------------

@@ -214,6 +214,7 @@ if TYPE_CHECKING:
     from autoware_carla_scenario import AutowareBridgeConfig
     from autoware_carla_scenario.driver import ControlConfig
     from autoware_carla_scenario.driver.autoware_lateral import LateralChainConfig
+    from autoware_carla_scenario.driver.vehicle_physics import VehicleSteeringConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1251,12 +1252,14 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # ``driver.control: null`` means the default gains, as ``ros2.control`` does.
         control = _control_config(driver_dict, "driver")
         lateral = _lateral_config(driver_dict)
+        vehicle = _vehicle_config(driver_dict)
         bridge_dict = driver_dict.get("bridge")
         if bridge_dict is None:
             return CarlaDriverEntity(
                 DriverClientConfig.from_mapping(driver_dict),
                 control,
                 lateral_config=lateral,
+                vehicle_config=vehicle,
             )
         # A stack serving the policy's world (splatsim, say) dials the bridge the
         # framework hosts for the mission and reports when it is ready, as
@@ -1297,6 +1300,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             bridge_config=bridge_cfg,
             episode_name=str(scenario_cfg.get("name", "")),
             lateral_config=lateral,
+            vehicle_config=vehicle,
         )
 
     if entity == "ros2":
@@ -3566,6 +3570,30 @@ def _lateral_config(section: Mapping[str, Any]) -> "LateralChainConfig":
         return LateralChainConfig.from_mapping(lateral)
     except ValueError as exc:
         raise ValueError(f"driver.lateral.{exc}") from None
+
+
+def _vehicle_config(section: Mapping[str, Any]) -> "VehicleSteeringConfig":
+    """The ego's steering parameters in CARLA's vehicle physics, ``driver.vehicle``,
+    read as :func:`_control_config` reads ``driver.control``: ``null`` (or none)
+    keeps the blueprint's; anything else but a mapping is refused.
+
+    Raises:
+        ValueError: naming ``driver.vehicle.<key>``.
+    """
+    from autoware_carla_scenario.driver.vehicle_physics import (  # noqa: PLC0415
+        VehicleSteeringConfig,
+    )
+    from autoware_carla_scenario.value_text import shown  # noqa: PLC0415
+
+    vehicle = section.get("vehicle")
+    if vehicle is None:
+        vehicle = {}
+    if not isinstance(vehicle, Mapping):
+        raise ValueError(f"driver.vehicle must be a mapping, got {shown(vehicle)}")
+    try:
+        return VehicleSteeringConfig.from_mapping(vehicle)
+    except ValueError as exc:
+        raise ValueError(f"driver.vehicle.{exc}") from None
 
 
 def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
