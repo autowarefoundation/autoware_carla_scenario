@@ -1845,7 +1845,9 @@ attribute that **no planned route reaches**, leaving out buckets outside the
 ODD (they are not targets). An attribute the map decides in general but left
 undecided on some lanelet of a route (metres in `<undecided>`) is reported as
 **undetermined** instead: the run may reach any of its buckets there, so none
-is called unreached.
+is called unreached. When no route could be planned at all, the report calls
+no bucket unreached (with `--json`, `unreached` is empty and `not_planned`
+gives each scenario's reason).
 
 The exit status is 0 when no route leaves the ODD, 1 when one does, and 2
 when a route could not be planned (no goal, no path, a lanelet the map does

@@ -74,7 +74,7 @@ dependencies = [
     # -- collecting, merging, the COD export (a Rust core). This package is its
     # CARLA backend (odd/backend.py's CarlaBackend), whose rules -- the
     # distributions of the grip and the visibility the weather leaves
-    # (weather_rules.py) -- openodd reads: rules version 2 (conditional
+    # (weather_rules.yaml) -- openodd reads: rules version 3 (conditional
     # distributions), and 0.18 reads a part reading another quantity, as
     # weather_rules.yaml's sight_speed reads the visibility. 0.19.1 reads a
     # normal or triangular distribution right however far its range lies

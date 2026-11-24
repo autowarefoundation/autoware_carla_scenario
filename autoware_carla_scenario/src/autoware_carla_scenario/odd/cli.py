@@ -343,6 +343,10 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
 
     if as_json:
         out = summary.describe()
+        if not routes:
+            # No route planned says nothing about which buckets the routes
+            # reach, as the text output says nothing either.
+            out["unreached"] = {}
         out["routes"] = [r.describe() for r in routes]
         out["not_planned"] = dict(failed)
         print(json.dumps(out, indent=2))  # noqa: T201
