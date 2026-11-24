@@ -257,7 +257,12 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   collected or not: a case that errored, has no outcome (its task was killed,
   or is still running) or one with no verdict counts, unless a gate record is
   at its stem -- its run wrote one before the task failed, and that record is
-  judged.
+  judged. So does a case whose outcome is stale (`collect` reports it as
+  `ERROR, stale result`): an earlier submission's, which the submission
+  that was to run the case again stopped before reaching
+  ([Running through SLURM](slurm.md)). The gate record at its stem is that
+  earlier run's, and does not exempt it (#2418). A batch whose submission
+  records cannot be read to tell is one that cannot be read.
 - A **`--multirun` sweep** has no summary, so each job given up -- the
   lanelet sweeper's, once it raised, timed out, crashed or was refused on every attempt
   (`server.cooldown_max_retries`), and Hydra's basic sweeper's, once its run

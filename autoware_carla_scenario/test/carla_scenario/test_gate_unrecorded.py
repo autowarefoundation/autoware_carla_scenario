@@ -1068,3 +1068,92 @@ def test_a_case_not_read_from_a_manifest_shows_what_it_holds() -> None:
             with pytest.raises(AttributeError) as expected:
                 value.get("stem")  # type: ignore[union-attr]
             assert str(error.value) == str(expected.value)
+
+
+# ---------------------------------------------------------------------------
+# A stale outcome (#2418)
+# ---------------------------------------------------------------------------
+
+
+def _stale_batch(directory: Path, resubmitted_state: str) -> BatchLayout:
+    """A two-case SLURM batch whose cases submission 0 ran and passed, each
+    with a gate record at its stem; submission 1 gave case 1 again, and its
+    task's state is *resubmitted_state*."""
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSION, write_json
+
+    layout = BatchLayout(directory)
+    write_json(
+        layout.manifest,
+        {
+            "version": MANIFEST_VERSION,
+            "cases": [
+                {"index": i, "label": f"s#{i + 1}", "stem": f"run{i}"} for i in range(2)
+            ],
+            "launcher": {},
+        },
+    )
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1]]})
+    write_json(layout.task(0, 0), {"state": "done"})
+    write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [[1]]})
+    write_json(layout.task(1, 0), {"state": resubmitted_state})
+    for index in range(2):
+        write_json(
+            layout.result(index),
+            {
+                "index": index,
+                "result": {
+                    "passed": True,
+                    "message": "ok",
+                    "elapsed_seconds": 1.0,
+                    "condition_statuses": [],
+                },
+                "submission": 0,
+            },
+        )
+        (directory / f"run{index}{GATE_RECORD_SUFFIX}").write_text(
+            "{}", encoding="utf-8"
+        )
+    return layout
+
+
+@pytest.mark.parametrize("state", ["failed", "cancelled"])
+def test_a_stale_outcome_is_unrecorded_whatever_record_is_at_its_stem(
+    tmp_path: Path, state: str
+) -> None:
+    """#2418: the submission that was to run case 1 again stopped before it
+    reached it, so its outcome is submission 0's, stale (``collect`` reports
+    it as ERROR), and so is the gate record at its stem: the case counts as
+    unrecorded, as ``status``, ``collect`` and the viewer count it."""
+    _stale_batch(tmp_path / "b", state)
+    assert unrecorded._slurm_cases(tmp_path / "b") == (["s#2"], 2, None)
+    lines, unreadable = unrecorded._scan_batches(tmp_path)
+    assert unreadable == []
+    assert len(lines) == 1 and "1 of 2 case(s)" in lines[0] and "(s#2)" in lines[0]
+
+
+@pytest.mark.parametrize("state", ["starting", "running", "done"])
+def test_an_outcome_a_running_or_finished_resubmission_left_is_recorded(
+    tmp_path: Path, state: str
+) -> None:
+    """#2418: while the resubmission is running, or once it is done, the
+    outcome is the latest there is (``stale_reason``): recorded."""
+    _stale_batch(tmp_path / "b", state)
+    assert unrecorded._slurm_cases(tmp_path / "b") == ([], 2, None)
+
+
+def test_a_batch_whose_submission_records_cannot_tell_staleness_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    """#2418: a submission record whose ``chunks`` cannot be read
+    (``SubmissionRecord.task_of`` raises) cannot tell whether an outcome is
+    stale: the batch cannot be read, rather than its outcome judged."""
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _stale_batch(tmp_path / "b", "failed")
+    write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [1]})
+    names, total, why = unrecorded._slurm_cases(tmp_path / "b")
+    assert (names, total) == ([], 0)
+    assert why is not None
+    assert why.startswith(
+        f"{layout.manifest}: the batch's SLURM submission records cannot be read ("
+    )
