@@ -40,6 +40,14 @@ _CONF = (
 # ---------------------------------------------------------------------------
 
 
+class _WalkerAIController:
+    def __init__(self, actor: "_Actor") -> None:
+        self._actor = actor
+
+    def stop(self) -> None:
+        self._actor.world.events.append(("stop", self._actor.type_id))
+
+
 class _Actor:
     def __init__(
         self,
@@ -57,8 +65,10 @@ class _Actor:
         #: A destroy the server refuses (returns False and the actor stays).
         self.stuck = False
 
-    def stop(self) -> None:
-        self.world.events.append(("stop", self.type_id))
+    def as_walker_ai_controller(self) -> "_WalkerAIController":
+        # Like typesafe_carla's plain Actor: no stop() without the conversion.
+        assert self.type_id.startswith("controller.ai.walker")
+        return _WalkerAIController(self)
 
     def destroy(self) -> bool:
         if self.stuck:

@@ -191,8 +191,12 @@ class _FakeActor:
         #: What happened to the actors of one world, in order.
         self.events = events if events is not None else []
 
-    def stop(self) -> None:
-        self.events.append(("stop", self.type_id))
+    def as_walker_ai_controller(self) -> MagicMock:
+        # Like typesafe_carla's plain Actor: no stop() without the conversion.
+        assert self.type_id.startswith("controller.ai.walker")
+        controller = MagicMock()
+        controller.stop.side_effect = lambda: self.events.append(("stop", self.type_id))
+        return controller
 
     def destroy(self) -> None:
         self.destroyed = True
@@ -297,7 +301,11 @@ class TestCleanupExemption:
     def test_a_controller_already_gone_does_not_stop_the_sweep(self):
         walker = _FakeActor(1, "walker1", type_id="walker.pedestrian.0001")
         controller = _FakeActor(2, parent=walker, type_id="controller.ai.walker")
-        controller.stop = MagicMock(side_effect=RuntimeError("actor not found"))
+        controller.as_walker_ai_controller = MagicMock(  # type: ignore[method-assign]
+            return_value=MagicMock(
+                stop=MagicMock(side_effect=RuntimeError("actor not found"))
+            )
+        )
         world = MagicMock()
         world.get_actors.return_value = _FakeActorList(
             [], [], walkers=[walker], controllers=[controller]

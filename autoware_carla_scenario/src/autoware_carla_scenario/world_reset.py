@@ -232,11 +232,16 @@ def ready_to_destroy(actors: List[carla.Actor]) -> List[carla.Actor]:
     over), and the list comes back sensors and controllers first, then
     walkers, then vehicles (:func:`_destroy_order`).  The soft reset and the
     runner's leftover sweep both destroy in this order.
+
+    ``world.get_actors()`` hands out plain ``carla.Actor`` handles, and
+    typesafe_carla's CPython ``Actor`` has no ``stop()`` (the Python-API
+    shortcuts are Codon-only): the checked ``as_walker_ai_controller()``
+    conversion comes first.
     """
     for actor in actors:
         if str(actor.type_id).startswith("controller.ai.walker"):
             try:
-                actor.stop()
+                actor.as_walker_ai_controller().stop()
             except RuntimeError:  # destroyed meanwhile
                 logger.debug("walker controller %d is gone", int(actor.id))
     ordered = list(actors)
