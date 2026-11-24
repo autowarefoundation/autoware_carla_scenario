@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import List, Tuple
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario.entity.ros2_entity import plan_from_trajectory
@@ -17,7 +18,11 @@ from autoware_carla_scenario.ros2 import (
     TrajectoryCommandPoint,
 )
 from autoware_carla_scenario.driver.geometry import Pose
-from autoware_carla_scenario.ros2.commands import Command, SteerAccelPairer
+from autoware_carla_scenario.ros2.commands import (
+    Command,
+    SteerAccelPairer,
+    command_is_finite,
+)
 from autoware_carla_scenario.ros2.transport import Received
 
 _VP = CommandSourceConfig(
@@ -124,6 +129,78 @@ def test_a_newer_command_replaces_the_older_from_the_same_source() -> None:
 def test_an_unknown_source_is_refused() -> None:
     with pytest.raises(KeyError):
         CommandArbiter([_SI]).observe("ghost", _control(), _us(0.0))
+
+
+def _trajectory(
+    x: float = 0.0, w: float = 1.0, velocity: float = 1.0, acceleration: float = 0.0
+) -> TrajectoryCommand:
+    return TrajectoryCommand(
+        stamp_us=0,
+        points=(
+            TrajectoryCommandPoint(
+                0,
+                Pose(np.array([x, 0.0, 0.0]), np.array([0.0, 0.0, 0.0, w])),
+                velocity,
+                acceleration,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        SteerAccelCommand(0.1, 0.5),
+        ControlCommand(0.1, -2.0, -3.0),
+        ControlCommand(0.1, 2.0, -3.0, jerk_mps3=-1.0),
+        _trajectory(),
+    ],
+)
+def test_a_finite_command_is_finite(command: Command) -> None:
+    assert command_is_finite(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        SteerAccelCommand(math.nan, 0.5),
+        SteerAccelCommand(0.1, math.inf),
+        ControlCommand(math.nan, 2.0, -3.0),
+        ControlCommand(0.1, -math.inf, -3.0),
+        ControlCommand(0.1, 2.0, math.nan),
+        ControlCommand(0.1, 2.0, -3.0, jerk_mps3=math.nan),
+        _trajectory(x=math.nan),
+        _trajectory(w=math.inf),
+        _trajectory(velocity=math.nan),
+        _trajectory(acceleration=-math.inf),
+    ],
+)
+def test_a_non_finite_command_is_not_finite(command: Command) -> None:
+    assert not command_is_finite(command)
+
+
+def test_a_non_finite_command_does_not_keep_its_source_fresh() -> None:
+    """#2434: a source sending NaN every cycle used to count as fresh forever."""
+    arbiter = CommandArbiter([_VP, _SI])
+    assert arbiter.observe("si", _control(2.0), _us(1.0))
+    assert arbiter.observe("vp", SteerAccelCommand(0.1, 0.5), _us(1.0))
+    for seconds in (1.1, 1.2, 1.3, 1.4):
+        assert not arbiter.observe("si", _control(math.nan), _us(seconds))
+        assert arbiter.observe("vp", SteerAccelCommand(0.1, 0.5), _us(seconds))
+    # Within stale_s, its last good command still drives...
+    selection = arbiter.select(_us(1.3))
+    assert selection is not None
+    assert (selection.source.name, selection.command) == ("si", _control(2.0))
+    # ...and then it ages out as a silent source does.
+    selection = arbiter.select(_us(1.4))
+    assert selection is not None
+    assert selection.source.name == "vp"
+
+
+def test_a_source_with_only_non_finite_commands_never_drives() -> None:
+    arbiter = CommandArbiter([_SI])
+    assert not arbiter.observe("si", _control(math.nan), _us(1.0))
+    assert arbiter.select(_us(1.0)) is None
 
 
 # ---------------------------------------------------------------------------

@@ -558,10 +558,7 @@ def test_a_non_finite_control_command_keeps_the_last_one(
         good.acceleration,
         good.jerk,
     )
-    assert [record.getMessage() for record in caplog.records] == [
-        "Command source 'si' sent a non-finite Ackermann command (NaN or "
-        "infinite); its last good command drives on (1 refused so far)"
-    ]
+    assert [record.getMessage() for record in caplog.records] == [_REFUSED_SI]
     # A good command drives again.
     transport.deliver("si", ControlCommand(-0.1, 2.0, -1.0))
     _tick(entity, clock)
@@ -576,19 +573,70 @@ def test_a_first_non_finite_steer_accel_command_brakes(bad: SteerAccelCommand) -
     entity, transport, actor, clock = _started()
     transport.deliver("vp", bad)
     _tick(entity, clock)
-    assert entity.active_source == "vp"
+    # Refused before arbitration: the source has not spoken.
+    assert entity.active_source is None
     assert _last_control(actor).brake == pytest.approx(1.0)
     actor.apply_ackermann_control.assert_not_called()
 
 
-def test_a_new_source_does_not_fall_back_on_another_source_s_command() -> None:
+def test_a_refused_command_does_not_take_over_from_a_lower_priority_source() -> None:
     entity, transport, actor, clock = _started()
     transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
     _tick(entity, clock)
     transport.deliver("si", ControlCommand(math.nan, 4.0, -3.0))
+    transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
+    _tick(entity, clock)
+    assert entity.active_source == "vp"
+    assert _last_ackermann(actor).steer == pytest.approx(0.1)
+
+
+def test_a_source_sending_only_non_finite_commands_goes_stale(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#2434: a higher-priority source publishing NaN every cycle used to count
+    as fresh forever, its last good command driving on and no lower priority
+    taking over."""
+    entity, transport, actor, clock = _started()
+    transport.deliver("si", ControlCommand(0.2, 4.0, -3.0))
+    transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
     _tick(entity, clock)
     assert entity.active_source == "si"
+    active = []
+    with caplog.at_level(
+        "WARNING", logger="autoware_carla_scenario.entity.ros2_entity"
+    ):
+        for _ in range(10):
+            transport.deliver("si", ControlCommand(math.nan, 4.0, -3.0))
+            transport.deliver("vp", SteerAccelCommand(0.1, 0.5))
+            _tick(entity, clock)
+            active.append(entity.active_source)
+    # Its last good command drives on within stale_s (0.3 s, six ticks), then
+    # the lower priority takes over.
+    assert active == ["si"] * 6 + ["vp"] * 4
+    assert _last_ackermann(actor).steer == pytest.approx(0.1)
+    # Logged once for the source, not once a cycle.
+    assert [record.getMessage() for record in caplog.records] == [_REFUSED_SI]
+
+
+def test_a_source_sending_only_non_finite_commands_brakes_once_stale() -> None:
+    entity, transport, actor, clock = _started(on_stale="brake")
+    transport.deliver("si", ControlCommand(0.2, 4.0, -3.0))
+    _tick(entity, clock)
+    for _ in range(6):
+        transport.deliver("si", ControlCommand(math.nan, 4.0, -3.0))
+        _tick(entity, clock)
+    # Within stale_s, the last good command drove on.
+    actor.apply_control.assert_not_called()
+    transport.deliver("si", ControlCommand(math.nan, 4.0, -3.0))
+    _tick(entity, clock)
     assert _last_control(actor).brake == pytest.approx(1.0)
+
+
+_REFUSED_SI = (
+    "Command source 'si' sent a non-finite command (NaN or infinite): refused, "
+    "and it does not keep the source fresh; its last good command drives on "
+    "until the source goes stale (logged once per source)"
+)
 
 
 def _straight_command(y_m: float = 2.0, velocity_mps: float = 5.0) -> TrajectoryCommand:
@@ -634,6 +682,42 @@ def test_a_non_finite_trajectory_keeps_the_last_one_tracked(
     planned = entity._planned
     assert planned is not None and planned[0] is good
     assert control.brake == pytest.approx(0.0)
+
+
+def _track_until_stale_and_back(on_stale: str) -> tuple[Ros2EgoEntity, MagicMock]:
+    """Track a trajectory, let its source go stale, and send it again; the
+    follower's reset, spied on from the start."""
+    entity, transport, _, clock = _started(
+        on_stale=on_stale, actor=_actor(speed_mps=5.0)
+    )
+    reset = MagicMock(wraps=entity._follower.reset)
+    entity._follower.reset = reset  # type: ignore[method-assign]
+    good = _straight_command()
+    for _ in range(3):
+        transport.deliver("planner", good)
+        _tick(entity, clock)
+    for _ in range(10):
+        _tick(entity, clock)
+    assert not entity._active_fresh
+    reset.reset_mock()
+    transport.deliver("planner", _straight_command())
+    _tick(entity, clock)
+    assert entity._active_fresh
+    return entity, reset
+
+
+def test_the_follower_restarts_when_a_braked_stale_source_comes_back() -> None:
+    """#2434: braked while stale, the ego was not tracked: the follower's
+    integrators and state are not carried over the gap."""
+    entity, reset = _track_until_stale_and_back("brake")
+    reset.assert_called_once_with()
+    assert entity.active_source == "planner"
+
+
+def test_the_follower_carries_on_when_a_held_stale_source_comes_back() -> None:
+    """Held, the follower tracked the last trajectory through the gap."""
+    _, reset = _track_until_stale_and_back("hold")
+    reset.assert_not_called()
 
 
 def test_a_first_non_finite_trajectory_brakes() -> None:

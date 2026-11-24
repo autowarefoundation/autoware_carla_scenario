@@ -11,6 +11,7 @@ trajectory follower and the ego observation already keep.
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -29,6 +30,7 @@ __all__ = [
     "SteerAccelPairer",
     "TrajectoryCommand",
     "TrajectoryCommandPoint",
+    "command_is_finite",
 ]
 
 
@@ -117,6 +119,49 @@ class TrajectoryCommand:
 
 
 Command = Union[SteerAccelCommand, ControlCommand, TrajectoryCommand]
+
+
+def command_is_finite(command: Command) -> bool:
+    """Whether every number of *command* is finite.
+
+    A steering angle, a speed, an acceleration, a jerk (when the command sets
+    one), and each of a trajectory's poses, speeds and accelerations: a NaN or
+    an infinity in any of them makes the command one no controller can apply.
+    """
+    # Each branch names the command as its class: Codon 0.19 reads no
+    # attribute of a union (docs/typecheck.md).
+    if isinstance(command, TrajectoryCommand):
+        trajectory: TrajectoryCommand = command
+        for point in trajectory.points:
+            if not (
+                math.isfinite(point.velocity_mps)
+                and math.isfinite(point.acceleration_mps2)
+            ):
+                return False
+            pose = point.pose
+            for index in range(3):
+                if not math.isfinite(float(pose.position[index])):
+                    return False
+            for index in range(4):
+                if not math.isfinite(float(pose.quat_xyzw[index])):
+                    return False
+        return True
+    if isinstance(command, SteerAccelCommand):
+        steer_accel: SteerAccelCommand = command
+        return math.isfinite(steer_accel.steering_rad) and math.isfinite(
+            steer_accel.acceleration_mps2
+        )
+    control: ControlCommand = command
+    jerk = control.jerk_mps3
+    if jerk is not None:
+        jerk_mps3: float = jerk
+        if not math.isfinite(jerk_mps3):
+            return False
+    return (
+        math.isfinite(control.steering_tire_angle_rad)
+        and math.isfinite(control.velocity_mps)
+        and math.isfinite(control.acceleration_mps2)
+    )
 
 
 #: How many recent write intervals :class:`SteerAccelPairer` estimates the
@@ -290,6 +335,11 @@ class CommandArbiter:
     configured last wins.  When every source is stale, :meth:`select` returns the command that drove
     last, marked not fresh, so the caller can hold it or brake.
 
+    A command that is not all finite (:func:`command_is_finite`) is refused by
+    :meth:`observe`: it neither drives nor keeps its source fresh, so a source
+    that sends nothing else goes stale after its ``stale_s``, and until then its
+    last good command is the one that drives.
+
     Args:
         sources: The configured sources.
     """
@@ -307,16 +357,23 @@ class CommandArbiter:
         self._last = None
         self._sequence = 0
 
-    def observe(self, source_name: str, command: Command, now_us: int) -> None:
+    def observe(self, source_name: str, command: Command, now_us: int) -> bool:
         """Record *command* from *source_name*, arrived at *now_us*.
+
+        Returns:
+            Whether it was recorded: ``False`` for a command that is not all
+            finite, which is refused and leaves the source as it was.
 
         Raises:
             KeyError: If *source_name* is not a configured source.
         """
         if source_name not in self._sources:
             raise KeyError(f"unknown command source {source_name!r}")
+        if not command_is_finite(command):
+            return False
         self._sequence += 1
         self._latest[source_name] = (command, now_us, self._sequence)
+        return True
 
     def select(self, now_us: int) -> Optional[Selection]:
         """Return the command that drives at *now_us*, or ``None`` before any."""
