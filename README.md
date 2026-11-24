@@ -38,7 +38,7 @@ command once CARLA is downloaded:
 
 ```bash
 uv add autoware-carla-scenario
-uv run scenario-setup     # downloads CARLA's nightly build into ~/.autoware_carla_scenario/bin
+uv run scenario-setup     # downloads CARLA 1.0 into ~/.autoware_carla_scenario/bin
 uv run scenario scenario=cut_in/left map=town10hd_opt \
   ego.spawn_lanelet_id=324 scenario.npc_lanelet_id=446 \
   ego.entity=carla_driver driver.policy=route_follower
@@ -63,7 +63,7 @@ uv sync --dev
 ```
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla)
-(CARLA UE5: 0.10.0 and ue5-dev; Linux x86_64 and aarch64), imported as
+(CARLA 1.0 by default, also its nightly and 0.10; Linux x86_64 and aarch64), imported as
 `import typesafe_carla.carla as carla`. Its PyPI wheel carries the CPython
 package prebuilt, so the sync above is the whole install; see
 [installation](autoware_carla_scenario/docs/installation.md) for the cases that

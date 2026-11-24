@@ -6,7 +6,7 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 
 ## Features
 
-- Automated scenario execution against CARLA UE5 (`0.10.0` and `ue5-dev`), through the statically typed [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) client.
+- Automated scenario execution against CARLA 1.0 (Unreal Engine 5.8; its nightly and `0.10.0` with `TYPESAFE_CARLA_CARLA_REF`), through the statically typed [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) client.
 - [Hydra](https://hydra.cc/)-composed configurations for map, server, ego, entities, and scenario.
 - Glob-pattern batch execution of multiple scenarios in a single CARLA session.
 - Condition system: timing, collisions, traffic signals, speed/standstill, lane/area position, waypoint crossing, plus logical (`And`/`Or`/`Not`), latching (`Sticky`), and persistent combinators.
@@ -16,7 +16,7 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 - Hydra `lanelet_constraint` sweeper plugin for parametric map-driven sweeps (resolvable without CARLA).
 - FastAPI + Uvicorn web viewer for browsing results and triggering runs.
 - A trajectory log of every run (actors, lights, map, the ego's plan, conditions, verdict; JSON Schema in the package), which the `rerun` extra turns into a Rerun recording as the run ends (`rerun.enabled=true`), to see the run, beside CARLA's native recording.
-- `scenario-setup` downloads CARLA's nightly build, which the runner then launches by itself.
+- `scenario-setup` downloads CARLA 1.0 (`--nightly`: the nightly build), which the runner then launches by itself.
 - CARLA maps cooked as content packs: `map.pack=OWNER/REPO/PACK@VERSION` downloads the pack through [carla-pack-registry](https://github.com/autowarefoundation/carla_content_pack_registry) (the `pack` extra; access by GitHub repository permissions), reads its Lanelet2 map and OpenDRIVE, and mounts it on the server before the map loads ([docs](docs/content_packs.md)).
 - pytest integration via `CarlaScenarioFixture` (auto-skips when there is no CARLA to launch).
 
@@ -38,7 +38,7 @@ The main CLI entry points (every command the package installs is in [CLI Command
 | Command | Framework | Purpose |
 |---------|-----------|---------|
 | `scenario` | Hydra | Run autonomous-driving scenario tests in CARLA |
-| `scenario-setup` | argparse | Download CARLA (the nightly build) for `scenario` to launch |
+| `scenario-setup` | argparse | Download CARLA (1.0; `--nightly` for the nightly build) for `scenario` to launch |
 | `detect-no-3d-model` | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | `viewer` | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario results |
 

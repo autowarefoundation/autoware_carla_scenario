@@ -239,7 +239,7 @@ If pre-commit hooks fail:
 
 - **simple-lanelet2** (>=1.2.3) - Provides `lanelet2` and
   `autoware_lanelet2_extension_python` as a single prebuilt wheel
-- **typesafe-carla** (>=0.8.1) - The CARLA client (CARLA UE5 only; Linux
+- **typesafe-carla** (>=0.8.7) - The CARLA client (CARLA 1.0 by default; Linux
   x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. Its PyPI wheel
   carries the CPython package prebuilt (`typesafe_carla/carla/_prebuilt`, one
   build for every Python 3.10+), so installing it compiles nothing and needs

@@ -59,6 +59,47 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path / "home"
 
 
+def _carla_10(path: Path) -> str:
+    """A package laid out as CARLA 1.0's: the launcher at the package's top."""
+    return _package(
+        path,
+        {
+            "Carla-1.0-Linux-Shipping/CarlaUnreal.sh": b"#!/bin/sh\n",
+            "Carla-1.0-Linux-Shipping/CarlaUnreal/Binaries/Linux/CarlaUnreal-Linux-Shipping": b"",
+            "Carla-1.0-Linux-Shipping/VERSION": b"1.0",
+        },
+    )
+
+
+def test_a_carla_10_package_installs_with_its_launcher_at_the_top(
+    home: Path, tmp_path: Path
+) -> None:
+    launcher = install(_carla_10(tmp_path / "CARLA_1.0.tar.gz"))
+    assert launcher == install_dir() / "CarlaUnreal.sh"
+    assert installed_executable() == launcher
+    # Current: installed again from the same file, it is kept.
+    assert install(_carla_10(tmp_path / "CARLA_1.0.tar.gz")) == launcher
+
+
+def test_scenario_setup_installs_carla_10_by_default(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+    real_install = carla_install.install
+
+    def recorded(url: str, target: Optional[Path] = None, force: bool = False) -> Path:
+        asked.append(url)
+        return real_install(_carla_10(tmp_path / "CARLA_1.0.tar.gz"), target, force)
+
+    monkeypatch.setattr(carla_install.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(carla_install.sys, "platform", "linux")
+    monkeypatch.setattr(carla_install, "install", recorded)
+    assert carla_install.main([]) == 0
+    assert carla_install.main(["--nightly"]) == 0
+    assert asked == [carla_install.RELEASE_URL, carla_install.NIGHTLY_URL]
+    assert "CARLA_1.0" in carla_install.RELEASE_URL
+
+
 def test_it_installs_under_the_framework_home(home: Path, tmp_path: Path) -> None:
     assert install_dir() == home / "bin" / "carla"
     assert installed_executable() is None

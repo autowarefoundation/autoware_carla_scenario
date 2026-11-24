@@ -16,7 +16,7 @@ This guide will help you install the `autoware-carla-scenario` package.
   `server.host=<address>` (the server already listening there is used; the
   runner launches CARLA only for a local host, see
   [CARLA Simulator](#carla-simulator)); `scenario-setup` refuses to download
-  the nightly there.
+  CARLA's own packages there.
 
 ### Python Version
 
@@ -44,11 +44,35 @@ This guide will help you install the `autoware-carla-scenario` package.
 
 ### CARLA Simulator
 
-The framework targets CARLA UE5 (`0.10.0` and `ue5-dev`). CARLA 0.9.x (UE4)
-is not supported. `uv run scenario-setup` downloads CARLA's nightly Linux
-build into `~/.autoware_carla_scenario/bin/carla`, and the runner launches it
-from there (see the [Quick Start](quickstart.md)). A CARLA installed any other
-way is used through `CARLA_EXECUTABLE`. Ctrl-C during the download or the
+The framework targets **CARLA 1.0** (Unreal Engine 5.8). `uv run
+scenario-setup` downloads the 1.0 release
+(`https://downloads.carlasim.com/Linux/CARLA_1.0.tar.gz`, about 14 GB) into
+`~/.autoware_carla_scenario/bin/carla`, and the runner launches it from there
+(see the [Quick Start](quickstart.md)); `scenario-setup --nightly` installs
+CARLA's nightly build (the `ue58-dev` branch) instead. A CARLA installed any
+other way is used through `CARLA_EXECUTABLE`. Both package layouts are
+accepted: CARLA 1.0's, with `CarlaUnreal.sh` at the package's top, and
+0.10's, with it in `Linux/`. An install made before CARLA 1.0 became the
+default (the old nightly) is replaced by the next `scenario-setup`, since it
+was downloaded from another URL.
+
+The client must be built from the same CARLA branch as the server: their RPC
+messages differ. typesafe_carla carries one client per branch, chosen by
+`TYPESAFE_CARLA_CARLA_REF` when it is first imported, and the framework makes
+CARLA 1.0's the default (`autoware_carla_scenario.carla_release`). Another
+server wants it set in the environment that runs the scenarios (a `.env` file
+is read too late, after the client is loaded), and SLURM jobs inherit it:
+
+| Server | `TYPESAFE_CARLA_CARLA_REF` |
+| --- | --- |
+| CARLA 1.0 (`scenario-setup`) | unset, or `1.0` |
+| CARLA's nightly (`scenario-setup --nightly`), a `ue58-dev` build | `ue58-dev` |
+| CARLA 0.10.0, a `ue5-dev` build | `ue5-dev` |
+
+Once a server is reached (launched or reused), the runner compares its
+version with the client's and stops with a message naming the value to set
+when they are of different branches, rather than failing later on the run's
+first world settings. CARLA 0.9.x (UE4) is not supported. Ctrl-C during the download or the
 unpack prints `scenario-setup: interrupted` and exits 130, leaving no partial
 install behind.
 
@@ -68,7 +92,7 @@ check `server.host` and `server.port` when the message appears.
 
 The Python client is
 [typesafe_carla](https://github.com/hakuturu583/typesafe_carla), a plain
-dependency of the package (`typesafe-carla>=0.8.1,<0.9`, from PyPI, Linux
+dependency of the package (`typesafe-carla>=0.8.7,<0.9`, from PyPI, Linux
 x86_64 and aarch64), imported as `import typesafe_carla.carla as carla`. It also
 provides the Codon library the static check compiles scenarios against, and
 pulls in `typesafe-carla-toolchain`, the pinned Codon compiler. The official
@@ -199,7 +223,7 @@ requires a CARLA server: a live one, or one to launch (`scenario-setup`, or
 
 The package's runtime dependencies (declared in `pyproject.toml`):
 
-- `typesafe-carla>=0.8.1,<0.9` (Linux x86_64 and aarch64) — the CARLA client and its Codon
+- `typesafe-carla>=0.8.7,<0.9` (Linux x86_64 and aarch64) — the CARLA client and its Codon
   library; pulls in `typesafe-carla-toolchain`
 - `pyxodr>=0.1.0` — OpenDRIVE parser used by `MapManager` / `to_opendrive`
 - `lxml>=5.0` — the XML elements pyxodr's roads hold, which the road

@@ -441,7 +441,7 @@ Defined in `pyproject.toml`'s `[project.scripts]`, in that order:
 | `scenario-slurm` | `autoware_carla_scenario.slurm.cli:main` | Follow, collect, resubmit or cancel a batch run with `launcher=slurm`. See [SLURM](slurm.md#following-collecting-resubmitting). |
 | `scenario-odd` | `autoware_carla_scenario.odd.cli:main` | Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets. See [ODD](odd.md#checking-an-odd). |
 | `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` | Generate a standalone scenario package. See [Tutorial](tutorial.md). |
-| `scenario-setup` | `autoware_carla_scenario.carla_install:main` | Download a CARLA server (the nightly build by default) for the runner to launch. See [Installation](installation.md). |
+| `scenario-setup` | `autoware_carla_scenario.carla_install:main` | Download a CARLA server (CARLA 1.0 by default) for the runner to launch. See [Installation](installation.md). |
 | `detect-no-3d-model` | `autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main` | Detect lanelets without a matching 3D ground model in CARLA. See [Usage](usage.md#detect-no-3d-model-3d-model-detection). |
 | `viewer` | `autoware_carla_scenario.ui:main` | Scenario Result Viewer: a web UI for browsing scenario results and starting runs. See [Usage](usage.md#viewer-scenario-result-viewer). |
 | `scenario-editor` | `autoware_carla_scenario.editor:main` | Scenario Editor: a web UI for authoring scenarios and exporting them as packages; a separate application from `viewer`. See [Scenario Editor](scenario_editor.md). |
