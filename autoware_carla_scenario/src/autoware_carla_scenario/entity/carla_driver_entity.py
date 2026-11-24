@@ -1056,6 +1056,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             if published is not None:
                 velocities = published.velocities
                 accelerations = published.accelerations
+        self._follower.follow_wheel_grip(actor)
         command = self._follower.step(
             plan,
             observation.pose,

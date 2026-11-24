@@ -42,3 +42,14 @@ def road_water(
     labels: Optional[Dict[str, str]] = None,
 ) -> Dict[str, float]:
     raise NotImplementedError()
+
+
+def merged_visibility(
+    visibility_m: float,
+    fields: Dict[str, float],
+    conditions: Dict[str, float],
+    labels: Dict[str, str],
+    run_conditions: Dict[str, float],
+    run_labels: Dict[str, str],
+) -> float:
+    raise NotImplementedError()

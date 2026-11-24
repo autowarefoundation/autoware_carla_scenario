@@ -14,6 +14,7 @@ from autoware_carla_scenario.entity._policy_warmup import (
     _CarriedWalker,
     _LanePath,
 )
+from autoware_carla_scenario.utils.powertrain import _WHEEL_FRICTION_CHANGES
 
 
 def _walker(yaw: float) -> MagicMock:
@@ -98,6 +99,9 @@ def _vehicle(lane_back_m: float, speed: float = _SPEED) -> _CarriedVehicle:
     )
     vehicle._powertrain = MagicMock()
     vehicle._powertrain.pedals.return_value = (0.3, 0.0)
+    # Read after the last wheel friction change: kept, not read again off the
+    # actor (utils.powertrain.follow_wheel_grip).
+    vehicle._powertrain.wheel_friction_changes = _WHEEL_FRICTION_CHANGES[0]
     return vehicle
 
 

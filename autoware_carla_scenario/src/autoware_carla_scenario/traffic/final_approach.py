@@ -270,6 +270,7 @@ class FinalApproach:
             gear = control.gear
         except AttributeError:
             gear = 0
+        self._follower.follow_wheel_grip(actor)
         command = self._follower.step(
             self._plan(elapsed),
             # The plan's frame is CARLA's with y flipped: right-handed.

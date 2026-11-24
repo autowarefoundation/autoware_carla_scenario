@@ -991,6 +991,7 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         weather_rules,
         (
             "custom_rules_in_use",
+            "merged_visibility",
             "road_water",
             "vehicle_at",
             "vehicle_rules_in_use",

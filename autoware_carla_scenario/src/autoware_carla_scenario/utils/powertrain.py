@@ -41,10 +41,18 @@ from typing import TYPE_CHECKING, Sequence, Tuple
 
 import numpy as np
 
+from .vehicles import as_vehicle
+
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["CREEP_THROTTLE", "ChaosPowertrain", "DEFAULT_ROAD_FRICTION"]
+__all__ = [
+    "CREEP_THROTTLE",
+    "ChaosPowertrain",
+    "DEFAULT_ROAD_FRICTION",
+    "follow_wheel_grip",
+    "note_wheel_friction_change",
+]
 
 #: Air density Chaos uses, kg/m³ (``RealWorldConsts::AirDensity``).
 _AIR_DENSITY: float = 1.225
@@ -70,6 +78,18 @@ _GRAVITY: float = 9.81
 #: Which wheels a ``differential_type`` drives, by wheel index (front pair first):
 #: CARLA passes UE's ``EVehicleDifferential`` through as is.
 _DRIVEN_WHEELS = {0: "all", 1: "all", 2: "front", 3: "rear"}
+
+#: How many times the framework has changed a vehicle's wheel friction (a
+#: grip the weather leaves, #2458): a powertrain read before the last change
+#: reads its grip again (:func:`follow_wheel_grip`).  A list, so it changes
+#: in place without a ``global``.
+_WHEEL_FRICTION_CHANGES: list[int] = [0]
+
+
+def note_wheel_friction_change() -> None:
+    """Note that a vehicle's wheel friction changed: every powertrain reads
+    its grip again the next time :func:`follow_wheel_grip` is asked."""
+    _WHEEL_FRICTION_CHANGES[0] += 1
 
 
 def _rich_curve(keys: Sequence[Tuple[float, float]], rpm: float) -> float:
@@ -118,6 +138,9 @@ class ChaosPowertrain:
         change_up_rpm: The automatic box changes up at this rpm.
         drag_n_per_mps2: Air drag per squared m/s.
         wheel_grip_n: A driven wheel's force under traction control.
+        road_friction: The friction of the road's surface material it was read at.
+        wheel_friction_changes: How many wheel friction changes there had been
+            when it was read (:func:`follow_wheel_grip`).
     """
 
     mass_kg: float
@@ -134,6 +157,8 @@ class ChaosPowertrain:
     change_up_rpm: float
     drag_n_per_mps2: float
     wheel_grip_n: float
+    road_friction: float
+    wheel_friction_changes: int
 
     @classmethod
     def from_physics_control(
@@ -205,6 +230,8 @@ class ChaosPowertrain:
             / 1e4
             * float(physics.drag_coefficient),
             wheel_grip_n=grip,
+            road_friction=road_friction,
+            wheel_friction_changes=_WHEEL_FRICTION_CHANGES[0],
         )
 
     # -- the engine and gearbox ----------------------------------------------------
@@ -360,3 +387,26 @@ class ChaosPowertrain:
                 for b in brakes
             ]
         )
+
+
+def follow_wheel_grip(
+    powertrain: ChaosPowertrain, actor: "carla.Actor"
+) -> ChaosPowertrain:
+    """*powertrain*, read again off *actor*'s physics control where a wheel
+    friction changed since it was read (:func:`note_wheel_friction_change`):
+    a follower built once keeps the grip the road's weather leaves its
+    vehicle (``wheel_grip_n``) when an ``EnvironmentAction`` changes it
+    during the run (#2458).  Cheap where nothing changed, so a follower asks
+    every tick; where the actor cannot be read (gone, or no vehicle),
+    *powertrain* as it is.
+    """
+    if powertrain.wheel_friction_changes == _WHEEL_FRICTION_CHANGES[0]:
+        return powertrain
+    try:
+        physics = as_vehicle(actor).get_physics_control()
+    # One `except` per exception: Codon takes no tuple (docs/typecheck.md).
+    except RuntimeError:
+        return powertrain
+    except AttributeError:  # a carried or fake actor has no physics control
+        return powertrain
+    return ChaosPowertrain.from_physics_control(physics, powertrain.road_friction)

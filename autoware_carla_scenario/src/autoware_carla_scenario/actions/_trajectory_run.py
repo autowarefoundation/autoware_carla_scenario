@@ -899,6 +899,7 @@ class TrajectoryRun(BaseAction):
                 carla.VehicleControl(throttle=0.0, brake=1.0)
             )
             return
+        self._follower.follow_wheel_grip(actor)
         command = self._follower.step(
             plan,
             # The plan's frame is CARLA's with y flipped: right-handed, as the
