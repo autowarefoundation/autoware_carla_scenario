@@ -1364,3 +1364,280 @@ class TestPaddedNamesResolve:
         result = condition.check(world, 1.0)
         assert result is not None
         assert result.passed
+
+
+class TestPhase0InTheInitPhase:
+    """A controller shows its phase 0 from the init phase (#2450).
+
+    So the wait for the ego and a policy's run-up see the junction the run
+    starts from, frozen, rather than CARLA's own cycle frozen and thawed on
+    arrival.  Only the lights: the cycle still starts on the run's first tick,
+    on the documented schedule, and that tick does not set them again.
+    """
+
+    @staticmethod
+    def _forget(junction: dict[int, MagicMock]) -> None:
+        for light in junction.values():
+            light.reset_mock()
+
+    def test_prime_shows_phase_0_frozen_before_the_cycle_starts(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller, world = _cycle(), _World()
+
+        controller.prime(world)
+
+        junction[_NORTH].set_state.assert_called_once_with(_GREEN)
+        junction[_EAST].set_state.assert_called_once_with(_RED)
+        junction[_NORTH].freeze.assert_called_with(True)
+        junction[_EAST].freeze.assert_called_with(True)
+        # The schedule has not started: that is the first tick's.
+        assert controller.current_phase is None
+        assert controller.started_at is None
+
+    def test_the_first_tick_starts_the_cycle_without_setting_the_lights_again(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """Whatever changed a light since -- an init or untriggered
+        ``traffic_signal`` card -- stands until the next phase change."""
+        controller, world = _cycle(), _World()
+        controller.prime(world)
+        self._forget(junction)
+
+        world.now = 30.0  # the wait for the ego, the run-up
+        controller.tick(world)
+
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "ns_green"
+        junction[_NORTH].set_state.assert_not_called()
+        junction[_EAST].set_state.assert_not_called()
+
+        world.now = 34.5
+        controller.tick(world)
+        junction[_NORTH].set_state.assert_not_called()
+
+        world.now = 35.0
+        controller.tick(world)
+        junction[_NORTH].set_state.assert_called_once_with(_YELLOW)
+
+    def test_the_schedule_starts_on_the_first_tick_not_at_the_prime(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """Phase 0 lasts its declared duration from the run's start, however
+        long the init phase and the warm-up took."""
+        primed, plain = _cycle("primed"), _cycle("plain")
+        world = _World()
+        primed.prime(world)
+
+        world.now = 100.0
+        starts_primed: list[tuple[float, str]] = []
+        starts_plain: list[tuple[float, str]] = []
+        while world.now <= 130.0 + 1e-9:
+            for controller, starts in ((primed, starts_primed), (plain, starts_plain)):
+                controller.tick(world)
+                phase = controller.current_phase
+                assert phase is not None
+                if not starts or starts[-1][1] != phase.name:
+                    starts.append((world.now, phase.name))
+            world.now = round(world.now + 0.5, 6)
+
+        assert primed.started_at == 100.0
+        assert starts_primed == starts_plain
+        assert starts_primed[:3] == [
+            (100.0, "ns_green"),
+            (105.0, "ns_amber"),
+            (107.0, "all_red"),
+        ]
+
+    def test_a_zero_second_phase_0_hands_over_on_the_first_tick(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller = SignalController(
+            name="flash",
+            phases=(
+                Phase("clear", 0.0, (PhaseState(_NORTH, "red"),)),
+                Phase("go", 5.0, (PhaseState(_NORTH, "green"),)),
+            ),
+        )
+        world = _World()
+        controller.prime(world)
+        junction[_NORTH].set_state.assert_called_once_with(_RED)
+
+        controller.tick(world)
+
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "go"
+        junction[_NORTH].set_state.assert_called_with(_GREEN)
+
+    def test_a_running_controller_is_not_primed_again(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller, world = _cycle(), _World()
+        _run_to(controller, world, 6.0)
+        self._forget(junction)
+
+        controller.prime(world)
+
+        junction[_NORTH].set_state.assert_not_called()
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "ns_amber"
+
+    def test_a_jump_after_the_prime_still_sets_the_lights(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        controller, world = _cycle(), _World()
+        controller.prime(world)
+        self._forget(junction)
+
+        assert controller.change_phase_to("ew_green", world)
+        junction[_EAST].set_state.assert_called_once_with(_GREEN)
+
+    def test_a_delayed_controller_is_not_primed(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """Its lights are CARLA's until its delay is over."""
+        first = _cycle("first")
+        second = SignalController(
+            name="second",
+            phases=(Phase("go", 5.0, (PhaseState(_EAST, "green"),)),),
+            delay_seconds=3.0,
+            reference=first,
+        )
+        world = _World()
+        first.prime(world)
+        self._forget(junction)
+
+        second.prime(world)
+
+        junction[_EAST].set_state.assert_not_called()
+
+        first.tick(world)
+        world.now = 3.0
+        second.tick(world)
+        junction[_EAST].set_state.assert_called_once_with(_GREEN)
+
+    def test_a_controller_offset_by_nothing_is_primed(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        first = _cycle("first")
+        second = SignalController(
+            name="second",
+            phases=(Phase("go", 5.0, (PhaseState(_EAST, "green"),)),),
+            delay_seconds=0.0,
+            reference=first,
+        )
+        world = _World()
+
+        first.prime(world)
+        self._forget(junction)
+        second.prime(world)
+        junction[_EAST].set_state.assert_called_once_with(_GREEN)
+        self._forget(junction)
+
+        first.tick(world)
+        second.tick(world)
+        assert second.current_phase is not None
+        junction[_EAST].set_state.assert_not_called()
+
+    def test_a_loop_of_references_is_not_primed(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """The validator rejects one; the walk is bounded should one get by."""
+        first = _cycle("first")
+        second = _cycle("second")
+        first.reference, second.reference = second, first
+
+        first.prime(_World())
+
+        junction[_NORTH].set_state.assert_not_called()
+
+
+class TestCardsOnControlledLights:
+    """An init or untriggered ``traffic_signal`` card on a light a controller
+    drives lasts only until the next phase change, and is warned about (#2450).
+    """
+
+    _WARNING = "next phase change"
+
+    @staticmethod
+    def _warnings(card: dict[str, Any]) -> list[str]:
+        raw = new_document().model_dump(mode="json")
+        raw["map"]["signal_groups"] = [
+            {
+                "name": "ns",
+                "lanelet2_regulatory_element_ids": [_NORTH, 1003],
+                "conflicts_with": ["ew"],
+            },
+            {"name": "ew", "lanelet2_regulatory_element_ids": [_EAST]},
+        ]
+        raw["map"]["traffic_signal_controllers"] = [
+            {
+                "name": "crossing",
+                "phases": [
+                    {
+                        "name": "ns_green",
+                        "duration_seconds": 5.0,
+                        "states": [
+                            {"group": "ns", "state": "green"},
+                            {"group": "ew", "state": "red"},
+                        ],
+                    }
+                ],
+            }
+        ]
+        raw["actions"].append(card)
+        report = validate_document(ScenarioDocument.model_validate(raw))
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+        return [f"{i.path}: {i.message}" for i in report.warnings]
+
+    @staticmethod
+    def _card(
+        ids: "list[int] | None", *, phase: str = "pre_tick", triggered: bool = False
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"state": "Red", "target": "all"}
+        if ids is not None:
+            params = {
+                "state": "Red",
+                "target": "ids",
+                "lanelet2_traffic_light_ids": ids,
+            }
+        card: dict[str, Any] = {
+            "type": "traffic_signal",
+            "phase": phase,
+            "params": params,
+        }
+        if triggered:
+            card["trigger"] = {
+                "type": "elapsed_time",
+                "params": {"duration_seconds": 1.0},
+            }
+        return card
+
+    def _hits(self, card: dict[str, Any]) -> list[str]:
+        return [w for w in self._warnings(card) if self._WARNING in w]
+
+    def test_an_init_card_on_a_grouped_light_is_warned_about(self) -> None:
+        (warning,) = self._hits(self._card([1003], phase="init"))
+        assert "initialization phase" in warning
+        assert "1003" in warning
+        assert "'crossing'" in warning
+        assert warning.startswith("actions[")
+        assert ".lanelet2_traffic_light_ids:" in warning
+
+    def test_an_untriggered_card_on_a_controlled_light_is_warned_about(
+        self,
+    ) -> None:
+        (warning,) = self._hits(self._card([_EAST, 4242]))
+        assert "no trigger" in warning
+        assert str(_EAST) in warning
+        assert "4242" not in warning
+
+    def test_an_untriggered_card_on_every_light_is_warned_about(self) -> None:
+        (warning,) = self._hits(self._card(None))
+        assert ".target:" in warning
+
+    def test_a_triggered_card_is_not(self) -> None:
+        assert self._hits(self._card([_NORTH], triggered=True)) == []
+
+    def test_a_card_on_a_light_no_controller_drives_is_not(self) -> None:
+        assert self._hits(self._card([4242], phase="init")) == []

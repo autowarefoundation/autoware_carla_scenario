@@ -821,6 +821,16 @@ replace the ego's own before the run starts. Only a vehicle that plans its own r
 goal at all, so a goal stored on any other entity is a validation error rather
 than something quietly dropped at export.
 
+A **Set Traffic Signal** card on a light one of the scenario's signal
+controllers drives (`map.traffic_signal_controllers`) lasts only until that
+controller's next phase change, which sets every light the phase names. A
+controller shows its first phase from the initialization phase, so a card left
+in the initialization phase, or with no trigger, shows over phase 0 until phase
+0 ends; such a card is warned about when its target is `all`, or `ids` naming a
+light a controller's phases drive (`route` finds its lights only when it fires,
+and is not judged). To change a controlled junction, jump its controller to a
+phase with a *Set Junction Phase* card instead.
+
 The **Set Goal** card is also how any road user moves through waypoints
 (written out, each with a time or a waypoint condition) and **Driven by** says
 who moves it: its own driver, a controller, or a replay

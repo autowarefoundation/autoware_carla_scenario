@@ -228,8 +228,12 @@ class TrafficSignalAction(BaseAction):
 
         Each id resolves as the condition and the signal controllers resolve
         it (:func:`~..coordinate.traffic_light.find_traffic_lights_for_lanelet2_id`):
-        by its OpenDRIVE controller, or by its stop line on a map where no
-        controller is named after it (a roadgen map).
+        by its OpenDRIVE controller, or, on a map where no controller is named
+        after it (a roadgen map), by the lanes: each CARLA light whose stop
+        waypoint's lanelets, walked forward up to
+        :data:`~..utils.light_lanes.LIGHT_SEARCH_M`, reach this element first
+        (the first lanelet on each branch carrying a ``traffic_light`` element,
+        :func:`~..utils.light_lanes.elements_ahead`).
         """
         seen: set[int] = set()  # actor ids: a light two ids name is set once
         count = 0

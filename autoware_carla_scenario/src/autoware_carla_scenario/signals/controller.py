@@ -27,6 +27,18 @@ authoring concern: :func:`build_controllers` expands each group into one
 :class:`PhaseState` per member, and everything from there down deals in single
 signals.
 
+Phase 0 is shown from the init phase
+------------------------------------
+A controller that starts with the run shows its first phase from the
+scenario's init phase (:meth:`SignalController.prime`), not from the first
+tick of the loop: everything that happens between the two -- the wait for the
+ego, a policy's run-up (``driver.warmup_s``) -- then sees the junction the run
+starts from, frozen, and leaves it alone.  Priming sets the lights only: the
+schedule still starts on the first tick, so phase 0 lasts its declared duration
+from the run's start however long the wait was, and that tick does not set the
+lights again -- a ``traffic_signal`` card that changed one of them meanwhile
+stands until the controller's next phase change.
+
 Time is the world's
 -------------------
 Durations are simulated seconds, read from the world rather than from a wall
@@ -57,6 +69,10 @@ __all__ = [
     "SignalController",
     "build_controllers",
 ]
+
+#: How far :meth:`SignalController.prime` follows a chain of references.  The
+#: validator rejects a loop of them; this bounds the walk should one get past it.
+_MAX_REFERENCE_DEPTH = 64
 
 #: The signal states a phase may name, and what each is in CARLA.
 #:
@@ -161,6 +177,9 @@ class SignalController:
     #: phase, or any phase shorter than the gap between ticks.  Never shown,
     #: but they did happen, and :meth:`showed` counts them.
     _passed: "list[int]" = field(default_factory=_no_indices, init=False, repr=False)
+    #: Whether :meth:`prime` showed phase 0 before the cycle started, so the
+    #: tick that starts it does not set the lights a second time.
+    _primed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # A cycle of no phases has nothing to show, and its first tick would
@@ -211,6 +230,30 @@ class SignalController:
     # Running
     # ------------------------------------------------------------------
 
+    def prime(self, world: "carla.World") -> None:
+        """Show phase 0 before the cycle starts: the scenario's init phase.
+
+        Registered as an init callback, so the junction is in its first phase
+        -- every signal set and frozen -- before anything else ticks the world:
+        the runner's tick after the init phase makes the lights read frozen,
+        and a policy's run-up then leaves them as they are rather than freezing
+        CARLA's own cycle and thawing it on arrival (docs/driver_interface.md).
+
+        Only the lights: the schedule is untouched, so the first :meth:`tick`
+        still starts the cycle, on the run's first tick, and phase 0 lasts its
+        declared duration from there.  That tick does not set the lights again,
+        so what changed one of them in between -- an init-phase or untriggered
+        ``traffic_signal`` card -- stands until the next phase change.
+
+        A controller that starts later than the run -- offset by a delay from
+        its reference -- is left alone: its lights are not its own until then.
+        Nor does a controller already running prime again.
+        """
+        if self._current is not None or not self._starts_with_run():
+            return
+        _apply(self.phases[0], world, self.name)
+        self._primed = True
+
     def tick(self, world: "carla.World") -> None:
         """Advance the cycle if it is due, and hold it where it is otherwise.
 
@@ -226,7 +269,9 @@ class SignalController:
         number of ticks is not rounded up phase after phase, and controllers
         offset from one another keep their offset.  The lights are set once,
         for the phase the tick ends in: a phase states every signal it
-        controls, so the ones passed over leave nothing behind.
+        controls, so the ones passed over leave nothing behind.  The tick
+        that starts the cycle sets none when :meth:`prime` already showed the
+        phase it ends in.
         """
         now = world_seconds(world)
         self._passed = []
@@ -238,7 +283,10 @@ class SignalController:
                 return
             self._enter(0, start)
 
-        if self._advance(now, entering) or entering:
+        changed = self._advance(now, entering)
+        primed = self._primed
+        self._primed = False
+        if changed or (entering and not primed):
             _apply(self.phases[self._index()], world, self.name)
 
     def change_phase_to(self, phase_name: str, world: "carla.World") -> bool:
@@ -257,6 +305,7 @@ class SignalController:
                 # Anchored at now, not at the schedule: a jump is an explicit
                 # decision taken on this tick, and the cycle runs on from it.
                 self._enter(index, world_seconds(world))
+                self._primed = False
                 _apply(phase, world, self.name)
                 return True
         logger.warning(
@@ -276,6 +325,25 @@ class SignalController:
         current = self._current
         assert current is not None
         return current
+
+    def _starts_with_run(self) -> bool:
+        """Whether the cycle begins on the run's first tick.
+
+        So it does without a reference, and with a chain of references whose
+        delays add up to nothing.  A chain that does not end -- a loop the
+        validator rejects -- never starts, as :meth:`_scheduled_start` would
+        have it.
+        """
+        delay = 0.0
+        current = self
+        for _ in range(_MAX_REFERENCE_DEPTH):
+            reference = current.reference
+            if reference is None:
+                # The tolerance _scheduled_start() and _advance() use.
+                return delay < 1e-9
+            delay += current.delay_seconds
+            current = reference
+        return False
 
     def _scheduled_start(self, now: float) -> Optional[float]:
         """When the cycle begins, or ``None`` while it is not yet due.

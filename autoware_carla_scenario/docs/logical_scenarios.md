@@ -341,6 +341,15 @@ those lights.
            route_turn: any, freeze: true}
 ```
 
+On a light one of the scenario's signal controllers drives, a card's state
+lasts only until that controller's **next phase change**: a phase sets every
+light it names. A controller that starts with the run shows its phase 0 from
+the initialization phase (its cycle still starts on the first tick), so an
+init-phase or untriggered card there shows over phase 0 until phase 0 ends.
+The validator warns about one whose target is `all`, or `ids` naming a
+controlled light; a `route` card's lights are found only when it fires, so it is
+not judged.
+
 ### Bringing an entity in: the `spawn` card
 
 An entity spawned `hidden` is brought into the scene by a **Spawn** card

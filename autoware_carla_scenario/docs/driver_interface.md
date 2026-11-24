@@ -452,7 +452,10 @@ everything arrives at its first-frame pose at its initial speed.
 - The traffic lights are frozen, so the run-up spends none of their phases, and
   thawed on arrival. A light the scenario (a `TrafficSignalAction` in
   `register_init`, say) or a signal controller already froze stays frozen and is
-  not thawed on arrival.
+  not thawed on arrival: a controller that starts with the run shows its first
+  phase, frozen, from the init phase, so the run-up sees the junction the run
+  starts from. One offset by a delay is CARLA's until its delay is over, and is
+  frozen and thawed like any other light.
 
 The policy gets every observation and plans all the way, but does not drive; the
 scenario's clock starts, and the policy takes over, on arrival. Set `warmup_s` to
