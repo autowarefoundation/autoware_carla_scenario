@@ -181,8 +181,11 @@ def _slurm_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
             try:
                 stale = stale_reason(layout, index, outcome) is not None
             except (OSError, TypeError, ValueError) as exc:
+                # Named by their directory, not the manifest: the line
+                # says to repair the file it names.
+                records = layout.root / "submissions"
                 unreadable = (
-                    f"{layout.manifest}: the batch's SLURM submission records "
+                    f"{records}: the batch's SLURM submission records "
                     f"cannot be read ({exc})"
                 )
                 none_read: list[str] = []

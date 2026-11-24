@@ -1155,5 +1155,6 @@ def test_a_batch_whose_submission_records_cannot_tell_staleness_is_unreadable(
     assert (names, total) == ([], 0)
     assert why is not None
     assert why.startswith(
-        f"{layout.manifest}: the batch's SLURM submission records cannot be read ("
+        f"{layout.root / 'submissions'}: the batch's SLURM submission records "
+        "cannot be read ("
     )
