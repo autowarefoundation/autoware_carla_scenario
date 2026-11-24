@@ -330,8 +330,9 @@ class _RunContext:
     #: :attr:`map_source` pinned to :attr:`map_commit`, when its ref is not
     #: that commit (a branch, a tag): what ``repro.sh`` of a case reads.
     map_pinned: str | None = None
-    #: The scenario the run built (:func:`note_run`), for the environment
-    #: pin of its package.
+    #: A stand-in for the scenario the run built (:func:`note_run`), for the
+    #: environment pin of its package: an instance of a class of the same
+    #: module, not the scenario, which the context would keep alive.
     scenario: Any = None
 
     def carried(self, report_dir: Path, **fields: Any) -> _RunContext:
@@ -952,6 +953,15 @@ def run_context(
             reporter.disarm_native()
 
 
+def _scenario_stand_in(scenario: Any) -> Any:
+    """An instance of a class of *scenario*'s class's module: all
+    :meth:`~.environment.RunEnvironment.scenario_package` reads of it, kept in
+    the run's context in its place so that the context does not keep the
+    scenario (its world, its actors, its records) alive after its run."""
+    cls = type(scenario)
+    return type(cls.__name__, (), {"__module__": cls.__module__})()
+
+
 def note_run(*, map_paths: Any = None, scenario: Any = None) -> None:
     """Note in the run's context what reports of it say of its map and its
     scenario, once they are known: the commit ``map.source`` resolved to
@@ -965,7 +975,7 @@ def note_run(*, map_paths: Any = None, scenario: Any = None) -> None:
         return
     ctx = reporter.context
     if scenario is not None:
-        ctx.scenario = scenario
+        ctx.scenario = _scenario_stand_in(scenario)
     try:
         if map_paths is not None:
             resolved = getattr(map_paths, "resolved", None)

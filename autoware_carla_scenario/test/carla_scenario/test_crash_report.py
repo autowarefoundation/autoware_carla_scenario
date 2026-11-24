@@ -1376,6 +1376,41 @@ def test_a_pin_that_cannot_be_read_leaves_the_report(
     assert json.loads((report / "context.json").read_text())["environment_pin"] is None
 
 
+def test_the_noted_scenario_is_not_kept_alive(
+    reporter: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gc
+    import weakref
+
+    from autoware_carla_scenario import environment
+
+    class Scenario:
+        pass
+
+    seen: list[str] = []
+
+    class Env:
+        id = "f" * 64
+        by_name: dict[str, Any] = {}
+
+        def scenario_package(self, scenario: Any) -> Any:
+            seen.append(type(scenario).__module__)
+            return {"name": "pkg", "version": "1"}
+
+    monkeypatch.setattr(environment, "capture", lambda: Env())
+    scenario = Scenario()
+    alive = weakref.ref(scenario)
+    crash_report.note_run(scenario=scenario)
+    del scenario
+    gc.collect()
+    assert alive() is None
+    report = crash_report.capture(_caught())
+    assert report is not None
+    pin = json.loads((report / "context.json").read_text())["environment_pin"]
+    assert pin["scenario"] == {"name": "pkg", "version": "1"}
+    assert seen and set(seen) == {Scenario.__module__}
+
+
 def _map_paths(uri: str, commit: str) -> Any:
     from types import SimpleNamespace
 
