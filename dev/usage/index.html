@@ -4117,7 +4117,7 @@
 neither starts the other.</p>
 <hr />
 <h2 id="scenario-scenario-runner"><code>scenario</code> - Scenario Runner<a class="headerlink" href="#scenario-scenario-runner" title="Permanent link">&para;</a></h2>
-<p>Runs autonomous driving scenario tests in CARLA. Uses <a href="https://hydra.cc/">Hydra</a> for configuration management. Requires a running CARLA server.</p>
+<p>Runs autonomous driving scenario tests in CARLA. Uses <a href="https://hydra.cc/">Hydra</a> for configuration management. Uses a CARLA server already listening on <code>server.host</code>/<code>server.port</code>, or, when <code>server.host</code> is a local host, launches one: <code>CARLA_EXECUTABLE</code>, else the one <code>scenario-setup</code> installed.</p>
 <h3 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Parses the <code>scenario=...</code> argument (supports glob patterns for batch execution)</li>
@@ -6807,7 +6807,7 @@ one YAML file:</p>
 <p>See <a href="../hils/">HILS Bridge</a>.</p>
 <hr />
 <h2 id="detect-no-3d-model-3d-model-detection"><code>detect-no-3d-model</code> - 3D Model Detection<a class="headerlink" href="#detect-no-3d-model-3d-model-detection" title="Permanent link">&para;</a></h2>
-<p>Detects lanelets that do not have a matching 3D ground model in CARLA. Useful for identifying areas where vehicle ground-projection ray casting will fail. Requires a running CARLA server with the target map loaded.</p>
+<p>Detects lanelets that do not have a matching 3D ground model in CARLA. Useful for identifying areas where vehicle ground-projection ray casting will fail. Requires a running CARLA server; it loads the map itself (step 2).</p>
 <h3 id="how-it-works_1">How It Works<a class="headerlink" href="#how-it-works_1" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Reads the map configuration YAML and resolves its map files the way <code>uv run scenario</code> does (see <a href="#input-yaml-requirements">Input YAML Requirements</a>)</li>
@@ -7640,7 +7640,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 21:15:10 UTC"><span class="timeago" datetime="2026-11-23T21:15:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 21:15:10 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 02:25:13 UTC"><span class="timeago" datetime="2026-11-24T02:25:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 02:25:13 UTC">2026-11-24</span>
   </span>
 
     
