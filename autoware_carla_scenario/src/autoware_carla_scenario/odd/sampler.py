@@ -936,6 +936,9 @@ def encode_case(case: OddSample, space: ParameterSpace) -> str:
         "values": dict(case.values),
         "situation": case.situation,
         "flaky": None if case.flaky is None else dataclasses.asdict(case.flaky),
+        # The values the case drew from the rules: the run measures and
+        # records each of them (``case.quantities``, ``effects.samples``).
+        "quantities": {str(k): float(v) for k, v in case.quantities.items()},
         "space": space.to_list(),
     }
     text = json.dumps(raw, separators=(",", ":"), default=str)
@@ -954,5 +957,7 @@ def decode_case(text: str) -> OddCase:
         values=dict(raw["values"]),
         situation=raw.get("situation"),
         flaky=None if flaky is None else FlakyMetrics(**flaky),
+        # A case encoded before the quantities travelled with it has none.
+        quantities={str(k): float(v) for k, v in (raw.get("quantities") or {}).items()},
     )
     return case, ParameterSpace.from_list(raw["space"])

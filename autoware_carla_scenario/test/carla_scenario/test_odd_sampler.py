@@ -41,6 +41,7 @@ from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
     check_sample_settings,
     decode_case,
+    encode_case,
     sample_count,
     sample_coverage_paths,
     sample_draws,
@@ -2904,3 +2905,34 @@ def test_a_negative_sample_seed_is_refused_once() -> None:
 
     with pytest.raises(ValueError, match="^sweep.odd_sample.seed must not be negative"):
         seed_setting("sweep.odd_sample.seed", -1)
+
+
+def test_a_case_keeps_what_it_drew_on_its_way_to_the_run() -> None:
+    from openodd import ParameterSpace
+
+    sampler, _count = sampler_from_config({"seed": 1}, odd="default")
+    case = sampler.sample(1)[0]
+    # The weather effects and the quantile nodes the rules drew.
+    assert case.quantities
+
+    decoded, _space = decode_case(encode_case(case, ParameterSpace.of(sampler)))
+
+    # The run measures and records each drawn quantity (docs/odd.md).
+    assert decoded.quantities == case.quantities
+    assert decoded == case
+
+
+def test_a_case_encoded_without_quantities_decodes_with_none() -> None:
+    import base64
+    import json
+
+    from openodd import ParameterSpace
+
+    sampler, _count = sampler_from_config({"seed": 1}, odd="default")
+    case = sampler.sample(1)[0]
+    text = encode_case(case, ParameterSpace.of(sampler))
+    raw = json.loads(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
+    del raw["quantities"]
+    old = base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
+
+    assert decode_case(old)[0].quantities == {}
