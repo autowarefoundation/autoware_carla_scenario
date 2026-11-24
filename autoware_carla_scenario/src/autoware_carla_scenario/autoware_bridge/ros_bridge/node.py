@@ -508,8 +508,8 @@ class ScenarioBridgeNode(Node):
     def _steady_timer(self, period_s: float, callback):  # noqa: ANN001, ANN202
         """A timer on the steady (wall) clock, whatever ``use_sim_time`` says.
 
-        Both timers poll the scenario's gRPC server, which lives in wall-clock
-        time: the scenario judges the stack alive by how long, in wall-clock
+        The tick and the route watch poll the scenario's gRPC server, which
+        lives in wall-clock time (as does the parent watch's one-second check): the scenario judges the stack alive by how long, in wall-clock
         seconds, it has gone without a ``GetMission`` (``liveness_timeout_s``),
         and a world ticking slower than real time -- or stalled between
         ticks -- would otherwise stretch the polls on the ROS clock, which
