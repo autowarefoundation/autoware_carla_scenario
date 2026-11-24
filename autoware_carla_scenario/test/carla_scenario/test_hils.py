@@ -3931,3 +3931,229 @@ def test_a_raw_send_without_an_id_describes_itself() -> None:
     assert StepSpec(kind="send", device="d", data=b"\x01", frame_id=7).describe() == (
         "send frame 7 to d"
     )
+
+
+# -- fresh commands and restored cuts (#2444) ---------------------------------------
+
+
+def test_a_message_whose_fields_are_all_dropped_refreshes_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A constant must not keep the command fresh while every field the ECU
+    # sends is NaN: brake would stay at its previous value for as long.
+    from autoware_carla_scenario.hils.config import InputSource, InputSpec
+
+    spec = InputSpec(
+        name="BrakeCmd",
+        command={
+            "brake": InputSource(field="Brake"),
+            "hand_brake": InputSource(constant=0.0),
+        },
+    )
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            assert spec.values({"Brake": math.nan}) == {}
+        # A message without the field refreshes nothing either.
+        assert spec.values({}) == {}
+    refused = [r for r in caplog.records if "refreshes nothing" in r.getMessage()]
+    assert len(refused) == 1 and "BrakeCmd" in refused[0].getMessage()
+    assert spec.values({"Brake": 0.3}) == {"brake": 0.3, "hand_brake": 0.0}
+    # One field left gives the message's constants too.
+    both = InputSpec(
+        name="Cmd",
+        command={
+            "brake": InputSource(field="Brake"),
+            "throttle": InputSource(field="Throttle"),
+            "hand_brake": InputSource(constant=1.0),
+        },
+    )
+    assert both.values({"Brake": math.nan, "Throttle": 0.5}) == {
+        "throttle": 0.5,
+        "hand_brake": 1.0,
+    }
+    # A message whose command is all constants says it by arriving.
+    constants = InputSpec(
+        name="Park", command={"hand_brake": InputSource(constant=1.0)}
+    )
+    assert constants.values({"Anything": math.nan}) == {"hand_brake": 1.0}
+
+
+def test_the_bridge_forwards_nothing_for_a_message_of_dropped_fields(
+    world: _World, dbc: Path
+) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    document["devices"]["can"]["inputs"][0]["command"] = {
+        "throttle": {"field": "Throttle", "scale": 0.01},
+        "hand_brake": 0,
+    }
+    bridge = HilsBridge(parse_config(document), carla_module=_carla(world))
+    sent: List[dict[str, Any]] = []
+    bridge._forwarding = True
+    bridge._link = types.SimpleNamespace(send=sent.append)  # type: ignore[assignment]
+    [spec] = bridge.config.devices
+    message = types.SimpleNamespace(name="ControlCmd", fields={"Throttle": 40.0})
+    bridge._on_input(spec, message)
+    version = bridge._command_version
+    message.fields = {"Throttle": math.nan}
+    bridge._on_input(spec, message)
+    assert bridge._command_version == version
+    assert bridge.command == {"throttle": 0.4, "hand_brake": 0.0}
+    assert len(sent) == 1
+
+
+class _CutChannel:
+    """A device's channel that records what it is told to stop, and fails to
+    carry its data again while :attr:`fail` is set."""
+
+    def __init__(self) -> None:
+        self.calls: List[tuple[Any, ...]] = []
+        self.fail = False
+
+    def disconnect(self, direction: str, messages: Optional[List[str]] = None) -> None:
+        self.calls.append(("disconnect", direction, messages))
+
+    def reconnect(self, direction: str) -> None:
+        self.calls.append(("reconnect", direction))
+        if self.fail:
+            raise RuntimeError(f"cannot carry {direction} again")
+
+
+def test_every_cut_channel_reconnects_and_a_scenario_starts_with_none_cut(
+    world: _World, dbc: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    document = _hils_config(_mem(), dbc, lifecycle={})
+    bridge = _bridge(document, world)
+    first, second = _CutChannel(), _CutChannel()
+    channels, bridge._channels = bridge._channels, {"a": first, "b": second}
+    sent: List[dict[str, Any]] = []
+    bridge._link = types.SimpleNamespace(send=sent.append, close=lambda: None)
+    try:
+        bridge._handle(("start", {"ego_id": 1, "scenario": "one"}))
+        assert sent[-1] == {"type": "ready"} and bridge.active
+        bridge.disconnect("1")  # everything, both ways
+        assert (
+            {c[1] for c in first.calls}
+            == {c[1] for c in second.calls}
+            == {
+                "send",
+                "recv",
+            }
+        )
+        first.fail = True
+        first.calls.clear()
+        second.calls.clear()
+        with caplog.at_level("ERROR"):
+            bridge._handle(("end", {}))
+        # The scenario ended, and every side was tried: the second channel
+        # carries its data again although the first failed before it.
+        assert sent[-1] == {"type": "ended"} and not bridge.active
+        assert sorted(first.calls) == [("reconnect", "recv"), ("reconnect", "send")]
+        assert sorted(second.calls) == [("reconnect", "recv"), ("reconnect", "send")]
+        assert any("restore the cut data" in r.getMessage() for r in caplog.records)
+        assert bridge._still_cut() == ["a (recv)", "a (send)"]
+        # The next scenario does not start with the first channel cut.
+        first.calls.clear()
+        second.calls.clear()
+        bridge._handle(("start", {"ego_id": 1, "scenario": "two"}))
+        assert sent[-1]["type"] == "error" and not bridge.active
+        assert "a (recv), a (send)" in sent[-1]["message"]
+        assert sorted(first.calls) == [("reconnect", "recv"), ("reconnect", "send")]
+        assert second.calls == []
+        # Once it carries its data again, a scenario starts.
+        first.fail = False
+        first.calls.clear()
+        bridge._handle(("start", {"ego_id": 1, "scenario": "three"}))
+        assert sent[-1] == {"type": "ready"} and bridge.active
+        assert bridge._still_cut() == []
+        assert sorted(first.calls) == [("reconnect", "recv"), ("reconnect", "send")]
+        # Restored sides are not set again.
+        first.calls.clear()
+        bridge._reconnect_all()
+        assert first.calls == []
+        bridge._handle(("end", {}))
+    finally:
+        bridge._channels = channels
+        bridge.close()
+
+
+def test_a_cut_that_fails_on_one_channel_is_still_made_on_the_others(
+    world: _World, dbc: Path
+) -> None:
+    document = _hils_config(_mem(), dbc, lifecycle={})
+    bridge = _bridge(document, world)
+    first, second = _CutChannel(), _CutChannel()
+    channels, bridge._channels = bridge._channels, {"a": first, "b": second}
+    bridge._link = types.SimpleNamespace(send=lambda message: None, close=lambda: None)
+    try:
+        bridge._handle(("start", {"ego_id": 1, "scenario": ""}))
+        bridge.disconnect("1", direction="from_ecu")
+        first.fail = True
+        with pytest.raises(RuntimeError, match="cannot carry recv again"):
+            bridge.reconnect("1")
+        assert ("reconnect", "recv") in second.calls
+        assert bridge._still_cut() == ["a (recv)"]
+        first.fail = False
+        bridge._reconnect_all()
+        assert bridge._still_cut() == []
+        bridge._handle(("end", {}))
+    finally:
+        bridge._channels = channels
+        bridge.close()
+
+
+def test_a_refused_cut_is_reported_though_its_undo_fails(
+    world: _World, dbc: Path
+) -> None:
+    # A channel an earlier change left cut fails every later change: the run
+    # still hears that its cut was refused, rather than nothing (#2444).
+    class _Stuck(_CutChannel):
+        def reconnect(self, direction: str) -> None:
+            self.calls.append(("reconnect", direction))
+            if self.fail:
+                raise hilspy.Error(f"cannot carry {direction} again")
+
+    document = _hils_config(_mem(), dbc, lifecycle={})
+    bridge = _bridge(document, world)
+    first, second = _Stuck(), _CutChannel()
+    channels, bridge._channels = bridge._channels, {"a": first, "b": second}
+    sent: List[dict[str, Any]] = []
+    bridge._link = types.SimpleNamespace(send=sent.append, close=lambda: None)
+    try:
+        bridge._handle(("start", {"ego_id": 1, "scenario": ""}))
+        bridge.disconnect("1", device="a", direction="from_ecu")
+        first.fail = True
+        with pytest.raises(hilspy.Error):
+            bridge.reconnect("1")
+        bridge._handle(("disconnect", {"id": "2", "device": "b"}))
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"].startswith("disconnect: ")
+        assert bridge._still_cut() == ["a (recv)"]
+        first.fail = False
+        bridge._handle(("end", {}))
+        assert bridge._still_cut() == []
+    finally:
+        bridge._channels = channels
+        bridge.close()
+
+
+def test_a_command_is_dated_by_the_read_that_takes_it() -> None:
+    import select
+
+    command = {"type": "command", "mode": "control", "throttle": 0.5}
+    bridge = _ScriptedBridge([{"type": "ready"}])
+    entity = _entity(bridge.port)
+    assert _ticked(entity, lambda: entity.is_initialized)
+    assert entity.command is None
+    bridge.send(command)
+    assert select.select([entity._sock], [], [], 5.0)[0]
+    before = time.monotonic()
+    entity.on_tick(None, 0.0)
+    after = time.monotonic()
+    assert entity.command == ("control", {"throttle": 0.5})
+    assert before <= entity._command_at <= after
+    # The read's own time dates every command it took.
+    entity._handle([command], 12.5)
+    assert entity._command_at == 12.5
+    entity.on_scenario_end(None)
