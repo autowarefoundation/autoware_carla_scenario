@@ -138,11 +138,12 @@ def test_the_queue_s_failed_attempts_are_reported(reporter: Path) -> None:
 
 
 def test_a_secret_in_the_environment_is_left_out(
-    reporter: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CARLA_SERVER_TOKEN", "hunter2")
     monkeypatch.setenv("CARLA_ROOT", "/opt/carla")
-    report = crash_report.capture(_caught())
+    with _installed(tmp_path, monkeypatch):
+        report = crash_report.capture(_caught())
     assert report is not None
     environment = json.loads((report / "context.json").read_text())["environment"]
     assert environment["CARLA_ROOT"] == "/opt/carla"
@@ -1159,3 +1160,339 @@ def test_a_sent_repro_script_without_the_environment_is_written_again(
         {},
         ["scenario", "scenario.note=a\nb"],
     )
+
+
+# ---------------------------------------------------------------------------
+# #2460: credentials, the environment repro.sh exports, a batch's directory,
+# the environment pin and the map's commit
+# ---------------------------------------------------------------------------
+
+_TOKEN = "glpat-SECRET123"
+_SOURCE = f"https://oauth2:{_TOKEN}@gitlab.example.org/o/r"
+
+
+def _recorded_sends(sent: list[Any]) -> Any:
+    from sentry_sdk.transport import Transport
+
+    class Recorder(Transport):
+        def capture_envelope(self, envelope: Any) -> None:
+            sent.append(envelope)
+
+    return Recorder()
+
+
+def _raise_with(source: str) -> None:
+    map_source = source  # noqa: F841 - the report keeps it, redacted
+    raise ValueError(f"cannot read {source}")
+
+
+@pytest.mark.parametrize("send_items", ["none", "all"])
+def test_map_credentials_are_redacted_everywhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, send_items: str
+) -> None:
+    import sentry_sdk
+
+    sent: list[Any] = []
+    monkeypatch.setenv("SCENARIO_CRASH_REPORT_SEND_ITEMS", send_items)
+    monkeypatch.setenv("SCENARIO_MAP", _SOURCE)
+    argv = ["scenario", "scenario=demo", f"map.source={_SOURCE}"]
+    with _installed(tmp_path, monkeypatch, argv):
+        sentry_sdk.get_client().transport.upstream = _recorded_sends(sent)  # type: ignore[union-attr]
+        logging.getLogger("demo").warning("cloning %s", _SOURCE)
+        with crash_report.run_context(
+            tmp_path / "run",
+            overrides=argv[1:],
+            config_yaml=f"map:\n  source: {_SOURCE}\n",
+        ):
+            try:
+                _raise_with(_SOURCE)
+            except ValueError as exc:
+                report = crash_report.capture(exc)
+    assert report is not None
+    for path in report.iterdir():
+        assert _TOKEN not in path.read_text(), path.name
+    context = json.loads((report / "context.json").read_text())
+    redacted = "https://oauth2:***@gitlab.example.org/o/r"
+    assert context["argv"][-1] == f"map.source={redacted}"
+    assert context["overrides"][-1] == f"map.source={redacted}"
+    assert context["repro"][-1] == f"map.source={redacted}"
+    assert context["environment"]["SCENARIO_MAP"] == redacted
+    assert context["repro_redacted"] is True
+    assert redacted in (report / "config.yaml").read_text()
+    script = (report / "repro.sh").read_text()
+    assert "Credentials in its URLs are redacted (***)" in script
+    event = json.loads((report / "event.json").read_text())
+    assert event["contexts"]["run"]["overrides"][-1] == f"map.source={redacted}"
+    (envelope,) = sent
+    assert _TOKEN not in json.dumps(envelope.get_event(), default=str)
+    for item in envelope.items:
+        assert _TOKEN.encode() not in item.get_bytes(), item.headers.get("filename")
+    names = {item.headers.get("filename") for item in envelope.items}
+    if send_items == "none":
+        assert "repro.sh" not in names and "config.yaml" not in names
+
+
+def test_a_report_without_credentials_says_nothing_of_them(reporter: Path) -> None:
+    report = crash_report.capture(_caught())
+    assert report is not None
+    assert json.loads((report / "context.json").read_text())["repro_redacted"] is False
+    assert "redacted" not in (report / "repro.sh").read_text()
+
+
+def test_the_framework_s_own_variables_are_not_exported() -> None:
+    from autoware_carla_scenario import crash_report_settings
+    from autoware_carla_scenario.heavy_metrics import HEAVY_METRICS_DECIDED_ENV
+    from autoware_carla_scenario.sweeper.isolation import SWEEPER_OWNS_RETRIES_ENV
+    from autoware_carla_scenario.typecheck.mode import TYPECHECK_ENV
+
+    assert set(crash_report_settings._FRAMEWORK_ENV_NAMES) == {
+        HEAVY_METRICS_DECIDED_ENV,
+        SWEEPER_OWNS_RETRIES_ENV,
+    }
+    assert TYPECHECK_ENV in crash_report_settings._SLURM_TASK_ENV_NAMES
+    env = {
+        "CARLA_ROOT": "/opt/carla",
+        HEAVY_METRICS_DECIDED_ENV: "1",
+        SWEEPER_OWNS_RETRIES_ENV: "1",
+        TYPECHECK_ENV: "off",
+        "CUDA_VISIBLE_DEVICES": "0",
+    }
+    # The user's static check setting and GPUs, outside SLURM.
+    assert crash_report_settings.repro_environment(env) == {
+        "CARLA_ROOT": "/opt/carla",
+        TYPECHECK_ENV: "off",
+        "CUDA_VISIBLE_DEVICES": "0",
+    }
+    # A SLURM task's: its worker's and SLURM's.
+    assert crash_report_settings.repro_environment(
+        {**env, "SLURM_JOB_ID": "7", "SLURM_PROCID": "0"}
+    ) == {"CARLA_ROOT": "/opt/carla"}
+
+
+def test_repro_sh_exports_the_environment_as_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.sweeper.isolation import SWEEPER_OWNS_RETRIES_ENV
+    from autoware_carla_scenario.typecheck.mode import TYPECHECK_ENV
+
+    monkeypatch.delenv(SWEEPER_OWNS_RETRIES_ENV, raising=False)
+    monkeypatch.delenv(TYPECHECK_ENV, raising=False)
+    monkeypatch.setenv("CARLA_ROOT", "/opt/carla")
+    monkeypatch.setenv("SLURM_JOB_ID", "7")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
+    with _installed(tmp_path, monkeypatch):
+        # Set by the framework once the reporter is installed: a forked
+        # sweeper case, a SLURM task's worker.
+        monkeypatch.setenv(SWEEPER_OWNS_RETRIES_ENV, "1")
+        monkeypatch.setenv(TYPECHECK_ENV, "off")
+        report = crash_report.capture(_caught())
+    assert report is not None
+    environment = json.loads((report / "context.json").read_text())["environment"]
+    assert environment["SLURM_JOB_ID"] == "7"
+    assert environment["CUDA_VISIBLE_DEVICES"] == "3"
+    assert SWEEPER_OWNS_RETRIES_ENV not in environment
+    assert TYPECHECK_ENV not in environment
+    exports = [
+        line
+        for line in (report / "repro.sh").read_text().splitlines()
+        if line.startswith("export ")
+    ]
+    assert "export CARLA_ROOT=/opt/carla" in exports
+    assert not any(line.startswith("export SLURM_") for line in exports)
+    for name in ("CUDA_VISIBLE_DEVICES", SWEEPER_OWNS_RETRIES_ENV, TYPECHECK_ENV):
+        assert not any(line.startswith(f"export {name}=") for line in exports), name
+
+
+def test_a_batch_s_repro_runs_into_a_new_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    argv = [
+        "scenario",
+        "scenario=cut_in/*",
+        "hydra.run.dir=outputs/nightly",
+        "+hydra.sweep.dir=outputs/sweep",
+        "seed=3",
+    ]
+    with _installed(tmp_path, monkeypatch, argv):
+        report = crash_report.capture(_caught())
+    assert report is not None
+    script = (report / "repro.sh").read_text()
+    assert script.splitlines()[-1] == "exec scenario 'scenario=cut_in/*' seed=3 \"$@\""
+    # The command line as it was, in the comment.
+    assert "hydra.run.dir=outputs/nightly" in script.splitlines()[2]
+
+
+def test_a_report_names_the_environment_pin(
+    reporter: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario import environment
+
+    class Env:
+        id = "f" * 64
+        by_name = {
+            environment.FRAMEWORK: {
+                "name": environment.FRAMEWORK,
+                "version": "1.0",
+                "source": {
+                    "kind": "editable",
+                    "path": "/src",
+                    "commit": "c" * 40,
+                    "dirty": True,
+                },
+            }
+        }
+
+        def scenario_package(self, scenario: Any) -> Any:
+            return None
+
+    monkeypatch.setattr(environment, "capture", lambda: Env())
+    report = crash_report.capture(_caught())
+    assert report is not None
+    pin = json.loads((report / "context.json").read_text())["environment_pin"]
+    assert pin == {
+        "id": "f" * 64,
+        "framework": {
+            "name": environment.FRAMEWORK,
+            "version": "1.0",
+            "kind": "editable",
+            "commit": "c" * 40,
+            "dirty": True,
+        },
+        "scenario": None,
+    }
+
+
+def test_a_pin_that_cannot_be_read_leaves_the_report(
+    reporter: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario import environment
+
+    def broken() -> Any:
+        raise RuntimeError("no metadata")
+
+    monkeypatch.setattr(environment, "capture", broken)
+    report = crash_report.capture(_caught())
+    assert report is not None
+    assert json.loads((report / "context.json").read_text())["environment_pin"] is None
+
+
+def test_the_noted_scenario_is_not_kept_alive(
+    reporter: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gc
+    import weakref
+
+    from autoware_carla_scenario import environment
+
+    class Scenario:
+        pass
+
+    seen: list[str] = []
+
+    class Env:
+        id = "f" * 64
+        by_name: dict[str, Any] = {}
+
+        def scenario_package(self, scenario: Any) -> Any:
+            seen.append(type(scenario).__module__)
+            return {"name": "pkg", "version": "1"}
+
+    monkeypatch.setattr(environment, "capture", lambda: Env())
+    scenario = Scenario()
+    alive = weakref.ref(scenario)
+    crash_report.note_run(scenario=scenario)
+    del scenario
+    gc.collect()
+    assert alive() is None
+    report = crash_report.capture(_caught())
+    assert report is not None
+    pin = json.loads((report / "context.json").read_text())["environment_pin"]
+    assert pin["scenario"] == {"name": "pkg", "version": "1"}
+    assert seen and set(seen) == {Scenario.__module__}
+
+
+def _map_paths(uri: str, commit: str) -> Any:
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario.maps.source import MapSource
+
+    return SimpleNamespace(
+        resolved=SimpleNamespace(source=MapSource.parse(uri), commit=commit)
+    )
+
+
+def test_a_case_s_repro_reads_the_map_at_the_commit_it_resolved_to(
+    reporter: Path,
+) -> None:
+    commit = "a" * 40
+    uri = f"git+{_SOURCE}@main#maps/T"
+    run_dir = reporter / "run"
+    # Noted before the batch's directory and its case's context: kept.
+    crash_report.note_run(map_paths=_map_paths(uri, commit))
+    crash_report.set_output_dir(reporter / "batch")
+    with crash_report.run_context(
+        run_dir, overrides=["scenario=demo", f"map.source={uri}"]
+    ):
+        report = crash_report.capture(_caught())
+    assert report is not None
+    context = json.loads((report / "context.json").read_text())
+    redacted = "git+https://oauth2:***@gitlab.example.org/o/r"
+    assert context["map"] == {
+        "source": f"{redacted}@main#maps/T",
+        "commit": commit,
+        "pinned": True,
+    }
+    lines = (report / "repro.sh").read_text().splitlines()
+    import shlex
+
+    pinned = f"map.source='{redacted}@{commit}#maps/T'"
+    assert lines[-1] == f'exec {shlex.join(["scenario", "scenario=demo", pinned])} "$@"'
+    assert shlex.split(lines[-1])[3] == pinned
+    assert any(f"pinned to commit {commit}" in line for line in lines)
+    assert _TOKEN not in "\n".join(lines)
+
+
+def test_a_pinned_map_source_is_named_with_its_commit(reporter: Path) -> None:
+    commit = "b" * 40
+    uri = f"git+https://huggingface.co/datasets/o/r@{commit}#T"
+    with crash_report.run_context(reporter / "run", overrides=["scenario=demo"]):
+        crash_report.note_run(map_paths=_map_paths(uri, commit))
+        report = crash_report.capture(_caught())
+    assert report is not None
+    context = json.loads((report / "context.json").read_text())
+    assert context["map"] == {"source": uri, "commit": commit, "pinned": False}
+    script = (report / "repro.sh").read_text()
+    assert script.splitlines()[-1] == 'exec scenario scenario=demo "$@"'
+    assert f"# The map was read from {uri} at commit {commit}." in script
+    # Outside the case, the process's context names no map.
+    other = crash_report.capture(_caught())
+    assert other is not None
+    assert json.loads((other / "context.json").read_text())["map"] is None
+
+
+def test_pin_map_source_replaces_the_case_s_map_source() -> None:
+    from autoware_carla_scenario.crash_report_settings import pin_map_source
+
+    assert pin_map_source(["scenario", "seed=1"], "u@c#p") == [
+        "scenario",
+        "seed=1",
+        "map.source='u@c#p'",
+    ]
+    assert pin_map_source(
+        ["scenario", "++map.source=x", "seed=1", "map.source=y"], "u"
+    ) == ["scenario", "map.source='u'", "seed=1"]
+    assert pin_map_source(["scenario"], "it's") == ["scenario", 'map.source="it\'s"']
+
+
+def test_the_native_report_names_the_map_once_noted(reporter: Path) -> None:
+    commit = "c" * 40
+    uri = "git+https://huggingface.co/datasets/o/r@main#T"
+    run_dir = reporter / "run"
+    with crash_report.run_context(run_dir, overrides=["scenario=demo"]):
+        (native,) = (run_dir / "crash_reports").iterdir()
+        assert json.loads((native / "context.json").read_text())["map"] is None
+        crash_report.note_run(map_paths=_map_paths(uri, commit))
+        assert (
+            json.loads((native / "context.json").read_text())["map"]["commit"] == commit
+        )
+        assert f"@{commit}#T" in (native / "repro.sh").read_text()

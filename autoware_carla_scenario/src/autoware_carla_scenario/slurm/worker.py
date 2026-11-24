@@ -813,6 +813,8 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             ["the batch's first case", *(str(case["label"]) for case in cases)],
         )
         map_paths = run.resolve_map_paths(first_cfg.map)
+        # The commit a branch resolved to, for the task's crash reports (#2460).
+        crash_report.note_run(map_paths=map_paths)
         queue = run._batch_queue(
             first_cfg,
             map_paths,

@@ -19,7 +19,8 @@ outputs/2026-11-22/10-15-00/crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d
 │                   # breadcrumbs (the recent log records), installed packages
 ├── traceback.txt   # the traceback, chained exceptions included
 ├── log.txt         # the last log records of the process (5000 by default)
-├── context.json    # command line, overrides, output directory, versions, environment
+├── context.json    # command line, overrides, output directory, versions, environment,
+│                   # the environment pin, the map's commit
 ├── config.yaml     # the case's composed config (none outside a case)
 └── repro.sh        # the command that runs the same case again
 ```
@@ -37,10 +38,62 @@ anything whose name looks like a secret is left out), and runs `scenario` with
 the case's own overrides. Run again, the case writes to an output directory of
 its own. A SLURM case's runs locally, without the batch's `launcher=` and
 `launcher.*` overrides; a report of a SLURM task that failed outside any case
-runs the task's worker again. Extra arguments are passed through:
+runs the task's worker again. A report written outside any case (a batch's,
+before its cases are known) runs the command line again, without its
+`hydra.run.dir=` and `hydra.sweep.dir=`: the batch's directory is no longer
+empty, and a batch refuses one that is not, so the rerun writes to a new one.
+Extra arguments are passed through:
 
 ```bash
 sh outputs/.../crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d/repro.sh
+```
+
+The environment `repro.sh` exports is the one `scenario` started with, read
+before the framework sets any variable of its own. It never exports the
+variables the framework sets for a run's processes
+(`AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES`,
+`AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED`), nor `SLURM_*`; in a SLURM
+task it also leaves out `AUTOWARE_CARLA_SCENARIO_TYPECHECK` (the worker turns
+the static check off, the submitting process having run it) and
+`CUDA_VISIBLE_DEVICES` (the GPUs SLURM gave the task). `context.json` keeps
+them all.
+
+### The map's commit
+
+When the map was read from `map.source`, `context.json` names the commit it
+resolved to (`"map": {"source": ..., "commit": ..., "pinned": ...}`). A
+branch or a tag moves, so a case's `repro.sh` reads the map at that commit: it
+runs with `map.source='<source>@<commit>'` in place of the case's own
+`map.source=`, and says so in a comment. Leave that override out to read the
+ref's current tip instead. A report written outside any case names the commit
+in a comment only. A source that names a commit already is run as it is.
+
+### The environment pin
+
+A run that raised writes no `{ScenarioName}_requirements.lock` nor
+`_environment.json` (they are written with a verdict; see
+[Usage](usage.md)), so `context.json` names the
+environment in brief under `environment_pin`: the lock's id, and the
+framework's and the scenario's package with their version, how they were
+installed, and the commit and uncommitted changes (`dirty`) of a checkout.
+It is `null` when the environment cannot be read; the report is written all
+the same.
+
+### Credentials
+
+A URL may carry credentials, a map source's most often
+(`map.source=https://oauth2:TOKEN@host/o/r`). Everything a report writes or
+sends shows them redacted, as the rest of the framework does
+(`https://oauth2:***@host/o/r`; see [Maps](maps.md)): `context.json`,
+`config.yaml`, `log.txt`, `traceback.txt`, every string of `event.json` (the
+local variables, the command line, the breadcrumbs) and `repro.sh` too. Only
+the userinfo of a URL is redacted, not a token in its query. A `repro.sh`
+that holds a redacted URL does not run as it is: a comment at its top says so.
+Put the credentials back (`***`) before running it, or pass the source again
+as an extra argument, which comes after the script's own and wins:
+
+```bash
+sh .../repro.sh "map.source='https://oauth2:$TOKEN@host/o/r@<commit>'"
 ```
 
 ## What is reported

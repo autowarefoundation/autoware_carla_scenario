@@ -60,6 +60,13 @@ Environment variables:
   ``SCENARIO_CRASH_REPORT_MAX_FILE_SIZE``, ``SCENARIO_CRASH_REPORT_MAX_REPORTS``
   and ``SCENARIO_CRASH_REPORT_LOG_LINES`` bound its size
   (:class:`Settings`, :func:`read_settings`).
+
+Credentials: a URL's userinfo (``https://oauth2:TOKEN@host/...``, a map
+source's) is redacted (:func:`~.maps.source.redacted_url`) in everything a
+report writes or sends -- ``context.json``, ``config.yaml``, ``repro.sh``,
+``log.txt``, ``traceback.txt`` and every string of the event -- so
+``repro.sh`` says when it holds a redacted URL, whose credentials are to be
+put back before it runs (#2460).
 """
 
 from __future__ import annotations
@@ -118,7 +125,13 @@ from .crash_report_settings import _parse_items as _parse_items
 from .crash_report_settings import _parse_size as _parse_size
 from .crash_report_settings import _safe_name as _safe_name
 from .crash_report_settings import _truncate as _truncate
-from .crash_report_settings import repro_command, repro_script
+from .crash_report_settings import (
+    pin_map_source,
+    repro_command,
+    repro_environment,
+    repro_script,
+)
+from .maps.source import redacted_url
 from .slurm.settings import snapshot_environment
 
 __all__ = [
@@ -133,6 +146,7 @@ __all__ = [
     "enabled",
     "install",
     "installed",
+    "note_run",
     "read_settings",
     "reporting",
     "run_context",
@@ -217,7 +231,80 @@ def _platform() -> str:
 
 
 def _kept_environment() -> dict[str, str]:
+    """The variables of the environment a report keeps (:data:`_ENV_PATTERNS`),
+    read as the reporter is installed (:func:`install`), before the framework
+    sets any of its own (#2460)."""
     return snapshot_environment(_ENV_PATTERNS)
+
+
+def _redacted(value: Any) -> Any:
+    """*value* -- a string, or a list, tuple or dict of them, nested -- with
+    the credentials of every URL in it redacted (:func:`redacted_url`): what
+    a report writes or sends (#2460)."""
+    if isinstance(value, str):
+        return redacted_url(value)
+    if isinstance(value, (list, tuple)):
+        return [_redacted(v) for v in value]
+    if isinstance(value, dict):
+        return {_redacted(k): _redacted(v) for k, v in value.items()}
+    return value
+
+
+def _redact_event(event: Any, _hint: Any) -> Any:
+    """``before_send``: the event, as written and sent, with every URL's
+    credentials redacted -- the frames' local variables, the command line
+    (``ArgvIntegration``), the run's context, the breadcrumbs."""
+    return _redacted(event)
+
+
+def _without_output_dirs(argv: list[str]) -> list[str]:
+    """*argv* without its ``hydra.run.dir=`` / ``hydra.sweep.dir=``
+    overrides, as a batch splits them off (``examples.argv.
+    _split_batch_output_dir()``): the batch's directory, which a batch run
+    again would refuse, being no longer empty (#2460).  *argv* as it is
+    when that cannot be imported."""
+    try:
+        from .examples.argv import _split_batch_output_dir  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - a report must never end the run
+        logger.debug("Cannot import examples.argv", exc_info=True)
+        return list(argv)
+    return _split_batch_output_dir(list(argv), multirun=False)[1]
+
+
+def _environment_pin(scenario: Any) -> dict[str, Any] | None:
+    """What :func:`~.environment.capture` says of the environment, in
+    brief: the id of its lock, and the framework's and the scenario's
+    package -- version, how it was installed, and the commit and
+    uncommitted changes of a checkout (#2460).  A run that raised writes no
+    lock; a report says this much of it.  ``None`` when it cannot be read:
+    the report is written all the same."""
+    try:
+        from . import environment  # noqa: PLC0415
+
+        env = environment.capture()
+
+        def brief(package: dict[str, Any] | None) -> dict[str, Any] | None:
+            if package is None:
+                return None
+            record: dict[str, Any] = {
+                "name": package.get("name"),
+                "version": package.get("version"),
+            }
+            source = package.get("source")
+            if isinstance(source, dict):
+                for key in ("kind", "commit", "dirty", "requested"):
+                    if key in source:
+                        record[key] = source[key]
+            return record
+
+        return {
+            "id": env.id,
+            "framework": brief(env.by_name.get(environment.FRAMEWORK)),
+            "scenario": brief(env.scenario_package(scenario)),
+        }
+    except Exception:  # noqa: BLE001 - a report must never end the run
+        logger.debug("Cannot capture the environment", exc_info=True)
+        return None
 
 
 def _timestamp() -> str:
@@ -236,6 +323,30 @@ class _RunContext:
     overrides: list[str] | None = None
     #: Its composed config, as YAML.
     config_yaml: str | None = None
+    #: The ``map.source`` the run read its map from (:func:`note_run`).
+    map_source: str | None = None
+    #: The commit :attr:`map_source` resolved to.
+    map_commit: str | None = None
+    #: :attr:`map_source` pinned to :attr:`map_commit`, when its ref is not
+    #: that commit (a branch, a tag): what ``repro.sh`` of a case reads.
+    map_pinned: str | None = None
+    #: A stand-in for the scenario the run built (:func:`note_run`), for the
+    #: environment pin of its package: an instance of a class of the same
+    #: module, not the scenario, which the context would keep alive.
+    scenario: Any = None
+
+    def carried(self, report_dir: Path, **fields: Any) -> _RunContext:
+        """A context in *report_dir* with *fields*, keeping what
+        :func:`note_run` noted in this one: the map and the scenario of the
+        process's runs, until another run notes its own."""
+        return _RunContext(
+            report_dir=report_dir,
+            map_source=self.map_source,
+            map_commit=self.map_commit,
+            map_pinned=self.map_pinned,
+            scenario=self.scenario,
+            **fields,
+        )
 
 
 class _LogBuffer(logging.Handler):
@@ -338,14 +449,46 @@ def _for_sending(envelope: Envelope, settings: Settings) -> Envelope:
                 continue  # nothing to write it again from: not sent
             # Written again without the environment, not filtered line by
             # line: a value of several lines spans several.
-            data = repro_script(
-                [str(a) for a in context["argv"]],
-                str(context["cwd"]),
-                {},
-                [str(a) for a in context["repro"]],
-            )
+            data = _repro_script_of(context, {})
         sent.add_item(Item(payload=data, headers=dict(item.headers)))
     return sent
+
+
+def _repro_notes(context: Mapping[str, Any]) -> list[str]:
+    """The comment lines of ``repro.sh`` of the report *context*
+    (``context.json``) holds: that it holds redacted credentials, and the
+    commit the map was read at."""
+    notes: list[str] = []
+    if context.get("repro_redacted"):
+        notes.append(
+            "Credentials in its URLs are redacted (***): put them back before "
+            "running it (docs/crash_reports.md)."
+        )
+    map_info = context.get("map")
+    if isinstance(map_info, dict) and map_info.get("commit"):
+        source = map_info.get("source")
+        commit = map_info.get("commit")
+        if map_info.get("pinned"):
+            notes.append(
+                f"The map's source is pinned to commit {commit}, the one "
+                f"{source} resolved to: leave out that map.source= to read "
+                "its ref's tip."
+            )
+        else:
+            notes.append(f"The map was read from {source} at commit {commit}.")
+    return notes
+
+
+def _repro_script_of(context: Mapping[str, Any], env: dict[str, str]) -> bytes:
+    """``repro.sh`` of the report *context* (``context.json``) holds,
+    exporting *env*."""
+    return repro_script(
+        [str(a) for a in context["argv"]],
+        str(context["cwd"]),
+        env,
+        [str(a) for a in context["repro"]],
+        _repro_notes(context),
+    )
 
 
 def _event_for_sending(event: Any, left_out: frozenset[str]) -> Any:
@@ -392,20 +535,49 @@ class _Reporter:
         #: How many reports were captured (:attr:`Settings.max_reports`).
         self.count = 0
         self.native: _NativeReport | None = None
+        #: The environment a report keeps, as it was when installed: not
+        #: what the framework sets later (#2460).
+        self.environment = _kept_environment()
 
     # -- what a report holds -------------------------------------------------
 
     def repro_command(self) -> list[str]:
-        """The command that runs the same case again."""
-        return repro_command(self.argv, self.context.overrides)
+        """The command that runs the same case again, as it is (credentials
+        and all; :meth:`context_dict` redacts them): a case's overrides with
+        its map's source pinned to the commit it resolved to, else the
+        process's argv without the batch's directory."""
+        overrides = self.context.overrides
+        if overrides is None:
+            return repro_command(_without_output_dirs(self.argv), None)
+        command = repro_command(self.argv, overrides)
+        if self.context.map_pinned:
+            command = pin_map_source(command, self.context.map_pinned)
+        return command
 
     def context_dict(self) -> dict[str, Any]:
+        """``context.json``: every URL's credentials redacted (#2460)."""
         ctx = self.context
+        command = self.repro_command()
+        repro = [redacted_url(a) for a in command]
+        env = self.environment if "environment" in self.settings.items else {}
+        exported = repro_environment(env)
+        redacted = repro != command or any(
+            redacted_url(v) != v for v in exported.values()
+        )
+        map_info: dict[str, Any] | None = None
+        if ctx.map_source and ctx.map_commit:
+            map_info = {
+                "source": redacted_url(ctx.map_source),
+                "commit": ctx.map_commit,
+                "pinned": bool(ctx.map_pinned) and ctx.overrides is not None,
+            }
         return {
-            "argv": self.argv,
+            "argv": [redacted_url(a) for a in self.argv],
             "cwd": str(self.cwd),
-            "repro": self.repro_command(),
-            "overrides": ctx.overrides,
+            "repro": repro,
+            "repro_redacted": redacted,
+            "overrides": _redacted(ctx.overrides),
+            "map": map_info,
             "output_dir": str(ctx.output_dir) if ctx.output_dir else None,
             "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.started)),
             "pid": os.getpid(),
@@ -414,16 +586,21 @@ class _Reporter:
             "executable": sys.executable,
             "platform": _platform(),
             "machine": platform.machine(),
+            "environment_pin": _environment_pin(ctx.scenario),
             **(
-                {"environment": _kept_environment()}
+                {"environment": _redacted(env)}
                 if "environment" in self.settings.items
                 else {}
             ),
         }
 
     def repro_script(self) -> bytes:
-        env = _kept_environment() if "environment" in self.settings.items else {}
-        return repro_script(self.argv, str(self.cwd), env, self.repro_command())
+        """``repro.sh``: credentials redacted, as in ``context.json``, and
+        only the user's environment exported (:func:`repro_environment`)."""
+        context = self.context_dict()
+        return _repro_script_of(
+            context, repro_environment(context.get("environment") or {})
+        )
 
     def context_files(self) -> dict[str, bytes]:
         """The files of a report that say how to run it again.
@@ -433,19 +610,24 @@ class _Reporter:
         neither JSON nor a script.
         """
         items = self.settings.items
-        files = {"context.json": json.dumps(self.context_dict(), indent=2).encode()}
+        context = self.context_dict()
+        files = {"context.json": json.dumps(context, indent=2).encode()}
         if "repro" in items:
-            files["repro.sh"] = self.repro_script()
+            files["repro.sh"] = _repro_script_of(
+                context, repro_environment(context.get("environment") or {})
+            )
         if self.context.config_yaml is not None and "config" in items:
             files["config.yaml"] = _truncate(
-                self.context.config_yaml.encode(), self.settings.max_file_size
+                redacted_url(self.context.config_yaml).encode(),
+                self.settings.max_file_size,
             )
         return files
 
     def log_text(self) -> bytes:
         """``log.txt``, cut to :attr:`Settings.max_file_size` from its start."""
+        text = redacted_url(self.log_buffer.text().decode("utf-8", "replace"))
         return _truncate(
-            self.log_buffer.text(), self.settings.max_file_size, keep_end=True
+            text.encode("utf-8", "replace"), self.settings.max_file_size, keep_end=True
         )
 
     def attach_log_buffer(self) -> None:
@@ -522,6 +704,20 @@ class _Reporter:
             return
         faulthandler.enable(file=log, all_threads=True)
         self.native = _NativeReport(directory, log)
+
+    def refresh_native(self) -> None:
+        """Write the files of the native-crash report prepared for this
+        context again, if one is: what it says of the run changed."""
+        native = self.native
+        if (
+            native is not None
+            and native.pid == os.getpid()
+            and native.directory.parent == self.context.report_dir
+        ):
+            try:
+                self._write_native_files(native.directory)
+            except OSError:
+                logger.warning("Cannot update the native crash report", exc_info=True)
 
     def _write_native_files(self, directory: Path) -> None:
         files = self.context_files()
@@ -630,6 +826,7 @@ def install(argv: Sequence[str] | None = None) -> bool:
         auto_enabling_integrations=False,
         integrations=integrations,
         max_breadcrumbs=200 if "log" in settings.items else 0,
+        before_send=_redact_event,
         **_locals_option("locals" in settings.items),
     )
     # Not the breadcrumbs of an earlier reporter in this process.
@@ -709,7 +906,9 @@ def set_output_dir(output_dir: Path) -> None:
     reporter = _REPORTER[0]
     if reporter is None:
         return
-    reporter.context = _RunContext(report_dir=Path(output_dir) / CRASH_REPORTS_DIRNAME)
+    reporter.context = reporter.context.carried(
+        Path(output_dir) / CRASH_REPORTS_DIRNAME
+    )
     reporter.attach_log_buffer()
     reporter.arm_native()
 
@@ -734,8 +933,8 @@ def run_context(
     previous = reporter.context
     # A native-crash report prepared before (a batch's) is again afterwards.
     rearm = reporter.native is not None
-    reporter.context = _RunContext(
-        report_dir=Path(output_dir) / CRASH_REPORTS_DIRNAME,
+    reporter.context = previous.carried(
+        Path(output_dir) / CRASH_REPORTS_DIRNAME,
         output_dir=Path(output_dir),
         overrides=None if overrides is None else [str(o) for o in overrides],
         config_yaml=config_yaml,
@@ -752,6 +951,47 @@ def run_context(
             reporter.arm_native()
         else:
             reporter.disarm_native()
+
+
+def _scenario_stand_in(scenario: Any) -> Any:
+    """An instance of a class of *scenario*'s class's module: all
+    :meth:`~.environment.RunEnvironment.scenario_package` reads of it, kept in
+    the run's context in its place so that the context does not keep the
+    scenario (its world, its actors, its records) alive after its run."""
+    cls = type(scenario)
+    return type(cls.__name__, (), {"__module__": cls.__module__})()
+
+
+def note_run(*, map_paths: Any = None, scenario: Any = None) -> None:
+    """Note in the run's context what reports of it say of its map and its
+    scenario, once they are known: the commit ``map.source`` resolved to
+    (*map_paths*, :func:`~.maps.config.resolve_map_paths`'s), and the
+    scenario built (*scenario*), whose package's commit the environment pin
+    names (#2460).  What is not given is kept.  A batch's reports, and its
+    cases', keep them.  Nothing when no reporter is installed; never
+    raises."""
+    reporter = _REPORTER[0]
+    if reporter is None:
+        return
+    ctx = reporter.context
+    if scenario is not None:
+        ctx.scenario = _scenario_stand_in(scenario)
+    try:
+        if map_paths is not None:
+            resolved = getattr(map_paths, "resolved", None)
+            source = getattr(resolved, "source", None)
+            commit = getattr(resolved, "commit", "")
+            if source is not None and isinstance(commit, str) and commit:
+                uri = str(source.uri)
+                pinned = None
+                if str(getattr(source, "ref", "")).lower() != commit.lower():
+                    pinned = str(source.at(commit).uri)
+                ctx.map_source, ctx.map_commit, ctx.map_pinned = uri, commit, pinned
+            else:
+                ctx.map_source = ctx.map_commit = ctx.map_pinned = None
+        reporter.refresh_native()
+    except Exception:  # noqa: BLE001 - a report must never end the run
+        logger.warning("Cannot note the run in its crash reports", exc_info=True)
 
 
 def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
@@ -805,7 +1045,7 @@ def capture(exc: BaseException, *, message: str | None = None) -> Path | None:
         trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         files = reporter.context_files()
         files["traceback.txt"] = _truncate(
-            trace.encode("utf-8", "replace"),
+            redacted_url(trace).encode("utf-8", "replace"),
             reporter.settings.max_file_size,
             keep_end=True,
         )
@@ -819,8 +1059,8 @@ def capture(exc: BaseException, *, message: str | None = None) -> Path | None:
                 "run",
                 {
                     "output_dir": str(ctx.output_dir) if ctx.output_dir else None,
-                    "overrides": ctx.overrides,
-                    "repro": shlex.join(reporter.repro_command()),
+                    "overrides": _redacted(ctx.overrides),
+                    "repro": redacted_url(shlex.join(reporter.repro_command())),
                 },
             )
             if message:

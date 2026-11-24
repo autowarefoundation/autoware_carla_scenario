@@ -99,8 +99,9 @@ branch or tag whose name is 4 or more hex digits (`@cafe`, `@2024`): it is
 spelled like an abbreviation, and the shortcut cannot tell it from one.
 
 A repository URL may carry credentials (`https://oauth2:TOKEN@host/o/r`).
-They are passed to git as written, but every log line, error message and
-`meta.json` / `.tip.json` this framework writes shows them redacted
+They are passed to git as written, but every log line, error message,
+`meta.json` / `.tip.json` and [crash report](crash_reports.md#credentials)
+this framework writes shows them redacted
 (`https://oauth2:***@host/o/r`; an http(s) user name with no password, which
 is how a token is often passed, as `***`). The cache entry is keyed on the URL
 without its password, so a replaced token reuses the entry, and **Refresh**
