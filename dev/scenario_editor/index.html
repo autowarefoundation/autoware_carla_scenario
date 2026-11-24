@@ -1388,6 +1388,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#what-an-export-copies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What an export copies
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2882,6 +2893,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#what-an-export-copies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What an export copies
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3826,13 +3848,15 @@ searched per scenario; the editor warns when a document asks for more.</p>
 <code>ego.spawn_heading</code>. Other entities get a declared
 <code>scenario.spawn_overrides.&lt;entity&gt;</code> sub-tree so they are addressable by exactly
 the same plain <code>key=value</code> overrides.
-None of these keys copies the document: an exported package runs its document
-as it is when the run starts -- edited after the export, or another one named by
-<code>&lt;PKG&gt;_DOCUMENT_PATH</code> -- and only an override replaces what it says. The
+None of these keys copies a value of the document: a run builds the scenario
+from its document as it is when the run starts -- the one the package ships,
+edited after the export, or another one named by <code>&lt;PKG&gt;_DOCUMENT_PATH</code> -- and
+only an override replaces what it says. (The searches are another matter: see
+<a href="#what-an-export-copies">What an export copies</a>.) The
 <code>scenario.spawn_overrides.&lt;entity&gt;</code> keys, <code>scenario.param_overrides.&lt;node id&gt;</code>
 and <code>scenario.timeout_seconds</code> are written as <code>null</code>, and the <code>ego.*</code> keys,
 which the runner reads before the scenario is built, as
-<code>${scenario_document:&lt;scenario id&gt;,&lt;path&gt;}</code>: the value at that path of the
+<code>${scenario_document:'&lt;scenario id&gt;',&lt;path&gt;}</code>: the value at that path of the
 document the package registered (<code>ego.spawn.lanelet_id</code>, say), read when the
 key is. The resolver exists in every process that has loaded the scenario
 packages -- the <code>scenario</code> CLI, a SLURM task, the viewer, <code>scenario-check</code> --
@@ -3846,6 +3870,38 @@ blank) and <code>s</code> a finite number (not a boolean or a blank), and an ent
 node's override (<code>scenario.spawn_overrides.&lt;entity&gt;</code>,
 <code>scenario.param_overrides.&lt;node id&gt;</code>) must be a mapping of fields; anything else
 is refused, naming the full key.</p>
+<h3 id="what-an-export-copies">What an export copies<a class="headerlink" href="#what-an-export-copies" title="Permanent link">&para;</a></h3>
+<p>What the sweeper and <code>scenario-expand</code> read is the exported config, never the
+document, so the export writes it into <code>conf/scenario/&lt;id&gt;.yaml</code> as the
+document has it at export time:</p>
+<ul>
+<li><strong>the searches</strong>: <code>sweep.constraints</code> (the searched lanelet's constraints,
+  under its key) and <code>sweep.bindings</code> (a spawn <code>s</code> derived from the match, and
+  every lanelet derived from it) or, for a logical scenario, <code>sweep.route</code>
+  alone (its route search). The sweeper, <code>scenario-expand</code> and the viewer's sweep
+  resolver enumerate their cases from these alone, and hand each case to the
+  run as overrides (<code>ego.spawn_lanelet_id</code>,
+  <code>scenario.spawn_overrides.&lt;entity&gt;.lanelet_id</code>,
+  <code>scenario.param_overrides.&lt;node id&gt;.&lt;field&gt;</code>, <code>scenario.route.*</code>) that
+  replace what the document says;</li>
+<li><strong>the declared override keys</strong>: <code>scenario.spawn_overrides.&lt;entity&gt;</code> for
+  every entity but the ego, <code>scenario.param_overrides.&lt;node id&gt;.&lt;field&gt;</code> for
+  every searched or derived lanelet of a card, and the <code>scenario.route.*</code> keys
+  of a logical scenario -- Hydra's struct mode refuses an override of a key the
+  config does not declare;</li>
+<li><strong>the exclusion list</strong>: on a built-in map group, a non-empty
+  <em>Excluded lanelet IDs</em> is written in place of every
+  <code>${map.no_3d_model_lanelet_ids}</code> in those searches. A document on a map of
+  its own writes the list, with the map's name, source and paths, into the map
+  group the package ships (<code>conf/map/&lt;id&gt;_map.yaml</code>) instead.</li>
+</ul>
+<p>So after changing any of these in an exported package's document -- a search's
+constraints, a binding, the route search, which entities or cards are
+searched, the excluded lanelets -- <strong>re-export the package</strong>. Until then a
+plain run follows the edited document (a searched lanelet runs as the id the
+document stores, a route search searches the map with the new pattern), but a
+sweep or an expansion still enumerates the old search's matches and overrides
+the document with them.</p>
 <p>An entity's spawn offsets, heading, goal <code>s</code>, size and initial speed must be
 finite numbers, and its initial speed 0 or more: the validator refuses another
 value on the entity's path (<code>entities[1].initial_speed_kmh</code>), where the run
@@ -3917,14 +3973,20 @@ by <code>ScenarioRunner</code> once <code>setup()</code> returns — so the edit
 ego and exports it as the framework's own keys, each reading the document
 (for a scenario <code>cut_in</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">ego</span><span class="p">:</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.spawn.lanelet_id}</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.spawn.s.value}</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">spawn_t</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.spawn.t}</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">spawn_heading</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.spawn.heading}</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.driven_by}</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">goal_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.goal.lanelet_id}</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="nt">goal_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:cut_in,ego.goal.s}</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.vehicle_type}</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">initial_speed_kmh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.initial_speed_kmh}</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">spawn_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.spawn.lanelet_id}</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">spawn_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.spawn.s.value}</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">spawn_t</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.spawn.t}</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">spawn_heading</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.spawn.heading}</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="nt">entity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.driven_by}</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">  </span><span class="nt">goal_lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.goal.lanelet_id}</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">  </span><span class="nt">goal_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${scenario_document:'cut_in',ego.goal.s}</span>
 </code></pre></div>
+<p>The scenario id is quoted so that OmegaConf reads it as a string whatever it
+spells: unquoted, an id such as <code>true</code>, <code>null</code> or <code>nan</code> would reach the
+resolver as a boolean, <code>None</code> or a float. A package exported before the quote
+was added still resolves.</p>
 <p>An ego with no goal reads as <code>null</code>, the <code>ego</code> group's own; a run sets any of
 them with the usual override (<code>ego.goal_lanelet_id=265</code>).</p>
 <p>The <strong>Set Goal</strong> card still exists, for changing a destination mid-run or for a
@@ -4660,7 +4722,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 09:48:36 UTC"><span class="timeago" datetime="2026-11-24T09:48:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 09:48:36 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 14:32:43 UTC"><span class="timeago" datetime="2026-11-24T14:32:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 14:32:43 UTC">2026-11-24</span>
   </span>
 
     
