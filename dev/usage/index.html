@@ -5552,7 +5552,7 @@ one warns that it is ignored and says the above.</p>
 <td><code>map.overwrite_xodr</code></td>
 <td>bool</td>
 <td><code>false</code></td>
-<td>Install <code>map.xodr_path</code> into the CARLA asset named by <code>&lt;MAP_NAME&gt;_PATH</code> before loading the map, replacing CARLA's own road network (<code>map=nishishinjuku</code> turns it on)</td>
+<td>Install <code>map.xodr_path</code> into the CARLA asset named by <code>&lt;MAP_NAME&gt;_PATH</code> before loading the map, replacing CARLA's own road network (<code>map=nishishinjuku</code> turns it on). The installed file stays overwritten after the run; its original is kept as <code>&lt;file&gt;.orig</code> (<a href="../maps/#opendrive-comes-from-carla">maps.md</a>)</td>
 </tr>
 <tr>
 <td><code>map.no_3d_model_lanelet_ids</code></td>
@@ -6928,7 +6928,7 @@ values, a <code>--timeout</code> that is not positive and finite, and a <code>--
 <a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.xodr</span><span class="w">     </span><span class="c1"># Path to OpenDRIVE file</span>
 <a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/map.osm</span><span class="w">  </span><span class="c1"># Path to Lanelet2 file</span>
 </code></pre></div>
-<p>A map given by <code>source</code> or <code>directory</code> needs only that key (<code>name</code> defaults to the map directory's name); when it ships no OpenDRIVE, the tool reads the road network back out of the loaded CARLA world and caches it, as a run does. With <code>overwrite_xodr: true</code> the OpenDRIVE is installed into the CARLA asset named by the <code>&lt;MAP_NAME&gt;_PATH</code> environment variable before the map is loaded; otherwise CARLA's own road network is kept.</p>
+<p>A map given by <code>source</code> or <code>directory</code> needs only that key (<code>name</code> defaults to the map directory's name); when it ships no OpenDRIVE, the tool reads the road network back out of the loaded CARLA world and caches it, as a run does. With <code>overwrite_xodr: true</code> the OpenDRIVE is installed into the CARLA asset named by the <code>&lt;MAP_NAME&gt;_PATH</code> environment variable before the map is loaded; otherwise the installed file is loaded as it is. The installed file <strong>stays overwritten</strong> after an <code>overwrite_xodr</code> run (the tool's or a scenario run's), so a later run of the same CARLA map without <code>overwrite_xodr</code> loads that road network, not CARLA's own; the installation's original is kept beside it as <code>&lt;file&gt;.orig</code> before the first overwrite, and an OpenDRIVE derived from the installation is copied from that original (see <a href="../maps/#opendrive-comes-from-carla">OpenDRIVE comes from CARLA</a>).</p>
 <p>These keys may also sit under a <code>map:</code> section (as in the example <code>nishishinjuku.yaml</code>, a <code># @package _global_</code> config); <code>no_3d_model_lanelet_ids</code> is then written there too.</p>
 <p>A config that cannot be read, is not valid YAML, or does not name a usable map is reported as a single <code>detect-no-3d-model: error: ...</code> line with exit status 1, before CARLA is contacted.</p>
 <h3 id="integration-with-scenario-runner">Integration with Scenario Runner<a class="headerlink" href="#integration-with-scenario-runner" title="Permanent link">&para;</a></h3>
@@ -7657,7 +7657,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 13:08:46 UTC"><span class="timeago" datetime="2026-11-24T13:08:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 13:08:46 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 16:22:43 UTC"><span class="timeago" datetime="2026-11-24T16:22:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 16:22:43 UTC">2026-11-24</span>
   </span>
 
     

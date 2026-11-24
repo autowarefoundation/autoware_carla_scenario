@@ -2520,7 +2520,7 @@ lines, and last a <code>condition</code> line for each condition that changed. A
 <tr>
 <td><code>map</code> (2)</td>
 <td>once, after <code>world</code></td>
-<td><code>name</code> (short map name), <code>source</code> (<code>map.directory</code>, else <code>carla-pack:OWNER/REPO/PACK@VERSION</code> for a map read from a content pack (<code>map.pack</code>, named with the version it resolved to), else <code>map.source</code>, else null: the one the map was read from, in the order the run resolves them, a directory before a pack before a source), <code>lanelet2</code> / <code>opendrive</code> (<code>{path, sha256, bytes}</code> of the file read, or null), <code>projector_info</code> (<code>map_projector_info.yaml</code> as read, or null), <code>projector_type</code> (the config's override, or null), <code>mgrs_offset</code> <code>[ox,oy]</code> and <code>z_offset</code> (the loaded Lanelet2 map's, or null)</td>
+<td><code>name</code> (short map name), <code>source</code> (<code>map.directory</code>, else <code>carla-pack:OWNER/REPO/PACK@VERSION</code> for a map read from a content pack (<code>map.pack</code>, named with the version it resolved to), else <code>map.source</code> -- followed by <code>(commit &lt;hash&gt;)</code>, the commit its ref resolved to, unless the source names that commit (a branch is resolved again by every task of a batch, <a href="../maps/#pinning-and-why-it-matters">maps.md</a>) -- else null: the one the map was read from, in the order the run resolves them, a directory before a pack before a source), <code>lanelet2</code> / <code>opendrive</code> (<code>{path, sha256, bytes}</code> of the file read, or null), <code>projector_info</code> (<code>map_projector_info.yaml</code> as read, or null), <code>projector_type</code> (the config's override, or null), <code>mgrs_offset</code> <code>[ox,oy]</code> and <code>z_offset</code> (the loaded Lanelet2 map's, or null)</td>
 </tr>
 <tr>
 <td><code>run</code> (2)</td>
@@ -2795,7 +2795,7 @@ change that a reader of the last version could not skip over is a new
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 11:17:44 UTC"><span class="timeago" datetime="2026-11-24T11:17:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 11:17:44 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 16:22:43 UTC"><span class="timeago" datetime="2026-11-24T16:22:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 16:22:43 UTC">2026-11-24</span>
   </span>
 
     
