@@ -136,4 +136,5 @@ markers = [
     "integration: marks tests requiring a running CARLA server",
     "codon: marks tests that compile with Codon (CI runs them in one leg per architecture)",
     "codon_selftest: marks the Codon tests of the checker itself (pull requests run them only when the checker may have changed)",
+    "version_check: test_server.py tests that keep CarlaServerManager's client/server version check (the others stub it)",
 ]

@@ -8,7 +8,7 @@ This package provides a framework for creating and running automated scenario te
 
 ## Features
 
-- Automated scenario execution in CARLA simulator (UE5: `0.10.0` and `ue5-dev`),
+- Automated scenario execution in CARLA simulator (1.0 by default; its nightly and `0.10.0` too),
   through the statically typed [typesafe_carla](https://github.com/hakuturu583/typesafe_carla) client
 - Configurable scenarios using Hydra `compose` + structured configs
 - Glob-pattern batch execution of multiple scenarios in a single CARLA session
@@ -27,8 +27,8 @@ This package provides a framework for creating and running automated scenario te
   verdict; JSON Schema published), which a Rerun recording is made from to
   see the run ([Seeing a run](usage.md#seeing-a-run)), beside CARLA's native
   recording
-- `scenario-setup` downloads CARLA's nightly build, which the runner then
-  launches by itself
+- `scenario-setup` downloads CARLA 1.0, which the runner then launches by
+  itself
 - pytest integration via `CarlaScenarioFixture` (auto-skip when no CARLA
   server answers and there is none to launch)
 

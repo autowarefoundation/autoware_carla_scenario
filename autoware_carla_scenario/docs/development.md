@@ -9,7 +9,7 @@ This guide is for developers who want to contribute to the `autoware-carla-scena
 - Python 3.10 to 3.14 (`>=3.10,<3.15`)
 - uv (version 0.9.7+)
 - Git
-- CARLA Simulator 0.10.0+
+- CARLA Simulator 1.0 (0.10.0 and the nightly with `TYPESAFE_CARLA_CARLA_REF`)
 
 ### Setting Up Your Environment
 

@@ -78,6 +78,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .carla_release import select_default_client as _select_default_client
+
+# Before any module of the package imports typesafe_carla, which picks its
+# LibCarla on that first import: the CARLA 1.0 client unless the environment
+# chose another (carla_release).
+_select_default_client()
+
 if TYPE_CHECKING:
     from .actions import (
         BaseAction as BaseAction,

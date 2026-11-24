@@ -125,6 +125,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.batch_resume",
     "autoware_carla_scenario.canvas",
     "autoware_carla_scenario.carla_install_paths",
+    "autoware_carla_scenario.carla_release",
     "autoware_carla_scenario.commonroad",
     "autoware_carla_scenario.commonroad.frame",
     "autoware_carla_scenario.commonroad.map",

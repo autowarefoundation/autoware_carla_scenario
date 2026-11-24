@@ -11,6 +11,66 @@ import pytest
 from autoware_carla_scenario import CarlaServerManager
 from autoware_carla_scenario import server as server_module
 from autoware_carla_scenario.carla_install import HOME_ENV, LAUNCHER, install_dir
+from autoware_carla_scenario.carla_release import CARLA_REF_ENV
+
+
+@pytest.fixture(autouse=True)
+def _no_version_check(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fakes answer pings, not version queries; the check has its own tests."""
+    if "version_check" not in request.keywords:
+        monkeypatch.setattr(
+            CarlaServerManager, "_check_client_matches", lambda self: None
+        )
+
+
+class _VersionedClient:
+    """A fake client of one CARLA version, talking to a server of another."""
+
+    client_version = "1.0"
+    server_version = "1.0"
+
+    def __init__(self, host: str, port: int) -> None:
+        pass
+
+    def set_timeout(self, seconds: float) -> None:
+        pass
+
+    def get_client_version(self) -> str:
+        return self.client_version
+
+    def get_server_version(self) -> str:
+        return self.server_version
+
+
+@pytest.mark.version_check
+def test_a_reused_server_of_the_clients_branch_is_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server_module.carla, "Client", _VersionedClient)
+    manager = CarlaServerManager(host="127.0.0.1", port=2000, reuse_if_running=True)
+    monkeypatch.setattr(manager, "_ping", lambda: True)
+    manager.start()
+    assert manager.reused
+
+
+@pytest.mark.version_check
+def test_a_server_of_another_branch_names_the_client_to_select(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CARLA 0.10 server with the 1.0 client would fail on apply_settings."""
+
+    class _Old(_VersionedClient):
+        server_version = "0.10.0-185-g0a5ce0d5b"
+
+    monkeypatch.setenv(CARLA_REF_ENV, "1.0")
+    monkeypatch.setattr(server_module.carla, "Client", _Old)
+    manager = CarlaServerManager(host="127.0.0.1", port=2000, reuse_if_running=True)
+    monkeypatch.setattr(manager, "_ping", lambda: True)
+    with pytest.raises(RuntimeError, match=f"{CARLA_REF_ENV}=ue5-dev"):
+        manager.start()
+    assert not manager.reused
 
 
 def test_the_installed_carla_is_the_fallback(

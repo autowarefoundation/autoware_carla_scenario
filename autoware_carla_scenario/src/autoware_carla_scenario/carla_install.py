@@ -1,14 +1,19 @@
 """``scenario-setup``: download a CARLA server for the framework to launch.
 
-By default it fetches CARLA's nightly Linux build (the ``ue5-dev`` branch) and
-unpacks it into ``~/.autoware_carla_scenario/bin/carla``, where
-:class:`~autoware_carla_scenario.server.CarlaServerManager` finds its launcher
-when ``CARLA_EXECUTABLE`` is not set::
+By default it fetches the CARLA release the framework targets, CARLA 1.0
+(Unreal Engine 5.8), and unpacks it into ``~/.autoware_carla_scenario/bin/carla``,
+where :class:`~autoware_carla_scenario.server.CarlaServerManager` finds its
+launcher when ``CARLA_EXECUTABLE`` is not set::
 
     scenario-setup            # download, or keep an install that is current
     scenario-setup --force    # download again regardless
+    scenario-setup --nightly  # CARLA's nightly build (the ue58-dev branch) instead
 
-The archive (~16 GB, ~30 GB unpacked) is unpacked while it downloads, so it is
+The client speaks the 1.0 release's RPC by default (``TYPESAFE_CARLA_CARLA_REF``,
+see :mod:`autoware_carla_scenario.carla_release`); a nightly server wants
+``TYPESAFE_CARLA_CARLA_REF=ue58-dev``.
+
+The archive (~14 GB, ~30 GB unpacked) is unpacked while it downloads, so it is
 never kept on disk; the new tree replaces the old one only once it is complete,
 by renames, so an interrupted run never leaves a half-deleted install in place.
 A connection that drops mid-download is picked up where it stopped with a range
@@ -27,8 +32,8 @@ trying to.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
 
 CARLA publishes its server for Linux x86_64 only, so on any other machine
-(aarch64 included, where the framework and its client do run) the nightly is
-refused rather than downloaded: run the server on an x86_64 host and point
+(aarch64 included, where the framework and its client do run) the release and
+the nightly are refused rather than downloaded: run the server on an x86_64 host and point
 ``server.host`` at it. ``--url`` still installs a package of one's choosing,
 from a URL or from a local path (``--url ~/Downloads/CARLA.tar.gz``).
 """
@@ -70,6 +75,7 @@ from .carla_install_paths import _UNWRITABLE_ERRNOS as _UNWRITABLE_ERRNOS
 from .carla_install_paths import HOME_ENV as HOME_ENV
 from .carla_install_paths import install_dir as install_dir
 from .carla_install_paths import installed_executable as installed_executable
+from .carla_install_paths import launcher_in as launcher_in
 from .carla_install_paths import package_url as package_url
 
 # The errors of a ``flock`` the file system does not support (some NFS and
@@ -77,11 +83,12 @@ from .carla_install_paths import package_url as package_url
 # such a file system by them too.
 from .slurm.start_lock import _NO_FLOCK_ERRNOS
 
-NIGHTLY_URL = (
-    "https://s3.us-east-005.backblazeb2.com/carla-releases/Linux/Dev/"
-    "CARLA_UE5_Latest.tar.gz"
-)
-"""CARLA's nightly Linux build, as linked from its download page."""
+RELEASE_URL = "https://downloads.carlasim.com/Linux/CARLA_1.0.tar.gz"
+"""The CARLA release the framework targets (1.0), as linked from its release page."""
+
+NIGHTLY_URL = "https://downloads.carlasim.com/Linux/Dev/CARLA_UE5_Latest.tar.gz"
+"""CARLA's nightly Linux build (the ``ue58-dev`` branch), as linked from its
+download page."""
 
 USER_AGENT = "autoware-carla-scenario (scenario-setup)"
 """The ``User-Agent`` every download request sends.
@@ -90,11 +97,24 @@ USER_AGENT = "autoware-carla-scenario (scenario-setup)"
 urllib's own (``Python-urllib/3.x``) with 403 Forbidden whatever the file, so
 a download that sent it could never start."""
 
-NIGHTLY_MACHINES = frozenset({"x86_64"})
-"""The machines (``platform.machine()``) the nightly build runs on."""
+PACKAGE_MACHINES = frozenset({"x86_64"})
+"""The machines (``platform.machine()``) CARLA's own packages, the release and
+the nightly, run on."""
+
+NIGHTLY_MACHINES = PACKAGE_MACHINES
+"""The name :data:`PACKAGE_MACHINES` had when only the nightly was offered."""
 
 LAUNCHER = PurePosixPath(_LAUNCHER)
-"""The server's launcher, relative to the unpacked package."""
+"""The server's launcher in a CARLA 0.10 package, relative to the unpacked
+package. CARLA 1.0's is at the package's top (``CarlaUnreal.sh``): either is
+accepted (:func:`launcher_in`)."""
+
+
+def _launcher_of(target: Path) -> Path:
+    """The launcher of the install at *target*, or where a 0.10 package's would be."""
+    found = launcher_in(target)
+    return found if found is not None else target / LAUNCHER
+
 
 _TIMEOUT = 60.0
 """Seconds a read may stall before the connection counts as dropped."""
@@ -107,14 +127,15 @@ _RETRY_DELAY = 2.0
 
 
 def install(
-    url: str = NIGHTLY_URL, target: Optional[Path] = None, force: bool = False
+    url: str = RELEASE_URL, target: Optional[Path] = None, force: bool = False
 ) -> Path:
     """Download the CARLA package at *url* into *target* and return its launcher.
 
     *url* may also be a local path (see :func:`package_url`); it is read in place.
     An install already made from the same download (same ETag, or Last-Modified
     and size) is kept unless *force*. The package's single top-level directory
-    is dropped, so the launcher is always ``<target>/Linux/CarlaUnreal.sh``.
+    is dropped, so the launcher is ``<target>/CarlaUnreal.sh`` (CARLA 1.0) or
+    ``<target>/Linux/CarlaUnreal.sh`` (0.10).
     Another install into *target* running meanwhile is waited for (see
     :func:`_locked`), so the two never delete each other's download.
 
@@ -182,7 +203,7 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
         if exc.code != 304:  # 304 Not Modified: the server says the install is current
             raise
         print(f"CARLA at {target} is up to date.")
-        return target / LAUNCHER
+        return _launcher_of(target)
     with response:
         source = {
             "url": url,
@@ -192,7 +213,7 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
         }
         if not force and _current(target, source):
             print(f"CARLA at {target} is up to date.")
-            return target / LAUNCHER
+            return _launcher_of(target)
         if not writable:
             raise _cannot_install(target)
         size = int(source["size"]) if source["size"] else None
@@ -213,9 +234,10 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
                 unit_divisor=1024,
             ) as counted:
                 _unpack(cast(IO[bytes], counted), staging)
-            if not (staging / LAUNCHER).is_file():
+            if launcher_in(staging) is None:
                 raise RuntimeError(
-                    f"{url} has no {LAUNCHER}: not a CARLA Linux package"
+                    f"{url} has no {LAUNCHER.name} (at its top, as CARLA 1.0 "
+                    f"has it, or in {LAUNCHER.parent}/): not a CARLA Linux package"
                 )
         except BaseException:  # Ctrl-C and a dead connection too: no 30 GB left over
             shutil.rmtree(staging, ignore_errors=True)
@@ -224,7 +246,7 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
             stream.close()
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
     _swap_into_place(staging, target)
-    return target / LAUNCHER
+    return _launcher_of(target)
 
 
 @contextlib.contextmanager
@@ -417,7 +439,7 @@ def _stamp(target: Path, shown: tuple[str, ...] = ()) -> dict[str, Optional[str]
     header carries, a value that is not falsy becomes its ``str()`` instead,
     which is what the header was given.
     """
-    if not (target / LAUNCHER).is_file():
+    if launcher_in(target) is None:
         return {}
     try:
         stamp = json.loads((target / _STAMP).read_text())
@@ -518,7 +540,7 @@ class _StripTop:
             raise _ArchiveLayoutError(
                 f"the archive has {member.name!r} at its top, not in a single "
                 "top directory: not a CARLA Linux package as released (one "
-                f"directory holding {LAUNCHER})"
+                f"directory holding {LAUNCHER.name})"
             )
         if self.top is None:
             if parts[0] == LAUNCHER.parts[0]:
@@ -528,14 +550,14 @@ class _StripTop:
                     f"the archive's top directory is {parts[0]!r}, the one "
                     f"holding {LAUNCHER.name}, with no directory around it: not "
                     "a CARLA Linux package as released (one directory holding "
-                    f"{LAUNCHER})"
+                    f"{LAUNCHER.name})"
                 )
             self.top = parts[0]
         elif parts[0] != self.top:
             raise _ArchiveLayoutError(
                 f"the archive has two top directories, {self.top!r} and "
                 f"{parts[0]!r}: not a CARLA Linux package as released (one "
-                f"directory holding {LAUNCHER})"
+                f"directory holding {LAUNCHER.name})"
             )
         if len(parts) < 2:
             return None
@@ -586,11 +608,20 @@ def _main(argv: Optional[list[str]]) -> int:
         prog="scenario-setup",
         description="Download a CARLA server for the scenario runner to launch.",
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--url",
-        default=NIGHTLY_URL,
+        default=RELEASE_URL,
         help="CARLA Linux package (.tar.gz) to install, as a URL or a local path "
-        "(default: the nightly build)",
+        "(default: the CARLA 1.0 release)",
+    )
+    source.add_argument(
+        "--nightly",
+        action="store_const",
+        const=NIGHTLY_URL,
+        dest="url",
+        help="install CARLA's nightly build (the ue58-dev branch) instead of the "
+        "release; run the scenarios with TYPESAFE_CARLA_CARLA_REF=ue58-dev",
     )
     parser.add_argument(
         "--dir",
@@ -603,11 +634,12 @@ def _main(argv: Optional[list[str]]) -> int:
     )
     args = parser.parse_args(argv)
     machine = platform.machine()
-    if args.url == NIGHTLY_URL and (
-        not sys.platform.startswith("linux") or machine not in NIGHTLY_MACHINES
+    official = {RELEASE_URL: "CARLA 1.0", NIGHTLY_URL: "CARLA's nightly build"}
+    if args.url in official and (
+        not sys.platform.startswith("linux") or machine not in PACKAGE_MACHINES
     ):
         print(
-            f"scenario-setup: CARLA's nightly build is for Linux x86_64 and does not "
+            f"scenario-setup: {official[args.url]} is for Linux x86_64 and does not "
             f"run on {sys.platform} {machine}. Run the CARLA server on an x86_64 host and point the "
             f"runner at it (server.host=<address>), or pass --url to install another "
             f"CARLA package.",

@@ -18,6 +18,7 @@ import typesafe_carla.carla as carla
 from dotenv import find_dotenv, load_dotenv
 
 from .carla_install_paths import installed_executable
+from .carla_release import client_server_mismatch
 
 # The run's own ``.env``: the nearest one from the working directory up, not
 # the one nearest this file (find_dotenv()'s default), which is no file in a
@@ -448,6 +449,7 @@ class CarlaServerManager:
         atexit.register(self.stop)
         try:
             self._wait_until_ready()
+            self._check_client_matches()
         except BaseException:
             # A server that never became reachable (or a Ctrl-C while
             # waiting) is not left for atexit: the caller gets no manager to
@@ -567,6 +569,7 @@ class CarlaServerManager:
 
     def _reuse(self) -> None:
         """Record that the server already running is reused."""
+        self._check_client_matches()
         self._reused = True
         if self.extra_args:
             logger.warning(
@@ -575,6 +578,26 @@ class CarlaServerManager:
                 _host_port(self.host, self.port),
                 " ".join(self.extra_args),
             )
+
+    def _check_client_matches(self) -> None:
+        """Raise when the server speaks another CARLA branch's RPC than the client.
+
+        A client of the wrong branch (``TYPESAFE_CARLA_CARLA_REF``) fails on
+        the run's first world settings with a msgpack error naming neither;
+        this says which client to select (carla_release). A server that
+        does not answer the question is left to fail where it is used: the
+        check is about the branch, not about reaching the server.
+        """
+        try:
+            client = carla.Client(self.host, self.port)
+            client.set_timeout(10.0)
+            versions = (client.get_client_version(), client.get_server_version())
+        except Exception as exc:  # typesafe_carla raises RuntimeError and others
+            logger.debug("CARLA version check skipped: %s", exc)
+            return
+        problem = client_server_mismatch(*versions)
+        if problem is not None:
+            raise RuntimeError(problem)
 
     def _log_hint(self) -> str:
         """Where the launched CARLA's own log is, as an error points to it

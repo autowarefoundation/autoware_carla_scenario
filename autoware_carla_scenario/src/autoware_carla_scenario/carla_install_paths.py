@@ -29,8 +29,15 @@ DEFAULT_HOME = "~/.autoware_carla_scenario"
 """The framework's home directory unless :data:`HOME_ENV` names another."""
 
 _LAUNCHER = "Linux/CarlaUnreal.sh"
-"""The server's launcher, relative to the unpacked package (``carla_install``'s
-``LAUNCHER``, as a ``str``: a ``Path`` joined with either is the same path)."""
+"""The server's launcher in a CARLA 0.10 package and the UE 5.5 nightlies,
+relative to the unpacked package (``carla_install``'s ``LAUNCHER``, as a
+``str``: a ``Path`` joined with either is the same path)."""
+
+_LAUNCHERS = ("CarlaUnreal.sh", _LAUNCHER)
+"""Where a package holds its launcher, relative to the unpacked package, in
+the order looked for: CARLA 1.0's (and the UE 5.8 nightlies') at the
+package's top, ``Carla-1.0-Linux-Shipping/CarlaUnreal.sh``, then 0.10's in
+``Linux/``."""
 
 _STAMP = ".download.json"
 """What the install was downloaded from, to tell whether it is still current."""
@@ -55,10 +62,19 @@ def install_dir() -> Path:
     return home_dir() / "bin" / "carla"
 
 
+def launcher_in(package: Path) -> Optional[Path]:
+    """The launcher of the CARLA package unpacked at *package*, if it has one
+    (:data:`_LAUNCHERS`)."""
+    for relative in _LAUNCHERS:
+        launcher = package / relative
+        if launcher.is_file():
+            return launcher
+    return None
+
+
 def installed_executable() -> Optional[Path]:
     """The launcher of the CARLA ``scenario-setup`` installed, if there is one."""
-    launcher = install_dir() / _LAUNCHER
-    return launcher if launcher.is_file() else None
+    return launcher_in(install_dir())
 
 
 def package_url(url: str) -> str:
@@ -89,7 +105,7 @@ def _lock_path(target: Path) -> Path:
 
 def _cannot_install(target: Path) -> RuntimeError:
     """The error of a run that can only check *target* but would have to install."""
-    state = "out of date" if (target / _LAUNCHER).is_file() else "not installed"
+    state = "out of date" if launcher_in(target) is not None else "not installed"
     return RuntimeError(
         f"CARLA at {target} is {state}, and this run cannot write there "
         f"({_lock_path(target)} cannot be opened for writing); run scenario-setup "
