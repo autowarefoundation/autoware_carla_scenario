@@ -26,9 +26,9 @@ Where the data comes from:
   that tick's, with its ego pose and boxes, as with the recorder's own LiDARs.
   A sweep from before the recording started, or older than the ticks the
   recorder keeps, is dropped (logged at debug level); one taken on the tick
-  the recording starts on is kept, as Rerun's sensor recording keeps it. A camera frame carries
-  the tick it was rendered on too (#951). Without a LiDAR, the oldest camera
-  frame's tick is the key frame. With one, a camera frame rendered on another
+  the recording starts on is kept, as Rerun's sensor recording keeps it. A
+  camera frame carries the tick it was rendered on too (#951). Without a
+  LiDAR, the oldest camera frame's tick is the key frame. With one, a camera frame rendered on another
   tick than the sweep (a camera faster than the LiDAR, or on the other ticks
   of its interval) still goes on the step's key frame, at most a policy step
   off: the dataset stamps a sample's data with the sample's time, and such a
@@ -126,10 +126,10 @@ The intensity is on T4's 0-255 scale, as Autoware's point clouds and the
 (`t4.INTENSITY_SCALE`), applied once as the sweep is written, whether the
 recorder's own LiDAR took it or a driver policy's ego fed it.
 Timestamps are Unix microseconds: the wall-clock time the run's clock
-started, plus the simulated time since, so key frames are on the policy-step
-grid, normally one step apart: a slow camera's older frame can pull a
-key frame back onto its own tick (samples 150 and 50 ms apart, see above), and
-a step is no key frame when nothing it took can be written (every fed item
+started, plus the simulated time since, so a key frame is stamped with its
+tick's time, and key frames are normally one policy step apart: a slow
+camera's older frame can pull a key frame back onto its own tick (samples
+150 and 50 ms apart, see above), and a step is no key frame when nothing it took can be written (every fed item
 dropped, or the recorder's own sweep not delivered in time).
 
 ## Frames

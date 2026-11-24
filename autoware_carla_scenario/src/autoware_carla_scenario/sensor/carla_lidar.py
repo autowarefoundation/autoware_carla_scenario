@@ -447,7 +447,6 @@ class CarlaLidarSensor:
         if weather is None:
             # Not marked: the next read of this sweep reads the weather again.
             return sweep
-        self._weathered_frame = sweep[0]
         result = (
             sweep[0],
             apply_weather(
@@ -459,6 +458,8 @@ class CarlaLidarSensor:
                 self._noise_stream,
             ),
         )
+        # Marked once it is on: a sweep left as it came is tried again.
+        self._weathered_frame = sweep[0]
         self._newest = result
         return result
 
