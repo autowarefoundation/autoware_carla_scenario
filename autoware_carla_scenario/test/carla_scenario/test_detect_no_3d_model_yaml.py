@@ -734,8 +734,10 @@ def test_the_insert_after_a_line_is_as_before() -> None:
 
 def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
     """update_no_3d_model_lanelet_ids_text before #2364, verbatim but for the
-    helpers it called (the old ones above; the unchanged ones off the tool),
-    and for the key-line comment #2412 keeps on the key's line."""
+    helpers it called (the old ones above; the unchanged ones off the tool).
+
+    It still moves a key-line comment after the block list's last item, which
+    #2412 fixed: test_the_whole_edit_is_as_before moves it back itself."""
     import copy  # noqa: PLC0415
 
     ids = [int(lid) for lid in lanelet_ids]
@@ -790,13 +792,6 @@ def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
             and value_node.value
         )
         tail = _old_key_line_tail(text, key_node, value_node)
-        if not tail and ids and not flow:
-            # #2412: a comment after a value on the key's line stays there.
-            rest = re.match(r"[^\r\n]*", text[end:]).group()  # type: ignore[union-attr]
-            comment = rest[_old_comment_start(rest) :]
-            if comment:
-                tail = comment
-                end += len(rest)
         replacement = _old_format_value(ids, indent, newline, flow=flow, tail=tail)
         result = text[:start] + replacement + text[end:]
     else:
@@ -827,7 +822,10 @@ def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
     return result
 
 
-def _random_document(rng: random.Random) -> str:
+def _random_document(rng: random.Random) -> tuple[str, str]:
+    """Return a document, and the comment after the value on the key's line
+    that #2412 keeps there when a block list replaces the value (``""`` when
+    there is none)."""
     newline = rng.choice(("\n", "\r\n"))
     comment = rng.choice(("", "  # c", " #x", "\t# a#b", "  #"))
     props = rng.choice(("", " &ids", " !!seq", " &a#b", " &ids  # keep"))
@@ -846,33 +844,57 @@ def _random_document(rng: random.Random) -> str:
         lines.append("map:" + rng.choice(("", "  # section")))
     pad = "  " if in_map else ""
     lines.append(f"{pad}name: M" + rng.choice(("", " # n")))
+    key_line_comment = ""
     if rng.random() < 0.7:
-        value = rng.choice(values).replace(newline + "  ", newline + "  " + pad)
+        choice = rng.randrange(len(values))
+        value = values[choice].replace(newline + "  ", newline + "  " + pad)
         lines.append(f"{pad}{NO_3D_MODEL_KEY}:{value}")
+        # ``[]``, ``null`` and an empty value start on the key's line and are
+        # replaced by a block list; a non-empty flow list stays one.
+        if choice in (1, 5, 6):
+            key_line_comment = comment
     if rng.random() < 0.4:
         lines.append(f"{pad}other: |{newline}{pad}  text{newline}")
     if rng.random() < 0.3:
         lines.append("# trailing" + rng.choice(("", "  #")))
     text = newline.join(lines)
-    return text + newline if rng.random() < 0.7 else text
+    return (text + newline if rng.random() < 0.7 else text), key_line_comment
+
+
+def _keep_on_the_key_line(old: str, comment: str, last_id: int) -> str:
+    """Move *comment* from after the block list's last item, where the old
+    edit left it, back onto the key's line (#2412)."""
+    newline = "\r\n" if "\r\n" in old else "\n"
+    key_line = f"{NO_3D_MODEL_KEY}:{newline}"
+    last_item = f"- {last_id}{comment}"
+    assert old.count(key_line) == 1, repr(old)
+    assert last_item in old, repr(old)
+    head, _, rest = old.rpartition(last_item)
+    moved = head + f"- {last_id}" + rest
+    return moved.replace(key_line, f"{NO_3D_MODEL_KEY}:{comment}{newline}")
 
 
 def test_the_whole_edit_is_as_before() -> None:
     """Over random documents, the text written (or the refusal) is the old
-    edit's."""
+    edit's, but for a key-line comment #2412 keeps on the key's line."""
     rng = random.Random(469)
+    moved = 0
     for _ in range(1500):
-        text = _random_document(rng)
+        text, key_line_comment = _random_document(rng)
         ids = [rng.randrange(0, 100) for _ in range(rng.randrange(0, 3))]
         try:
             old: object = _old_update(text, ids)
         except YamlUpdateError as exc:
             old = ("refused", str(exc))
+        if isinstance(old, str) and key_line_comment and ids:
+            old = _keep_on_the_key_line(old, key_line_comment, ids[-1])
+            moved += 1
         try:
             new: object = update_no_3d_model_lanelet_ids_text(text, ids)
         except YamlUpdateError as exc:
             new = ("refused", str(exc))
         assert new == old, repr(text)
+    assert moved > 50  # the documents do exercise #2412
 
 
 def test_the_tool_still_hands_out_the_moved_names() -> None:
