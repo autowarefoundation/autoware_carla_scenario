@@ -466,13 +466,24 @@ small, asks for reverse: there is no deadband, so an ECU that means "stop" sends
 A value that is not finite (NaN or an infinity: a decoded IEEE-float signal, a
 scale that overflows), or larger in magnitude than a 32-bit float holds (CARLA's
 controls would make it an infinity), is dropped with a warning, as a missing
-field is: the command keeps the field's previous value. The run drops one it
-receives too, and the field takes its default. A constant, `scale` or `offset`
-must be finite. The run clamps `gear` to a 32-bit integer.
+field is: the command keeps the field's previous value. A message none of
+whose message fields gives a value (all NaN, say) refreshes nothing, its
+constants included, so a constant does not keep the command fresh while the
+ECU sends NaN; a message whose command is all constants still refreshes it
+when it arrives. The run drops a non-finite field it receives too, and the
+field takes its default. A constant, `scale` or `offset` must be finite. The
+run clamps `gear` to a 32-bit integer.
 
 The run applies the newest command every tick. One older than `hils.stale_s`
 (the ECUs stopped sending) is stale: the ego brakes, or with
-`hils.on_stale=hold` keeps the last command.
+`hils.on_stale=hold` keeps the last command. The command is one, merged from
+every input message: it is fresh while any of them arrives, so only a loss of
+every command message makes it stale. When one message stops (cut, or its ECU
+dead) while others still arrive, its fields keep their last values and the
+others refresh. A command's age is measured from when the run reads it, at the
+start of its tick's work after `world.tick()`: one that arrived during a slow
+tick counts as up to a tick younger than it is, so a command goes stale up to
+one tick period after `hils.stale_s`.
 
 ### Lifecycle
 
@@ -579,10 +590,16 @@ whichever comes first; with neither, until the scenario ends. Several actions
 add up: a device stops what any running action names. While data is stopped,
 the periodic messages are still encoded and only their frames are dropped, so
 an E2E counter or a sequence number moves on as an ECU's would on a cut bus.
-Stopping an ECU's command messages (`from_ecu`) makes the run's command go
-stale after `hils.stale_s`, and the ego brakes or holds it (`hils.on_stale`).
+Stopping every one of an ECU's command messages (`from_ecu`) makes the run's
+command go stale after `hils.stale_s`, and the ego brakes or holds it
+(`hils.on_stale`). Stopping some of them does not: the command is merged from
+every input message, so the fields of the stopped ones stay at their last
+values while the others keep the command fresh.
 The bridge carries everything again when the scenario ends, before its
-`scenario_end` steps, so they reach the ECUs. A device the bridge
+`scenario_end` steps, so they reach the ECUs; a channel that fails to is
+logged, the others are still carried again, and the next scenario's `start`
+tries it again and fails with an error if it still stops data, rather than run
+with it cut. A device the bridge
 does not have ends the run with an error; on any ego but `ego.entity=hils` the
 action only logs a warning, so one scenario serves HILS and simulation runs
 alike.
@@ -627,4 +644,5 @@ each frame the runner ticks. carla_canvas's client is installed with
   the ego's state, without CARLA's sensor noise.
 - A sensor's data reaches the devices on the tick after the one it was
   measured on when it arrives after that tick; an ECU command reaches the ego
-  on the run's next tick after it arrives.
+  on the run's next tick after it arrives, and its age (`hils.stale_s`) is
+  counted from then.

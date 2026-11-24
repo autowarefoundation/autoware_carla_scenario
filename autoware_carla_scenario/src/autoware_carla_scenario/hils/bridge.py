@@ -66,6 +66,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -751,6 +752,9 @@ class HilsBridge:
         #: What each channel side was last set to stop (:meth:`_apply_cuts`):
         #: these names (none when absent), or everything (``None``).
         self._applied: Dict[Tuple[str, Side], Optional[FrozenSet[str]]] = {}
+        #: The channel sides whose last change failed: what they stop is not
+        #: known, so :meth:`_apply_cuts` sets them again.
+        self._unsettled: Set[Tuple[str, Side]] = set()
         self._stop = threading.Event()
 
     # -- set-up and shut-down ------------------------------------------------
@@ -988,11 +992,24 @@ class HilsBridge:
         The ``warmup`` steps wait on what the ECUs make of the sensors, so
         they run with the world followed (:meth:`step`), as a scenario runs.
 
+        No channel stops data when a scenario begins: what a previous
+        scenario's cuts stopped is carried again first -- every channel side,
+        those an earlier end failed to restore included (#2444).
+
         Raises:
-            HilsStepError: A scenario_start or warmup step failed (the scenario
-                is still running, and ends as any other).
+            HilsStepError: A channel still stops data (the scenario does not
+                start), or a scenario_start or warmup step failed (the
+                scenario is still running, and ends as any other).
         """
         assert self._world is not None
+        try:
+            self._reconnect_all()
+        except Exception as exc:  # noqa: BLE001 - refused, as a failed step
+            raise HilsStepError(
+                "the data a previous scenario cut cannot be carried again "
+                f"({', '.join(self._still_cut())}: {exc}); the scenario does "
+                "not start"
+            ) from exc
         self._ego = ego
         self._active = True
         self._map = self._world.get_map()
@@ -1140,28 +1157,72 @@ class HilsBridge:
 
     def _apply_cuts(self) -> None:
         """Set every device's channel to stop what its cuts stop together,
-        changing only the sides whose combined cut changed."""
+        changing only the sides whose combined cut changed -- or whose last
+        change failed, which is tried again.
+
+        Every side is set, even when one before it fails (#2444): a channel
+        left cut would stop its data in the scenarios that follow.  A side
+        that fails is set again by the next call.
+
+        Raises:
+            Exception: The first side's failure, once every side was tried
+                (the others are logged).
+        """
         cuts = list(self._cuts.values())
+        errors: List[Exception] = []
         for name, channel in self._channels.items():
             for side in _SIDES:
                 # Nothing (an empty set), everything (None), or these names.
                 stopped = stopped_messages(cuts, name, side)
-                if self._applied.get((name, side), frozenset()) == stopped:
+                if (name, side) not in self._unsettled and self._applied.get(
+                    (name, side), frozenset()
+                ) == stopped:
                     continue
-                if stopped is None:
-                    channel.disconnect(direction=side)
-                elif stopped:
-                    channel.disconnect(direction=side, messages=sorted(stopped))
-                else:
-                    channel.reconnect(direction=side)
+                try:
+                    if stopped is None:
+                        channel.disconnect(direction=side)
+                    elif stopped:
+                        channel.disconnect(direction=side, messages=sorted(stopped))
+                    else:
+                        channel.reconnect(direction=side)
+                except Exception as exc:  # noqa: BLE001 - the others still
+                    # What the side stops is not known: set it next time.
+                    self._unsettled.add((name, side))
+                    if errors:
+                        logger.error(
+                            "%s: failed to set what is stopped (%s): %s",
+                            name,
+                            side,
+                            exc,
+                        )
+                    errors.append(exc)
+                    continue
+                self._unsettled.discard((name, side))
                 self._applied[(name, side)] = stopped
+        if errors:
+            raise errors[0]
 
     def _reconnect_all(self) -> None:
-        """Carry everything again."""
+        """Carry everything again: every channel side, even when one fails.
+
+        Raises:
+            Exception: A channel side failed to carry its data again
+                (:meth:`_apply_cuts`); the others were.
+        """
         if self._cuts:
             self._cuts.clear()
             logger.info("every cut restored")
         self._apply_cuts()
+
+    def _still_cut(self) -> List[str]:
+        """The channel sides that may still stop data (``"device (side)"``):
+        those set to stop some, and those whose last change failed."""
+        return [
+            f"{name} ({side})"
+            for name, side in sorted(set(self._applied) | self._unsettled)
+            if (name, side) in self._unsettled
+            or self._applied[(name, side)] != frozenset()
+        ]
 
     def _on_input(self, spec: DeviceSpec, message: Any) -> None:
         """A receiving thread's message: merge its command fields, forward them."""
