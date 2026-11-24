@@ -31,6 +31,9 @@ ROUTING_STATE_TOPIC = "/api/routing/state"
 OPERATION_MODE_STATE_TOPIC = "/api/operation_mode/state"
 #: Service: change the operation mode to autonomous.
 OPERATION_MODE_CHANGE_TO_AUTONOMOUS_SERVICE = "/api/operation_mode/change_to_autonomous"
+#: Service: change the operation mode to stop -- what a new bridge session asks
+#: of a stack an earlier one left driving, before it clears that one's route.
+OPERATION_MODE_CHANGE_TO_STOP_SERVICE = "/api/operation_mode/change_to_stop"
 
 # -- Enum values (autoware_adapi_v1_msgs; see check_enum_values) --------------
 
@@ -90,7 +93,10 @@ class ReadinessAggregator:
     * :attr:`can_engage` - localization initialized, route set, and autonomous
       mode available: the precondition for calling ``change_to_autonomous``.
     * :attr:`ready` - localization initialized, route set, and Autoware now in
-      AUTONOMOUS with control enabled: the flag pushed to the scenario framework.
+      AUTONOMOUS with control enabled and the change to it complete (not
+      ``is_in_transition``): the flag pushed to the scenario framework.  The AD
+      API reports AUTONOMOUS as soon as it accepts the change, and a transition
+      that then falls back is not driving.
 
     ``require_localization`` folds in the localization state.  Set it ``False`` for
     stacks that do not localize through the AD API -- e.g. a CARLA ground-truth /
@@ -105,6 +111,9 @@ class ReadinessAggregator:
     route_state: int = ROUTE_STATE_UNKNOWN
     autonomous_available: bool = False
     autonomous_engaged: bool = False
+    #: Whether the last ``OperationModeState`` reads AUTONOMOUS, in transition
+    #: to it or not, control enabled or not.
+    autonomous_mode: bool = False
 
     def update_localization(self, state: int) -> None:
         """Update from ``LocalizationInitializationState.state``."""
@@ -149,12 +158,21 @@ class ReadinessAggregator:
         return self.route_state == ROUTE_STATE_ARRIVED
 
     def update_operation_mode(
-        self, mode: int, is_control_enabled: bool, is_autonomous_available: bool
+        self,
+        mode: int,
+        is_control_enabled: bool,
+        is_autonomous_available: bool,
+        is_in_transition: bool = False,
     ) -> None:
-        """Update from ``OperationModeState`` fields."""
+        """Update from ``OperationModeState`` fields.
+
+        Engaged is AUTONOMOUS with control enabled once the transition to it is
+        over: while ``is_in_transition`` it may still fall back.
+        """
         self.autonomous_available = is_autonomous_available
+        self.autonomous_mode = mode == OPERATION_MODE_AUTONOMOUS
         self.autonomous_engaged = (
-            mode == OPERATION_MODE_AUTONOMOUS and is_control_enabled
+            self.autonomous_mode and is_control_enabled and not is_in_transition
         )
 
     @property

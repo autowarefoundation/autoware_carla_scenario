@@ -176,6 +176,11 @@ What happens:
 
     Once it has reached the bridge, routing and engaging are measured in
     ticks, `autoware.ready_timeout_ticks`. The route itself waits for UNSET.
+    Ready is AUTONOMOUS with control enabled once the change to it is over
+    (the AD API's `OperationModeState.is_in_transition` false): the AD API
+    reports AUTONOMOUS as soon as it accepts the change, and a transition
+    that falls back out of it before the node has reported ready is engaged
+    again rather than left to the timeout.
     A stack that takes the mission but never localizes fails at
     `boot_timeout_s` with `took the mission but did not report in`; one that
     never asks for it, with `did not reach the bridge`. A `scenario_bridge`
@@ -523,6 +528,29 @@ PYTHONPATH=$(uv run python -c "from autoware_carla_scenario.autoware_stack.bridg
   --ros-args -p bridge_address:=localhost:50052 -p use_sim_time:=true &
 ros2 launch autoware_launch e2e_simulator.launch.xml simulator_type:=carla scenario_mode:=true ...
 ```
+
+One node and one stack serve every scenario that follows, and every attempt
+of one: nothing removes them between scenarios, as a launcher does. Each
+scenario's bridge -- and each attempt's, when a scenario is retried -- is a
+bridge session of its own: the server draws a new `session_id` every time it
+starts serving and sends it in every `GetMission` answer, while its
+`mission_version` counts within the session and starts over with the next.
+So when the session changes -- or the server answers that it has no mission
+after it had one, as a new session does until its mission is handed over --
+the node forgets everything of the last one, versions included, and starts
+over: it stops the last session's drive
+(`/api/operation_mode/change_to_stop`) while Autoware is still AUTONOMOUS,
+clears its route (`/api/routing/clear_route`) unless it is UNSET, initializes
+localization again at the new initial pose (the ego is spawned there afresh;
+with `initialize_localization:=false`, the stack's own localization follows
+it), routes the new mission, engages, and reports in and ready to the new
+session, within its `ready_timeout_ticks`. Only a new
+version within a session is a re-route. What a fresh stack would not carry
+over -- the planner's memory of the last run, a localization that drifted --
+a hand-started one does; start a stack per scenario (a launcher) when a batch
+has to be independent of its order. A bridge server that predates the session
+id sends none, and the node then takes each version as a re-route of one
+session: start the node afresh for each scenario attempt with such a server.
 
 ## From Python
 

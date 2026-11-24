@@ -35,14 +35,27 @@ class Mission:
         goal: Where Autoware plans the route to.
         waypoints: Poses the route must pass through, in order; empty leaves
             the way to the goal to Autoware.
-        version: The server's ``mission_version``: a new one is a re-route.
-            0 from a server that predates it, which never re-routes.
+        version: The server's ``mission_version``: a new one within a session
+            is a re-route.  0 from a server that predates it, which never
+            re-routes.
+        session: The server's ``session_id``: a new one is a new scenario, or a
+            new attempt of one, whose versions start over.  Empty from a server
+            that predates it, which a client takes as the session it had.
     """
 
     initial_pose: pb2.Pose
     goal: pb2.Pose
     waypoints: tuple[pb2.Pose, ...] = ()
     version: int = 0
+    session: str = ""
+
+    def is_new_session_after(self, other: "Mission") -> bool:
+        """Whether this mission is a new bridge session's rather than *other*'s.
+
+        Only a session id says so: an empty one (a server that predates it) is
+        taken as the session *other* had.
+        """
+        return bool(self.session) and self.session != other.session
 
 
 class ScenarioBridgeClient:
@@ -85,6 +98,7 @@ class ScenarioBridgeClient:
             goal=response.goal,
             waypoints=tuple(response.waypoints),
             version=int(response.mission_version),
+            session=str(response.session_id),
         )
 
     def report_readiness(self, ready: bool, timeout: Optional[float] = None) -> None:

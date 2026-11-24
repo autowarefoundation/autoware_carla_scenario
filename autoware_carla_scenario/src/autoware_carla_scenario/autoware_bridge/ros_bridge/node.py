@@ -51,6 +51,28 @@ ego has reached its goal (the route ARRIVED, which neither routing service
 takes, and Autoware stopped) clears the route (``/api/routing/clear_route``),
 then sets the new one and engages again as the startup did.
 
+Each ``GetMission`` answer names its bridge session (``session_id``), which
+the server draws afresh every time it starts serving: one scenario, or one
+attempt of it.  ``mission_version`` counts within a session, so a node that
+outlives one -- started by hand for a batch, ``autoware.launcher.type=none`` --
+tells the next session's mission from a re-route by the session, and starts
+over for it: when the session changes, or the server answers it has no mission
+after it had one (a new session before its mission), the node forgets
+everything it latched for the last one, goes back to its startup tick and
+stops watching for a re-route.  The new mission's startup first gets the last
+session's drive out of the way -- ``/api/operation_mode/change_to_stop`` while
+Autoware is still AUTONOMOUS, then ``/api/routing/clear_route`` for a route
+that is not UNSET -- then initializes localization again at the new initial
+pose (the ego was spawned there afresh), routes, engages, reports in and
+reports ready to the new session.  A server that predates the session id sends
+none, and is taken as keeping its session.
+
+Ready means AUTONOMOUS with control enabled once the change to it is over
+(``OperationModeState.is_in_transition`` false): the AD API reports AUTONOMOUS
+as soon as it accepts the change.  If the mode then falls back out of
+AUTONOMOUS before readiness has been reported, the engage is no longer taken
+as done, and the node engages again.
+
 Throughout the run it also forwards Autoware's turn-indicator command
 (``turn_indicators_topic``, ``/control/command/turn_indicators_cmd``) with
 ``ReportTurnIndicators`` whenever it changes, so the framework lights the CARLA
@@ -91,6 +113,7 @@ from autoware_adapi_v1_msgs.srv import SetRoutePoints
 from .ad_api import (
     OPERATION_MODE_CHANGE_TO_AUTONOMOUS_SERVICE,
 )
+from .ad_api import OPERATION_MODE_CHANGE_TO_STOP_SERVICE
 from .ad_api import LOCALIZATION_INITIALIZATION_STATE_TOPIC
 from .ad_api import LOCALIZATION_INITIALIZE_SERVICE
 from .ad_api import OPERATION_MODE_STATE_TOPIC
@@ -98,6 +121,7 @@ from .ad_api import ROUTING_CHANGE_ROUTE_POINTS_SERVICE
 from .ad_api import ROUTING_CLEAR_ROUTE_SERVICE
 from .ad_api import ROUTING_SET_ROUTE_POINTS_SERVICE
 from .ad_api import ROUTE_STATE_UNKNOWN
+from .ad_api import ROUTE_STATE_UNSET
 from .ad_api import ROUTING_STATE_TOPIC
 from .ad_api import ReadinessAggregator
 from .ad_api import check_enum_values
@@ -205,6 +229,7 @@ class ScenarioBridgeNode(Node):
         super().__init__("scenario_bridge")
 
         tick_period_s = self._declare_parameters()
+        self._tick_period_s = tick_period_s
 
         self._client = ScenarioBridgeClient(self._bridge_address)
         self._aggregator = ReadinessAggregator(
@@ -231,6 +256,10 @@ class ScenarioBridgeNode(Node):
         # the old goal. Gates completion until our own route has landed.
         self._route_accepted = False
         self._engage_requested = False
+        # Whether the operation mode has read AUTONOMOUS since the engage was
+        # requested: a mode that then drops out of it before readiness is
+        # reported is a transition that fell back, and frees the engage latch.
+        self._engage_saw_autonomous = False
         self._readiness_inflight = False
         self._readiness_reported = False
         # The not-ready ReportReadiness that tells the scenario the stack has
@@ -249,6 +278,17 @@ class ScenarioBridgeNode(Node):
         self._reroute_rejections = 0
         self._abandoned_version: Optional[int] = None
         self._route_watch_timer = None
+        # Bridge sessions (the server's session_id). Bumped by every reset of
+        # the startup state, so a gRPC report that was in flight across one
+        # does not latch its outcome into the new session.
+        self._session_generation = 0
+        # Set by a reset: the last session's drive is still Autoware's -- its
+        # operation mode, its route -- and is got out of the way (a stop, then
+        # a route clear, each latched like the startup's steps) before the new
+        # mission's startup runs.
+        self._leftover_pending = False
+        self._stop_requested = False
+        self._leftover_clear_requested = False
         # Whether the AD API was up at the last check, for logging its changes
         # (under _lock: the tick and the route watch both check it).
         self._ad_api_was_up = False
@@ -403,6 +443,11 @@ class ScenarioBridgeNode(Node):
             OPERATION_MODE_CHANGE_TO_AUTONOMOUS_SERVICE,
             callback_group=group,
         )
+        self._stop_cli = self.create_client(
+            ChangeOperationMode,
+            OPERATION_MODE_CHANGE_TO_STOP_SERVICE,
+            callback_group=group,
+        )
 
     def _subscribe_ad_api_states(self, group: ReentrantCallbackGroup) -> None:
         """Subscribe to the latched AD API state topics that feed the aggregator."""
@@ -441,13 +486,15 @@ class ScenarioBridgeNode(Node):
         retried after a transient failure even though the AD API states go
         quiescent once Autoware is ready.  Stops once readiness has been reported,
         handing over to the slower route watch (:meth:`_watch_route`).
+
+        It polls ``GetMission`` on every pass while the AD API is up, the
+        mission in hand or not, so a startup that never gets to ready (the
+        scenario gave up on it) still sees the next bridge session's mission.
         """
-        if self._mission is None:
-            if not self._ad_api_up():
-                return
+        if self._ad_api_up():
             self._poll_mission()
-            if self._mission is None:
-                return
+        if self._mission is None:
+            return
         self._advance()
         # ReportReadiness makes a blocking gRPC call, so it runs only here on the
         # tick -- never on the AD API state-callback path, where it would stall the
@@ -470,6 +517,8 @@ class ScenarioBridgeNode(Node):
             return
         with self._lock:
             self._expire_stalled_steps()
+            if not self._ensure_leftover_cleared():
+                return
             self._ensure_localization()
             if self._localization_ready_for_routing():
                 self._ensure_route()
@@ -481,6 +530,19 @@ class ScenarioBridgeNode(Node):
             if self._tick_timer is not None:
                 self._tick_timer.cancel()
                 self._tick_timer = None
+
+    def _start_tick(self) -> None:
+        """Start the reconciliation tick again, for a new session.  Idempotent."""
+        with self._lock:
+            if self._tick_timer is None:
+                self._tick_timer = self._steady_timer(self._tick_period_s, self._tick)
+
+    def _stop_route_watch(self) -> None:
+        """Stop polling for a re-route, for a new session.  Idempotent."""
+        with self._lock:
+            if self._route_watch_timer is not None:
+                self._route_watch_timer.cancel()
+                self._route_watch_timer = None
 
     def _start_route_watch(self) -> None:
         """Start polling for a re-route at ``route_watch_period_s``.  Idempotent."""
@@ -602,14 +664,89 @@ class ScenarioBridgeNode(Node):
             # The scenario server may not be up yet; keep polling.
             self.get_logger().debug(f"GetMission not ready: {error}")
             return
-        if mission is None:
-            return
         with self._lock:
-            if self._mission is None:
+            if self._follow_session(mission):
+                return
+            if self._mission is None and mission is not None:
                 self._mission = mission
                 self.get_logger().info(
                     "Received scenario mission; driving Autoware startup"
                 )
+
+    def _follow_session(self, mission: Optional[Mission]) -> bool:
+        """Start afresh if the server is in a new bridge session (under ``_lock``).
+
+        A new session is a mission with another ``session_id`` than the one in
+        hand, or no mission at all once there was one: the server answers
+        ``available=False`` only before a session's mission, so the scenario
+        (or attempt) the node was starting is over.  Then every latch of the
+        last session is dropped (:meth:`_reset_startup`) and *mission*, if
+        any, becomes the one the startup drives.  A mission without a session
+        id, from a server that predates it, is the session in hand.
+
+        Returns:
+            Whether the node started afresh.
+        """
+        current = self._mission
+        if current is None:
+            return False
+        if mission is None:
+            self._reset_startup(
+                "The scenario's bridge has no mission any more: a new bridge "
+                "session, which has not handed its mission over yet"
+            )
+            return True
+        if not mission.is_new_session_after(current):
+            return False
+        self._reset_startup(
+            f"A new bridge session (mission {mission.version}, session "
+            f"{mission.session}) replaced the one Autoware was started for"
+        )
+        self._mission = mission
+        return True
+
+    def _reset_startup(self, reason: str) -> None:
+        """Forget everything latched for the last session (under ``_lock``).
+
+        Requests still in flight are given up on (their answers are ignored),
+        the route watch stops and the startup tick runs again, from the top:
+        the last session's drive is got out of the way
+        (:meth:`_ensure_leftover_cleared`), localization is initialized again
+        -- it is still INITIALIZED, at where the last session left the ego --
+        and the new mission is routed, engaged and reported to the new session.
+        """
+        self._session_generation += 1
+        for _issued_at, future in list(self._inflight.values()):
+            future.cancel()
+        self._inflight.clear()
+        self._mission = None
+        self._localization_requested = False
+        self._route_requested = False
+        self._route_accepted = False
+        self._engage_requested = False
+        self._engage_saw_autonomous = False
+        self._readiness_inflight = False
+        self._readiness_reported = False
+        self._booted_inflight = False
+        self._booted_reported = False
+        self._routed_version = 0
+        self._route_request_version = 0
+        self._reroute_requested = False
+        self._clear_requested = False
+        self._reroute_rejections = 0
+        self._abandoned_version = None
+        self._stop_requested = False
+        self._leftover_clear_requested = False
+        self._leftover_pending = True
+        if self._init_localization:
+            # Initialized again from the new mission's initial pose; until the
+            # AD API says it is, the last session's localization is no use.
+            self._aggregator.localization_initialized = False
+        self._stop_route_watch()
+        self._start_tick()
+        self.get_logger().warning(
+            f"{reason}; starting Autoware's startup afresh for it"
+        )
 
     def _watch_route(self) -> None:
         """Poll the mission once more; change Autoware's route to a new version.
@@ -621,12 +758,17 @@ class ScenarioBridgeNode(Node):
         """
         if not self._ad_api_up():
             return
+        polled = True
         try:
             mission = self._client.get_mission(timeout=self._mission_poll_timeout_s)
         except grpc.RpcError as error:
             self.get_logger().debug(f"GetMission failed while watching: {error}")
             mission = None
+            polled = False
         with self._lock:
+            if polled and self._follow_session(mission):
+                # The startup tick, running again, takes it from here.
+                mission = None
             current = self._mission
             if (
                 mission is not None
@@ -730,6 +872,12 @@ class ScenarioBridgeNode(Node):
                     self._route_requested = False
                     self._route_accepted = False
                     self._engage_requested = False
+                    self._engage_saw_autonomous = False
+            elif latch == "_leftover_clear_requested":
+                # The last session's route is gone: the new mission's startup
+                # runs (its route still waits for the state to read UNSET).
+                with self._lock:
+                    self._leftover_pending = False
             return
         # Rejected (e.g. service not settled yet / ERROR_PLANNER_UNREADY): clear
         # the latch so the next pass retries.
@@ -746,6 +894,46 @@ class ScenarioBridgeNode(Node):
                     )
                     return
         self.get_logger().warning(f"{label} rejected ({detail}); will retry")
+
+    def _ensure_leftover_cleared(self) -> bool:
+        """Get the last session's drive out of the new session's way.
+
+        Only after a reset (:meth:`_reset_startup`): Autoware still has the
+        route the last session set, which the AD API takes no new route over
+        (set_route_points wants UNSET), and may still be driving it, which it
+        does not clear a route under.  So a stack still AUTONOMOUS is stopped
+        (``change_to_stop``), then a route that is not UNSET cleared
+        (``clear_route``); each is latched and retried on rejection as the
+        startup's steps are.  UNKNOWN waits: the planner is not up.
+
+        Returns:
+            Whether the new mission's startup may run.
+        """
+        if not self._leftover_pending:
+            return True
+        state = self._aggregator.route_state
+        if state == ROUTE_STATE_UNSET:
+            self._leftover_pending = False
+            return True
+        if state == ROUTE_STATE_UNKNOWN or self._leftover_clear_requested:
+            return False
+        if self._aggregator.autonomous_mode:
+            if not self._stop_requested and self._stop_cli.service_is_ready():
+                self._issue(
+                    self._stop_cli,
+                    ChangeOperationMode.Request(),
+                    "_stop_requested",
+                    "change_to_stop (the last session's drive)",
+                )
+            return False
+        if self._clear_route_cli.service_is_ready():
+            self._issue(
+                self._clear_route_cli,
+                ClearRoute.Request(),
+                "_leftover_clear_requested",
+                "route clear (the last session's route)",
+            )
+        return False
 
     def _ensure_localization(self) -> None:
         """(Re)issue ``/api/localization/initialize`` until the AD API accepts it.
@@ -957,43 +1145,52 @@ class ScenarioBridgeNode(Node):
                 return
             if self._readiness_reported or self._readiness_inflight:
                 return
-            if self._mission is None or not self._localization_ready_for_routing():
+            if self._mission is None or self._leftover_pending:
+                return
+            if not self._localization_ready_for_routing():
                 return
             self._booted_inflight = True
+            generation = self._session_generation
         try:
             self._client.report_readiness(False, timeout=self._rpc_timeout_s)
         except grpc.RpcError as error:
             with self._lock:
-                self._booted_inflight = False
+                if generation == self._session_generation:
+                    self._booted_inflight = False
             self.get_logger().warning(
                 f"ReportReadiness (booted) failed ({error.code()}); will retry"
             )
             return
         with self._lock:
+            if generation != self._session_generation:
+                return  # for a session that has ended since
             self._booted_reported = True
             self._booted_inflight = False
         self.get_logger().info(
             "Autoware can be routed; told the scenario it has booted"
         )
 
-    def _claim_readiness_report(self) -> bool:
-        """Latch and claim the readiness report for this caller (else return False).
+    def _claim_readiness_report(self) -> Optional[int]:
+        """Latch and claim the readiness report for this caller.
 
         The ``_readiness_inflight`` latch (set under the lock) stops two overlapping
         ticks from both firing the RPC; already-reported or not-yet-ready both mean
         "don't send".
+
+        Returns:
+            The session generation the claim is for, or ``None`` for no claim.
         """
         with self._lock:
             if self._readiness_reported or self._readiness_inflight:
-                return False
+                return None
             # Do not report ready off a stale SET route: our mission's route must
             # have been accepted first (see _route_accepted).
             if not self._route_accepted:
-                return False
+                return None
             if not self._aggregator.ready:
-                return False
+                return None
             self._readiness_inflight = True
-            return True
+            return self._session_generation
 
     def _maybe_report_ready(self) -> None:
         """Push ``ReportReadiness(True)`` once Autoware is ready, retrying on failure.
@@ -1002,18 +1199,22 @@ class ScenarioBridgeNode(Node):
         independently of AD API state changes, which go quiescent once Autoware is
         ready.
         """
-        if not self._claim_readiness_report():
+        generation = self._claim_readiness_report()
+        if generation is None:
             return
         try:
             self._client.report_readiness(True, timeout=self._rpc_timeout_s)
         except grpc.RpcError as error:
             with self._lock:
-                self._readiness_inflight = False
+                if generation == self._session_generation:
+                    self._readiness_inflight = False
             self.get_logger().warning(
                 f"ReportReadiness failed ({error.code()}); will retry"
             )
             return
         with self._lock:
+            if generation != self._session_generation:
+                return  # for a session that has ended since
             self._readiness_reported = True
             self._readiness_inflight = False
         self.get_logger().info("Autoware ready; reported readiness to the scenario")
@@ -1032,10 +1233,40 @@ class ScenarioBridgeNode(Node):
         self._advance()
 
     def _on_operation_mode_state(self, msg: OperationModeState) -> None:
-        self._aggregator.update_operation_mode(
-            msg.mode, msg.is_autoware_control_enabled, msg.is_autonomous_mode_available
-        )
+        with self._lock:
+            self._aggregator.update_operation_mode(
+                msg.mode,
+                msg.is_autoware_control_enabled,
+                msg.is_autonomous_mode_available,
+                msg.is_in_transition,
+            )
+            self._follow_engage()
         self._advance()
+
+    def _follow_engage(self) -> None:
+        """Free the engage latch if the change to AUTONOMOUS fell back (under ``_lock``).
+
+        The AD API reports AUTONOMOUS, in transition, as soon as it accepts
+        ``change_to_autonomous``; a transition that does not complete takes the
+        mode back out of it.  Before readiness is reported that leaves nothing
+        to engage again -- the latch says it was done -- and the ego would sit
+        until the scenario's timeout, so the latch is freed and the next pass
+        engages again.  After readiness the scenario has its ready latch; what
+        Autoware does then is the scenario's to judge.
+        """
+        if not self._engage_requested or self._readiness_reported:
+            return
+        if self._aggregator.autonomous_mode:
+            self._engage_saw_autonomous = True
+            return
+        if not self._engage_saw_autonomous:
+            return
+        self._engage_requested = False
+        self._engage_saw_autonomous = False
+        self.get_logger().warning(
+            "The operation mode fell back out of AUTONOMOUS before Autoware "
+            "was ready; engaging again"
+        )
 
     def _on_turn_indicators(self, msg: TurnIndicatorsCommand) -> None:
         try:

@@ -8,6 +8,7 @@ running Autoware stack.
 from concurrent import futures
 
 from autoware_carla_scenario.autoware_bridge.ros_bridge.client import (
+    Mission,
     ScenarioBridgeClient,
     TurnIndicatorForwarder,
 )
@@ -174,6 +175,8 @@ def test_the_mission_carries_the_framework_servers_waypoints_and_version():
         rerouted = client.get_mission(timeout=5.0)
         assert rerouted is not None
         assert rerouted.version > mission.version
+        assert rerouted.session == mission.session != ""
+        assert not rerouted.is_new_session_after(mission)
         assert rerouted.waypoints == ()
         assert rerouted.goal.position.x == pytest.approx(20.0)
         assert rerouted.initial_pose == mission.initial_pose
@@ -187,3 +190,18 @@ def test_a_server_without_mission_versions_reads_as_version_zero(server):
     assert mission is not None
     assert mission.version == 0
     assert mission.waypoints == ()
+
+
+def test_a_server_without_sessions_keeps_the_session_it_had(server):
+    """#2463: no session id is the session in hand; another one is a new one."""
+    server.mission = (_pose(1.0, 2.0, 3.0), _pose(10.0, 20.0, 30.0))
+    mission = _client(server).get_mission(timeout=5.0)
+    assert mission is not None
+    assert mission.session == ""
+    held = Mission(mission.initial_pose, mission.goal, version=3, session="abc")
+    assert not mission.is_new_session_after(held)
+    assert not mission.is_new_session_after(mission)
+    assert Mission(
+        mission.initial_pose, mission.goal, session="def"
+    ).is_new_session_after(held)
+    assert not held.is_new_session_after(held)

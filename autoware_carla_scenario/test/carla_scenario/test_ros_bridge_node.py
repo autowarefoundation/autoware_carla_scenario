@@ -359,11 +359,14 @@ def _route_state(state: int) -> SimpleNamespace:
     return SimpleNamespace(state=state)
 
 
-def _operation_mode(mode: int, engaged: bool) -> SimpleNamespace:
+def _operation_mode(
+    mode: int, engaged: bool, *, in_transition: bool = False
+) -> SimpleNamespace:
     return SimpleNamespace(
         mode=mode,
         is_autoware_control_enabled=engaged,
         is_autonomous_mode_available=True,
+        is_in_transition=in_transition,
     )
 
 
@@ -1375,3 +1378,264 @@ def test_the_node_shuts_down_once_its_parent_is_gone(
     assert shutdowns == [True]
     assert watch.cancelled
     assert any("4321" in message for _, message in node.logger.records)
+
+
+# ---------------------------------------------------------------------------
+# #2463: a node that outlives a bridge session starts afresh for the next one
+# ---------------------------------------------------------------------------
+
+_ENGAGE_SERVICE = "/api/operation_mode/change_to_autonomous"
+_STOP_SERVICE = "/api/operation_mode/change_to_stop"
+_INITIALIZE_SERVICE = "/api/localization/initialize"
+
+
+def _bridge_on(port: int) -> GrpcAutowareBridgeServer:
+    return GrpcAutowareBridgeServer(AutowareBridgeConfig(address=f"localhost:{port}"))
+
+
+@pytest.fixture
+def fixed_bridge() -> Iterator[GrpcAutowareBridgeServer]:
+    """A bridge on a port of its own, which a restart binds again: the node
+    dials one address for its whole life."""
+    probe = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    port = probe.port
+    probe.close()
+    assert port is not None
+    server = _bridge_on(port)
+    try:
+        yield server
+    finally:
+        server.close()
+
+
+def _active(node: Any, callback: Callable[[], None]) -> list[_Timer]:
+    return [t for t in node.timers if t.callback == callback and not t.cancelled]
+
+
+def _watching_now(node: Any) -> bool:
+    """Whether the route watch runs (and the startup tick does not)."""
+    return bool(_active(node, node._watch_route)) and not _active(  # noqa: SLF001
+        node,
+        node._tick,  # noqa: SLF001
+    )
+
+
+def _ticking_now(node: Any) -> bool:
+    """Whether the startup tick runs (and the route watch does not)."""
+    return bool(_active(node, node._tick)) and not _active(  # noqa: SLF001
+        node,
+        node._watch_route,  # noqa: SLF001
+    )
+
+
+def _watch_active_until(node: Any, predicate: Callable[[], Any]) -> None:
+    """Run the live route watch until *predicate* holds (see :func:`_repeat_until`)."""
+    _repeat_until(lambda: _active(node, node._watch_route)[0].callback(), predicate)  # noqa: SLF001
+
+
+def _engage_and_report_ready(node: Any) -> None:
+    """Answer the engage the node made, go AUTONOMOUS, and let it report ready."""
+    node.clients[_ENGAGE_SERVICE].calls[-1][1].answer(True)
+    node._on_operation_mode_state(  # noqa: SLF001
+        _operation_mode(OPERATION_MODE_AUTONOMOUS, True)
+    )
+    _tick_until(node, lambda: _watching_now(node))
+
+
+def _stop_and_clear_the_last_drive(node: Any) -> None:
+    """Answer the stop and the route clear a new session starts with."""
+    stops = node.clients[_STOP_SERVICE].calls
+    assert len(stops) == 1, "the last session's drive is stopped first"
+    assert node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls == []
+    stops[-1][1].answer(True)
+    node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001 - STOP
+    clears = node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls
+    assert len(clears) == 1, "then its route is cleared"
+    clears[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+
+
+def test_a_new_bridge_session_gets_its_own_mission_and_readiness(
+    node_module: types.ModuleType, fixed_bridge: GrpcAutowareBridgeServer
+) -> None:
+    """Scenario 2 on a server of its own: its mission is version 1 again, and
+    the node routes it and reports ready to it rather than ignoring it."""
+    fixed_bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, fixed_bridge)
+    _drive_to_ready(node)
+    assert fixed_bridge.is_ready()
+    port = fixed_bridge.port
+    assert port is not None
+    fixed_bridge.close()
+
+    second = _bridge_on(port)
+    try:
+        second.configure(
+            _INITIAL, BridgePose.from_yaw(150.0, 0.0, 0.0, 0.0), _WAYPOINTS
+        )
+        _watch_active_until(node, lambda: node.clients[_STOP_SERVICE].calls)
+
+        assert _ticking_now(node)
+        assert _change_calls(node) == []  # not taken for a re-route
+        assert len(_route_calls(node)) == 1  # nor routed over the last route
+        _stop_and_clear_the_last_drive(node)
+        assert len(_route_calls(node)) == 2
+        assert _xs(_route_calls(node)[-1][0]) == ([30.0, 60.0], 150.0)
+
+        _route_calls(node)[-1][1].answer(True)
+        node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
+        assert len(node.clients[_ENGAGE_SERVICE].calls) == 2
+        _engage_and_report_ready(node)
+
+        assert second.client_connected and second.is_ready()
+        _watch_active_until(node, lambda: True)  # the same session: nothing new
+        assert _change_calls(node) == []
+        assert len(node.clients[_STOP_SERVICE].calls) == 1
+    finally:
+        second.close()
+
+
+def test_a_retried_attempt_restarts_from_localization_init(
+    node_module: types.ModuleType,
+    fixed_bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry restarts the same server: version 2, which is not a re-route
+    from where the failed attempt drove to but a fresh start, localization
+    included, reported in and ready to the restarted server."""
+    fixed_bridge.configure(_INITIAL, _GOAL)
+    node = _node(
+        node_module,
+        fixed_bridge,
+        initialize_localization=True,
+        require_localization_initialized=True,
+    )
+    initialize = node.clients[_INITIALIZE_SERVICE].calls
+    node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    _tick_until(node, lambda: initialize)
+    initialize[-1][1].answer(True)
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+    _tick_until(node, lambda: _route_calls(node))
+    _route_calls(node)[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
+    node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001
+    _engage_and_report_ready(node)
+    assert fixed_bridge.is_ready()
+
+    fixed_bridge.close()
+    fixed_bridge.start()
+    fixed_bridge.configure(_INITIAL, _GOAL)
+    sent, reports = _readiness_reports(node, monkeypatch)
+    _watch_active_until(node, lambda: node.clients[_STOP_SERVICE].calls)
+    _stop_and_clear_the_last_drive(node)
+
+    assert len(initialize) == 2  # at the initial pose again
+    assert initialize[-1][0].pose[0].pose.pose.position.x == pytest.approx(
+        _INITIAL.position.x
+    )
+    assert len(_route_calls(node)) == 1  # not before localization is
+    node._tick()  # noqa: SLF001
+    assert sent == [] and not fixed_bridge.client_connected
+
+    initialize[-1][1].answer(True)
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+    _tick_until(node, lambda: reports)
+    assert reports == [False]  # reported in to the restarted server
+    assert len(_route_calls(node)) == 2
+    _route_calls(node)[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
+    _engage_and_report_ready(node)
+
+    assert reports == [False, True]
+    assert fixed_bridge.is_ready()
+    assert _change_calls(node) == []
+
+
+def test_a_server_without_sessions_still_re_routes(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """A server that predates the session id: its new version is a re-route."""
+    bridge._session_id = ""  # noqa: SLF001 - as an old server answers
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    _drive_to_ready(node)
+
+    bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0))
+    _watch_active_until(node, lambda: _change_calls(node))
+
+    assert _xs(_change_calls(node)[-1][0]) == ([], 120.0)
+    assert _watching_now(node)
+    assert node.clients[_STOP_SERVICE].calls == []
+
+
+def test_no_mission_after_one_starts_afresh(
+    node_module: types.ModuleType, fixed_bridge: GrpcAutowareBridgeServer
+) -> None:
+    """A node whose scenario gave up on it before it was ready sees the next
+    session by its unavailable answer, from an old server too, and drives the
+    next mission rather than the one it had."""
+    fixed_bridge._session_id = ""  # noqa: SLF001 - as an old server answers
+    fixed_bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, fixed_bridge)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    _tick_until(node, lambda: _route_calls(node))  # starting: not ready
+    first_route = _route_calls(node)[-1][1]
+
+    fixed_bridge.close()
+    fixed_bridge.start()
+    fixed_bridge._session_id = ""  # noqa: SLF001
+    _tick_until(node, lambda: node._mission is None)  # noqa: SLF001
+    assert first_route.cancelled()  # its answer no longer counts
+
+    fixed_bridge.configure(_INITIAL, BridgePose.from_yaw(150.0, 0.0, 0.0, 0.0))
+    _tick_until(node, lambda: len(_route_calls(node)) == 2)  # UNSET: nothing to clear
+    assert _xs(_route_calls(node)[-1][0]) == ([], 150.0)
+    assert node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls == []
+
+
+def test_ready_waits_out_the_transition_and_a_fallback_engages_again(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AUTONOMOUS in transition is not ready; a transition that falls back out
+    of AUTONOMOUS before then frees the engage, which is sent again."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    sent, _landed = _readiness_reports(node, monkeypatch)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    _tick_until(node, lambda: _route_calls(node))
+    _route_calls(node)[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
+    node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001
+    engage = node.clients[_ENGAGE_SERVICE].calls
+    assert len(engage) == 1
+    engage[-1][1].answer(True)
+
+    node._on_operation_mode_state(  # noqa: SLF001
+        _operation_mode(OPERATION_MODE_AUTONOMOUS, True, in_transition=True)
+    )
+    for _ in range(3):
+        node._tick()  # noqa: SLF001
+    assert True not in sent
+    assert not bridge.is_ready()
+    assert len(engage) == 1  # still changing: nothing to retry
+
+    node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001 - fell back
+    assert len(engage) == 2
+    assert any(
+        level == "warning" and "fell back" in message
+        for level, message in node.logger.records
+    )
+
+    engage[-1][1].answer(True)
+    node._on_operation_mode_state(  # noqa: SLF001
+        _operation_mode(OPERATION_MODE_AUTONOMOUS, True, in_transition=True)
+    )
+    node._on_operation_mode_state(  # noqa: SLF001
+        _operation_mode(OPERATION_MODE_AUTONOMOUS, True)
+    )
+    _tick_until(node, lambda: _watching_now(node))
+    assert bridge.is_ready()
+    assert len(engage) == 2
