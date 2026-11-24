@@ -2599,7 +2599,7 @@ CARLA's <code>/clock</code> carries, which is what nodes with <code>use_sim_time
 <tr>
 <td><code>speed_topic</code> (<code>/vehicle/speed</code>)</td>
 <td><code>std_msgs/Float64</code></td>
-<td>ground speed, m/s</td>
+<td>ground speed, m/s: a magnitude, never negative, even while a <code>control</code> source reverses the ego (the odometry's twist is signed)</td>
 </tr>
 <tr>
 <td><code>clock_topic</code> (off)</td>
@@ -2685,7 +2685,7 @@ publishes them, and under the names a node already subscribes to:</p>
 <tr>
 <td><code>trajectory</code></td>
 <td><code>topic</code>: <code>autoware_planning_msgs/Trajectory</code></td>
-<td>the framework's trajectory follower (pure pursuit + Autoware's PID longitudinal controller on the trajectory's own speeds, through the powertrain model), as for an <a href="../driver_interface/">external driver policy</a></td>
+<td>the framework's trajectory follower (pure pursuit + Autoware's PID longitudinal controller on the trajectory's own speeds, through the powertrain model), as for an <a href="../driver_interface/">external driver policy</a>; forward only: a negative speed at the follower's target is braked to, not reversed, so a reversing trajectory leaves the ego standing (logged once)</td>
 </tr>
 <tr>
 <td><code>control</code></td>
@@ -2751,8 +2751,15 @@ Once every source is stale, <code>on_stale</code> decides: <code>hold</code> kee
 command has arrived, the ego is held on its brakes.</p>
 <p>A command that is not all finite (a NaN or an infinity in a steering angle, a speed,
 an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
-refused, with a warning: the active source's last good command of that kind drives
-on, and with none, the ego is held on its brakes.</p>
+refused before arbitration, with a warning once per source. A refused command does
+not keep its source fresh: the source's last good command drives on until it is
+<code>stale_s</code> old, and then the source ages out as one that fell silent does -- a
+lower-priority fresh source takes over, or with none, <code>on_stale</code> applies. A source
+that has sent no good command does not drive at all.</p>
+<p>With <code>on_stale: brake</code>, a source that comes back after it went stale starts its
+trajectory follower afresh (its integrators and state are reset), as the ego was
+braked rather than tracked meanwhile; with <code>hold</code>, the follower kept tracking the
+held trajectory and carries on.</p>
 <p>A <code>control</code> command's jerk is signed in Autoware (negative while the deceleration
 grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
 magnitude, logged once a session. A <code>control</code> command that leaves its jerk undefined,
@@ -2865,6 +2872,14 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
 <li>A camera in <code>cameras</code> publishes no <code>sensor_msgs/CameraInfo</code>.</li>
 <li>Commands are read in the local frame <code>frame_id</code> names; nothing transforms a plan
   published in another frame (a Lanelet2 <code>map</code>, say).</li>
+<li>The ego publishes no acceleration (<code>/localization/acceleration</code>), no
+  <code>autoware_vehicle_msgs/VelocityReport</code> (<code>/vehicle/status/velocity_status</code>) and no
+  <code>autoware_vehicle_msgs/GearReport</code> (<code>/vehicle/status/gear_status</code>): stock
+  Autoware planners and controllers that wait for them do not start. Its states are
+  those in <a href="#what-the-ego-publishes">What the ego publishes</a>.</li>
+<li><code>/vehicle/speed</code> is a magnitude: a node that needs the direction of travel reads
+  the odometry's twist.</li>
+<li>A <code>trajectory</code> source is tracked forward only: the follower does not reverse.</li>
 <li><code>control</code> and <code>steer_accel</code> hand the acceleration to CARLA's Ackermann controller as
   given, as VisionPilot's relay does; the controller's own settings
   (<code>AckermannControllerSettings</code>) are CARLA's defaults.</li>
@@ -2891,7 +2906,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 03:05:20 UTC"><span class="timeago" datetime="2026-11-20T03:05:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 03:05:20 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 09:48:57 UTC"><span class="timeago" datetime="2026-11-24T09:48:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 09:48:57 UTC">2026-11-24</span>
   </span>
 
     
