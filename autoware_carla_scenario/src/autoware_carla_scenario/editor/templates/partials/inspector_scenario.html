@@ -73,7 +73,11 @@
    One row per threshold: its checkbox says whether it is judged, its bar and
    number what it asks.  A share is edited in percent and stored as 0-1.  The
    bar names no field -- it moves the number beside it, which the form sends.
-   An unticked row's inputs are disabled, so they are not sent at all. #}
+   An unticked row's inputs are disabled, so they are not sent at all.
+   The form is `novalidate`: htmx sends no form the browser finds invalid,
+   and a stored threshold off the number's step (12.34567 % against a step of
+   1, #2442) would otherwise stop every edit of the gate.  The service checks
+   what is posted. #}
 {% macro gate_row(field, value, input_name, label, check_name=none, judged=true, mono=false) %}
   <div class="ed-gate-row{% if not judged %} is-off{% endif %}">
     <label class="ed-gate-name{% if mono %} mono{% endif %}">
@@ -99,7 +103,7 @@
 {% if not document.route %}
   <p class="ed-help">A gate judges a logical scenario: add a route search first.</p>
 {% endif %}
-<form hx-post="/draft/{{ draft.id }}/scenario"
+<form hx-post="/draft/{{ draft.id }}/scenario" novalidate
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
   <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <input type="hidden" name="gate_form" value="1">

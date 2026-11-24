@@ -157,21 +157,21 @@
       </div>
     {% endif %}
 
+    {# Off the centreline and turned: a pedestrian waiting at the kerb to
+       cross.  A vehicle is snapped back onto the road, so for one these
+       mostly read zero.  The ego's reach the run as `ego.spawn_t` and
+       `ego.spawn_heading`, which its export reads from the document. #}
+    <div class="ed-field">
+      <label class="ed-labelled"><span class="ed-label">Off the centreline <span class="unit">(m, + left)</span></span>
+      <input type="number" step="any" name="spawn_t" class="ed-input"
+             value="{{ target.spawn.t }}"></label>
+    </div>
+    <div class="ed-field">
+      <label class="ed-labelled"><span class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></span>
+      <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
+             value="{{ target.spawn.heading_deg|round(1) }}"></label>
+    </div>
     {% if target.kind != 'ego' %}
-      {# Off the centreline and turned: a pedestrian waiting at the kerb to
-         cross.  A vehicle is snapped back onto the road, so for one these
-         mostly read zero.  The ego spawns from its own Hydra keys, which have
-         neither. #}
-      <div class="ed-field">
-        <label class="ed-labelled"><span class="ed-label">Off the centreline <span class="unit">(m, + left)</span></span>
-        <input type="number" step="any" name="spawn_t" class="ed-input"
-               value="{{ target.spawn.t }}"></label>
-      </div>
-      <div class="ed-field">
-        <label class="ed-labelled"><span class="ed-label">Heading from the lane <span class="unit">(&deg;, + anticlockwise)</span></span>
-        <input type="number" step="any" name="spawn_heading_deg" class="ed-input"
-               value="{{ target.spawn.heading_deg|round(1) }}"></label>
-      </div>
       <div class="ed-field">
         <input type="hidden" name="spawn_hidden_shown" value="1">
         <label class="ed-check">

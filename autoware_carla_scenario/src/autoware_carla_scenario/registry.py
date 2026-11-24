@@ -180,7 +180,7 @@ def register_scenario_document(name: str, loader: ScenarioDocumentLoader) -> Non
 
 
 #: The OmegaConf resolver an exported scenario package's Hydra config reads its
-#: document's values through: ``${scenario_document:<scenario>,<path>}`` is the
+#: document's values through: ``${scenario_document:'<scenario>',<path>}`` is the
 #: attribute *path* (``ego.spawn.lanelet_id``) of the document the scenario
 #: registered (:func:`register_scenario_document`), read when the key is first
 #: read on a composed config (OmegaConf keeps the value with that config, so
@@ -188,7 +188,10 @@ def register_scenario_document(name: str, loader: ScenarioDocumentLoader) -> Non
 #: document as it is then -- an edited one, or the one ``<PKG>_DOCUMENT_PATH``
 #: points at -- while a ``key=value`` override (the command line's, the
 #: sweeper's) replaces the interpolation and wins.  A path through an unset
-#: value (an ego with no goal) reads as ``None``.
+#: value (an ego with no goal) reads as ``None``.  The scenario is quoted so
+#: that OmegaConf passes it as a string whatever it spells (``true``,
+#: ``null``); an export from before the quote names it bare, which resolves
+#: the same for any other name.
 SCENARIO_DOCUMENT_RESOLVER = "scenario_document"
 
 

@@ -523,7 +523,9 @@ match -- takes about 3.5-4 s. Properties are cached per lanelet.
 ## Running it
 
 **Expansion.** `scenario-expand` (and the `lanelet_constraint` Hydra sweeper)
-read the document's `sweep.route` and emit, per match:
+read the exported config's `sweep.route` -- the document's route search as it
+was when the package was exported, not the document's as it is at run time --
+and emit, per match:
 
 ```text
 ego.spawn_lanelet_id=101 ego.spawn_s=45.0
@@ -541,6 +543,9 @@ scenario.route.case_count=4                             # cases on this map, for
 A match the ego cannot be placed on (spawn past the end, goal not ahead of the
 spawn) is skipped and logged. The exported Hydra config declares every
 `scenario.route.*` key, empty, so struct mode accepts them.
+So after changing the route search of an exported package's document,
+re-export the package: until then an expansion still enumerates the old
+pattern's matches, while an unexpanded run (below) searches with the new one.
 
 **A run.** `DeclarativeScenario` takes the match it was given; with none (an
 unexpanded run) it searches the loaded map and takes `match_index`, spawning

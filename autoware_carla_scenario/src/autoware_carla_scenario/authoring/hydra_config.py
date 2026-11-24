@@ -9,16 +9,29 @@ produces is one a human could have written.
 
 The document decides
 --------------------
-An exported package runs its document as it is when the run starts -- the one
-it ships, edited or not, or the one ``<PKG>_DOCUMENT_PATH`` points at -- so
-nothing the document says is copied into the config as a value.  A key the
-config declares only so that it can be overridden is ``null``, which
-:class:`~autoware_carla_scenario.declarative.DeclarativeScenario` reads as "the
-document's"; a key the runner reads before the scenario is built (the ego's)
-names the document's value with ``${scenario_document:...}``
-(:data:`~autoware_carla_scenario.registry.SCENARIO_DOCUMENT_RESOLVER`).
+A run of an exported package builds its scenario from the document as it is
+when the run starts -- the one it ships, edited or not, or the one
+``<PKG>_DOCUMENT_PATH`` points at -- so no value of the scenario is copied into
+the config.  A key the config declares only so that it can be overridden is
+``null``, which :class:`~autoware_carla_scenario.declarative.DeclarativeScenario`
+reads as "the document's"; a key the runner reads before the scenario is built
+(the ego's) names the document's value with ``${scenario_document:'<id>',...}``
+(:func:`document_ref`,
+:data:`~autoware_carla_scenario.registry.SCENARIO_DOCUMENT_RESOLVER`).
 Either way a ``key=value`` override -- the command line's, the sweeper's,
 an expansion's -- replaces it and wins.
+
+What the sweeper and ``scenario-expand`` read is the config, though, never the
+document, so that much is copied as it is at export time
+(:func:`build_scenario_config`): the searches (``sweep.constraints``,
+``sweep.bindings``, ``sweep.route``), which override keys are declared
+(``scenario.spawn_overrides``, ``scenario.param_overrides``,
+``scenario.route``), and a non-empty exclusion list written in place of
+:data:`MAP_EXCLUSION_REF` (or, on the document's own map, its map group,
+:func:`build_map_group_config`).  A package whose document changes any of
+these has to be re-exported: until then a plain run follows the new document
+while a sweep still enumerates the old search's matches and overrides the
+document with them.
 
 Spawn keys
 ----------
@@ -247,14 +260,21 @@ def swept_entity(document: ScenarioDocument) -> Entity | None:
 def document_ref(document: ScenarioDocument, path: str) -> str:
     """Return the interpolation that reads *path* of *document* at run time.
 
-    ``${scenario_document:<id>,<path>}``, resolved against the document the
+    ``${scenario_document:'<id>',<path>}``, resolved against the document the
     package registered under the scenario's id
     (:data:`~autoware_carla_scenario.registry.SCENARIO_DOCUMENT_RESOLVER`):
     the document as it is when the key is read, not as it was exported.
+
+    The id is quoted: OmegaConf's grammar reads an unquoted ``true``,
+    ``false``, ``null``, ``nan`` or ``inf`` as a boolean, ``None`` or a float,
+    and the resolver would look up a scenario of that name.  The model's
+    pattern (``^[a-z][a-z0-9_]*$``) leaves no quote or backslash to escape.
+    An export from before the quote (``${scenario_document:<id>,<path>}``)
+    still resolves for any other id.
     """
     from ..registry import SCENARIO_DOCUMENT_RESOLVER  # noqa: PLC0415
 
-    return f"${{{SCENARIO_DOCUMENT_RESOLVER}:{document.id},{path}}}"
+    return f"${{{SCENARIO_DOCUMENT_RESOLVER}:'{document.id}',{path}}}"
 
 
 #: The ``ego`` keys an export writes, and the attribute of the document each

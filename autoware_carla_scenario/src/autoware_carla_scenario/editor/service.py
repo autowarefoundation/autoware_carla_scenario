@@ -749,7 +749,7 @@ class EditorService:
         if "route_yaml" in form:
             document.route = parse_route_yaml(str(form["route_yaml"]))
         if "gate_form" in form:
-            document.gate = parse_gate_form(form)
+            document.gate = parse_gate_form(form, document.gate)
         before = document.map.model_copy()
         # ``group`` and ``name`` are required strings: a blank one is refused,
         # not filled in.  A fallback would be some other map's name or group
@@ -2135,20 +2135,37 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
 
 
 def _gate_number(
-    form: Mapping[str, Any], field: GateField, key: str = "", label: str = ""
+    form: Mapping[str, Any],
+    field: GateField,
+    key: str = "",
+    label: str = "",
+    stored: Any = None,
 ) -> Any:
     """*field*'s value in *form* (``gate_<name>``, or *key*), in the unit
-    stored; its default when blank."""
+    stored; its default when blank.
+
+    *stored* is the value the gate holds: posted back as the form shows it
+    (:meth:`~.gate_fields.GateField.shown`), it is kept as it is, so an edit
+    of another row does not turn a share shown in percent into the nearest
+    float of that percentage over 100 (#2442).
+    """
     label = f"Gate: {label or field.label}"
     text = str(form.get(key or f"gate_{field.name}", "")).strip()
+    if stored is not None and text == field.shown(stored):
+        return stored
     if field.unit == "":
         return as_int(text, label, int(field.default))
     value = _as_float(text, label, field.default)
     return value / 100.0 if field.percent else value
 
 
-def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
+def parse_gate_form(
+    form: Mapping[str, Any], current: Optional["GateSpec"] = None
+) -> Optional["GateSpec"]:
     """The gate the inspector's Gate form states; ``None`` when it is off.
+
+    *current* is the gate the document holds, whose thresholds a number
+    posted back unchanged keeps exactly (:func:`_gate_number`).
 
     Each optional threshold is judged while its checkbox (``gate_on_<name>``)
     is ticked, at its number (``gate_<name>``; a share in percent), or at its
@@ -2172,14 +2189,24 @@ def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
             continue
         if not field.optional and f"gate_{field.name}" not in form:
             continue  # not on the form yet: the model's default
-        raw[field.name] = _gate_number(form, field)
+        stored = None if current is None else getattr(current, field.name)
+        raw[field.name] = _gate_number(form, field, stored=stored)
+    stored_grades = (
+        {}
+        if current is None
+        else {entry.item: entry.min for entry in current.coverage_items}
+    )
     items: list[dict[str, Any]] = []
     index = 0
     while f"gate_item_name_{index}" in form:
         name = str(form[f"gate_item_name_{index}"]).strip()
         if name and is_checked(form, f"gate_item_on_{index}"):
             grade = _gate_number(
-                form, GATE_ITEM_FIELD, f"gate_item_min_{index}", f"coverage of {name}"
+                form,
+                GATE_ITEM_FIELD,
+                f"gate_item_min_{index}",
+                f"coverage of {name}",
+                stored_grades.get(name),
             )
             items.append({"item": name, "min": grade})
         index += 1

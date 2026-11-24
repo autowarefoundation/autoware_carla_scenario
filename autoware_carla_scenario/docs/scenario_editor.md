@@ -672,13 +672,15 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_heading`. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
-None of these keys copies the document: an exported package runs its document
-as it is when the run starts -- edited after the export, or another one named by
-`<PKG>_DOCUMENT_PATH` -- and only an override replaces what it says. The
+None of these keys copies a value of the document: a run builds the scenario
+from its document as it is when the run starts -- the one the package ships,
+edited after the export, or another one named by `<PKG>_DOCUMENT_PATH` -- and
+only an override replaces what it says. (The searches are another matter: see
+[What an export copies](#what-an-export-copies).) The
 `scenario.spawn_overrides.<entity>` keys, `scenario.param_overrides.<node id>`
 and `scenario.timeout_seconds` are written as `null`, and the `ego.*` keys,
 which the runner reads before the scenario is built, as
-`${scenario_document:<scenario id>,<path>}`: the value at that path of the
+`${scenario_document:'<scenario id>',<path>}`: the value at that path of the
 document the package registered (`ego.spawn.lanelet_id`, say), read when the
 key is. The resolver exists in every process that has loaded the scenario
 packages -- the `scenario` CLI, a SLURM task, the viewer, `scenario-check` --
@@ -692,6 +694,40 @@ blank) and `s` a finite number (not a boolean or a blank), and an entity's or a
 node's override (`scenario.spawn_overrides.<entity>`,
 `scenario.param_overrides.<node id>`) must be a mapping of fields; anything else
 is refused, naming the full key.
+
+### What an export copies
+
+What the sweeper and `scenario-expand` read is the exported config, never the
+document, so the export writes it into `conf/scenario/<id>.yaml` as the
+document has it at export time:
+
+* **the searches**: `sweep.constraints` (the searched lanelet's constraints,
+  under its key) and `sweep.bindings` (a spawn `s` derived from the match, and
+  every lanelet derived from it) or, for a logical scenario, `sweep.route`
+  alone (its route search). The sweeper, `scenario-expand` and the viewer's sweep
+  resolver enumerate their cases from these alone, and hand each case to the
+  run as overrides (`ego.spawn_lanelet_id`,
+  `scenario.spawn_overrides.<entity>.lanelet_id`,
+  `scenario.param_overrides.<node id>.<field>`, `scenario.route.*`) that
+  replace what the document says;
+* **the declared override keys**: `scenario.spawn_overrides.<entity>` for
+  every entity but the ego, `scenario.param_overrides.<node id>.<field>` for
+  every searched or derived lanelet of a card, and the `scenario.route.*` keys
+  of a logical scenario -- Hydra's struct mode refuses an override of a key the
+  config does not declare;
+* **the exclusion list**: on a built-in map group, a non-empty
+  *Excluded lanelet IDs* is written in place of every
+  `${map.no_3d_model_lanelet_ids}` in those searches. A document on a map of
+  its own writes the list, with the map's name, source and paths, into the map
+  group the package ships (`conf/map/<id>_map.yaml`) instead.
+
+So after changing any of these in an exported package's document -- a search's
+constraints, a binding, the route search, which entities or cards are
+searched, the excluded lanelets -- **re-export the package**. Until then a
+plain run follows the edited document (a searched lanelet runs as the id the
+document stores, a route search searches the map with the new pattern), but a
+sweep or an expansion still enumerates the old search's matches and overrides
+the document with them.
 
 An entity's spawn offsets, heading, goal `s`, size and initial speed must be
 finite numbers, and its initial speed 0 or more: the validator refuses another
@@ -758,14 +794,21 @@ ego and exports it as the framework's own keys, each reading the document
 
 ```yaml
 ego:
-  spawn_lanelet_id: ${scenario_document:cut_in,ego.spawn.lanelet_id}
-  spawn_s: ${scenario_document:cut_in,ego.spawn.s.value}
-  spawn_t: ${scenario_document:cut_in,ego.spawn.t}
-  spawn_heading: ${scenario_document:cut_in,ego.spawn.heading}
-  entity: ${scenario_document:cut_in,ego.driven_by}
-  goal_lanelet_id: ${scenario_document:cut_in,ego.goal.lanelet_id}
-  goal_s: ${scenario_document:cut_in,ego.goal.s}
+  vehicle_type: ${scenario_document:'cut_in',ego.vehicle_type}
+  initial_speed_kmh: ${scenario_document:'cut_in',ego.initial_speed_kmh}
+  spawn_lanelet_id: ${scenario_document:'cut_in',ego.spawn.lanelet_id}
+  spawn_s: ${scenario_document:'cut_in',ego.spawn.s.value}
+  spawn_t: ${scenario_document:'cut_in',ego.spawn.t}
+  spawn_heading: ${scenario_document:'cut_in',ego.spawn.heading}
+  entity: ${scenario_document:'cut_in',ego.driven_by}
+  goal_lanelet_id: ${scenario_document:'cut_in',ego.goal.lanelet_id}
+  goal_s: ${scenario_document:'cut_in',ego.goal.s}
 ```
+
+The scenario id is quoted so that OmegaConf reads it as a string whatever it
+spells: unquoted, an id such as `true`, `null` or `nan` would reach the
+resolver as a boolean, `None` or a float. A package exported before the quote
+was added still resolves.
 
 An ego with no goal reads as `null`, the `ego` group's own; a run sets any of
 them with the usual override (`ego.goal_lanelet_id=265`).
