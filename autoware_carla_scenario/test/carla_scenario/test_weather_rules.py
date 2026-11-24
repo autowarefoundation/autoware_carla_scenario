@@ -39,6 +39,8 @@ from autoware_carla_scenario.weather_rules import (
     weather_rule_files,
 )
 
+from ._vehicle_physics import Carla010Curves
+
 
 @pytest.fixture(autouse=True)
 def _default_rules() -> object:
@@ -450,16 +452,19 @@ class _Vehicle:
         self.type_id = type_id
         self.attributes = {"role_name": role} if role else {}
         self.frictions = [3.5] * 4
+        self.curves = Carla010Curves()
 
     def get_physics_control(self) -> SimpleNamespace:
         return SimpleNamespace(
             wheels=[
                 SimpleNamespace(friction_force_multiplier=f) for f in self.frictions
-            ]
+            ],
+            **self.curves.read(),
         )
 
     def apply_physics_control(self, physics: SimpleNamespace) -> None:
         self.frictions = [w.friction_force_multiplier for w in physics.wheels]
+        self.curves.write(physics)
 
 
 _world_ids = itertools.count(5000)

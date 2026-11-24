@@ -119,7 +119,7 @@ from ...entity_role import canonical_role_name
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import HIDDEN_BELOW_M, actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
-from ...utils.vehicles import is_emergency_vehicle_type
+from ...utils.vehicles import apply_physics_control, is_emergency_vehicle_type
 from ...visibility import world_visibility
 from ...world_reset import episode_of
 from ..base import (
@@ -3601,7 +3601,9 @@ class SumoTrafficBackend(TrafficBackend):
                 carla.Vector2D(0.0, 1.0),
                 carla.Vector2D(120.0, 1.0),
             ]
-            actor.apply_physics_control(physics)
+            # The torque curve goes back as it was read: without the keys
+            # CARLA 0.10 would put in front of it a second time.
+            apply_physics_control(actor, physics)
         except Exception as exc:  # noqa: BLE001 - keep the estimates
             logger.debug("SUMO: no physics control for %s: %s", actor.id, exc)
         state = {
