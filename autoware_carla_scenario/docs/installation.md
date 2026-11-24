@@ -248,7 +248,7 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `carla-driver-interface>=2.4.2,<3`, `grpcio>=1.60`,
   `protobuf>=4.25.0,<8` — the gRPC contract to an external driver policy
 - `orjson>=3.13.0` — serialises the trajectory log
-- `sentry-sdk>=2.20` — builds the [crash reports](crash_reports.md), written
+- `sentry-sdk>=2.20,<4` (2.x and 3.x) — builds the [crash reports](crash_reports.md), written
   to files; nothing is sent unless `SCENARIO_CRASH_REPORT_DSN` is set
 
 ## Troubleshooting

@@ -419,7 +419,7 @@ requires-dist = [
     { name = "roadgen", marker = "extra == 'map'", specifier = ">=0.45.0" },
     { name = "roadgen", marker = "extra == 'sumo'", specifier = ">=0.45.0" },
     { name = "scipy", specifier = ">=1.10" },
-    { name = "sentry-sdk", specifier = ">=2.20" },
+    { name = "sentry-sdk", specifier = ">=2.20,<4" },
     { name = "simple-lanelet2", specifier = ">=1.2.3" },
     { name = "starlette", specifier = ">=0.37.2" },
     { name = "sumolib", marker = "extra == 'sumo'", specifier = ">=1.23" },
