@@ -5834,6 +5834,13 @@ class TestTheGate:
                 rf'name="{name}"\s+min="0" step="[^"]*" value="{re.escape(shown)}"',
                 body,
             ), name
+        # A value off the number's step is invalid to the browser, and htmx
+        # sends no invalid form: the gate's form skips that check.
+        gate_form = re.search(
+            r"<form[^>]*>\s*<input[^>]*>\s*<input[^>]*gate_form", body
+        )
+        assert gate_form is not None
+        assert "novalidate" in gate_form.group(0)
 
     def test_posting_the_form_unchanged_keeps_every_threshold(
         self, client: TestClient, store: DraftStore, draft_id: str

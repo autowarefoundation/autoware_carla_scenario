@@ -702,9 +702,9 @@ document, so the export writes it into `conf/scenario/<id>.yaml` as the
 document has it at export time:
 
 * **the searches**: `sweep.constraints` (the searched lanelet's constraints,
-  under its key), `sweep.bindings` (a spawn `s` derived from the match, and
-  every lanelet derived from it) and, for a logical scenario, `sweep.route`
-  (its route search). The sweeper, `scenario-expand` and the viewer's sweep
+  under its key) and `sweep.bindings` (a spawn `s` derived from the match, and
+  every lanelet derived from it) or, for a logical scenario, `sweep.route`
+  alone (its route search). The sweeper, `scenario-expand` and the viewer's sweep
   resolver enumerate their cases from these alone, and hand each case to the
   run as overrides (`ego.spawn_lanelet_id`,
   `scenario.spawn_overrides.<entity>.lanelet_id`,
