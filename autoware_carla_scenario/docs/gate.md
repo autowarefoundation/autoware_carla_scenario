@@ -204,6 +204,11 @@ scenario-gate outputs/ --scenario logical_left_turn --json gate.json --markdown 
 scenario-gate runs/v1.4/ runs/v1.5/
 ```
 
+`--document`'s id selects the runs its gate is judged on, so `--scenario`
+with another id is refused (exit code `2`) rather than judging one
+scenario's runs against another's gate; `--scenario` with the document's own
+id is allowed.
+
 ### Cases that raised: no record, so the set is refused
 
 A run that raises (a spawn that fails on every attempt, a lost CARLA
@@ -379,13 +384,21 @@ and what the gate asks:
 | max_lateral_spread_m | 0.2213 (segment 1 at 45%, 60 station(s)) | <= 0.4 | pass |
 ```
 
+Values are printed to four significant digits, except a failing one that
+would then read as its threshold: it and the threshold are printed to the
+fewest digits that tell them apart (`0.40004 ... <= 0.4 ... **FAIL**`, not
+`0.4 ... <= 0.4`). A record that could not be read is listed under **Records
+that could not be read**, after the title, and is not judged.
+
 ### Regression: a baseline against a candidate
 
 Given two sets -- the runs of one version of the driver (the baseline) and of
 the next (the candidate) -- each logical scenario either ran is judged on
 both, **against one gate**: `--document`'s, else the one the candidate's
 latest record states. What moved is then the runs, not the thresholds; a
-baseline whose runs stated another gate is re-judged, with a warning.
+baseline whose runs stated another gate is re-judged, with a warning (gates
+are compared normalized, so a record that leaves out a default states the
+same gate as one that spells it out).
 
 Each criterion is compared:
 
@@ -442,7 +455,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, did not finish or (planned) never ran, and left no record (unless `--allow-unrecorded`; above), a batch summary, SLURM manifest or sweep plan could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
+| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, did not finish or (planned) never ran, and left no record (unless `--allow-unrecorded`; above), a batch summary, SLURM manifest or sweep plan could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, `--scenario` is not `--document`'s id, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
@@ -454,6 +467,16 @@ both verdicts, each criterion's `change` and `delta` (candidate less
 baseline), the `newly_failing` and `fixed` cases, and the `warnings`: the
 baseline verdict's (each prefixed `baseline: `), then the candidate verdict's
 (`candidate: `), then the comparison's own.
+
+Either way it also holds, after those:
+
+- `unreadable_records`: each record that could not be read (`path`,
+  `reason`), not judged -- the verdicts are over the rest, and the run exits
+  `2` even if they passed;
+- `unwritable_outputs`: each output that could not be written (`path`,
+  `reason`): the `--markdown` file (the JSON is written after it; a JSON that
+  cannot be written does not exist to say so);
+- `exit_code`: what `scenario-gate` exits with (above).
 
 ## In the Scenario Editor
 

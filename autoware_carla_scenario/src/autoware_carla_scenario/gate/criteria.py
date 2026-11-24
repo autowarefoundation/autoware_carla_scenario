@@ -81,6 +81,38 @@ def _number(value: float) -> str:
     return f"{value:.4g}"
 
 
+def _wider(value: float) -> list[str]:
+    """*value* to ever more significant digits, past :func:`_number`'s four
+    (each spec spelled out: Codon's f-strings take no nested width)."""
+    return [
+        f"{value:.6g}",
+        f"{value:.8g}",
+        f"{value:.10g}",
+        f"{value:.12g}",
+        f"{value:.15g}",
+        f"{value:.17g}",
+    ]
+
+
+def _value_and_threshold(
+    value: float, threshold: float, passed: bool
+) -> tuple[str, str]:
+    """*value* and *threshold* as a report prints them: four significant
+    digits, unless a failing value would print as its threshold (``0.40004``
+    against ``<= 0.4`` reads ``0.4``) and the row would contradict its
+    verdict; both are then printed to the fewest digits that tell them
+    apart.  A passing value equal to its threshold to four digits says
+    nothing false, and is printed as it is."""
+    shown, required = _number(value), _number(threshold)
+    if passed or shown != required:
+        return shown, required
+    values, thresholds = _wider(value), _wider(threshold)
+    for i in range(len(values)):
+        if values[i] != thresholds[i]:
+            return values[i], thresholds[i]
+    return repr(value), repr(threshold)
+
+
 def _warning_lines(warnings: Sequence[str]) -> list[str]:
     """A report's warnings, after a blank line; none without any."""
     return ["", *(f"- warning: {w}" for w in warnings)] if warnings else []
