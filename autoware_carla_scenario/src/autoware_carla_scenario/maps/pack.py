@@ -80,13 +80,25 @@ class PackAccessError(MapPackError):
 
     The message says which, where the token was taken from, and how to fix
     it; :attr:`code` is carla-pack's error code (``unauthenticated``,
-    ``no_access``, ``credentials_unavailable``, ``storage_error``).
+    ``no_access``, ``credentials_unavailable``, ``storage_error``, and for a
+    pack repository on Google Drive, read through rclone with the user's own
+    Google account: ``rclone_unavailable``, ``storage_unauthenticated``,
+    ``storage_no_access``).
     """
 
     def __init__(self, message: str, code: str) -> None:
         super().__init__(message)
         self.code = code
 
+
+#: carla-pack's codes for a refusal by a pack repository's Google Drive
+#: storage (read through rclone with the user's own Google account): no
+#: rclone, no valid Google credentials, a drive not shared with the account.
+STORAGE_REFUSALS = (
+    "rclone_unavailable",
+    "storage_unauthenticated",
+    "storage_no_access",
+)
 
 #: Where carla-pack looks for a GitHub token, in order.
 _TOKEN_SOURCES = (
@@ -237,6 +249,15 @@ def _failure(
             f"{action}: the storage credentials of {repository} could not be "
             "read. Your GitHub access is fine; the pack repository's credential "
             f"workflow has to run (ask the owner of {repository}). ({message})",
+            code,
+        )
+    # The pack's storage refused the user after GitHub let them in: a pack
+    # repository on Google Drive, read through rclone with their own Google
+    # account. carla-pack's message names the cause and the fix.
+    if code in STORAGE_REFUSALS:
+        return PackAccessError(
+            f"{action}: the pack's storage refused access. Your GitHub access "
+            f"to {repository} is fine. {message}",
             code,
         )
     if code == "storage_error" and "refused" in message:

@@ -25,6 +25,7 @@ from autoware_carla_scenario.maps.pack import (
     MapPack,
     MapPackError,
     PackAccessError,
+    STORAGE_REFUSALS,
     packs_dir,
 )
 
@@ -88,6 +89,7 @@ class FakeClient:
         if self.refusal is not None and self.refusal[1] in (
             "storage_error",
             "credentials_unavailable",
+            *STORAGE_REFUSALS,
         ):
             raise FakeCarlaPackError(*self.refusal)
         return self._formats
@@ -411,6 +413,16 @@ def test_refused_storage_says_to_retry(town: FakeClient) -> None:
     )
     with pytest.raises(PackAccessError, match="storage refused the download"):
         MapPack(REF).files("Town")
+
+
+@pytest.mark.parametrize("code", STORAGE_REFUSALS)
+def test_google_drive_refusals_are_access_errors(town: FakeClient, code: str) -> None:
+    error = str(_refused(town, "run `carla-pack drive login`", code))
+    assert (
+        "storage refused access. Your GitHub access to acme/carla-packs is fine"
+        in error
+    )
+    assert error.endswith("run `carla-pack drive login`")
 
 
 def test_a_rejected_token_while_mounting_is_an_access_error(
