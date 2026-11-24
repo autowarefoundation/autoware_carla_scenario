@@ -104,6 +104,9 @@ from autoware_carla_scenario.tools.file_writes import (
 # it had here stay importable from here.
 from autoware_carla_scenario.tools.yaml_text import NO_3D_MODEL_KEY as NO_3D_MODEL_KEY
 from autoware_carla_scenario.tools.yaml_text import (
+    comment_start as _comment_start,
+)
+from autoware_carla_scenario.tools.yaml_text import (
     format_value as _format_value,
 )
 from autoware_carla_scenario.tools.yaml_text import (
@@ -421,6 +424,20 @@ def update_no_3d_model_lanelet_ids_text(text: str, lanelet_ids: Sequence[int]) -
             and value_node.value
         )
         tail = _key_line_tail(text, key_node, value_node)
+        if not tail and ids and not flow:
+            # The value starts on the key's line (``key: []  # c``), so a
+            # comment after it is on the key's line too: it stays there rather
+            # than following the block list's last item.
+            line_end = len(text)
+            for line_break in ("\n", "\r"):
+                found_at = text.find(line_break, end)
+                if found_at != -1:
+                    line_end = min(line_end, found_at)
+            rest = text[end:line_end]
+            comment = rest[_comment_start(rest) :]
+            if comment:
+                tail = comment
+                end = line_end
         replacement = _format_value(ids, indent, newline, flow=flow, tail=tail)
         result = text[:start] + replacement + text[end:]
     else:

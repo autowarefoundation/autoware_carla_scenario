@@ -460,9 +460,11 @@ and fetch OpenDRIVE.
 
 Its **Map directory** field is `map.directory`. Setting one clears the Lanelet2
 and OpenDRIVE file fields unless they were edited in the same change, and takes
-the CARLA map name from the directory. The editor only serves a map from inside
-`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache, so a directory
-elsewhere has to be added to `SCENARIO_EDITOR_MAP_ROOTS` to be previewed.
+the CARLA map name from the directory. The editor only reads a map from inside
+`SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache --
+to draw it, and to parse its Lanelet2 and OpenDRIVE files for a lanelet search,
+a derived lanelet, a spawn offset or an area -- so a directory elsewhere has to
+be added to `SCENARIO_EDITOR_MAP_ROOTS` to be previewed.
 
 A scenario whose map is a source or a directory is exported with a map group of
 its own, `conf/map/<id>_map.yaml` inside the package, setting every `map` key

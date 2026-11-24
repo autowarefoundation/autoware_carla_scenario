@@ -19,7 +19,9 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 
-_PATTERN = re.compile(r"^(Ego|[a-z]+[1-9]\d*)$")
+#: Matched whole (``fullmatch``): with ``match``, ``$`` would let a trailing
+#: newline through (``"npc1\n"``, from a YAML block scalar, say).
+_PATTERN = re.compile(r"Ego|[a-z]+[1-9]\d*")
 
 #: The role names CARLA's native Autoware interface serves (CARLA 1.0,
 #: ``ros2_autoware_control``): it drives only a vehicle registered under one of
@@ -99,7 +101,7 @@ class EntityRole:
     _value: str
 
     def __init__(self, value: str) -> None:
-        if not _PATTERN.match(value):
+        if not _PATTERN.fullmatch(value):
             raise ValueError(
                 f"Invalid entity role name {value!r}. "
                 "Must be 'Ego' or <lowercase-category><positive-integer> "

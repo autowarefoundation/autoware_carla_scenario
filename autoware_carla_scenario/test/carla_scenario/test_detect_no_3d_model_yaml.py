@@ -540,6 +540,37 @@ def test_a_comment_after_a_value_on_the_keys_line_is_still_kept() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "expected_tail"),
+    [
+        ("[]  # keep me", "  # keep me"),
+        (" # keep me", "  # keep me"),
+        ("null # keep me", " # keep me"),
+        ("~ # keep me", " # keep me"),
+    ],
+)
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_a_comment_after_a_value_on_the_keys_line_stays_there_for_a_block_list(
+    value: str, expected_tail: str, newline: str
+) -> None:
+    """The block list replacing a value that starts on the key's line goes on
+    later lines, so the comment stays on the key's line, not after the last
+    item (#2412)."""
+    nl = newline
+    text = f"map:{nl}  name: M{nl}  no_3d_model_lanelet_ids: {value}{nl}  other: 3{nl}"
+    assert update_no_3d_model_lanelet_ids_text(text, [3, 4]) == (
+        f"map:{nl}  name: M{nl}  no_3d_model_lanelet_ids:{expected_tail}{nl}"
+        f"    - 3{nl}    - 4{nl}  other: 3{nl}"
+    )
+
+
+def test_a_key_line_comment_stays_there_at_the_end_of_the_file() -> None:
+    text = "no_3d_model_lanelet_ids: []  # keep me"
+    assert update_no_3d_model_lanelet_ids_text(text, [3, 4]) == (
+        "no_3d_model_lanelet_ids:  # keep me\n  - 3\n  - 4"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The YAML text rendering, moved into the checked tools.yaml_text (#2364)
 # ---------------------------------------------------------------------------
@@ -703,7 +734,10 @@ def test_the_insert_after_a_line_is_as_before() -> None:
 
 def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
     """update_no_3d_model_lanelet_ids_text before #2364, verbatim but for the
-    helpers it called (the old ones above; the unchanged ones off the tool)."""
+    helpers it called (the old ones above; the unchanged ones off the tool).
+
+    It still moves a key-line comment after the block list's last item, which
+    #2412 fixed: test_the_whole_edit_is_as_before moves it back itself."""
     import copy  # noqa: PLC0415
 
     ids = [int(lid) for lid in lanelet_ids]
@@ -788,7 +822,10 @@ def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
     return result
 
 
-def _random_document(rng: random.Random) -> str:
+def _random_document(rng: random.Random) -> tuple[str, str]:
+    """Return a document, and the comment after the value on the key's line
+    that #2412 keeps there when a block list replaces the value (``""`` when
+    there is none)."""
     newline = rng.choice(("\n", "\r\n"))
     comment = rng.choice(("", "  # c", " #x", "\t# a#b", "  #"))
     props = rng.choice(("", " &ids", " !!seq", " &a#b", " &ids  # keep"))
@@ -807,33 +844,57 @@ def _random_document(rng: random.Random) -> str:
         lines.append("map:" + rng.choice(("", "  # section")))
     pad = "  " if in_map else ""
     lines.append(f"{pad}name: M" + rng.choice(("", " # n")))
+    key_line_comment = ""
     if rng.random() < 0.7:
-        value = rng.choice(values).replace(newline + "  ", newline + "  " + pad)
+        choice = rng.randrange(len(values))
+        value = values[choice].replace(newline + "  ", newline + "  " + pad)
         lines.append(f"{pad}{NO_3D_MODEL_KEY}:{value}")
+        # ``[]``, ``null`` and an empty value start on the key's line and are
+        # replaced by a block list; a non-empty flow list stays one.
+        if choice in (1, 5, 6):
+            key_line_comment = comment
     if rng.random() < 0.4:
         lines.append(f"{pad}other: |{newline}{pad}  text{newline}")
     if rng.random() < 0.3:
         lines.append("# trailing" + rng.choice(("", "  #")))
     text = newline.join(lines)
-    return text + newline if rng.random() < 0.7 else text
+    return (text + newline if rng.random() < 0.7 else text), key_line_comment
+
+
+def _keep_on_the_key_line(old: str, comment: str, last_id: int) -> str:
+    """Move *comment* from after the block list's last item, where the old
+    edit left it, back onto the key's line (#2412)."""
+    newline = "\r\n" if "\r\n" in old else "\n"
+    key_line = f"{NO_3D_MODEL_KEY}:{newline}"
+    last_item = f"- {last_id}{comment}"
+    assert old.count(key_line) == 1, repr(old)
+    assert last_item in old, repr(old)
+    head, _, rest = old.rpartition(last_item)
+    moved = head + f"- {last_id}" + rest
+    return moved.replace(key_line, f"{NO_3D_MODEL_KEY}:{comment}{newline}")
 
 
 def test_the_whole_edit_is_as_before() -> None:
     """Over random documents, the text written (or the refusal) is the old
-    edit's."""
+    edit's, but for a key-line comment #2412 keeps on the key's line."""
     rng = random.Random(469)
+    moved = 0
     for _ in range(1500):
-        text = _random_document(rng)
+        text, key_line_comment = _random_document(rng)
         ids = [rng.randrange(0, 100) for _ in range(rng.randrange(0, 3))]
         try:
             old: object = _old_update(text, ids)
         except YamlUpdateError as exc:
             old = ("refused", str(exc))
+        if isinstance(old, str) and key_line_comment and ids:
+            old = _keep_on_the_key_line(old, key_line_comment, ids[-1])
+            moved += 1
         try:
             new: object = update_no_3d_model_lanelet_ids_text(text, ids)
         except YamlUpdateError as exc:
             new = ("refused", str(exc))
         assert new == old, repr(text)
+    assert moved > 50  # the documents do exercise #2412
 
 
 def test_the_tool_still_hands_out_the_moved_names() -> None:
