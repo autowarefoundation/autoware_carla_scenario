@@ -33,9 +33,11 @@ __all__ = [
     "OpenDriveUnavailable",
     "capture_opendrive",
     "ensure_xodr",
+    "install_xodr",
     "installed_xodr",
     "map_asset_env_var",
     "map_asset_path",
+    "original_xodr_path",
 ]
 
 #: Default CARLA RPC endpoint, matching
@@ -46,6 +48,10 @@ DEFAULT_PORT = 2000
 #: Seconds the client waits for the server.  Loading a town is slow, so this is
 #: well above the CARLA client default of 5.
 DEFAULT_TIMEOUT = 60.0
+
+#: Suffix of the copy of a CARLA installation's own ``.xodr`` kept beside it
+#: before :func:`install_xodr` first overwrites it (#2446).
+ORIGINAL_SUFFIX = ".orig"
 
 
 class OpenDriveUnavailable(RuntimeError):
@@ -84,14 +90,73 @@ def map_asset_path(map_name: str) -> Optional[Path]:
     return Path(configured).expanduser()
 
 
+def original_xodr_path(installed: Path) -> Path:
+    """Return where the original of the installation's ``.xodr`` *installed*
+    is kept once :func:`install_xodr` has overwritten it: beside it, with
+    :data:`ORIGINAL_SUFFIX` appended (``Town10HD_Opt.xodr.orig``)."""
+    return installed.with_name(installed.name + ORIGINAL_SUFFIX)
+
+
 def installed_xodr(map_name: str) -> Optional[Path]:
     """Return the CARLA installation's ``.xodr`` for *map_name*, if reachable.
+
+    The installation's *original* road network: once a run with
+    ``map.overwrite_xodr`` has installed another map's OpenDRIVE over the file
+    (:func:`install_xodr`), the copy of what was there first
+    (:func:`original_xodr_path`), so that a copy derived from the
+    installation is CARLA's map, not the last run's (#2446).
 
     ``None`` when the variable is unset or points at a file that is not there --
     a workstation with no CARLA installed is the normal case for the editor.
     """
     path = map_asset_path(map_name)
-    return path if path is not None and path.is_file() else None
+    if path is None:
+        return None
+    original = original_xodr_path(path)
+    if original.is_file():
+        return original
+    return path if path.is_file() else None
+
+
+def install_xodr(xodr_path: Path, destination: Path) -> bool:
+    """Install *xodr_path* as the CARLA installation's ``.xodr`` *destination*;
+    whether it was written.
+
+    What ``load_map_by_overwriting_xodr`` (and the lanelet check of
+    ``tools.detect_no_3d_model_lanelets``) does to the installation (#2446):
+
+    * Before the file is first overwritten, its original is kept beside it
+      (:func:`original_xodr_path`), once: an existing copy is never replaced,
+      so it stays CARLA's own road network whatever runs install later, and
+      :func:`installed_xodr` derives copies from it.  The installed file
+      itself stays overwritten after the run.
+    * The file is replaced in one rename (``maps.cache._copy_atomically``):
+      another process on the same installation -- a task of the same SLURM
+      batch -- loading the map meanwhile reads the old file or the new one,
+      never a part.
+    * Nothing is written when the installed file already holds these bytes,
+      as it does on every reload of a batch's map.
+
+    Raises:
+        FileNotFoundError: If *xodr_path* does not exist.
+    """
+    if destination.is_file():
+        if _same_bytes(xodr_path, destination):
+            return False
+        original = original_xodr_path(destination)
+        if not original.exists() and _copy_atomically(destination, original, True):
+            logger.info(
+                "Kept the CARLA installation's original OpenDRIVE as %s", original
+            )
+    _copy_atomically(xodr_path, destination)
+    return True
+
+
+def _same_bytes(first: Path, second: Path) -> bool:
+    """Whether the files *first* and *second* hold the same bytes."""
+    if first.stat().st_size != second.stat().st_size:
+        return False
+    return first.read_bytes() == second.read_bytes()
 
 
 def capture_opendrive(world: carla.World, destination: Path) -> Path:
@@ -231,7 +296,8 @@ def ensure_xodr(
         # Copied whole, as the fetch below writes: another process resolving
         # the same map reads the old file or the new one, never a part.
         # Byte for byte, mode and mtime as well: load_map_by_overwriting_xodr
-        # may copy this file back over the installation's.
+        # may copy this file back over the installation's.  The installation's
+        # original, once a run has overwritten it (installed_xodr, #2446).
         _copy_atomically(installed, destination)
         logger.info("Took OpenDRIVE for %s from %s", name, installed)
         return destination

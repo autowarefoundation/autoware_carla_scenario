@@ -322,6 +322,14 @@ pin_source("https://huggingface.co/datasets/OWNER/NAME/tree/main/maps/T")
 In the editor this is the **Pin to commit** button in the Scenario inspector,
 which also tells you when a source is still unpinned.
 
+A branch is resolved again by **every process** that resolves the source: each
+task of a [SLURM batch](slurm.md) and each job of a multirun runs its own
+`git ls-remote`, so a batch that runs while the branch moves mixes runs on two
+commits. Each run's [trajectory log](trajectory_log.md) names the commit its
+branch resolved to beside the configured ref (`"source":
+"git+https://...@main#T (commit <40-hex>)"`), as it names a content pack with
+the version it resolved to. **Pin a commit to keep a batch on one map.**
+
 One consequence is worth stating plainly: an already-unpacked map directory
 records no revision, so a **pinned source never uses one**. It always resolves
 through git, where the commit is checked rather than assumed. Pinning would be
@@ -336,8 +344,22 @@ in the order that costs least:
 1. one the repository ships, or one already cached;
 2. the asset inside a local CARLA installation, named by the same
    `<MAP_NAME>_PATH` environment variable the rest of the framework uses
-   (`TOWN10_HD_OPT_PATH`, and see `.env.example`);
+   (`TOWN10_HD_OPT_PATH`, and see `.env.example`) -- its original, see below;
 3. a running server, over the CARLA Python API.
+
+A run with `map.overwrite_xodr=true` installs its map's OpenDRIVE over that
+asset, and the installed file **stays overwritten** after the run: a later run
+naming the same CARLA map without `overwrite_xodr` loads those roads, not
+CARLA's own. Before the first overwrite the installation's file is kept beside
+it as `<file>.orig` (`Town10HD_Opt.xodr.orig`), once -- an existing `.orig` is
+never replaced -- and an OpenDRIVE derived from the installation (step 2,
+**Fetch OpenDRIVE**) is copied from that original, so it is CARLA's town and
+not the last run's map. To give CARLA its own roads back, copy the `.orig`
+over the installed file. The install is a single rename, and is skipped when
+the file already holds the same bytes, so a task of a SLURM batch loading the
+map on the same installation meanwhile never reads half a file. (An
+installation overwritten before the `.orig` was kept has no original to go
+back to: reinstall the asset.)
 
 Whatever it comes from is cached under `.derived/` beside the map, so it is
 fetched once, as `.derived/<repository>-<hash>/<path>/<MAP_NAME>.xodr`. The

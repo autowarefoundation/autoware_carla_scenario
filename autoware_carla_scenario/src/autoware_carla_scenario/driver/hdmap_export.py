@@ -47,6 +47,7 @@ from .hdmap_files import (
     READ_FILE,
     READ_TRACE_FILE,
     SOURCE_FILE,
+    converted_by_another_roadgen,
     map_id_for,
 )
 
@@ -72,7 +73,9 @@ def export_map(
     run's Lanelet2 map, the set holds it as its ``t4`` format (and ``t4`` is
     written even if ``formats`` leaves it out); without, ``t4`` cannot be
     written. A complete set already holding every format is reused
-    as it is. One lacking some is built again holding the formats it has and
+    as it is -- unless the installed roadgen is not the one that converted
+    it (its manifest's ``roadgen_version``): its converted formats then count
+    as missing, and are converted again (#2446). One lacking some is built again holding the formats it has and
     those asked for, its id unchanged: a set only grows, except by a format
     this version or its roadgen cannot write, which is dropped with a warning. A set is built in
     a scratch directory beside its destination and moved into place whole, so
@@ -99,7 +102,7 @@ def export_map(
     map_id = map_id_for(map_name, opendrive, _provided_digests(provided, given))
     root = Path(map_dir)
     target = root / map_id
-    present = _formats_in(target)
+    present = _current_formats(target)
     if set(formats) <= set(present):
         logger.info("map %s already written to %s", map_id, target)
         return map_id
@@ -133,7 +136,10 @@ def export_map(
             # holds every format this one does -- the id is the content's;
             # one holding formats this one lacks is built again with them.
             present = _known(_formats_in(target), dropped, map_id)
-            if set(formats) <= set(present):
+            # Not the set a run is replacing because an older roadgen wrote
+            # it: only one converted by the installed roadgen is taken.
+            current = _known(_current_formats(target), dropped, map_id)
+            if set(formats) <= set(current):
                 logger.info("map %s written to %s meanwhile", map_id, target)
                 _discard(kept, formats)
                 return map_id
@@ -396,9 +402,60 @@ def _export(world_map: Any, name: str, out: Path) -> Dict[str, Optional[str]]:
 
 def _formats_in(directory: Path) -> Dict[str, Any]:
     """The formats a complete set in ``directory`` holds; none if there is none."""
+    formats = _read_manifest(directory).get("formats")
+    return dict(formats) if isinstance(formats, dict) else {}
+
+
+def _read_manifest(directory: Path) -> Dict[str, Any]:
+    """The manifest of the complete set in ``directory``; empty if there is none."""
     try:
         manifest = json.loads((directory / MANIFEST_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    formats = manifest.get("formats") if isinstance(manifest, dict) else None
-    return dict(formats) if isinstance(formats, dict) else {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def _current_formats(directory: Path) -> Dict[str, Any]:
+    """:func:`_formats_in`, without the formats a roadgen other than the
+    installed one converted (#2446).
+
+    Those count as missing, so the set is written again -- its id unchanged,
+    as the id digests the inputs -- with every converted format converted by
+    the installed roadgen. The formats given rather than converted
+    (``provided``) count as held whatever roadgen wrote the set. With no
+    roadgen installed nothing can be converted again, and the set is taken
+    as it is.
+    """
+    manifest = _read_manifest(directory)
+    held = manifest.get("formats")
+    formats: Dict[str, Any] = dict(held) if isinstance(held, dict) else {}
+    converted = [
+        name
+        for name, entry in formats.items()
+        if not (isinstance(entry, dict) and entry.get("provided"))
+    ]
+    if not converted:
+        return formats
+    installed = _installed_roadgen_version()
+    set_version = str(manifest.get("roadgen_version") or "")
+    if installed is None or not converted_by_another_roadgen(set_version, installed):
+        return formats
+    logger.info(
+        "map %s: %s converted by roadgen %s, not the installed %s; converting "
+        "them again",
+        directory.name,
+        ", ".join(sorted(converted)),
+        set_version or "(unknown)",
+        installed or "(unknown)",
+    )
+    return {name: entry for name, entry in formats.items() if name not in converted}
+
+
+def _installed_roadgen_version() -> Optional[str]:
+    """The installed roadgen's ``__version__``, as a set's manifest records it
+    (``""`` when it states none); ``None`` when roadgen is not installed."""
+    try:
+        import roadgen  # noqa: PLC0415
+    except ImportError:
+        return None
+    return str(getattr(roadgen, "__version__", "") or "")

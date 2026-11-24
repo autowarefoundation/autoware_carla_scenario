@@ -52,9 +52,11 @@ from autoware_carla_scenario.maps.opendrive import (
     OpenDriveUnavailable,
     capture_opendrive,
     ensure_xodr,
+    install_xodr,
     installed_xodr,
     map_asset_env_var,
     map_asset_path,
+    original_xodr_path,
 )
 from autoware_carla_scenario.maps.resolver import MapResolutionError
 
@@ -3391,6 +3393,144 @@ def test_an_installed_xodr_is_copied_byte_for_byte(
     assert written.stat().st_mtime_ns == asset.stat().st_mtime_ns
     assert stat.S_IMODE(written.stat().st_mode) == 0o640
     assert [p.name for p in written.parent.iterdir()] == [written.name]
+
+
+class TestInstallingAnOpenDrive:
+    """#2446: overwrite_xodr keeps the installation's original, once, and
+    installs in one rename."""
+
+    def test_the_original_is_kept_once_before_the_first_overwrite(
+        self, tmp_path: Path
+    ) -> None:
+        installed = tmp_path / "TownA.xodr"
+        installed.write_bytes(b"<OpenDRIVE>carla</OpenDRIVE>")
+        os.utime(installed, ns=(1_000_000_000_000_000_000,) * 2)
+        first = tmp_path / "a.xodr"
+        first.write_text("<OpenDRIVE>a</OpenDRIVE>")
+        second = tmp_path / "b.xodr"
+        second.write_text("<OpenDRIVE>b</OpenDRIVE>")
+
+        assert install_xodr(first, installed)
+        original = original_xodr_path(installed)
+        assert original == tmp_path / "TownA.xodr.orig"
+        assert original.read_bytes() == b"<OpenDRIVE>carla</OpenDRIVE>"
+        assert original.stat().st_mtime_ns == 1_000_000_000_000_000_000
+        assert installed.read_text() == "<OpenDRIVE>a</OpenDRIVE>"
+
+        # A later install never replaces the original.
+        assert install_xodr(second, installed)
+        assert installed.read_text() == "<OpenDRIVE>b</OpenDRIVE>"
+        assert original.read_bytes() == b"<OpenDRIVE>carla</OpenDRIVE>"
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "TownA.xodr",
+            "TownA.xodr.orig",
+            "a.xodr",
+            "b.xodr",
+        ], "left scratch behind"
+
+    def test_the_same_bytes_are_not_written_again(self, tmp_path: Path) -> None:
+        installed = tmp_path / "TownA.xodr"
+        installed.write_text("<OpenDRIVE>a</OpenDRIVE>")
+        xodr = tmp_path / "a.xodr"
+        xodr.write_text("<OpenDRIVE>a</OpenDRIVE>")
+        before = installed.stat()
+
+        assert not install_xodr(xodr, installed)
+
+        assert installed.stat().st_ino == before.st_ino
+        assert installed.stat().st_mtime_ns == before.st_mtime_ns
+        assert not original_xodr_path(installed).exists(), "nothing overwritten"
+
+    def test_the_install_is_one_rename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The installed file is never truncated in place: a reader on the
+        same installation sees the old file or the new one."""
+        installed = tmp_path / "TownA.xodr"
+        installed.write_text("<OpenDRIVE>carla</OpenDRIVE>")
+        held = installed.open("rb")  # a loader reading the old file
+        xodr = tmp_path / "a.xodr"
+        xodr.write_text("<OpenDRIVE>a</OpenDRIVE>")
+        renamed: list[str] = []
+        real_replace = os.replace
+
+        def replace(src: Any, dst: Any) -> None:
+            renamed.append(Path(dst).name)
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        try:
+            install_xodr(xodr, installed)
+            assert held.read() == b"<OpenDRIVE>carla</OpenDRIVE>"
+        finally:
+            held.close()
+        assert "TownA.xodr" in renamed
+        assert installed.read_text() == "<OpenDRIVE>a</OpenDRIVE>"
+
+    def test_an_existing_original_is_never_replaced(self, tmp_path: Path) -> None:
+        """Another process saved it first (or an earlier run did)."""
+        installed = tmp_path / "TownA.xodr"
+        installed.write_text("<OpenDRIVE>someone else's</OpenDRIVE>")
+        original = original_xodr_path(installed)
+        original.write_text("<OpenDRIVE>carla</OpenDRIVE>")
+        xodr = tmp_path / "a.xodr"
+        xodr.write_text("<OpenDRIVE>a</OpenDRIVE>")
+
+        install_xodr(xodr, installed)
+
+        assert original.read_text() == "<OpenDRIVE>carla</OpenDRIVE>"
+
+    def test_a_missing_installed_file_keeps_no_original(self, tmp_path: Path) -> None:
+        installed = tmp_path / "TownA.xodr"
+        xodr = tmp_path / "a.xodr"
+        xodr.write_text("<OpenDRIVE>a</OpenDRIVE>")
+
+        assert install_xodr(xodr, installed)
+
+        assert installed.read_text() == "<OpenDRIVE>a</OpenDRIVE>"
+        assert not original_xodr_path(installed).exists()
+
+    def test_a_missing_opendrive_is_an_error(self, tmp_path: Path) -> None:
+        installed = tmp_path / "TownA.xodr"
+        installed.write_text("<OpenDRIVE>carla</OpenDRIVE>")
+        with pytest.raises(FileNotFoundError):
+            install_xodr(tmp_path / "missing.xodr", installed)
+        assert installed.read_text() == "<OpenDRIVE>carla</OpenDRIVE>"
+
+    def test_the_installed_xodr_is_the_original(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        installed = tmp_path / "TownA.xodr"
+        installed.write_text("<OpenDRIVE>carla</OpenDRIVE>")
+        monkeypatch.setenv(map_asset_env_var("TownA"), str(installed))
+        assert installed_xodr("TownA") == installed
+
+        xodr = tmp_path / "a.xodr"
+        xodr.write_text("<OpenDRIVE>repo A</OpenDRIVE>")
+        install_xodr(xodr, installed)
+
+        assert installed_xodr("TownA") == original_xodr_path(installed)
+
+
+def test_a_derived_xodr_is_the_installations_original(
+    origin_repo: Path,
+    cache: GitMapCache,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2446: after repo A's overwrite_xodr run, repo B's derived copy of the
+    same CARLA map is CARLA's road network, not A's."""
+    asset = tmp_path / "TownA.xodr"
+    asset.write_text("<OpenDRIVE>carla</OpenDRIVE>")
+    monkeypatch.setenv(map_asset_env_var("TownA"), str(asset))
+    repo_a = tmp_path / "repo_a.xodr"
+    repo_a.write_text("<OpenDRIVE>repo A</OpenDRIVE>")
+    install_xodr(repo_a, asset)
+
+    written = ensure_xodr(resolve_map(_uri(origin_repo), cache=cache), refresh=True)
+
+    assert written.read_text() == "<OpenDRIVE>carla</OpenDRIVE>"
+    assert asset.read_text() == "<OpenDRIVE>repo A</OpenDRIVE>", "stays overwritten"
 
 
 # ---------------------------------------------------------------------------

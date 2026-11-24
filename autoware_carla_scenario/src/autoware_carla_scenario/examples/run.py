@@ -1708,6 +1708,11 @@ def _map_source(cfg: DictConfig, map_paths: Any) -> str | None:
     repository, and a pack without ``@VERSION`` is its newest -- so the log
     says which pack the run read (#2198).  A pack that carries no Lanelet2
     map leaves it to ``map.source``, which is then the source named.
+
+    A source is named as configured, followed by the commit *map_paths*
+    resolved it to (``git+https://...@main#T (commit <40-hex>)``) when its ref
+    is not that commit: every process resolves a branch again (each task of a
+    SLURM batch), so the log says which commit the run read (#2446).
     """
     # Read as resolve_map_paths reads them: a blank setting is unset (#2198).
     directory = _map_setting(cfg, "directory")
@@ -1722,7 +1727,24 @@ def _map_source(cfg: DictConfig, map_paths: Any) -> str | None:
         from_pack = resolved is not None and resolved.source is None
         if from_pack or not source:
             return f"carla-pack:{pack}"
-    return str(source) if source else None
+    if not source:
+        return None
+    return str(source) + _resolved_commit_suffix(map_paths)
+
+
+def _resolved_commit_suffix(map_paths: Any) -> str:
+    """`` (commit <hash>)``, the commit *map_paths* resolved ``map.source`` to,
+    for :func:`_map_source`; empty when the map was not read from a source,
+    when the commit is not known (a map already unpacked under the map root)
+    or when the source names that very commit (a pinned source)."""
+    resolved = getattr(map_paths, "resolved", None)
+    resolved_source = getattr(resolved, "source", None)
+    commit = getattr(resolved, "commit", "")
+    if resolved_source is None or not isinstance(commit, str) or not commit:
+        return ""
+    if str(getattr(resolved_source, "ref", "")).lower() == commit.lower():
+        return ""
+    return f" (commit {commit})"
 
 
 def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:

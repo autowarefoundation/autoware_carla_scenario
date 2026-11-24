@@ -90,3 +90,14 @@ def test_the_projector_of_a_given_map_is_in_its_id(
         ids.append(map_id)
     assert ids[0] != ids[1]
     assert "Town-c1e43f649d0f" not in ids
+
+
+@pytest.mark.parametrize(
+    ("set_version", "installed", "expected"),
+    [("0.45.0", "0.45.0", False), ("0.44.0", "0.45.0", True), ("", "0.45.0", True)],
+)
+def test_formats_another_roadgen_converted_are_converted_again(
+    set_version: str, installed: str, expected: bool
+) -> None:
+    """#2446: the id digests the inputs only; the roadgen is checked apart."""
+    assert hdmap_files.converted_by_another_roadgen(set_version, installed) is expected

@@ -561,6 +561,10 @@ another's `auto` build uses it rather than build again.
   directory, so these must be on a file system every node sees. Map files,
   and the OpenDRIVE a run captures from the loaded world on a map's first run,
   are written atomically, so tasks that fill a cache at once do not break it.
+  A `map.source` naming a branch is resolved by each task, so a batch that
+  runs while the branch moves can mix commits (each run's trajectory log
+  names the one it got); pin a commit to keep the batch on one map
+  ([Pinning](maps.md#pinning-and-why-it-matters)).
   A driver policy's own caches are its own: one that two processes cannot
   load at once (OnePlanner's TensorRT engines, whose identity file is written
   under one temporary name, so two loads at the same moment fail one case

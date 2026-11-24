@@ -30,7 +30,7 @@ from ..authoring.hydra_config import (
 )
 from ..maps import MapCacheError, MapPaths, MapSource, MapSourceError, map_root
 from ..maps.config import resolve_map_paths
-from ..maps.resolver import MapResolutionError
+from ..maps.resolver import PROJECTOR_INFO_FILENAME, MapResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,12 @@ __all__ = [
 #: one map at a time.
 _MAP_CACHE_SIZE = 2
 
-_MAP_CACHE: "OrderedDict[tuple[str, str, str], _LoadedMap]" = OrderedDict()
+#: What a parse is cached under (:func:`_cache_key`): the Lanelet2 path, the
+#: OpenDRIVE path and the projector override, then the modification time and
+#: size of the ``.osm``, the ``.xodr`` and ``map_projector_info.yaml``.
+_CacheKey = tuple[str, str, str, tuple[int, int], tuple[int, int], tuple[int, int]]
+
+_MAP_CACHE: "OrderedDict[_CacheKey, _LoadedMap]" = OrderedDict()
 
 #: Guards :data:`_MAP_CACHE` and the ``matches`` / ``derived`` caches of every
 #: map in it.  The editor reaches them from worker threads at once -- the map
@@ -72,7 +77,7 @@ _CACHE_LOCK = threading.Lock()
 #: parse it once (the second waits and is answered from the cache) while maps
 #: with different keys still parse side by side.  An entry lives only while
 #: its parse runs; guarded by :data:`_CACHE_LOCK`.
-_LOADING: "dict[tuple[str, str, str], threading.Lock]" = {}
+_LOADING: "dict[_CacheKey, threading.Lock]" = {}
 
 #: Distinct constraint trees whose matches are remembered per map.  A session
 #: writes a bounded number of them -- one per edit to a search -- and each is a
@@ -410,7 +415,7 @@ def _outside_map_roots_reason(path: Path) -> str:
     )
 
 
-def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
+def _cache_key(paths: MapPaths) -> Optional[_CacheKey]:
     """Return the cache key for a resolved map, or ``None`` when it has none.
 
     Every input :func:`~autoware_carla_scenario.sweeper.map_loader.load_map`
@@ -419,14 +424,38 @@ def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
     would have supplied is the one its own descriptor states -- but a map that
     *gains* either has to be re-read rather than answered from the earlier
     parse.
+
+    So is what those files hold, by their modification time and size (``(0,
+    -1)`` for one that is missing): a ``map.directory`` map edited while the
+    editor runs -- its ``.osm``, OpenDRIVE or ``map_projector_info.yaml`` -- is
+    parsed again rather than previewed, picked from and matched against as it
+    was (#2446).
     """
-    if paths.lanelet2_path is None:
+    lanelet2 = paths.lanelet2_path
+    if lanelet2 is None:
         return None
+    xodr = paths.xodr_path
     return (
-        str(paths.lanelet2_path),
-        str(paths.xodr_path or ""),
+        str(lanelet2),
+        str(xodr or ""),
         paths.projector_type or "",
+        _file_stamp(lanelet2),
+        (0, -1) if xodr is None else _file_stamp(xodr),
+        _file_stamp(lanelet2.parent / PROJECTOR_INFO_FILENAME),
     )
+
+
+def _file_stamp(path: Path) -> tuple[int, int]:
+    """*path*'s modification time (ns) and size, ``(0, -1)`` when missing.
+
+    The viewer's ``ui.case_paths._stat``, which the editor may not import
+    (``test_editor_viewer_isolation.py``).
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return (0, -1)
+    return (info.st_mtime_ns, info.st_size)
 
 
 def is_map_loaded(document: ScenarioDocument, paths: Optional[MapPaths] = None) -> bool:
@@ -444,7 +473,7 @@ def clear_cache() -> None:
         _MAP_CACHE.clear()
 
 
-def _cached(key: tuple[str, str, str]) -> Optional[_LoadedMap]:
+def _cached(key: _CacheKey) -> Optional[_LoadedMap]:
     """Return the cached parse for *key*, marking it most recently used."""
     with _CACHE_LOCK:
         cached = _MAP_CACHE.get(key)
@@ -533,6 +562,10 @@ def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
                 return cached
             loaded = _parse(paths)
             with _CACHE_LOCK:
+                # A parse of the same files as they were before an edit is
+                # never looked up again: it goes rather than hold a slot.
+                for stale in [k for k in _MAP_CACHE if k[:3] == key[:3]]:
+                    del _MAP_CACHE[stale]
                 _MAP_CACHE[key] = loaded
                 while len(_MAP_CACHE) > _MAP_CACHE_SIZE:
                     _MAP_CACHE.popitem(last=False)

@@ -1261,7 +1261,7 @@ one warns that it is ignored and says the above.
 | `map.xodr_path` | str \| null | `null` | Path to custom OpenDRIVE file. If `null`, loads built-in CARLA map by name |
 | `map.lanelet2_path` | str \| null | `null` | Path to Lanelet2 .osm file (required for lanelet-based spawn) |
 | `map.projector_type` | str \| null | `null` | Projection the Lanelet2 map is read with (`mgrs`, `utm`, `local_xy`, `local_cartesian` or `transverse_mercator`). If `null`, taken from the map's `map_projector_info.yaml` |
-| `map.overwrite_xodr` | bool | `false` | Install `map.xodr_path` into the CARLA asset named by `<MAP_NAME>_PATH` before loading the map, replacing CARLA's own road network (`map=nishishinjuku` turns it on) |
+| `map.overwrite_xodr` | bool | `false` | Install `map.xodr_path` into the CARLA asset named by `<MAP_NAME>_PATH` before loading the map, replacing CARLA's own road network (`map=nishishinjuku` turns it on). The installed file stays overwritten after the run; its original is kept as `<file>.orig` ([maps.md](maps.md#opendrive-comes-from-carla)) |
 | `map.no_3d_model_lanelet_ids` | list[int] | `[]` | Lanelet IDs to exclude from sweeps (no ground geometry) |
 | `map.pack` | str \| null | `null` | CARLA content pack the map is mounted from: `OWNER/REPO/PACK[@VERSION]`, or `OWNER/REPO` to take the newest pack providing `map.name`. Its Lanelet2 map and OpenDRIVE are read, and it is installed and mounted on the server before the map loads ([content_packs.md](content_packs.md)). `map.directory` wins over it; it wins over `map.source` |
 | `map.pack_sha256` | str \| null | `null` | Pins `map.pack` to one artifact by its SHA-256 |
@@ -1999,7 +1999,7 @@ xodr_path: path/to/map.xodr     # Path to OpenDRIVE file
 lanelet2_path: path/to/map.osm  # Path to Lanelet2 file
 ```
 
-A map given by `source` or `directory` needs only that key (`name` defaults to the map directory's name); when it ships no OpenDRIVE, the tool reads the road network back out of the loaded CARLA world and caches it, as a run does. With `overwrite_xodr: true` the OpenDRIVE is installed into the CARLA asset named by the `<MAP_NAME>_PATH` environment variable before the map is loaded; otherwise CARLA's own road network is kept.
+A map given by `source` or `directory` needs only that key (`name` defaults to the map directory's name); when it ships no OpenDRIVE, the tool reads the road network back out of the loaded CARLA world and caches it, as a run does. With `overwrite_xodr: true` the OpenDRIVE is installed into the CARLA asset named by the `<MAP_NAME>_PATH` environment variable before the map is loaded; otherwise the installed file is loaded as it is. The installed file **stays overwritten** after an `overwrite_xodr` run (the tool's or a scenario run's), so a later run of the same CARLA map without `overwrite_xodr` loads that road network, not CARLA's own; the installation's original is kept beside it as `<file>.orig` before the first overwrite, and an OpenDRIVE derived from the installation is copied from that original (see [OpenDRIVE comes from CARLA](maps.md#opendrive-comes-from-carla)).
 
 These keys may also sit under a `map:` section (as in the example `nishishinjuku.yaml`, a `# @package _global_` config); `no_3d_model_lanelet_ids` is then written there too.
 

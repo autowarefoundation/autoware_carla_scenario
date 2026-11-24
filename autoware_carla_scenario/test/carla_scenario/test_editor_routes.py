@@ -5419,6 +5419,60 @@ class TestMapCacheConcurrency:
         assert map_preview.is_map_loaded(document, slow)
         map_preview.clear_cache()
 
+    def test_editing_the_map_files_invalidates_the_parse(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A map edited while the editor runs -- its .osm, OpenDRIVE or
+        map_projector_info.yaml -- is parsed again, and the stale parse does
+        not keep a slot (#2446)."""
+        import os
+
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.maps import MapPaths
+
+        map_preview.clear_cache()
+        calls: list[Any] = []
+
+        def _parse(paths: Any) -> Any:
+            calls.append(paths)
+            return map_preview._LoadedMap(
+                lanelet_map=None, routing_graph=None, lanelet_count=len(calls)
+            )
+
+        monkeypatch.setattr(map_preview, "_parse", _parse)
+        osm = tmp_path / "town.osm"
+        osm.write_text("<osm/>")
+        xodr = tmp_path / "town.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        projector = tmp_path / "map_projector_info.yaml"
+        paths = MapPaths(lanelet2_path=osm, xodr_path=xodr)
+        document = ScenarioDocument()
+
+        def _touch(path: Path, text: str, ns: int) -> None:
+            path.write_text(text)
+            os.utime(path, ns=(ns, ns))
+
+        first = map_preview._load(document, paths)
+        assert map_preview._load(document, paths) is first
+        assert len(calls) == 1
+
+        _touch(osm, "<osm><node/></osm>", 2_000_000_000_000_000_000)
+        assert not map_preview.is_map_loaded(document, paths)
+        second = map_preview._load(document, paths)
+        assert second is not first
+        assert len(calls) == 2
+        # The stale parse went, rather than keep one of the two slots.
+        assert list(map_preview._MAP_CACHE.values()) == [second]
+
+        _touch(xodr, "<OpenDRIVE><road/></OpenDRIVE>", 2_000_000_000_000_000_000)
+        map_preview._load(document, paths)
+        assert len(calls) == 3
+        _touch(projector, "projector_type: MGRS\n", 2_000_000_000_000_000_000)
+        third = map_preview._load(document, paths)
+        assert len(calls) == 4
+        assert map_preview._load(document, paths) is third
+        map_preview.clear_cache()
+
 
 class TestMapRootsGuardEveryRead:
     """A map outside SCENARIO_EDITOR_MAP_ROOTS is not parsed for a preview
