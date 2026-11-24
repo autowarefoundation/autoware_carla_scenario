@@ -5295,6 +5295,15 @@ class TestLaneletPreviewOffTheLoop:
 class TestMapCacheConcurrency:
     """The parsed-map cache is shared by worker threads (#1335)."""
 
+    @pytest.fixture(autouse=True)
+    def _maps_in_tmp_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.editor import map_preview
+
+        # The maps are in tmp_path; a parse is held to the map roots (#2412).
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(tmp_path))
+
     @staticmethod
     def _paths(tmp_path: Path, name: str) -> Any:
         from autoware_carla_scenario.maps import MapPaths
@@ -5381,6 +5390,136 @@ class TestMapCacheConcurrency:
         assert not thread.is_alive()
         assert map_preview.is_map_loaded(document, slow)
         map_preview.clear_cache()
+
+
+class TestMapRootsGuardEveryRead:
+    """A map outside SCENARIO_EDITOR_MAP_ROOTS is not parsed for a preview
+    either, as it is not drawn (#2412)."""
+
+    @staticmethod
+    def _stub_parse(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        from autoware_carla_scenario.editor import map_preview
+
+        calls: list[Any] = []
+
+        def _parse(paths: Any) -> Any:
+            calls.append(paths)
+            return map_preview._LoadedMap(
+                lanelet_map=None, routing_graph=None, lanelet_count=1
+            )
+
+        monkeypatch.setattr(map_preview, "_parse", _parse)
+        return calls
+
+    @pytest.mark.parametrize("outside", ["lanelet2", "xodr"])
+    def test_a_map_file_outside_the_roots_is_not_parsed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outside: str
+    ) -> None:
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.maps import MapPaths
+
+        roots = tmp_path / "roots"
+        elsewhere = tmp_path / "elsewhere"
+        roots.mkdir()
+        elsewhere.mkdir()
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+        calls = self._stub_parse(monkeypatch)
+        map_preview.clear_cache()
+        paths = MapPaths(
+            lanelet2_path=(elsewhere if outside == "lanelet2" else roots) / "m.osm",
+            xodr_path=(elsewhere if outside == "xodr" else roots) / "m.xodr",
+        )
+        try:
+            with pytest.raises(
+                FileNotFoundError, match="outside the editor's map roots"
+            ):
+                map_preview._load(ScenarioDocument(), paths)
+            assert calls == []
+            # Inside the roots, the same map parses.
+            monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(tmp_path))
+            assert map_preview._load(ScenarioDocument(), paths).lanelet_count == 1
+            # A parse cached before the roots narrowed is not answered either.
+            monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+            with pytest.raises(
+                FileNotFoundError, match="outside the editor's map roots"
+            ):
+                map_preview._load(ScenarioDocument(), paths)
+        finally:
+            map_preview.clear_cache()
+
+    def test_an_area_does_not_read_an_opendrive_map_outside_the_roots(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.conditions import map_area
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.maps import MapPaths
+
+        roots = tmp_path / "roots"
+        roots.mkdir()
+        xodr = tmp_path / "m.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+
+        def _never(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("read an OpenDRIVE map outside the roots")
+
+        monkeypatch.setattr(map_area, "surface_regions", _never)
+        result = map_preview.evaluate_area(
+            ScenarioDocument(),
+            {"ground": "SURFACE_RAISED"},
+            paths=MapPaths(lanelet2_path=roots / "m.osm", xodr_path=xodr),
+        )
+        assert "outside the editor's map roots" in result.error
+        assert not result.map_loaded
+
+
+class TestDerivedCachesAreLeastRecentlyUsed:
+    """A hit moves the entry to the end, as evaluate_slot's does (#2412)."""
+
+    @staticmethod
+    def _loaded(monkeypatch: pytest.MonkeyPatch) -> Any:
+        from autoware_carla_scenario.editor import map_preview
+
+        loaded = map_preview._LoadedMap(
+            lanelet_map=None, routing_graph=None, lanelet_count=1
+        )
+        monkeypatch.setattr(map_preview, "_loaded", lambda *a, **k: loaded)
+        return loaded
+
+    def test_derive_lanelet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import json
+        from types import SimpleNamespace
+
+        from autoware_carla_scenario.editor import map_preview
+
+        loaded = self._loaded(monkeypatch)
+        binding = {"type": "successor"}
+        slot: Any = SimpleNamespace(
+            key="k",
+            choice=SimpleNamespace(
+                binding=SimpleNamespace(to_sweep_dict=lambda: binding)
+            ),
+        )
+        asked = (json.dumps(binding, sort_keys=True), 1)
+        loaded.derived[asked] = 11
+        loaded.derived[("other", 2)] = 22
+        assert map_preview.derive_lanelet(ScenarioDocument(), slot, 1) == 11
+        assert list(loaded.derived) == [("other", 2), asked]
+
+    def test_resolve_spawn_offset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import json
+
+        from autoware_carla_scenario.editor import map_preview
+
+        loaded = self._loaded(monkeypatch)
+        binding = {"type": "stop_line_offset"}
+        asked = (json.dumps(["s", binding], sort_keys=True), 1)
+        offset = map_preview.SpawnOffset(lanelet_id=1, s=2.0)
+        loaded.offsets[asked] = offset
+        loaded.offsets[("other", 2)] = map_preview.SpawnOffset(lanelet_id=2)
+        found = map_preview.resolve_spawn_offset(ScenarioDocument(), "s", binding, 1)
+        assert found is offset
+        assert list(loaded.offsets) == [("other", 2), asked]
 
 
 @pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "NaN"])

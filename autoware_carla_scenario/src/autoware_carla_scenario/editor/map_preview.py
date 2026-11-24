@@ -360,7 +360,26 @@ def lanelet2_source(
     paths = map_paths(document) if paths is None else paths
     if paths.lanelet2_path is None:
         return None
-    path = paths.lanelet2_path.expanduser()
+    resolved = _inside_map_roots(paths.lanelet2_path)
+    if resolved is None:
+        return None
+    if resolved.suffix.lower() != ".osm":
+        logger.warning("Refusing map that is not a .osm file: %s", resolved)
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _inside_map_roots(path: Path) -> Optional[Path]:
+    """Return *path* resolved when it lies inside one of :func:`map_roots`,
+    else ``None`` (logged).
+
+    The containment check every map file the editor reads goes through: the
+    drawn map (:func:`lanelet2_source`) and every parse (:func:`_load`, and
+    the OpenDRIVE an area reads its road surface from), so a map refused for
+    drawing is not parsed for a preview either (#2412).  A relative path is
+    the working directory's, as the document's paths are written.
+    """
+    path = path.expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
     try:
@@ -377,10 +396,16 @@ def lanelet2_source(
             resolved,
         )
         return None
-    if resolved.suffix.lower() != ".osm":
-        logger.warning("Refusing map that is not a .osm file: %s", resolved)
-        return None
-    return resolved if resolved.is_file() else None
+    return resolved
+
+
+def _outside_map_roots_reason(path: Path) -> str:
+    """Say that the map file *path* is outside the editor's map roots."""
+    return (
+        f"The map file {path} is outside the editor's map roots: add its "
+        f"directory to {MAP_ROOTS_ENV} (the working directory unless set) to "
+        "preview it."
+    )
 
 
 def _cache_key(paths: MapPaths) -> Optional[tuple[str, str, str]]:
@@ -447,8 +472,8 @@ def missing_map_reason(document: ScenarioDocument) -> str:
         )
     if document.map.lanelet2_path:
         return (
-            "The Lanelet2 file this scenario names cannot be read: "
-            f"{document.map.lanelet2_path}"
+            "The Lanelet2 file this scenario names cannot be read, or is "
+            f"outside the editor's map roots: {document.map.lanelet2_path}"
         )
     return (
         "The scenario has no map configured. Set a map source, or the Lanelet2 "
@@ -478,12 +503,18 @@ def _load(document: ScenarioDocument, paths: MapPaths) -> _LoadedMap:
     """Parse the document's map, or return the cached parse.
 
     Raises:
-        FileNotFoundError: If the map files are not configured or missing.
+        FileNotFoundError: If the map files are not configured, missing or
+            outside :func:`map_roots`.
         RuntimeError: If Lanelet2 could not parse the map.
     """
     key = _cache_key(paths)
     if key is None:
         raise FileNotFoundError(missing_map_reason(document))
+    # Checked on every call, a cached parse too: the files load_map() reads
+    # are held to the roots lanelet2_source() holds the drawn map to.
+    for path in (paths.lanelet2_path, paths.xodr_path):
+        if path is not None and _inside_map_roots(path) is None:
+            raise FileNotFoundError(_outside_map_roots_reason(path))
     cached = _cached(key)
     if cached is not None:
         return cached
@@ -651,6 +682,7 @@ def derive_lanelet(
     asked = (json.dumps(binding.to_sweep_dict(), sort_keys=True), picked_id)
     with _CACHE_LOCK:
         if asked in loaded.derived:
+            loaded.derived.move_to_end(asked)
             return loaded.derived[asked]
 
     from ..sweeper.bindings import parse_binding  # noqa: PLC0415
@@ -698,6 +730,7 @@ def resolve_spawn_offset(
     asked = (json.dumps([s_key, binding], sort_keys=True), picked_id)
     with _CACHE_LOCK:
         if asked in loaded.offsets:
+            loaded.offsets.move_to_end(asked)
             return loaded.offsets[asked]
 
     from ..sweeper.bindings import parse_binding  # noqa: PLC0415
@@ -800,6 +833,10 @@ def evaluate_area(
         # remembered) without parsing a Lanelet2 map, so on every render.
         resolved = map_paths(document) if paths is None else paths
         xodr = resolved.xodr_path
+        # The roots first, so a path outside them is not even looked up.
+        if xodr is not None and _inside_map_roots(xodr) is None:
+            result.error = _outside_map_roots_reason(xodr)
+            return result
         if xodr is None or not xodr.expanduser().exists():
             result.error = (
                 "The road surface is read from the OpenDRIVE map, and there is "

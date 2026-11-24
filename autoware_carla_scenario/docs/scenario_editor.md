@@ -920,7 +920,10 @@ could reach the port. A path is accepted only when it resolves **inside**
 `SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache
 (`map_root()`, always added) and names a
 `.osm`, so what the route can serve is bounded by where the editor was started
-rather than by what the process can read.
+rather than by what the process can read. The previews that parse the map (a
+lanelet search, a derived lanelet, a spawn offset, an area, and the OpenDRIVE an
+area's road surface is read from) hold its files to the same roots, so a map that
+is not drawn is not parsed either.
 
 That is a bound, not authentication: the editor still has none, so it belongs on
 a network you trust.

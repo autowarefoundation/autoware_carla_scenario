@@ -540,6 +540,37 @@ def test_a_comment_after_a_value_on_the_keys_line_is_still_kept() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "expected_tail"),
+    [
+        ("[]  # keep me", "  # keep me"),
+        (" # keep me", "  # keep me"),
+        ("null # keep me", " # keep me"),
+        ("~ # keep me", " # keep me"),
+    ],
+)
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_a_comment_after_a_value_on_the_keys_line_stays_there_for_a_block_list(
+    value: str, expected_tail: str, newline: str
+) -> None:
+    """The block list replacing a value that starts on the key's line goes on
+    later lines, so the comment stays on the key's line, not after the last
+    item (#2412)."""
+    nl = newline
+    text = f"map:{nl}  name: M{nl}  no_3d_model_lanelet_ids: {value}{nl}  other: 3{nl}"
+    assert update_no_3d_model_lanelet_ids_text(text, [3, 4]) == (
+        f"map:{nl}  name: M{nl}  no_3d_model_lanelet_ids:{expected_tail}{nl}"
+        f"    - 3{nl}    - 4{nl}  other: 3{nl}"
+    )
+
+
+def test_a_key_line_comment_stays_there_at_the_end_of_the_file() -> None:
+    text = "no_3d_model_lanelet_ids: []  # keep me"
+    assert update_no_3d_model_lanelet_ids_text(text, [3, 4]) == (
+        "no_3d_model_lanelet_ids:  # keep me\n  - 3\n  - 4"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The YAML text rendering, moved into the checked tools.yaml_text (#2364)
 # ---------------------------------------------------------------------------
@@ -703,7 +734,8 @@ def test_the_insert_after_a_line_is_as_before() -> None:
 
 def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
     """update_no_3d_model_lanelet_ids_text before #2364, verbatim but for the
-    helpers it called (the old ones above; the unchanged ones off the tool)."""
+    helpers it called (the old ones above; the unchanged ones off the tool),
+    and for the key-line comment #2412 keeps on the key's line."""
     import copy  # noqa: PLC0415
 
     ids = [int(lid) for lid in lanelet_ids]
@@ -758,6 +790,13 @@ def _old_update(text: str, lanelet_ids: Sequence[int]) -> str:
             and value_node.value
         )
         tail = _old_key_line_tail(text, key_node, value_node)
+        if not tail and ids and not flow:
+            # #2412: a comment after a value on the key's line stays there.
+            rest = re.match(r"[^\r\n]*", text[end:]).group()  # type: ignore[union-attr]
+            comment = rest[_old_comment_start(rest) :]
+            if comment:
+                tail = comment
+                end += len(rest)
         replacement = _old_format_value(ids, indent, newline, flow=flow, tail=tail)
         result = text[:start] + replacement + text[end:]
     else:

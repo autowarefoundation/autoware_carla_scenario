@@ -82,6 +82,12 @@ class TestEntityRoleConstruction:
         with pytest.raises(ValueError, match="Invalid entity role name"):
             EntityRole("npc 1")
 
+    @pytest.mark.parametrize("value", ["npc1\n", "Ego\n", "npc1\r\n"])
+    def test_rejects_a_trailing_newline(self, value: str) -> None:
+        # ``$`` matches before a final newline; the name must match whole.
+        with pytest.raises(ValueError, match="Invalid entity role name"):
+            EntityRole(value)
+
 
 class TestEntityRoleEquality:
     """Tests for equality and hashing."""

@@ -2401,7 +2401,7 @@ any job ran (its multirun directory could not be created), where it says why.
 | `VIEWER_SCENARIO_COMMAND` | viewer | The command a SLURM batch is submitted with (default `uv run scenario`) |
 | `SCENARIO_EDITOR_DRAFTS` | scenario editor | Directory holding scenario drafts |
 | `SCENARIO_EDITOR_EXPORT_DIR` | scenario editor | Staging area for exported package archives |
-| `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a Lanelet2 map may be served from |
+| `SCENARIO_EDITOR_MAP_ROOTS` | scenario editor | Directories a map may be served and previewed from |
 | `SCENARIO_EDITOR_HOST` | scenario editor | Editor server bind address (default `127.0.0.1`; `--host` wins) |
 | `SCENARIO_EDITOR_PORT` | scenario editor | Editor server listen port (`--port` wins) |
 | `SCENARIO_EDITOR_MAP_VIEWER` | scenario editor | URL of a self-hosted `simple_lanelet2` map viewer |
