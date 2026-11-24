@@ -709,7 +709,12 @@ document has it at export time:
   run as overrides (`ego.spawn_lanelet_id`,
   `scenario.spawn_overrides.<entity>.lanelet_id`,
   `scenario.param_overrides.<node id>.<field>`, `scenario.route.*`) that
-  replace what the document says;
+  replace what the document says. A logical scenario also gets
+  `sweep.exclude` with the map's exclusion list
+  (`${map.no_3d_model_lanelet_ids}`) for `ego.spawn_lanelet_id`,
+  `ego.goal_lanelet_id` and `scenario.route.lanelet_ids`: a route search has
+  no constraint to name that list in, so this keeps its matches from spawning
+  on, ending on or driving through a lanelet CARLA does not draw;
 * **the declared override keys**: `scenario.spawn_overrides.<entity>` for
   every entity but the ego, `scenario.param_overrides.<node id>.<field>` for
   every searched or derived lanelet of a card, and the `scenario.route.*` keys
@@ -717,7 +722,8 @@ document has it at export time:
   config does not declare;
 * **the exclusion list**: on a built-in map group, a non-empty
   *Excluded lanelet IDs* is written in place of every
-  `${map.no_3d_model_lanelet_ids}` in those searches. A document on a map of
+  `${map.no_3d_model_lanelet_ids}` in those searches (and in a logical
+  scenario's `sweep.exclude`). A document on a map of
   its own writes the list, with the map's name, source and paths, into the map
   group the package ships (`conf/map/<id>_map.yaml`) instead.
 

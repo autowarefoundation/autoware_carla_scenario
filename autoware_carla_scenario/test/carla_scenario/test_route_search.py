@@ -873,6 +873,60 @@ class TestExpansion:
                 road[0],
             )
 
+    def test_route_and_bindings_together_are_refused(
+        self, road: tuple[Any, Any]
+    ) -> None:
+        # A route search derives nothing from a pick: the bindings would be
+        # dropped silently (#2454).
+        with pytest.raises(ValueError, match="route search and bindings"):
+            expand_sweep(
+                {
+                    "route": {"segments": [_junction()]},
+                    "bindings": {"ego.spawn_s": {"type": "stop_line_offset"}},
+                },
+                road[0],
+            )
+
+    def test_exclude_drops_a_case_before_it_is_counted(
+        self, road: tuple[Any, Any]
+    ) -> None:
+        search = {
+            "segments": [
+                _lane(length={"min": 30, "max": 60}),
+                _junction(turn="left"),
+                _lane(length={"max": 20}),
+            ],
+            "ego_spawn_s": 5.0,
+        }
+        every = expand_sweep({"route": search}, road[0])
+        assert len(every) == 4
+
+        # By the spawn's lanelet...
+        kept = expand_sweep(
+            {"route": search, "exclude": {"ego.spawn_lanelet_id": [rm.W_IN1]}},
+            road[0],
+        )
+        assert kept
+        assert len(kept) < len(every)
+        assert not any(f"ego.spawn_lanelet_id={rm.W_IN1}" in case for case in kept)
+        # ...and the cases left say how many are left (#2454).
+        assert all(f"scenario.route.case_count={len(kept)}" in c for c in kept)
+        # The match keeps its index: it is the search's, not the expansion's.
+        assert {o for c in kept for o in c if o.startswith("scenario.route.index")} < {
+            o for c in every for o in c if o.startswith("scenario.route.index")
+        }
+
+        # ...and by any one lanelet of the route, a list.
+        through = expand_sweep(
+            {"route": search, "exclude": {"scenario.route.lanelet_ids": [602]}},
+            road[0],
+        )
+        for case in through:
+            ids = next(o for o in case if o.startswith("scenario.route.lanelet_ids="))
+            assert 602 not in [int(i) for i in ids.split("=")[1].strip("[]").split(",")]
+        assert len(through) < len(every)
+        assert all(f"scenario.route.case_count={len(through)}" in c for c in through)
+
     def test_a_spawn_past_the_route_drops_the_case(self, road: tuple[Any, Any]) -> None:
         cases = expand_sweep(
             {"route": {"segments": [_junction(turn="right")], "ego_spawn_s": 500.0}},

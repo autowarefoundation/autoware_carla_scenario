@@ -783,11 +783,11 @@ def test_drawn_cases_take_the_lanelet_cases_in_turn(monkeypatch) -> None:
 
     monkeypatch.setattr(
         expand_module,
-        "_expand_lanelets",
-        lambda sweep, lanelet_map: [
-            ["ego.spawn_lanelet_id=1"],
-            ["ego.spawn_lanelet_id=2"],
-        ],
+        "_lanelet_cases",
+        lambda sweep, lanelet_map: (
+            [["ego.spawn_lanelet_id=1"], ["ego.spawn_lanelet_id=2"]],
+            [1, 2],
+        ),
     )
     odd_sample: dict[str, Any] = {"count": 3}
     sweep = {"constraints": {"ego.spawn_lanelet_id": [{}]}, "odd_sample": odd_sample}
@@ -1752,7 +1752,10 @@ def test_drawn_cases_take_route_matches_in_turn(monkeypatch) -> None:
     monkeypatch.setattr(
         expand_module,
         "expand_route",
-        lambda route, lanelet_map, arguments=(): [["route=a"], ["route=b"]],
+        lambda route, lanelet_map, arguments=(), exclude=None: [
+            ["route=a"],
+            ["route=b"],
+        ],
     )
     sweep = {"route": {"pattern": "x"}, "odd_sample": {"count": 3}}
 
@@ -2048,10 +2051,11 @@ def _on_road(monkeypatch, buckets: list[dict[str, str]]) -> None:
 
     monkeypatch.setattr(
         expand_module,
-        "_expand_lanelets",
-        lambda sweep, lanelet_map: [
-            [f"ego.spawn_lanelet_id={i + 1}"] for i in range(len(buckets))
-        ],
+        "_lanelet_cases",
+        lambda sweep, lanelet_map: (
+            [[f"ego.spawn_lanelet_id={i + 1}"] for i in range(len(buckets))],
+            [i + 1 for i in range(len(buckets))],
+        ),
     )
     readings = [
         {name: (label, _VALUES[label]) for name, label in b.items()} for b in buckets
@@ -2059,7 +2063,7 @@ def _on_road(monkeypatch, buckets: list[dict[str, str]]) -> None:
     monkeypatch.setattr(
         expand_module,
         "_case_readings",
-        lambda cases, definition, lanelet_map: readings,
+        lambda lanelets, definition, lanelet_map: readings,
     )
 
 

@@ -106,3 +106,7 @@ sweep:
     scenario.npc_lanelet_id:
       type: adjacent
       side: left
+  # The constraints see the ego's lane, not the NPC's beside it: keep that off
+  # the lanelets CARLA does not draw.
+  exclude:
+    scenario.npc_lanelet_id: ${map.no_3d_model_lanelet_ids}

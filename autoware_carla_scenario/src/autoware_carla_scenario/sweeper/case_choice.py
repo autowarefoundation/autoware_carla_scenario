@@ -28,8 +28,13 @@ __all__ = [
 
 
 def case_lanelet(case: Sequence[str]) -> Optional[int]:
-    """The lanelet a base case is on: its first ``*lanelet_id`` override (the
-    constraints' pick, or the route's spawn)."""
+    """The lanelet a base case is on, read off its overrides: its first
+    ``*lanelet_id`` override (a route case's spawn).
+
+    A lanelet case is on the constraints' pick, which its overrides name only
+    until a ``stop_line_offset`` walk-back moves the target key off it, so
+    :mod:`.expand` carries each lanelet case's pick to the ODD's readings
+    itself and reads this only for a case it holds no pick for (#2454)."""
     for item in case:
         key, _, value = item.lstrip("+").partition("=")
         if key.endswith("lanelet_id"):

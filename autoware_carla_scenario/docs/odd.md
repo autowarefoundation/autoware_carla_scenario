@@ -1553,9 +1553,9 @@ on the `traffic_manager` backend fails before it starts
 A sweep with cases of its own -- constraints, or a route search -- draws the
 attributes the Lanelet2 map decides as well: whether the case is in a
 junction, how many lanes, the speed limit, the location and road type
-tags. Each is read off every case's lanelet (its first
-`*lanelet_id` override: the constraints' pick, or the route's spawn) with the
-probe's lanelet form, and gets a knob that reaches the buckets those lanelets
+tags. Each is read off every case's lanelet (the constraints' pick, even
+when a `stop_line_offset` walk-back moves the case's spawn onto the lane
+before it, or the route's spawn) with the probe's lanelet form, and gets a knob that reaches the buckets those lanelets
 are in. The knobs write no setting a run reads (`_odd_map.*`, taken off
 again); instead each drawn case is put on a case whose lanelet is in every
 bucket drawn, the one run least so far among those that are. So a lanelet

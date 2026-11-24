@@ -82,3 +82,36 @@ def test_no_case_touches_a_lanelet_without_a_3d_model(
         f"{scenario}: {len(offending)} case(s) on lanelets without a 3D model: "
         f"{offending}"
     )
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_odd_reads_the_right_turns_on_their_picks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every right-turn case is a junction case to the ODD, although its
+    stop_line_offset walks its spawn back onto the lane before the junction:
+    the road a case is on is the constraints' pick (docs/odd.md, #2454)."""
+    from autoware_carla_scenario.examples.compose_errors import compose_or_report
+    from autoware_carla_scenario.odd.sampler import ODD_CASE_KEY, decode_case
+    from autoware_carla_scenario.registry import load_scenario_plugins
+    from autoware_carla_scenario.sweeper.expand import expand_config
+
+    caplog.set_level(logging.ERROR)
+    load_scenario_plugins()
+    cfg = compose_or_report(
+        "intersection_passing/right_turn_sweep",
+        ["++sweep.odd_sample.count=20", "++sweep.odd_sample.seed=1"],
+    )
+    assert cfg is not None
+
+    cases = expand_config(cfg)
+
+    assert len(cases) == 20
+    junctions = []
+    for case in cases:
+        encoded = next(o for o in case if o.startswith(f"++{ODD_CASE_KEY}="))
+        sample, _space = decode_case(encoded.split("=", 1)[1])
+        junctions.append(
+            {k: v for k, v in sample.buckets.items() if k.endswith("junction_type")}
+        )
+    assert all(j and set(j.values()) == {"intersection"} for j in junctions), junctions

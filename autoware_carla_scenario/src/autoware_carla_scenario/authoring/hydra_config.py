@@ -24,7 +24,8 @@ an expansion's -- replaces it and wins.
 What the sweeper and ``scenario-expand`` read is the config, though, never the
 document, so that much is copied as it is at export time
 (:func:`build_scenario_config`): the searches (``sweep.constraints``,
-``sweep.bindings``, ``sweep.route``), which override keys are declared
+``sweep.bindings``, ``sweep.route`` with the map's exclusion list as its
+``sweep.exclude``, :data:`ROUTE_EXCLUDED_KEYS`), which override keys are declared
 (``scenario.spawn_overrides``, ``scenario.param_overrides``,
 ``scenario.route``), and a non-empty exclusion list written in place of
 :data:`MAP_EXCLUSION_REF` (or, on the document's own map, its map group,
@@ -115,6 +116,7 @@ __all__ = [
     "MAP_EXCLUSION_REF",
     "PACKAGE_GLOBAL_HEADER",
     "ROUTE_CONFIG_DEFAULTS",
+    "ROUTE_EXCLUDED_KEYS",
     "build_map_group_config",
     "build_scenario_config",
     "document_ref",
@@ -142,6 +144,17 @@ PACKAGE_GLOBAL_HEADER = "# @package _global_"
 #: list, resolved from the composed ``map`` config as the sweep YAML does (see
 #: "Excluded lanelets" above for what an export writes instead).
 MAP_EXCLUSION_REF = "${map.no_3d_model_lanelet_ids}"
+
+#: The keys of a route case an export excludes the map's lanelets from
+#: (``sweep.exclude``): the ego's spawn and goal, and every lanelet of the
+#: route it drives.  A route search has no constraint to name the map's
+#: exclusion list in, so without these it spawns and drives on lanelets
+#: CARLA does not draw (#2454).
+ROUTE_EXCLUDED_KEYS = (
+    "ego.spawn_lanelet_id",
+    "ego.goal_lanelet_id",
+    "scenario.route.lanelet_ids",
+)
 
 #: The framework's own Hydra config directory, whose ``map`` groups are the
 #: built-in ones.  It is the primary config directory of every run, so a group
@@ -726,7 +739,10 @@ def build_scenario_config(
             key: list(value) if isinstance(value, list) else value
             for key, value in ROUTE_CONFIG_DEFAULTS.items()
         }
-        config["sweep"] = {"route": document.route.to_sweep_dict()}
+        config["sweep"] = {
+            "route": document.route.to_sweep_dict(),
+            "exclude": {key: MAP_EXCLUSION_REF for key in ROUTE_EXCLUDED_KEYS},
+        }
         return _with_pinned_exclusions(config, document)
 
     slot = swept_slot(document)

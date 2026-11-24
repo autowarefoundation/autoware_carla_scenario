@@ -79,3 +79,7 @@ sweep:
     scenario.expected_route_lanelet_ids:
       type: route_through
       depth: 1
+  # The constraints see the pick, not the approach lane stop_line_offset
+  # walks the spawn back onto: keep that off the lanelets CARLA does not draw.
+  exclude:
+    ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
