@@ -15,7 +15,7 @@ from .actions._trajectory_run import forget_walkers
 from .actions.environment import forget_tire_friction, forget_weather_conditions
 from .actions.spawn import clear_props
 from .entity.ego import EgoVehicle
-from .entity._walker_ai import forget_all
+from .entity._walker_ai import forget_all, seed_navigation
 from .adversity_activity import clear_adversities
 from .entity.registry import (
     clear_entities,
@@ -1976,8 +1976,11 @@ class ScenarioRunner:
             else:
                 _follow_weather_rules(scenario)
             # CARLA's pedestrian navigation (the AI walker controllers' choice
-            # of where to go) from the run's seed, before any walker is spawned.
-            world.set_pedestrians_seed(seed)
+            # of where to go) from the run's seed, before any walker is spawned:
+            # after the map's navigation mesh is probed, so that the probe's
+            # draws (the first run on a world only) come before the run's
+            # sequence and every run draws the same after its seed (#2448).
+            seed_navigation(world, seed)
             backend.prepare(
                 TrafficContext(
                     client=self._client,

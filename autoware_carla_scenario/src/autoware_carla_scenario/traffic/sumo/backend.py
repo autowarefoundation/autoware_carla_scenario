@@ -2584,8 +2584,14 @@ class SumoTrafficBackend(TrafficBackend):
             return False
         role = str(getattr(entity, "role_name", person))
         if speed_ms <= 0.0:
-            self._walking.pop(person, None)
-            self._walk(actor, self._person_carla_pose(person), 0.0)
+            # Where SUMO has it, facing the way it walked (or, never sent on
+            # a walk, the way its walker faces): SUMO's own angle may be a
+            # crossing's backward one (_person_angle()).
+            walk = self._walking.pop(person, None)
+            heading = (
+                walk[2] if walk is not None else self._walker_pose(actor).heading_deg
+            )
+            self._walk(actor, self._person_carla_pose(person, heading), 0.0)
             logger.info("SUMO: pedestrian '%s' stands where it is", role)
             return True
         pose = self._walker_pose(actor, yaw_deg)
@@ -2660,12 +2666,18 @@ class SumoTrafficBackend(TrafficBackend):
 
     def _follow_walked(self) -> None:
         """Walk the walkers of the scenario's pedestrians out on a walk to
-        where SUMO has their persons."""
-        for person, (_x, _y, _heading, speed) in self._walking.items():
+        where SUMO has their persons, facing and walking the way the walk
+        goes.
+
+        Only the position is SUMO's: near a crossing the person is moved with
+        the crossing's backward angle (_person_angle(), a SUMO 1.28 crash
+        workaround), which the walker would otherwise face and be driven
+        along -- backwards (#2448)."""
+        for person, (_x, _y, heading, speed) in self._walking.items():
             entity = self._walked.get(person)
             actor = getattr(entity, "actor", None) if entity is not None else None
             if actor is not None:
-                self._walk(actor, self._person_carla_pose(person), speed)
+                self._walk(actor, self._person_carla_pose(person, heading), speed)
 
     def background_actors(self, world: Any) -> dict[str, Any]:
         """The CARLA mirror of every ambient SUMO vehicle, by its role name
@@ -4786,12 +4798,14 @@ class SumoTrafficBackend(TrafficBackend):
                 continue
             self._walk(walker, pose, float(tc.person.getSpeed(person)))
 
-    def _person_carla_pose(self, person: str) -> Pose2D:
+    def _person_carla_pose(self, person: str, angle: Optional[float] = None) -> Pose2D:
+        """Where *person* is, in CARLA's frame, facing SUMO's *angle* when
+        given (a walk's heading, in SUMO's frame), else its own."""
         tc = self._traci
         x, y, z = tc.person.getPosition3D(person)
-        return sumo_to_carla(
-            Pose2D(x, y, z, tc.person.getAngle(person)), 0.0, self._offset
-        )
+        if angle is None:
+            angle = tc.person.getAngle(person)
+        return sumo_to_carla(Pose2D(x, y, z, angle), 0.0, self._offset)
 
     def _spawn_walker(self, world: Any, library: Any, person: str, pose: Pose2D) -> Any:
         """A walker for *person* at *pose*; ``None`` if the spot is taken

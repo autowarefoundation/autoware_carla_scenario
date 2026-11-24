@@ -119,6 +119,7 @@ __all__ = [
     "has_navmesh",
     "release",
     "road_stretches",
+    "seed_navigation",
 ]
 
 #: CARLA's own pedestrian cross factor (``Navigation::_probability_crossing``).
@@ -281,6 +282,22 @@ def has_navmesh(world: "carla.World") -> bool:
                 "controller (build one when importing the map)"
             )
     return _NAVMESH[key]
+
+
+def seed_navigation(world: "carla.World", seed: int) -> None:
+    """Seed *world*'s pedestrian navigation for a run, after
+    :func:`has_navmesh` has asked whether its map has a mesh.
+
+    The seed decides ``get_random_location_from_navigation()``, the cross
+    factor's draw as a controller starts and random routes.  The probe draws
+    navigation locations, but only the first time a world is asked (a soft
+    reset keeps the world id), so probed lazily -- at a run's first
+    :func:`drive` -- it would take draws from the first run on a world and not
+    from the ones after it, and every draw after it would depend on the run's
+    place in a batch (#2448).  Probed here, before the seed, its draws come
+    before the run's sequence starts, whichever run it is."""
+    has_navmesh(world)
+    world.set_pedestrians_seed(seed)
 
 
 def _start(world: "carla.World", driven: _Driven) -> None:

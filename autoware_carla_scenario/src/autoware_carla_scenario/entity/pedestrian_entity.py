@@ -211,12 +211,15 @@ class PedestrianEntity(WalkedEntity):
     ``scenario_pedestrians=sumo`` -- takes it, and the walker follows that
     backend's pedestrian.  Otherwise the entity walks its walker itself.
 
-    Walking it itself is commanded with :class:`carla.WalkerControl` rather than through
-    a ``controller.ai.walker``.  The AI controller exists to send a walker *to
-    a destination*, which is a different scenario primitive and one nothing
-    here asks for yet; using it to walk straight would mean inventing a
-    destination far enough away to look like "straight", and the walker would
-    then route around obstacles the scenario put there on purpose.
+    A straight walk it walks itself is commanded with :class:`carla.WalkerControl`
+    rather than through a ``controller.ai.walker``.  The AI controller exists
+    to send a walker *to a destination*, which is a different scenario
+    primitive: a routed walk (a ``RoutingAction`` in driver mode) uses it, to
+    walk the walker along its route through CARLA's navigation
+    (:mod:`~autoware_carla_scenario.entity._walker_ai`).  Using it to walk
+    straight would mean inventing a destination far enough away to look like
+    "straight", and the walker would then route around obstacles the scenario
+    put there on purpose.
     """
 
     # Declared for the static check (docs/typecheck.md): Codon types an
