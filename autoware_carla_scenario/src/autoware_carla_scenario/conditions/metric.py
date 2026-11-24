@@ -46,6 +46,11 @@ class MetricCondition(BaseCondition):
     it earlier.  A frame the
     metric reads nothing in (no ego, no road user to measure from) is not NG.
 
+    A condition that is not judged at all -- its metric is a heavy one and
+    the heavy metrics are off, or the run recorded no frame -- neither fails
+    nor passes the run, and says so: its details hold ``"judged": false`` and
+    the ``reason`` (:meth:`mark_not_judged`).
+
     Being judged after the run, it neither ends a run early nor composes:
     :class:`~autoware_carla_scenario.conditions.PersistentCondition`, a NOT,
     an AND or an OR refuses one (*max_ng_seconds* is how long it must hold),
@@ -78,6 +83,7 @@ class MetricCondition(BaseCondition):
     _comparison: ScalarComparisonRule
     _max_ng_seconds: float
     _judgement: dict[str, float]
+    _not_judged: str
 
     def __init__(
         self,
@@ -104,6 +110,7 @@ class MetricCondition(BaseCondition):
         )
         self._max_ng_seconds = float(max_ng_seconds)
         self._judgement = {}
+        self._not_judged = ""
 
     @property
     def metric(self) -> str:
@@ -137,7 +144,20 @@ class MetricCondition(BaseCondition):
         # one).
         for key, found in self._judgement.items():
             details[key] = found if math.isfinite(found) else None
+        if self._not_judged:
+            details["judged"] = False
+            details["reason"] = self._not_judged
         return details
+
+    def mark_not_judged(self, reason: str) -> None:
+        """Record that the run was not judged on this condition, for
+        *reason* (e.g. ``"heavy metrics off"``): it neither fails nor passes
+        the run, and :meth:`get_details` says so (``"judged": false`` and the
+        ``reason``) in place of what a judgement found."""
+        self._judgement = {}
+        self._not_judged = reason
+        self._last_satisfied = False
+        self._last_message = f"not judged: {reason}"
 
     def is_ng(self, value: Optional[float]) -> bool:
         """Whether a frame reading *value* is NG."""
@@ -163,7 +183,15 @@ class MetricCondition(BaseCondition):
         the NG time, when it first went NG, the most critical value -- is in
         :meth:`get_details` afterwards, a value that is not finite (a
         ``worst`` of ``inf``) as ``None``.
+
+        An empty series (the run recorded no frame) judges nothing: the
+        condition is marked not judged (:meth:`mark_not_judged`, "no frame
+        recorded") rather than held, and ``None`` is returned.
         """
+        self._not_judged = ""
+        if len(times) == 0:
+            self.mark_not_judged("no frame recorded")
+            return None
         ng = 0.0
         first: Optional[float] = None
         worst: Optional[float] = None
@@ -220,7 +248,11 @@ class MetricCondition(BaseCondition):
 
     def _more_critical(self, value: float, than: float) -> bool:
         """Whether *value* is further into NG than *than*: below a threshold
-        it is NG under, lower; above, higher."""
+        it is NG under, lower; above, higher; equal to it (within the
+        tolerance), closer to it."""
+        if self._comparison.rule == ComparisonRule.EQUAL_TO:
+            target = self._comparison.value
+            return abs(value - target) < abs(than - target)
         if self._comparison.rule in (
             ComparisonRule.LESS_THAN,
             ComparisonRule.LESS_THAN_OR_EQUAL,
@@ -236,3 +268,4 @@ class MetricCondition(BaseCondition):
     def reset(self) -> None:
         super().reset()
         self._judgement = {}
+        self._not_judged = ""
