@@ -2753,6 +2753,10 @@ two are refused.</p>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># Regression: the candidate's runs against the baseline's</span>
 <a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>scenario-gate<span class="w"> </span>runs/v1.4/<span class="w"> </span>runs/v1.5/
 </code></pre></div>
+<p><code>--document</code>'s id selects the runs its gate is judged on, so <code>--scenario</code>
+with another id is refused (exit code <code>2</code>) rather than judging one
+scenario's runs against another's gate; <code>--scenario</code> with the document's own
+id is allowed.</p>
 <h3 id="cases-that-raised-no-record-so-the-set-is-refused">Cases that raised: no record, so the set is refused<a class="headerlink" href="#cases-that-raised-no-record-so-the-set-is-refused" title="Permanent link">&para;</a></h3>
 <p>A run that raises (a spawn that fails on every attempt, a lost CARLA
 connection) writes no result and so no gate record. The batch still lists the
@@ -2912,12 +2916,19 @@ and what the gate asks:</p>
 <a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>| min_case_coverage | 1 (12 of 12 case(s) on 1 map(s)) | &gt;= 0.8 | pass |
 <a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>| max_lateral_spread_m | 0.2213 (segment 1 at 45%, 60 station(s)) | &lt;= 0.4 | pass |
 </code></pre></div>
+<p>Values are printed to four significant digits, except a failing one that
+would then read as its threshold: it and the threshold are printed to the
+fewest digits that tell them apart (<code>0.40004 ... &lt;= 0.4 ... **FAIL**</code>, not
+<code>0.4 ... &lt;= 0.4</code>). A record that could not be read is listed under <strong>Records
+that could not be read</strong>, after the title, and is not judged.</p>
 <h3 id="regression-a-baseline-against-a-candidate">Regression: a baseline against a candidate<a class="headerlink" href="#regression-a-baseline-against-a-candidate" title="Permanent link">&para;</a></h3>
 <p>Given two sets -- the runs of one version of the driver (the baseline) and of
 the next (the candidate) -- each logical scenario either ran is judged on
 both, <strong>against one gate</strong>: <code>--document</code>'s, else the one the candidate's
 latest record states. What moved is then the runs, not the thresholds; a
-baseline whose runs stated another gate is re-judged, with a warning.</p>
+baseline whose runs stated another gate is re-judged, with a warning (gates
+are compared normalized, so a record that leaves out a default states the
+same gate as one that spells it out).</p>
 <p>Each criterion is compared:</p>
 <table>
 <thead>
@@ -3002,7 +3013,7 @@ not run fails either way; one only the candidate ran is judged on its own.</p>
 </tr>
 <tr>
 <td><code>2</code></td>
-<td>Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a <code>--multirun</code> job among them was given up, did not finish or (planned) never ran, and left no record (unless <code>--allow-unrecorded</code>; above), a batch summary, SLURM manifest or sweep plan could not be read (even with <code>--allow-unrecorded</code>), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, <code>--fail-on-regression</code> with one set, <code>--document</code> has no gate, or the <code>--markdown</code> or <code>--json</code> file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged)</td>
+<td>Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a <code>--multirun</code> job among them was given up, did not finish or (planned) never ran, and left no record (unless <code>--allow-unrecorded</code>; above), a batch summary, SLURM manifest or sweep plan could not be read (even with <code>--allow-unrecorded</code>), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, <code>--fail-on-regression</code> with one set, <code>--document</code> has no gate, <code>--scenario</code> is not <code>--document</code>'s id, or the <code>--markdown</code> or <code>--json</code> file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged)</td>
 </tr>
 </tbody>
 </table>
@@ -3016,6 +3027,16 @@ both verdicts, each criterion's <code>change</code> and <code>delta</code> (cand
 baseline), the <code>newly_failing</code> and <code>fixed</code> cases, and the <code>warnings</code>: the
 baseline verdict's (each prefixed <code>baseline:</code>), then the candidate verdict's
 (<code>candidate:</code>), then the comparison's own.</p>
+<p>Either way it also holds, after those:</p>
+<ul>
+<li><code>unreadable_records</code>: each record that could not be read (<code>path</code>,
+  <code>reason</code>), not judged -- the verdicts are over the rest, and the run exits
+  <code>2</code> even if they passed;</li>
+<li><code>unwritable_outputs</code>: each output that could not be written (<code>path</code>,
+  <code>reason</code>): the <code>--markdown</code> file (the JSON is written after it; a JSON that
+  cannot be written does not exist to say so);</li>
+<li><code>exit_code</code>: what <code>scenario-gate</code> exits with (above).</li>
+</ul>
 <h2 id="in-the-scenario-editor">In the Scenario Editor<a class="headerlink" href="#in-the-scenario-editor" title="Permanent link">&para;</a></h2>
 <p>The scenario inspector's <strong>Gate</strong> section, below the route search, turns the
 gate on (<strong>Judge the logical scenario</strong>) and lists one row per threshold: a
@@ -3077,7 +3098,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 05:56:19 UTC"><span class="timeago" datetime="2026-11-24T05:56:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 05:56:19 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 21:03:48 UTC"><span class="timeago" datetime="2026-11-24T21:03:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 21:03:48 UTC">2026-11-24</span>
   </span>
 
     
