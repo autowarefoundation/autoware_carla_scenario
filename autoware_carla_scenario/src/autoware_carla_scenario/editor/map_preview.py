@@ -384,7 +384,9 @@ def _inside_map_roots(path: Path) -> Optional[Path]:
         path = Path.cwd() / path
     try:
         resolved = path.resolve()
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError: a NUL byte in a typed path, which is no map either
+        # (fetch_opendrive answered it with a 500, #2414).
         return None
 
     # ``resolve()`` first, so `..` cannot walk out of a root it started in.

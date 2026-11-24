@@ -701,3 +701,13 @@ class TestNothingIsHandWrittenAnyMore:
 
         defined = [name for name in vars(builders) if name.startswith("build_")]
         assert not defined, f"hand-written builders are back: {defined}"
+
+
+def test_a_reference_with_a_trailing_newline_is_no_reference() -> None:
+    """Matched with ``fullmatch``: ``$`` also matches before a final newline,
+    so ``match`` took one (#2414)."""
+    from autoware_carla_scenario.editor.forms import parse_int_list
+
+    assert registry.REFERENCE_PATTERN.fullmatch("${map.ids}")
+    assert registry.REFERENCE_PATTERN.fullmatch("${map.ids}\n") is None
+    assert parse_int_list("${map.ids}", reference="${map.ids}") == "${map.ids}"

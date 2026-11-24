@@ -113,7 +113,7 @@ def _expected_int_list(raw: Any, reference: str | None = None) -> Any:
     """:func:`_old_parse_int_list`, but for the interpolations the old one
     kept verbatim: only *reference*, exactly, is kept now (#2235)."""
     text = raw.strip() if isinstance(raw, str) else None
-    if text is not None and text != reference and REFERENCE_PATTERN.match(text):
+    if text is not None and text != reference and REFERENCE_PATTERN.fullmatch(text):
         if reference is not None:
             raise ValueError(f"must be whole numbers or {reference}, got {text!r}")
         raise ValueError(f"must be whole numbers, got {text!r}")

@@ -5472,6 +5472,43 @@ class TestMapRootsGuardEveryRead:
         assert "outside the editor's map roots" in result.error
         assert not result.map_loaded
 
+    def test_opendrive_is_not_fetched_into_a_directory_outside_the_roots(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fetching resolves the map directory, a typed path (#2414)."""
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.editor import service as service_module
+
+        roots = tmp_path / "roots"
+        elsewhere = tmp_path / "elsewhere"
+        roots.mkdir()
+        elsewhere.mkdir()
+        monkeypatch.setenv(map_preview.MAP_ROOTS_ENV, str(roots))
+        fetched: list[Any] = []
+
+        def _ensure_xodr(resolved: Any, **kwargs: Any) -> Path:
+            fetched.append(resolved)
+            return roots / "m.xodr"
+
+        monkeypatch.setattr(service_module, "resolve_directory", lambda d: d)
+        monkeypatch.setattr(service_module, "ensure_xodr", _ensure_xodr)
+        service = EditorService(DraftStore(tmp_path / "drafts"))
+        document = ScenarioDocument()
+        document.map.directory = str(elsewhere)
+        with pytest.raises(EditorError, match="outside the editor's map roots"):
+            service.fetch_opendrive(document, host="localhost", port=2000)
+        assert fetched == []
+        # Inside the roots, the same fetch writes.
+        document.map.directory = str(roots)
+        assert service.fetch_opendrive(document, host="localhost", port=2000) == (
+            "OpenDRIVE written to m.xodr."
+        )
+        assert fetched == [str(roots)]
+        # A NUL byte, which resolve() raises ValueError for, is refused too.
+        document.map.directory = str(roots) + "\x00"
+        with pytest.raises(EditorError, match="outside the editor's map roots"):
+            service.fetch_opendrive(document, host="localhost", port=2000)
+
 
 class TestDerivedCachesAreLeastRecentlyUsed:
     """A hit moves the entry to the end, as evaluate_slot's does (#2412)."""

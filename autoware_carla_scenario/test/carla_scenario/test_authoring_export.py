@@ -263,6 +263,24 @@ class TestFrameworkPin:
             == "https://gitlab.example.com/team/repo"
         )
 
+    def test_a_trailing_newline_is_no_commit_and_no_scp_remote(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``$`` matched before a final newline (#2414)."""
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        assert module._SCP_URL_PATTERN.fullmatch("git@host:o/r.git\n") is None
+        commits = {"HEAD": "a" * 40 + "\n"}
+        monkeypatch.setattr(module, "_is_framework_project", lambda _root: True)
+        monkeypatch.setattr(
+            module,
+            "_git",
+            lambda _root, *args: commits.get(args[-1], "/repo"),
+        )
+        assert module._resolve_git_pin(Path("/repo")) is None
+        commits["HEAD"] = "a" * 40
+        assert module._resolve_git_pin(Path("/repo")) is not None
+
     @pytest.mark.parametrize(
         "url",
         ["https://github.com/owner/repo", "https://github.com/owner/repo.git"],
