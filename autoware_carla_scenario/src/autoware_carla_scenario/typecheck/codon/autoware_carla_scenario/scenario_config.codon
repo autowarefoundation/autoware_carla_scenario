@@ -209,11 +209,6 @@ class DriverLateralSpec:
     tso_t0_point: bool = True
 
 
-class DriverVehicleSpec:
-    max_steer_angle_deg: Optional[float] = None
-    steering_curve: Optional[List[List[float]]] = None
-
-
 class DriverConfig:
     address: str = "localhost:50051"
     policy: Optional[str] = None
@@ -243,7 +238,6 @@ class DriverConfig:
     t4_scene_map: str = "run"
     control: DriverControlSpec = DriverControlSpec()
     lateral: DriverLateralSpec = DriverLateralSpec()
-    vehicle: DriverVehicleSpec = DriverVehicleSpec()
 
 
 class SweepConfig:

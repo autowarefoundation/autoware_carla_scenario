@@ -497,10 +497,6 @@ def register_odd(name: str, builder) -> None:
     odd: OddDefinition = builder()
 
 
-def ego_max_steer_angle_deg(world: carla.World) -> Optional[float]:
-    raise NotImplementedError()
-
-
 def ego_speed_kph(world: carla.World) -> Optional[float]:
     raise NotImplementedError()
 

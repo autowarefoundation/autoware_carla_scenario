@@ -84,7 +84,6 @@ __all__ = [
     "cloudiness",
     "drivable_area_of_subtype",
     "drivable_area_type",
-    "ego_max_steer_angle_deg",
     "ego_speed_kph",
     "fog",
     "fog_visibility_range_m",
@@ -500,35 +499,6 @@ def ego_speed_kph(world: carla.World) -> Optional[float]:
     if ego is None:
         return None
     return Vector3.from_carla_vector3d(ego.get_velocity()).magnitude() * _KMH_PER_MS
-
-
-def ego_max_steer_angle_deg(world: carla.World) -> Optional[float]:
-    """The ego's wheel angle at full lock, in degrees: the largest
-    ``max_steer_angle`` of its wheels in CARLA's vehicle physics, which
-    ``driver.vehicle.max_steer_angle_deg`` sets
-    (:mod:`autoware_carla_scenario.driver.vehicle_physics`); ``None`` without
-    an ego, or one whose physics tells no steered wheel.
-
-    Read from the vehicle on every call (a physics control is not cached: the
-    run writes it when its session starts).
-    """
-    ego = _ego(world)
-    if ego is None:
-        return None
-    # One `except` per exception: Codon takes no tuple (docs/typecheck.md).
-    try:
-        if TYPE_CHECKING:
-            # Codon's CARLA API has the physics control on a carla.Vehicle only.
-            physics = ego.as_vehicle().get_physics_control()
-        else:
-            physics = ego.get_physics_control()
-        angles = [float(wheel.max_steer_angle) for wheel in physics.wheels]
-    except AttributeError:
-        return None
-    except RuntimeError:
-        return None
-    largest = max(angles) if angles else 0.0
-    return largest if largest > 0.0 else None
 
 
 def in_junction(world: carla.World) -> Optional[bool]:

@@ -56,7 +56,6 @@ __all__ = [
 #: Built-in probe name -> the unit it returns.
 _PROBE_UNITS: dict[str, str] = {
     "ego_speed_kph": "km/h",
-    "ego_max_steer_angle_deg": "deg",
     "speed_limit_kph": "km/h",
     "lanelet_speed_limit_kph": "km/h",
     "visibility": "m",
@@ -192,12 +191,6 @@ _KNOBS_BY_NAME: dict[str, OddKnob] = {
     "tire_friction": OddKnob(
         "environment.tire_friction",
         range=(0.3, 1.1),
-    ),
-    # The ego's steering in CARLA's vehicle physics (driver.vehicle): the
-    # wheels' angle at full lock.  CARLA has no steering delay to set.
-    "ego_max_steer_angle_deg": OddKnob(
-        "driver.vehicle.max_steer_angle_deg",
-        range=(20.0, 90.0),
     ),
     "wind": OddKnob(
         "environment.wind_intensity",

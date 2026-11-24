@@ -86,7 +86,6 @@ if TYPE_CHECKING:
 
     from ..autoware_bridge.base import AutowareBridge, AutowareBridgeConfig
     from ..driver.autoware_lateral import AutowareLateralChain, LateralChainConfig
-    from ..driver.vehicle_physics import VehicleSteeringConfig
     from ..autoware_stack.launcher import AutowareLauncher
     from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 
@@ -129,11 +128,6 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             follower's longitudinal controller follows the published trajectory.
             ``None`` (or ``controller: pure_pursuit``) steers on the follower's pure
             pursuit, as before.
-        vehicle_config: The ego's steering parameters in CARLA's vehicle physics
-            (``driver.vehicle``: the wheels' ``max_steer_angle``, the
-            ``steering_curve``), written to the ego when a session starts
-            (:mod:`~autoware_carla_scenario.driver.vehicle_physics`).  ``None``
-            keeps the blueprint's.
         client: Pre-built driver client, used by tests to substitute a fake or an
             in-process gRPC channel.  ``None`` builds an
             :class:`~autoware_carla_scenario.driver.egodriver_client.EgoDriverGrpcClient`
@@ -167,7 +161,6 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         launcher: Optional["AutowareLauncher"] = None,
         episode_name: str = "",
         lateral_config: Optional["LateralChainConfig"] = None,
-        vehicle_config: Optional["VehicleSteeringConfig"] = None,
     ) -> None:
         super().__init__()
         if launcher is not None and bridge is None:
@@ -199,7 +192,6 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             from ..driver.autoware_lateral import AutowareLateralChain  # noqa: PLC0415
 
             self._lateral = AutowareLateralChain(lateral_config, self._follower.config)
-        self._vehicle_config = vehicle_config
 
         self._cameras: List[Tuple[str, "CarlaCameraSensor"]] = []
         #: ``(logical_id, sensor, mount in the rig frame)`` per LiDAR.
@@ -376,13 +368,6 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._world = world
         self._acceleration.reset()
         self._turn_indicator = TurnIndicator.NO_COMMAND
-        if self._vehicle_config is not None:
-            # Imported here: only a run that sets driver.vehicle needs it.
-            from ..driver.vehicle_physics import (  # noqa: PLC0415
-                apply_vehicle_steering,
-            )
-
-            apply_vehicle_steering(actor, self._vehicle_config)
         # The ego drives on CARLA's own (Chaos) vehicle physics: this entity puts it
         # on no other, so its pedals are worked out from that model.
         self._follower.powertrain = ChaosPowertrain.from_physics_control(

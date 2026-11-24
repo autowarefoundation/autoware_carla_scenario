@@ -219,7 +219,6 @@ These live in `autoware_carla_scenario.odd`:
 | Probe | Returns | Read from |
 |---|---|---|
 | `ego_speed_kph` | float, km/h | Ego velocity |
-| `ego_max_steer_angle_deg` | float, deg | The ego's wheel angle at full lock, the largest `max_steer_angle` of its wheels in CARLA's vehicle physics (`driver.vehicle`) |
 | `speed_limit_kph` | float, km/h | Lanelet2 `speed_limit` tag, else CARLA |
 | `lanelet_speed_limit_kph` | float, km/h | Lanelet2 `speed_limit` tag |
 | `lanelet_location` | str | Lanelet2 `location` tag (`urban`, `nonurban`, ...) |
@@ -1104,17 +1103,6 @@ so). CARLA's own fields have controls too, for an ODD that names them:
 | `tire_friction` | `environment.tire_friction` | 0.3-1.1 of the dry road's grip, whatever the weather |
 | `wind` | `environment.wind_intensity` | as `rain` |
 | `cloudiness` | `environment.cloudiness` | as `rain` |
-
-The ego's steering has a control too, in CARLA's vehicle physics
-([`driver.vehicle`](driver_interface.md#the-egos-steering-in-carlas-physics-drivervehicle)):
-
-| Probe | Key | Ranges |
-|---|---|---|
-| `ego_max_steer_angle_deg` | `driver.vehicle.max_steer_angle_deg` | 20-90 degrees of wheel angle at full lock |
-
-CARLA has no steering dead time or servo response to set, and the
-follower's angle-to-steer map (`driver.control`) does not change with the
-wheels' angle: see that section.
 
 The precipitation brings, by the rules, the cloudiness, standing water and
 wetness of CARLA's rain presets: precipitation alone draws only the falling

@@ -157,11 +157,11 @@ def _defaults(cls: type) -> dict[str, Any]:
 
 def test_the_driver_schema_has_the_runtime_driver_fields() -> None:
     # DriverClientConfig is what the run builds from the `driver` block; the
-    # controller (`control`, `lateral`), the ego's steering parameters
-    # (`vehicle`) and the bridge (`bridge`) are read on their own.
+    # controller (`control`, `lateral`) and the bridge (`bridge`) are read on
+    # their own.
     schema = _defaults(DriverConfig)
     runtime = _defaults(DriverClientConfig)
-    assert set(schema) - {"control", "bridge", "lateral", "vehicle"} == set(runtime)
+    assert set(schema) - {"control", "bridge", "lateral"} == set(runtime)
     for key, value in runtime.items():
         if key in ("cameras", "lidars"):
             continue  # Specs here, DriverCameraConfig / DriverLidarConfig there.
