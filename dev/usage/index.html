@@ -7000,8 +7000,14 @@ is recorded as failed, and the jobs after it do not start.</p>
 <div class="admonition warning">
 <p class="admonition-title">The viewer listens on this machine only by default</p>
 <p>The viewer has no authentication, and its API starts scenario runs
-(<code>POST /api/run</code>) and SLURM submissions (<code>/api/slurm/...</code>). It therefore
-binds <code>127.0.0.1</code> unless told otherwise. It used to bind <code>0.0.0.0</code>, every
+(<code>POST /api/run</code>) and SLURM submissions (<code>/api/slurm/...</code>). <code>POST
+/api/run</code> passes its <code>extra_overrides</code> to Hydra unvalidated (only a line
+starting with <code>-</code>, a flag, is refused): <code>hydra.run.dir=...</code> makes the job
+write wherever it names, and a Hydra callback (<code>+hydra.callbacks...</code>)
+makes it run any code, so anyone who can reach the viewer's port can run
+commands as the user the viewer runs as, on this machine or, through a
+SLURM submission, on the cluster. It therefore binds <code>127.0.0.1</code> unless
+told otherwise. It used to bind <code>0.0.0.0</code>, every
 interface; to serve other machines as before, pass <code>--host 0.0.0.0</code> (or set
 <code>VIEWER_HOST=0.0.0.0</code>) on a network you trust. The viewer prints a warning
 when it listens on anything but a loopback address.</p>
@@ -7333,7 +7339,7 @@ sync the environment).</p>
 <tr>
 <td><code>POST</code></td>
 <td><code>/api/run</code></td>
-<td>Start a scenario execution in the background (400 <code>{"status": "error"}</code> for a body that is not a JSON object or names no <code>scenario</code>, a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available)</td>
+<td>Start a scenario execution in the background (400 <code>{"status": "error"}</code> for a body that is not a JSON object or names no <code>scenario</code>, an extra override starting with <code>-</code> (a flag of <code>scenario</code>, not an override), a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available)</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -7397,8 +7403,9 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
 <a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="w">  </span><span class="nt">"total"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
 <a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a><span class="w">  </span><span class="nt">"scenario_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"intersection_passing/straight"</span><span class="p">,</span>
 <a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a><span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span><span class="p">,</span>
-<a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span>
-<a id="__codelineno-41-7" name="__codelineno-41-7" href="#__codelineno-41-7"></a><span class="p">}</span>
+<a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="w">  </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span>
+<a id="__codelineno-41-7" name="__codelineno-41-7" href="#__codelineno-41-7"></a><span class="w">  </span><span class="nt">"failed"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-41-8" name="__codelineno-41-8" href="#__codelineno-41-8"></a><span class="p">}</span>
 </code></pre></div>
 <p>Each event is a <code>data:</code> line holding one such object. <code>status</code> is one of:</p>
 <ul>
@@ -7411,7 +7418,11 @@ lines, or a mapping, each value exported as written, so without <code>${...}</co
   ends here.</li>
 </ul>
 <p><code>message</code> is empty but on a <code>"done"</code> of a run that failed as a whole before
-any job ran (its multirun directory could not be created), where it says why.</p>
+any job ran (its multirun directory could not be created), where it says why,
+and on a <code>"done"</code> of a run some of whose jobs failed, where it says how many
+(<code>"2 of 5 failed"</code>). <code>failed</code> is that count on a <code>"done"</code> (0 otherwise; a job
+a stop ended is not counted); the Run panel shows a <code>"done"</code> with a <code>message</code>
+in red, else "Completed!" in green.</p>
 <hr />
 <h2 id="environment-variables_1">Environment Variables<a class="headerlink" href="#environment-variables_1" title="Permanent link">&para;</a></h2>
 <table>
@@ -7646,7 +7657,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 07:42:41 UTC"><span class="timeago" datetime="2026-11-24T07:42:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 07:42:41 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 13:08:46 UTC"><span class="timeago" datetime="2026-11-24T13:08:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 13:08:46 UTC">2026-11-24</span>
   </span>
 
     
