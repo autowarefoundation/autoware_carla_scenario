@@ -32,7 +32,7 @@ neither starts the other.
 
 ## `scenario` - Scenario Runner
 
-Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/) for configuration management. Uses a CARLA server already listening on `server.host`/`server.port`, or launches one: `CARLA_EXECUTABLE`, else the one `scenario-setup` installed.
+Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/) for configuration management. Uses a CARLA server already listening on `server.host`/`server.port`, or, when `server.host` is a local host, launches one: `CARLA_EXECUTABLE`, else the one `scenario-setup` installed.
 
 ### How It Works
 
