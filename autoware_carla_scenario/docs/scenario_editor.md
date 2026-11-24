@@ -923,7 +923,9 @@ could reach the port. A path is accepted only when it resolves **inside**
 rather than by what the process can read. The previews that parse the map (a
 lanelet search, a derived lanelet, a spawn offset, an area, and the OpenDRIVE an
 area's road surface is read from) hold its files to the same roots, so a map that
-is not drawn is not parsed either.
+is not drawn is not parsed either. Fetching OpenDRIVE from CARLA reads the
+**Map directory** to cache an `.xodr` for it, so a directory outside those roots
+is refused there too.
 
 That is a bound, not authentication: the editor still has none, so it belongs on
 a network you trust.

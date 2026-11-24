@@ -54,8 +54,8 @@ PACKS_DIR_ENV = "AUTOWARE_CARLA_SCENARIO_PACKS_DIR"
 """Overrides where packs are installed for the server (:func:`packs_dir`)."""
 
 _NAME = r"[A-Za-z0-9_.-]+"
-_REFERENCE = re.compile(rf"^{_NAME}/{_NAME}(?:/{_NAME}(?:@[A-Za-z0-9_.+-]+)?)?$")
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_REFERENCE = re.compile(rf"{_NAME}/{_NAME}(?:/{_NAME}(?:@[A-Za-z0-9_.+-]+)?)?")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 #: The formats a pack's Lanelet2 map is read from, in order of preference: the
 #: Autoware map folder (Lanelet2, projector info, point cloud) over a bare
@@ -293,14 +293,14 @@ class MapPack:
         # pack name, and a path built of one leaves the packs directory
         # (#2233).
         parts = self.reference.replace("@", "/").split("/")
-        if not _REFERENCE.match(self.reference) or any(
+        if not _REFERENCE.fullmatch(self.reference) or any(
             part in (".", "..") for part in parts
         ):
             raise ValueError(
                 f"map.pack must be OWNER/REPO/PACK[@VERSION] or OWNER/REPO, "
                 f"got {self.reference!r}"
             )
-        if self.sha256 is not None and not _SHA256.match(self.sha256):
+        if self.sha256 is not None and not _SHA256.fullmatch(self.sha256):
             raise ValueError(
                 "map.pack_sha256 must be a SHA-256 in lowercase hex (64 "
                 f"characters), got {self.sha256!r}"

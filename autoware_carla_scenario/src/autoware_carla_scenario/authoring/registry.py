@@ -211,7 +211,8 @@ def read_bool(value: Any) -> Optional[bool]:
 
 #: An OmegaConf interpolation such as ``${map.no_3d_model_lanelet_ids}``.  A
 #: field whose kind ends in ``_or_ref`` keeps one of these verbatim so the
-#: composed YAML resolves it at run time.
+#: composed YAML resolves it at run time.  Match it with ``fullmatch``: its
+#: ``$`` also matches before a final newline (#2414).
 REFERENCE_PATTERN = re.compile(r"^\$\{[^}]+\}$")
 
 

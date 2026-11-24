@@ -76,12 +76,12 @@ _SCP_HOST = re.compile(r"^[A-Za-z0-9_.+-]+@[A-Za-z0-9_.-]+:")
 
 #: A full git object name.  Abbreviated hashes are deliberately not pins: they
 #: are not guaranteed to stay unambiguous as a repository grows.
-_FULL_COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
+_FULL_COMMIT = re.compile(r"[0-9a-fA-F]{40}")
 
 #: What could be an abbreviated commit hash: git takes no fewer than four
 #: digits.  A branch or a tag can be spelled so as well, and is what such a
 #: ref names when the remote has one.
-_ABBREVIATED_COMMIT = re.compile(r"^[0-9a-fA-F]{4,39}$")
+_ABBREVIATED_COMMIT = re.compile(r"[0-9a-fA-F]{4,39}")
 
 #: The fragment of a browser page's URL that is an anchor on the page rather
 #: than a path in the repository, matched in lower case: a line or a range of
@@ -174,12 +174,12 @@ def url_without_password(url: str) -> str:
 
 def looks_like_commit(ref: str) -> bool:
     """Whether *ref* is spelled like a commit hash, full or abbreviated."""
-    return bool(_ABBREVIATED_COMMIT.match(ref)) or bool(_FULL_COMMIT.match(ref))
+    return bool(_ABBREVIATED_COMMIT.fullmatch(ref)) or bool(_FULL_COMMIT.fullmatch(ref))
 
 
 def _canonical_ref(ref: str) -> str:
     """*ref*, a full commit hash in lower case as git spells it."""
-    return ref.lower() if _FULL_COMMIT.match(ref) else ref
+    return ref.lower() if _FULL_COMMIT.fullmatch(ref) else ref
 
 
 #: Characters ``git check-ref-format`` refuses anywhere in a ref name.
@@ -555,7 +555,7 @@ class MapSource:
         tag can be deleted and recreated, so neither fixes what a scenario runs
         against.
         """
-        return bool(_FULL_COMMIT.match(self.ref))
+        return bool(_FULL_COMMIT.fullmatch(self.ref))
 
     @property
     def names_commit(self) -> bool:
