@@ -19,6 +19,7 @@ from .criteria import (
     CriterionChange,
     CriterionResult,
     _number,
+    _value_and_threshold,
     _warning_lines,
 )
 from .record import GateRecord
@@ -55,12 +56,14 @@ def verdict_markdown(
         "|---|---|---|---|",
     ]
     for c in criteria:
-        value = "-" if c.value is None else _number(c.value)
+        required = _number(c.threshold)
+        value = "-"
+        if c.value is not None:
+            value, required = _value_and_threshold(c.value, c.threshold, c.passed)
         result = "pass" if c.passed else "**FAIL**"
         detail = f" ({c.detail})" if c.detail else ""
         lines.append(
-            f"| {c.name} | {value}{detail} | {c.comparison} "
-            f"{_number(c.threshold)} | {result} |"
+            f"| {c.name} | {value}{detail} | {c.comparison} {required} | {result} |"
         )
     lines += _warning_lines(warnings)
     for e in errors:
@@ -70,11 +73,27 @@ def verdict_markdown(
 
 def criterion_cell(result: Optional[CriterionResult]) -> str:
     """One side of a criterion in a comparison's table: its value, marked when
-    it fails; ``-`` when that side did not judge it."""
+    it fails; ``-`` when that side did not judge it.  A failing value that
+    would print as its threshold is printed to more digits
+    (:func:`~.criteria._value_and_threshold`)."""
     if result is None:
         return "-"
-    value = "n/a" if result.value is None else _number(result.value)
+    value = "n/a"
+    if result.value is not None:
+        value = _value_and_threshold(result.value, result.threshold, result.passed)[0]
     return value if result.passed else f"{value} (fail)"
+
+
+def _required(ref: CriterionResult, sides: Sequence[Optional[CriterionResult]]) -> str:
+    """A comparison's Required cell: *ref*'s threshold, to as many digits as a
+    side's failing value needed to be told apart from it."""
+    required = _number(ref.threshold)
+    for side in sides:
+        if side is not None and side.value is not None and not side.passed:
+            wide = _value_and_threshold(side.value, ref.threshold, False)[1]
+            if len(wide) > len(required):
+                required = wide
+    return required
 
 
 def comparison_markdown(
@@ -117,7 +136,7 @@ def comparison_markdown(
     for c in criteria:
         ref = c.candidate if c.candidate is not None else c.baseline
         assert ref is not None  # noqa: S101 -- one side judged it
-        required = f"{ref.comparison} {_number(ref.threshold)}"
+        required = f"{ref.comparison} {_required(ref, [c.baseline, c.candidate])}"
         change = c.change
         if change == "regressed":
             change = "**regressed**"

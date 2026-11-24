@@ -184,8 +184,18 @@ class GateVerdict:
 
 
 def _gate_key(gate: Mapping[str, Any]) -> str:
-    """*gate* (as a record stores it) in a form two gates compare equal in."""
-    return json.dumps(gate, sort_keys=True)
+    """*gate* (as a record stores it) in a form two gates compare equal in.
+
+    The gate is normalized first (:class:`GateSpec`'s ``to_dict()``), so a
+    record that leaves out a default (written by an older package, or by
+    hand) states the same gate as one that spells it out.  A gate that is not
+    valid (never one :func:`load_gate_records` read) is compared as it is.
+    """
+    try:
+        normalized: Mapping[str, Any] = GateSpec.model_validate(gate).to_dict()
+    except ValueError:  # pydantic's ValidationError is a ValueError
+        normalized = gate
+    return json.dumps(normalized, sort_keys=True)
 
 
 # ---------------------------------------------------------------------------
@@ -203,21 +213,34 @@ def load_gate_records(paths: Iterable[Path]) -> tuple[list[GateRecord], list[str
     (``--document``) replaces the gates the records state: a record whose
     gate is malformed is corrupt, and judging it would hide that.
     """
+    records, failed = _read_gate_records(paths)
+    return records, [f"{path}: {reason}" for path, reason in failed]
+
+
+def _read_gate_records(
+    paths: Iterable[Path],
+) -> tuple[list[GateRecord], list[tuple[Path, str]]]:
+    """:func:`load_gate_records`, each file that could not be read given as
+    ``(its path, why)`` (the report's ``unreadable_records``)."""
     records: list[GateRecord] = []
-    errors: list[str] = []
+    failed: list[tuple[Path, str]] = []
     for path in paths:
         try:
             record = read_gate_record(path)
         except ValueError as exc:
-            errors.append(str(exc))
+            reason = str(exc)
+            prefix = f"{path}: "
+            if reason.startswith(prefix):
+                reason = reason[len(prefix) :]
+            failed.append((path, reason))
             continue
         try:
             GateSpec.model_validate(record.gate)
         except ValueError as exc:  # pydantic's ValidationError is a ValueError
-            errors.append(f"{path}: not a valid gate ({exc})")
+            failed.append((path, f"not a valid gate ({exc})"))
             continue
         records.append(record)
-    return records, errors
+    return records, failed
 
 
 def unrecorded_cases(path: Path) -> list[str]:
@@ -644,7 +667,8 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
         type=Path,
         help=(
             "judge against this document's gate instead of the one the runs "
-            "recorded (its id selects the runs)"
+            "recorded (its id selects the runs; a --scenario other than its "
+            "id is refused, exit 2)"
         ),
     )
     parser.add_argument(
@@ -678,18 +702,40 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
     return parser
 
 
-def _load(path: Path, errors: list[str]) -> list[GateRecord]:
-    records, failed = load_gate_records(find_gate_records([path]))
-    errors.extend(failed)
+def _load(path: Path, failed: list[tuple[Path, str]]) -> list[GateRecord]:
+    records, unread = _read_gate_records(find_gate_records([path]))
+    failed.extend(unread)
     return records
 
 
-def _write_output(path: Path, text: str, errors: list[str]) -> None:
-    """Write ``text`` to ``path``; on failure, append why to ``errors``."""
+def _write_output(path: Path, text: str, failed: list[tuple[Path, str]]) -> None:
+    """Write ``text`` to ``path``; on failure, append ``(path, why)`` to
+    ``failed``."""
     try:
         path.write_text(text, encoding="utf-8")
     except OSError as exc:
-        errors.append(f"cannot write {path}: {exc.strerror or exc}")
+        failed.append((path, str(exc.strerror or exc)))
+
+
+def _failures(failed: Sequence[tuple[Path, str]]) -> list[dict[str, str]]:
+    """``(path, why)`` pairs as the JSON report lists them."""
+    return [{"path": str(path), "reason": reason} for path, reason in failed]
+
+
+def _unreadable_markdown(failed: Sequence[tuple[Path, str]]) -> str:
+    """The records that could not be read, as the report's Markdown lists
+    them; empty without any."""
+    if not failed:
+        return ""
+    lines = [
+        "## Records that could not be read",
+        "",
+        f"{len(failed)} record(s) could not be read and are not judged "
+        "(scenario-gate exits 2):",
+        "",
+    ]
+    lines += [f"- `{path}`: {reason}" for path, reason in failed]
+    return "\n".join(lines)
 
 
 def main(
@@ -703,8 +749,10 @@ def main(
     SLURM manifest or sweep plan among the runs too, :func:`batch_read_errors`, whatever
     ``--allow-unrecorded`` says), a batch or sweep among the runs lists cases
     that left no record (:func:`unrecorded_cases`; unless
-    ``--allow-unrecorded``), or an output (``--markdown``, ``--json``)
-    cannot be written.
+    ``--allow-unrecorded``), ``--scenario`` is not ``--document``'s id, or
+    an output (``--markdown``, ``--json``) cannot be written.  The JSON
+    (``--json``) lists the records that could not be read, the outputs that
+    could not be written and the exit code too.
     """
     parser = _parser(prog)
     args = parser.parse_args(argv)
@@ -729,8 +777,17 @@ def main(
                 file=sys.stderr,
             )
             return EXIT_ERROR
+        if scenario is not None and scenario != document.id:
+            print(
+                f"scenario-gate: --scenario {scenario} is not the id of "
+                f"--document {args.document} ({document.id}): the document's "
+                "gate is judged on its own scenario's runs. Drop --scenario, "
+                f"or give the document of {scenario}",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
         gate = document.gate
-        scenario = scenario or document.id
+        scenario = document.id
     scans = [_scan_batches(path) for path in args.runs]
     unrecorded = [line for found, _ in scans for line in found]
     unreadable = [line for _, failed in scans for line in failed]
@@ -753,10 +810,10 @@ def main(
         return EXIT_ERROR
     for line in unrecorded:
         print(f"scenario-gate: warning: {line}", file=sys.stderr)
-    errors: list[str] = []
-    sets = [_load(path, errors) for path in args.runs]
-    for error in errors:
-        print(f"scenario-gate: {error}", file=sys.stderr)
+    unread_records: list[tuple[Path, str]] = []
+    sets = [_load(path, unread_records) for path in args.runs]
+    for path, reason in unread_records:
+        print(f"scenario-gate: {path}: {reason}", file=sys.stderr)
     reports: Sequence[GateVerdict | GateComparison]
     strict = bool(args.fail_on_regression)
     if strict and len(sets) == 1:
@@ -776,29 +833,45 @@ def main(
     if not reports:
         print("scenario-gate: no gate record to judge", file=sys.stderr)
         return EXIT_ERROR
-    markdown = title + "\n\n" + "\n\n".join(r.to_markdown() for r in reports)
+    sections = [title]
+    unreadable_section = _unreadable_markdown(unread_records)
+    if unreadable_section:
+        sections.append(unreadable_section)
+    sections += [r.to_markdown() for r in reports]
+    markdown = "\n\n".join(sections)
     # Both outputs are attempted, so one line names every path that cannot
-    # be written; the verdict printed to stdout is unchanged either way.
-    unwritable: list[str] = []
+    # be written; the verdict printed to stdout is unchanged either way.  The
+    # Markdown goes first, so the JSON can say whether it was written.
+    unwritable: list[tuple[Path, str]] = []
     if args.markdown is not None:
         _write_output(args.markdown, markdown + "\n", unwritable)
     else:
         print(markdown)
-    if args.json is not None:
-        _write_output(args.json, json.dumps(payload, indent=2), unwritable)
-    for error in unwritable:
-        print(f"scenario-gate: {error}", file=sys.stderr)
     # What the judging could not read (a run's coverage file), as the records
     # main could not read: reported, and the exit code says so.
     unread = [e for r in reports for e in r.errors]
+    if unread_records or unread or unwritable:
+        code = EXIT_ERROR
+    elif all(
+        r.ok(strict) if isinstance(r, GateComparison) else r.passed for r in reports
+    ):
+        code = EXIT_PASSED
+    else:
+        code = EXIT_FAILED
+    if args.json is not None:
+        # Added after the verdicts, so a reader of the older shape is
+        # unaffected: what could not be read or written, and the exit code
+        # (2 when the JSON itself cannot be written, which then does not
+        # exist).
+        payload["unreadable_records"] = _failures(unread_records)
+        payload["unwritable_outputs"] = _failures(unwritable)
+        payload["exit_code"] = code
+        _write_output(args.json, json.dumps(payload, indent=2), unwritable)
+    for path, reason in unwritable:
+        print(f"scenario-gate: cannot write {path}: {reason}", file=sys.stderr)
     for error in unread:
         print(f"scenario-gate: {error}", file=sys.stderr)
-    if errors or unread or unwritable:
-        return EXIT_ERROR
-    passed = all(
-        r.ok(strict) if isinstance(r, GateComparison) else r.passed for r in reports
-    )
-    return EXIT_PASSED if passed else EXIT_FAILED
+    return EXIT_ERROR if unwritable else code
 
 
 if __name__ == "__main__":  # pragma: no cover

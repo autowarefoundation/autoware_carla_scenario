@@ -1772,3 +1772,189 @@ class TestSweepPlan:
         write_sweep_plan(tmp_path / "sweep", [(elsewhere, [])])
         ((job, _),) = read_sweep_plan(tmp_path / "sweep" / "sweep_plan.json")
         assert job == elsewhere
+
+
+# ---------------------------------------------------------------------------
+# #2456: --document with another --scenario, normalized gates, the JSON's
+# unreadable records
+# ---------------------------------------------------------------------------
+
+
+def _left_turn_document(tmp_path: Path, min_success_rate: float) -> Path:
+    document = new_document()
+    document.id = "left_turn"
+    document.route = _route()
+    document.gate = GateSpec(min_success_rate=min_success_rate)
+    path = tmp_path / "left_turn.yaml"
+    save_document(document, path)
+    return path
+
+
+class TestDocumentAndScenario:
+    def _cut_in_runs(self, runs: Path) -> None:
+        # One of two passed under their own strict gate.
+        strict = {"min_success_rate": 1.0}
+        _write(runs, "a", _record(scenario="cut_in", passed=True, gate=strict))
+        _write(
+            runs,
+            "b",
+            _record(scenario="cut_in", passed=False, gate=strict, lanelets=(4, 5)),
+        )
+
+    def test_another_scenario_than_the_documents_exits_2(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        self._cut_in_runs(runs)
+        document = _left_turn_document(tmp_path, 0.5)
+        assert main([str(runs)]) == EXIT_FAILED
+        capsys.readouterr()
+        argv = [str(runs), "--document", str(document), "--scenario", "cut_in"]
+        assert main(argv) == EXIT_ERROR
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert "--scenario cut_in is not the id of --document" in err
+        assert "(left_turn)" in err
+
+    def test_another_scenario_is_refused_with_two_sets_too(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        baseline, candidate = tmp_path / "base", tmp_path / "cand"
+        baseline.mkdir()
+        candidate.mkdir()
+        self._cut_in_runs(baseline)
+        self._cut_in_runs(candidate)
+        document = _left_turn_document(tmp_path, 0.5)
+        argv = [
+            str(baseline),
+            str(candidate),
+            "--document",
+            str(document),
+            "--scenario",
+            "cut_in",
+        ]
+        assert main(argv) == EXIT_ERROR
+        assert "is not the id of --document" in capsys.readouterr().err
+
+    def test_the_documents_own_id_as_scenario_is_allowed(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a", _record(passed=False))
+        document = _left_turn_document(tmp_path, 0.0)
+        argv = [str(tmp_path), "--document", str(document), "--scenario", "left_turn"]
+        assert main(argv) == EXIT_PASSED
+
+
+class TestNormalizedGates:
+    def test_identical_gates_leaving_out_defaults_do_not_warn(self) -> None:
+        sparse = {"min_success_rate": 0.5}
+        full = GateSpec(min_success_rate=0.5).to_dict()
+        assert sparse != full  # the record leaves out the defaults
+        comparison = compare([_record(gate=sparse)], [_record(gate=sparse)])
+        assert not any("another gate" in w for w in comparison.warnings)
+        comparison = compare([_record(gate=sparse)], [_record(gate=full)])
+        assert not any("another gate" in w for w in comparison.warnings)
+        verdict = judge([_record(gate=sparse), _record(gate=full, lanelets=(4,))])
+        assert not any("different gates" in w for w in verdict.warnings)
+
+    def test_really_different_gates_still_warn(self) -> None:
+        comparison = compare(
+            [_record(gate={"min_success_rate": 0.4})],
+            [_record(gate={"min_success_rate": 0.5})],
+        )
+        assert any("another gate" in w for w in comparison.warnings)
+        verdict = judge(
+            [
+                _record(gate={"min_success_rate": 0.4}),
+                _record(gate={"min_success_rate": 0.5}, lanelets=(4,)),
+            ]
+        )
+        assert any("different gates" in w for w in verdict.warnings)
+
+
+class TestJsonReportsWhatWasNotRead:
+    def test_a_clean_run_lists_nothing_and_its_exit_code(self, tmp_path: Path) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record(passed=False))
+        verdict = tmp_path / "v.json"
+        assert main([str(runs), "--json", str(verdict)]) == EXIT_FAILED
+        payload = json.loads(verdict.read_text())
+        assert payload["verdicts"][0]["passed"] is False
+        assert payload["unreadable_records"] == []
+        assert payload["unwritable_outputs"] == []
+        assert payload["exit_code"] == EXIT_FAILED
+
+    def test_an_unreadable_record_is_listed_in_the_json_and_markdown(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record())
+        bad = runs / "b_gate.json"
+        bad.write_text("{")
+        verdict, markdown = tmp_path / "v.json", tmp_path / "gate.md"
+        argv = [str(runs), "--json", str(verdict), "--markdown", str(markdown)]
+        assert main(argv) == EXIT_ERROR
+        err = capsys.readouterr().err
+        payload = json.loads(verdict.read_text())
+        # The surviving run passes, but the report does not hide the other.
+        assert payload["verdicts"][0]["passed"] is True
+        assert payload["exit_code"] == EXIT_ERROR
+        [entry] = payload["unreadable_records"]
+        assert entry["path"] == str(bad)
+        assert entry["reason"].startswith("cannot be read (")
+        # stderr names it as before.
+        assert f"scenario-gate: {bad}: {entry['reason']}" in err.splitlines()
+        text = markdown.read_text()
+        assert "## Records that could not be read" in text
+        assert f"- `{bad}`: {entry['reason']}" in text
+
+    def test_an_invalid_gate_is_listed_with_its_reason(self, tmp_path: Path) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record())
+        _write(runs, "b", _record(gate={"min_success_rate": 2.0}))
+        verdict = tmp_path / "v.json"
+        assert main([str(runs), "--json", str(verdict)]) == EXIT_ERROR
+        [entry] = json.loads(verdict.read_text())["unreadable_records"]
+        assert entry["path"] == str(runs / "b_gate.json")
+        assert entry["reason"].startswith("not a valid gate (")
+
+    def test_an_unwritable_markdown_is_listed_in_the_json(self, tmp_path: Path) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record())
+        markdown = tmp_path / "missing" / "gate.md"
+        verdict = tmp_path / "v.json"
+        argv = [str(runs), "--markdown", str(markdown), "--json", str(verdict)]
+        assert main(argv) == EXIT_ERROR
+        payload = json.loads(verdict.read_text())
+        assert payload["unwritable_outputs"] == [
+            {"path": str(markdown), "reason": "No such file or directory"}
+        ]
+        assert payload["exit_code"] == EXIT_ERROR
+
+    def test_two_sets_list_the_unreadable_records_too(self, tmp_path: Path) -> None:
+        baseline, candidate = tmp_path / "base", tmp_path / "cand"
+        baseline.mkdir()
+        candidate.mkdir()
+        _write(baseline, "a", _record())
+        _write(candidate, "a", _record())
+        (candidate / "b_gate.json").write_text("[]")
+        verdict = tmp_path / "v.json"
+        argv = [str(baseline), str(candidate), "--json", str(verdict)]
+        assert main(argv) == EXIT_ERROR
+        payload = json.loads(verdict.read_text())
+        assert payload["comparisons"][0]["passed"] is True
+        assert [e["path"] for e in payload["unreadable_records"]] == [
+            str(candidate / "b_gate.json")
+        ]
+        assert payload["exit_code"] == EXIT_ERROR
+
+    def test_load_gate_records_still_returns_lines(self, tmp_path: Path) -> None:
+        bad = tmp_path / "b_gate.json"
+        bad.write_text("{")
+        records, errors = load_gate_records([bad])
+        assert records == []
+        assert len(errors) == 1
+        assert errors[0].startswith(f"{bad}: cannot be read (")

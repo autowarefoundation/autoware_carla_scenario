@@ -431,3 +431,75 @@ class TestByScenario:
             ("a", False),
             ("b", True),
         ]
+
+
+class TestUnambiguousThresholdRows:
+    """#2456: a failing value is never printed as its threshold."""
+
+    def test_a_failing_value_rounding_to_its_threshold_shows_more_digits(
+        self,
+    ) -> None:
+        failing = CriterionResult(
+            "max_lateral_spread_m", False, 0.40004, 0.4, "<=", "segment 1"
+        )
+        verdict = GateVerdict(
+            scenario="left_turn",
+            title="Left turn",
+            gate=GateSpec(max_lateral_spread_m=0.4),
+            records=[],
+            criteria=[failing],
+        )
+        row = [
+            line
+            for line in verdict.to_markdown().splitlines()
+            if "max_lateral_spread_m" in line
+        ]
+        assert row == [
+            "| max_lateral_spread_m | 0.40004 (segment 1) | <= 0.4 | **FAIL** |"
+        ]
+
+    def test_a_tiny_excess_shows_every_digit_needed(self) -> None:
+        value = 0.4 + 1e-9
+        failing = CriterionResult("max_speed_spread_mps", False, value, 0.4, "<=")
+        verdict = GateVerdict(
+            scenario="s",
+            title="",
+            gate=GateSpec(),
+            records=[],
+            criteria=[failing],
+        )
+        text = verdict.to_markdown()
+        assert "| max_speed_spread_mps | 0.400000001 | <= 0.4 | **FAIL** |" in text
+
+    def test_a_passing_value_equal_to_its_threshold_keeps_four_digits(
+        self,
+    ) -> None:
+        passing = CriterionResult("min_success_rate", True, 0.90001, 0.9, ">=")
+        verdict = GateVerdict(
+            scenario="s", title="", gate=GateSpec(), records=[], criteria=[passing]
+        )
+        assert "| min_success_rate | 0.9 | >= 0.9 | pass |" in verdict.to_markdown()
+
+    def test_a_failing_value_already_apart_keeps_four_digits(self) -> None:
+        failing = CriterionResult("min_success_rate", False, 0.5, 0.9, ">=")
+        verdict = GateVerdict(
+            scenario="s", title="", gate=GateSpec(), records=[], criteria=[failing]
+        )
+        assert "| min_success_rate | 0.5 | >= 0.9 | **FAIL** |" in verdict.to_markdown()
+
+    def test_the_comparison_cell_and_required_show_more_digits(self) -> None:
+        before = CriterionResult("max_lateral_spread_m", True, 0.2, 0.4, "<=")
+        after = CriterionResult("max_lateral_spread_m", False, 0.40004, 0.4, "<=")
+        assert criterion_cell(after) == "0.40004 (fail)"
+        assert criterion_cell(before) == "0.2"
+        comparison = GateComparison(
+            scenario="s",
+            title="",
+            baseline=None,
+            candidate=None,
+            criteria=[CriterionChange("max_lateral_spread_m", before, after)],
+        )
+        assert (
+            "| max_lateral_spread_m | <= 0.4 | 0.2 | 0.40004 (fail) | regressed |"
+            in comparison.to_markdown().replace("**regressed**", "regressed")
+        )
