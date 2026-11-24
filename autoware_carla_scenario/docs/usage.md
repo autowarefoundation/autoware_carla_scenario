@@ -2062,10 +2062,12 @@ is recorded as failed, and the jobs after it do not start.
     The viewer has no authentication, and its API starts scenario runs
     (`POST /api/run`) and SLURM submissions (`/api/slurm/...`). `POST
     /api/run` passes its `extra_overrides` to Hydra unvalidated (only a line
-    starting with `-`, a flag, is refused): an override such as
-    `hydra.run.dir=...` or a Hydra callback can make the job run any command,
-    so anyone who can reach the viewer's port can run commands as the user
-    the viewer runs as. It therefore binds `127.0.0.1` unless told otherwise. It used to bind `0.0.0.0`, every
+    starting with `-`, a flag, is refused): `hydra.run.dir=...` makes the job
+    write wherever it names, and a Hydra callback (`+hydra.callbacks...`)
+    makes it run any code, so anyone who can reach the viewer's port can run
+    commands as the user the viewer runs as, on this machine or, through a
+    SLURM submission, on the cluster. It therefore binds `127.0.0.1` unless
+    told otherwise. It used to bind `0.0.0.0`, every
     interface; to serve other machines as before, pass `--host 0.0.0.0` (or set
     `VIEWER_HOST=0.0.0.0`) on a network you trust. The viewer prints a warning
     when it listens on anything but a loopback address.
