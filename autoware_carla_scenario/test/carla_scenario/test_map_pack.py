@@ -88,6 +88,9 @@ class FakeClient:
         if self.refusal is not None and self.refusal[1] in (
             "storage_error",
             "credentials_unavailable",
+            "rclone_unavailable",
+            "storage_unauthenticated",
+            "storage_no_access",
         ):
             raise FakeCarlaPackError(*self.refusal)
         return self._formats
@@ -411,6 +414,22 @@ def test_refused_storage_says_to_retry(town: FakeClient) -> None:
     )
     with pytest.raises(PackAccessError, match="storage refused the download"):
         MapPack(REF).files("Town")
+
+
+@pytest.mark.parametrize(
+    ("code", "says"),
+    [
+        ("rclone_unavailable", "reads through rclone, and rclone cannot run here"),
+        ("storage_unauthenticated", "run `carla-pack drive login`"),
+        ("storage_no_access", "not shared with your Google account"),
+    ],
+)
+def test_google_drive_refusals_are_access_errors(
+    town: FakeClient, code: str, says: str
+) -> None:
+    error = str(_refused(town, "packs/x.tar.gz: refused by rclone", code))
+    assert says in error
+    assert "packs/x.tar.gz: refused by rclone" in error
 
 
 def test_a_rejected_token_while_mounting_is_an_access_error(

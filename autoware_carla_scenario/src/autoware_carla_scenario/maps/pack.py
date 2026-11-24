@@ -80,7 +80,10 @@ class PackAccessError(MapPackError):
 
     The message says which, where the token was taken from, and how to fix
     it; :attr:`code` is carla-pack's error code (``unauthenticated``,
-    ``no_access``, ``credentials_unavailable``, ``storage_error``).
+    ``no_access``, ``credentials_unavailable``, ``storage_error``, and for a
+    pack repository on Google Drive, read through rclone with the user's own
+    Google account: ``rclone_unavailable``, ``storage_unauthenticated``,
+    ``storage_no_access``).
     """
 
     def __init__(self, message: str, code: str) -> None:
@@ -237,6 +240,33 @@ def _failure(
             f"{action}: the storage credentials of {repository} could not be "
             "read. Your GitHub access is fine; the pack repository's credential "
             f"workflow has to run (ask the owner of {repository}). ({message})",
+            code,
+        )
+    # A pack repository on Google Drive (carla-pack's `type = "rclone"`
+    # storage): GitHub let the user read the list of packs, and the drive,
+    # read with their own Google account through rclone, decides the rest.
+    # carla-pack's message already names the remote and the fix.
+    if code == "rclone_unavailable":
+        return PackAccessError(
+            f"{action}: {repository} keeps its packs on Google Drive, which "
+            f"carla-pack reads through rclone, and rclone cannot run here. "
+            f"({message})",
+            code,
+        )
+    if code == "storage_unauthenticated":
+        return PackAccessError(
+            f"{action}: Google Drive authentication failed. Your GitHub access "
+            f"to {repository} is fine; carla-pack has no valid Google "
+            f"credentials: run `carla-pack drive login`. ({message})",
+            code,
+        )
+    if code == "storage_no_access":
+        return PackAccessError(
+            f"{action}: Google Drive access denied. Your GitHub access to "
+            f"{repository} is fine, but the pack's shared drive is not shared "
+            f"with your Google account (or the file is missing): ask the owner "
+            f"of {repository} to share it. `carla-pack credentials "
+            f"{repository}` checks it. ({message})",
             code,
         )
     if code == "storage_error" and "refused" in message:
