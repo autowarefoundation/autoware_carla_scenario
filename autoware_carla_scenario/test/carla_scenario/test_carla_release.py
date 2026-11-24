@@ -79,3 +79,30 @@ def test_importing_the_package_selects_the_10_client() -> None:
         check=True,
     ).stdout
     assert out.strip().splitlines()[-1] == "1.0"
+
+
+@pytest.mark.parametrize(
+    ("ref", "family", "steer", "lock", "scale", "most"),
+    [
+        ("1.0", "1", 1.0, 53.0, 1.0, 10.0),
+        ("ue58-dev", "1", 1.0, 53.0, 1.0, 10.0),
+        ("ue5-dev", "0.10", 2.0, 56.0, 20.5, 2.0),
+        ("0.10.0", "0.10", 2.0, 56.0, 20.5, 2.0),
+        ("", "0.10", 2.0, 56.0, 20.5, 2.0),  # typesafe_carla's own default
+    ],
+)
+def test_the_servers_physics_follow_the_selected_client(
+    monkeypatch: pytest.MonkeyPatch,
+    ref: str,
+    family: str,
+    steer: float,
+    lock: float,
+    scale: float,
+    most: float,
+) -> None:
+    monkeypatch.setenv(CARLA_REF_ENV, ref)
+    assert carla_release.server_family() == family
+    assert carla_release.default_steer_exponent() == steer
+    assert carla_release.default_max_steer_angle_deg() == lock
+    assert carla_release.walker_speed_scale() == scale
+    assert carla_release.walker_max_speed_mps() == most

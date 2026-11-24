@@ -16,6 +16,10 @@ import numpy as np
 import pytest
 import yaml  # type: ignore[import-untyped]
 
+from autoware_carla_scenario.carla_release import (
+    default_max_steer_angle_deg,
+    default_steer_exponent,
+)
 from autoware_carla_scenario.driver.base import DriverCameraConfig, DriverClientConfig
 from autoware_carla_scenario.driver.control import ControlConfig
 
@@ -52,8 +56,11 @@ def test_shipped_yaml_builds_a_client_config() -> None:
 
 def test_shipped_yaml_builds_control_gains() -> None:
     control = ControlConfig.from_mapping(_shipped_driver_config()["control"])
-    assert control.max_steer_angle_rad == pytest.approx(math.radians(56.0))
-    assert control.steer_exponent == pytest.approx(2.0)
+    # null in the YAML: the server's (carla_release).
+    assert control.max_steer_angle_rad == pytest.approx(
+        math.radians(default_max_steer_angle_deg())
+    )
+    assert control.steer_exponent == pytest.approx(default_steer_exponent())
     assert control.yaw_rate_ki == pytest.approx(3.0)
     assert control.longitudinal_controller == "pid"
     assert control.delay_compensation_time == pytest.approx(0.17)

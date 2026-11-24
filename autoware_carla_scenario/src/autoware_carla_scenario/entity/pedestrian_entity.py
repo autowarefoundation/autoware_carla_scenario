@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 import typesafe_carla.carla as carla
 
+from ..carla_release import walker_max_speed_mps, walker_speed_scale
 from ..entity_role import _refuse_ego_role_name
 from ..traffic.base import TrafficBackend, WalkedEntity
 
@@ -28,11 +29,12 @@ __all__ = ["PedestrianEntity", "PedestrianEntityConfig"]
 #: clear of it, by more than the ground needs.
 _SPAWN_LIFTS_M = (0.3, 0.8, 1.3)
 
-#: CARLA 0.10 (UE5) moves a walker at about 1/20.5 of the ``WalkerControl``
-#: speed it is given, whatever the step length -- measured on 0.10.0: 2 -> 0.098
-#: m/s, 20 -> 0.98 m/s, 40 -> 1.95 m/s -- and no faster than 2 m/s.
-_UE5_WALKER_SPEED_SCALE = 20.5
-_UE5_WALKER_MAX_SPEED_MS = 2.0
+#: How fast a walker walks for the ``WalkerControl`` speed it is given depends
+#: on the server (carla_release): CARLA 0.10 moves it at about 1/20.5 of that
+#: speed, whatever the step length -- measured on 0.10.0: 2 -> 0.098 m/s, 20 ->
+#: 0.98 m/s, 40 -> 1.95 m/s -- and no faster than 2 m/s; CARLA 1.0 at the speed
+#: given (2 -> 2.0, 20 -> 20.0). Read each time (walker_speed_scale(),
+#: walker_max_speed_mps()), off the client the process selected.
 
 #: Metres between the poses of a walk :meth:`PedestrianEntity.route_to` lays out.
 WALK_POINT_STEP_M: float = 1.5
@@ -52,14 +54,15 @@ DEFAULT_WALKING_SPEED_MPS: float = 1.4
 
 
 def walker_speed_command(speed_ms: float) -> float:
-    """The ``WalkerControl`` speed that moves a walker at *speed_ms* (CARLA UE5)."""
-    if speed_ms > _UE5_WALKER_MAX_SPEED_MS:
+    """The ``WalkerControl`` speed that moves a walker at *speed_ms* on the server."""
+    most = walker_max_speed_mps()
+    if speed_ms > most:
         logger.warning(
-            "CARLA 0.10 walks a pedestrian at %.1f m/s at most; %.1f m/s asked for",
-            _UE5_WALKER_MAX_SPEED_MS,
+            "CARLA walks a pedestrian at %.1f m/s at most; %.1f m/s asked for",
+            most,
             speed_ms,
         )
-    return speed_ms * _UE5_WALKER_SPEED_SCALE
+    return speed_ms * walker_speed_scale()
 
 
 def walker_control_speed(speed_mps: float) -> float:
@@ -67,7 +70,7 @@ def walker_control_speed(speed_mps: float) -> float:
 
     Capped rather than left to warn: a walk re-sends it every tick.
     """
-    return walker_speed_command(min(max(speed_mps, 0.0), _UE5_WALKER_MAX_SPEED_MS))
+    return walker_speed_command(min(max(speed_mps, 0.0), walker_max_speed_mps()))
 
 
 def steer_walker(

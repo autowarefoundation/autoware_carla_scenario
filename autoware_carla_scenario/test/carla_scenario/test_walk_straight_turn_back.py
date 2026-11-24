@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 import typesafe_carla.carla as carla
 
+from autoware_carla_scenario.carla_release import walker_speed_scale
 from autoware_carla_scenario import (
     PedestrianEntity,
     PedestrianEntityConfig,
@@ -92,7 +93,7 @@ class _Walker:
     def get_velocity(self) -> carla.Vector3D:
         if self.control is None:
             return carla.Vector3D(0.0, 0.0, 0.0)
-        speed = self.control.speed / 20.5
+        speed = self.control.speed / walker_speed_scale()
         d = self.control.direction
         return carla.Vector3D(d.x * speed, d.y * speed, 0.0)
 
@@ -109,7 +110,9 @@ class _Walker:
 
     @property
     def speed(self) -> float:
-        return 0.0 if self.control is None else self.control.speed / 20.5
+        return (
+            0.0 if self.control is None else self.control.speed / walker_speed_scale()
+        )
 
 
 class _Vehicle:
@@ -310,7 +313,7 @@ def test_a_backend_that_walks_it_is_told_to_walk_it_back(scene: Any) -> None:
             s.walker.apply_control(
                 carla.WalkerControl(
                     direction=carla.Vector3D(math.cos(yaw), math.sin(yaw), 0.0),
-                    speed=speed_ms * 20.5,
+                    speed=speed_ms * walker_speed_scale(),
                 )
             )
             return True

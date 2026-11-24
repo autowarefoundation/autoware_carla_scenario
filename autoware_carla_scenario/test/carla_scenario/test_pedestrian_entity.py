@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import typesafe_carla.carla as carla
 import pytest
 
+from autoware_carla_scenario.carla_release import walker_speed_scale
 from autoware_carla_scenario import (
     PedestrianEntity,
     PedestrianEntityConfig,
@@ -239,7 +240,7 @@ class TestWalking:
 
         # The command that moves it at 1.4 m/s on CARLA UE5.
         assert control.speed == pytest.approx(walker_speed_command(1.4))
-        assert control.speed == pytest.approx(1.4 * 20.5)
+        assert control.speed == pytest.approx(1.4 * walker_speed_scale())
         assert control.direction.x == pytest.approx(1.0)
 
     def test_zero_speed_stops_the_walker(self, walker: PedestrianEntity) -> None:
@@ -271,7 +272,9 @@ class TestWalking:
 
         actor = walker.actor
         assert actor is not None
-        assert actor.apply_control.call_args[0][0].speed == pytest.approx(1.4 * 20.5)
+        assert actor.apply_control.call_args[0][0].speed == pytest.approx(
+            1.4 * walker_speed_scale()
+        )
 
     def test_releasing_it_takes_it_back_from_its_backend(
         self, walker: PedestrianEntity
@@ -308,13 +311,32 @@ class TestWalking:
 
 
 class TestWalkingSpeed:
-    """CARLA 0.10 scales a walker's commanded speed down about twentyfold."""
+    """CARLA 0.10 scales a walker's commanded speed down about twentyfold; 1.0 does not."""
 
-    def test_carla_010_is_given_the_speed_that_moves_it_at_that(self) -> None:
+    def test_carla_010_is_given_the_speed_that_moves_it_at_that(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_control_speed,
             walker_speed_command,
         )
 
-        # 2 m/s needs a command of about 41 on 0.10.0.
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "ue5-dev")
+        # 2 m/s needs a command of about 41 on 0.10.0, which walks none faster.
         assert walker_speed_command(2.0) == pytest.approx(41.0)
         assert walker_speed_command(0.0) == 0.0
+        assert walker_control_speed(3.0) == pytest.approx(41.0)
+
+    def test_carla_10_is_given_the_speed_itself(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_control_speed,
+            walker_speed_command,
+        )
+
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "1.0")
+        # Measured on CARLA 1.0: a command of 2 walks at 2.0 m/s.
+        assert walker_speed_command(2.0) == pytest.approx(2.0)
+        assert walker_control_speed(3.0) == pytest.approx(3.0)
+        assert walker_control_speed(40.0) == pytest.approx(10.0)

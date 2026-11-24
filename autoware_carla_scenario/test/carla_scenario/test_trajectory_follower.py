@@ -126,7 +126,7 @@ def _arc(radius_m: float, speed_mps: float) -> Trajectory:
 
 def test_steer_map_inverts_carla_quadratic_response() -> None:
     """CARLA 0.10 turns the wheels by about 56 deg * steer**2."""
-    config = ControlConfig()
+    config = ControlConfig(max_steer_angle_rad=math.radians(56.0), steer_exponent=2.0)
     # 5 degrees needs steer 0.3 on the MKZ; a linear map over 70 would send 0.07.
     assert steer_command(math.radians(5.0), config) == pytest.approx(0.3, abs=0.01)
     for angle in (-0.6, -0.1, 0.0, 0.02, 0.4):
@@ -136,6 +136,31 @@ def test_steer_map_inverts_carla_quadratic_response() -> None:
     assert steer_command(math.radians(90.0), config) == 1.0
     linear = ControlConfig(max_steer_angle_rad=math.radians(70.0), steer_exponent=1.0)
     assert steer_command(math.radians(7.0), linear) == pytest.approx(0.1)
+
+
+def test_steer_map_inverts_carla_10_linear_response() -> None:
+    """CARLA 1.0 turns the wheels by about 53 deg * steer (measured 5.4 deg at 0.1)."""
+    config = ControlConfig(max_steer_angle_rad=math.radians(53.0), steer_exponent=1.0)
+    assert steer_command(math.radians(5.3), config) == pytest.approx(0.1)
+    # The quadratic map would send 0.31 for it, three times the steer.
+    assert steer_command(
+        math.radians(5.3),
+        ControlConfig(max_steer_angle_rad=math.radians(56.0), steer_exponent=2.0),
+    ) == pytest.approx(0.31, abs=0.01)
+
+
+def test_the_steer_map_defaults_to_the_servers() -> None:
+    """The selected client's family (the server's) picks the default map."""
+    from autoware_carla_scenario.carla_release import (
+        default_max_steer_angle_deg,
+        default_steer_exponent,
+    )
+
+    config = ControlConfig()
+    assert config.steer_exponent == default_steer_exponent()
+    assert config.max_steer_angle_rad == pytest.approx(
+        math.radians(default_max_steer_angle_deg())
+    )
 
 
 def test_pure_pursuit_recovers_the_geometric_steering_angle() -> None:
