@@ -577,6 +577,7 @@ def _check_condition(
 
     _check_collision_names_one_target(out, path, node)
     _check_persistent_child(out, path, node)
+    _check_persistent_nots(out, path, node)
     _check_filter_ranges(out, path, node)
     _check_map_area(out, path, node)
     _check_condition_frame(out, path, node)
@@ -652,7 +653,69 @@ _FIRING_ROOTS = {
     "trigger": "an action's trigger, which fires on any result",
     "pass": "a pass condition, which is met by any result",
     "fail": "a fail condition, which fails the run on any result",
+    "waypoint": "a waypoint condition, which opens on any result",
 }
+
+_HOLDS_WHEN_PENDING_REMEDY = (
+    "For a logical NOT -- one that holds while the child has not fired -- "
+    "tick *Holds while the child does not* (holds_when_pending)."
+)
+
+
+def _holds_when_pending(node: ConditionNode) -> bool:
+    return read_bool(_value(node, "holds_when_pending")) is not False
+
+
+def _never_passes(node: ConditionNode) -> bool:
+    """Whether *node* only ever fails or says nothing: a condition of
+    :data:`FAILURE_ONLY_CONDITIONS`, an ALL with such a child (it passes only
+    when every child does), an ANY or a Sticky whose children all are (both
+    hand on what they get), a default NOT around a child that never fails, or
+    a Persistent around one that never passes."""
+    if node.type in FAILURE_ONLY_CONDITIONS:
+        return True
+    if not node.children:
+        return False
+    if node.type == "all":
+        return any(_never_passes(child) for child in node.children)
+    if node.type in ("any", "sticky", "persistent"):
+        return all(_never_passes(child) for child in node.children)
+    if node.type == "not":
+        return not _holds_when_pending(node) and _never_fails(node.children[0])
+    return False
+
+
+def _never_fails(node: ConditionNode) -> bool:
+    """Whether *node* only ever passes or says nothing: every condition but
+    those of :data:`FAILURE_ONLY_CONDITIONS` (the runtime's conditions report
+    only a pass), a Persistent, a NOT that holds while its child does not, a
+    default NOT around a child that never passes, and an ALL, ANY or Sticky
+    whose children all never fail."""
+    if node.type in FAILURE_ONLY_CONDITIONS:
+        return False
+    if node.type == "persistent":
+        return True
+    if node.type == "not":
+        if _holds_when_pending(node):
+            return True
+        return not node.children or _never_passes(node.children[0])
+    if node.type in ("all", "any", "sticky"):
+        return all(_never_fails(child) for child in node.children)
+    return True
+
+
+def _flips_a_pass(node: ConditionNode) -> bool:
+    """Whether *node* is a NOT with its default setting around a child that
+    can pass: one that turns that pass into a failure and says nothing
+    otherwise (#2430)."""
+    if node.type != "not" or not node.children or _holds_when_pending(node):
+        return False
+    return not _never_passes(node.children[0])
+
+
+def _child_title(node: ConditionNode) -> str:
+    spec = get_condition_spec(node.children[0].type)
+    return spec.title if spec is not None else node.children[0].type
 
 
 def _check_firing_nots(
@@ -662,38 +725,70 @@ def _check_firing_nots(
     (#2430).
 
     By default a NOT flips the verdict of a child that has fired and says
-    nothing while the child says nothing.  A trigger, a pass condition and a
-    fail condition count any result, so ``NOT(distance < 10 m)`` there fires
-    once the ego *is* within 10 m.  ANY and ALL pass that on (they fire on
-    their children's firing).  Persistent and Sticky count only passes, not
-    firing, so the walk stops there.  A child that only ever reports a
-    failure (:data:`FAILURE_ONLY_CONDITIONS`) is what such a NOT is for: it
+    nothing while the child says nothing.  A trigger, a pass condition, a
+    fail condition and a waypoint condition count any result, so
+    ``NOT(distance < 10 m)`` there fires once the ego *is* within 10 m.  ANY
+    and ALL pass that on (they fire on their children's firing), and so does
+    Sticky, which latches only a pass and hands a failure on as it gets it.
+    Persistent counts only passes: what stands under it is
+    :func:`_check_persistent_nots`'.  A child that only ever reports a
+    failure (:func:`_never_passes`) is what such a NOT is for: it
     turns that failure into a pass.  A warning, not an error: the semantics
     stay, and documents built this way still run.
     """
-    if node.type in ("persistent", "sticky"):
+    if node.type == "persistent":
         return
     if node.type != "not":
         for index, child in enumerate(node.children):
             _check_firing_nots(out, f"{path}.children[{index}]", child, root)
         return
-    if read_bool(_value(node, "holds_when_pending")) is not False:
+    if not _flips_a_pass(node):
         return
-    if not node.children or any(
-        child.type in FAILURE_ONLY_CONDITIONS for child in node.children
-    ):
-        return
-    spec = get_condition_spec(node.children[0].type)
-    title = spec.title if spec is not None else node.children[0].type
+    title = _child_title(node)
     out.warn(
         path,
         f"This NOT fires when {title} does, not when it does not: by default a "
         "NOT only flips the verdict of a child that has fired and says nothing "
         f"while the child says nothing, and it stands in {_FIRING_ROOTS[root]}. "
-        "For a logical NOT -- one that holds while the child has not fired -- "
-        "tick *Holds while the child does not* (holds_when_pending).",
+        + _HOLDS_WHEN_PENDING_REMEDY,
         node.id,
     )
+
+
+def _check_persistent_nots(out: _Collector, path: str, node: ConditionNode) -> None:
+    """Warn about a NOT under a Persistent that never passes (#2430).
+
+    A NOT with its default setting turns its child's pass into a failure and
+    says nothing otherwise, and a child that can pass -- most conditions --
+    often never fails (:func:`_never_fails`).  The NOT then never passes, and a Persistent counts only the
+    ticks its child passes: it adds nothing to it, and a Persistent around it
+    alone never fires.  Looked for through ALL, ANY and Sticky, which do not
+    turn a failure into a pass; a nested Persistent has its own check.  A
+    warning, not an error, as :func:`_check_persistent_child`.
+    """
+    if node.type != "persistent":
+        return
+
+    def walk(where: str, child: ConditionNode) -> None:
+        if child.type in ("all", "any", "sticky"):
+            for index, grandchild in enumerate(child.children):
+                walk(f"{where}.children[{index}]", grandchild)
+            return
+        if not _flips_a_pass(child) or not _never_fails(child.children[0]):
+            return
+        title = _child_title(child)
+        out.warn(
+            where,
+            f"This NOT never passes around {title}: by default a NOT turns its "
+            "child's pass into a failure and says nothing while the child says "
+            f"nothing, and {title} never fails. It stands under a Persistent, "
+            "which counts only the ticks its child passes, so it never helps "
+            "that fire. " + _HOLDS_WHEN_PENDING_REMEDY,
+            child.id,
+        )
+
+    for index, child in enumerate(node.children):
+        walk(f"{path}.children[{index}]", child)
 
 
 #: An entity filter's bounds, in pairs: the runtime's EntityFilter refuses a
@@ -913,6 +1008,7 @@ def _check_advance_conditions(
         _check_condition(
             out, f"{where}.condition", gate.condition, refs, departure=True
         )
+        _check_firing_nots(out, f"{where}.condition", gate.condition, "waypoint")
         # Deliberately conservative: any reference to the card's own action
         # but "is running" is refused, wherever it sits in the tree -- under
         # a Not as well, where it could not deadlock.  Telling the two apart
