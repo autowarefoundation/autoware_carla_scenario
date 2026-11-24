@@ -4450,7 +4450,12 @@ case drawn <code>clear</code> in moderate rain renders a cloudy sky and is measu
 measured off CARLA's cloudiness.</p>
 <p>A config that sets CARLA's fields alone names no condition: the ODD's
 weather is not measured, and drivers see as they always did (a warning says
-so). CARLA's own fields have controls too, for an ODD that names them:</p>
+so). Where a condition does give the visibility, a <code>sun_altitude_angle</code>
+set without a <code>time_of_day</code> (as the <code>illumination</code> knob sets it) is the
+light it is seen in: the time of day that sun renders, a value the
+visibility reads and not a condition, so the sun alone still gives none --
+rain at a sun 45 degrees below the horizon leaves the night's sight
+(#2458). CARLA's own fields have controls too, for an ODD that names them:</p>
 <table>
 <thead>
 <tr>
@@ -4554,6 +4559,32 @@ camera sees, or set <code>server.fog_density_scale=0.01</code>
 <p>A scenario that sets the weather itself has the last word over the config:
 its own <code>EnvironmentAction</code>, with numbers -- worked out from conditions with
 <code>EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5.0}))</code>.</p>
+<p><code>resolve_environment</code> reads no run state: it works out what the conditions
+it is given lead to, alone. An action that runs during the run merges them
+with the run's where they meet (#2458):</p>
+<ul>
+<li><strong>The visibility</strong> is worked out again from the merged causes: the
+  action's own, and the rainfall rate, fog visibility range, wind speed and
+  cloud cover the run recorded (the config's <code>environment</code>, an earlier
+  action) and the action does not restate, and the time of day the sun
+  renders (<code>weather_rules.merged_visibility</code>). The action's <code>visibility_m</code>
+  is read as the quantile it is of what its own causes leave, and the
+  drivers get that quantile of what the merged ones leave. So with fog
+  visibility 50 m at night in the config, a mid-run
+  <code>resolve_environment({"rainfall_rate_mm_h": 5.0})</code> keeps the drivers'
+  50 m, as CARLA keeps drawing the fog, rather than the rain's 206 m. A
+  <code>visibility_m</code> outside what the action's own causes leave is one given
+  outright, and is kept; so is one an action gives with no cause.</li>
+<li><strong>The road's water</strong> an action that sets the rain and not the water
+  leaves follows the merged conditions too (<a href="#tire-friction-follows-the-weather">below</a>).</li>
+<li><strong>Every other CARLA field</strong> is the action's own, as <code>resolve_environment</code>
+  worked it out for its conditions alone: the action cannot tell a field
+  worked out from one given. So a rain-only resolve's <code>cloudiness</code> (the
+  rain's clouds) replaces a sky the config set <code>clear</code>, though the cloud
+  cover the run is measured at stays <code>clear</code>. Restate what should hold
+  (<code>resolve_environment({"rainfall_rate_mm_h": 5.0, "cloud_cover": "clear"})</code>),
+  or pass the fields to keep out of the action.</li>
+</ul>
 <h3 id="tire-friction-follows-the-weather">Tire friction follows the weather<a class="headerlink" href="#tire-friction-follows-the-weather" title="Permanent link">&para;</a></h3>
 <p>CARLA draws rain but does not drive on it: a vehicle grips a soaked road as
 it grips a dry one. So an <code>EnvironmentAction</code> that sets the rain or the
@@ -5500,7 +5531,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 20:13:42 UTC"><span class="timeago" datetime="2026-11-24T20:13:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 20:13:42 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 23:02:17 UTC"><span class="timeago" datetime="2026-11-24T23:02:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 23:02:17 UTC">2026-11-24</span>
   </span>
 
     
