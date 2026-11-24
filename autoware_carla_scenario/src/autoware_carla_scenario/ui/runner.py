@@ -29,6 +29,7 @@ from typing import IO
 
 from ..run_dirs import multirun_dir as _multirun_dir  # noqa: F401  (its old name)
 from ..run_dirs import reserve_timestamped_dir
+from ..utils.process_group import signal_group
 from .case_paths import _override_label
 from .models import RunProgress, Status
 
@@ -218,12 +219,12 @@ def _stop_requested() -> bool:
 
 
 def _signal_group(pgid: int, sig: int) -> bool:
-    """Send *sig* to the process group *pgid*; ``False`` if none of it is left."""
+    """Send *sig* to the process group *pgid*; ``False`` if none of it is left
+    (:func:`signal_group`), or it may not be signalled."""
     try:
-        os.killpg(pgid, sig)
-    except (ProcessLookupError, PermissionError):
+        return signal_group(pgid, sig)
+    except PermissionError:
         return False
-    return True
 
 
 def _terminate_group(pgid: int, timeout: float) -> None:

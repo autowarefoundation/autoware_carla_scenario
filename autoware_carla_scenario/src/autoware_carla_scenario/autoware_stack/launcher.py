@@ -49,6 +49,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ..utils.process_group import signal_group
 from .bridge_node import bridge_command, host_python_root
 
 logger = logging.getLogger(__name__)
@@ -260,13 +261,6 @@ def _check_argument_list(name: str, value: Sequence[str]) -> None:
             )
 
 
-def _signal_group(pgid: int, sig: signal.Signals) -> None:
-    try:
-        os.killpg(pgid, sig)
-    except ProcessLookupError:
-        pass
-
-
 def _start_session(
     argv: Sequence[str],
     env: Optional[Mapping[str, str]],
@@ -385,7 +379,7 @@ class ProcessGroup:
         for sig in signals:
             if self._process.poll() is not None:
                 break
-            _signal_group(self._pgid, sig)
+            signal_group(self._pgid, int(sig))
             try:
                 self._process.wait(timeout=self._stop_timeout_s)
             except subprocess.TimeoutExpired:
@@ -397,7 +391,7 @@ class ProcessGroup:
                 )
         # The leader may be gone while a node it started is not: whatever is
         # left of the group goes too.
-        _signal_group(self._pgid, signal.SIGKILL)
+        signal_group(self._pgid, int(signal.SIGKILL))
         self._close_log()
         return self._process.poll()
 

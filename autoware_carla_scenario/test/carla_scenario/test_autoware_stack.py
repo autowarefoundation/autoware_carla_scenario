@@ -1503,7 +1503,8 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
             "source /home/aw/autoware/install/setup.bash && "
             '(PYTHONPATH=/opt/autoware_carla_scenario/python"${PYTHONPATH:+:$PYTHONPATH}" '
             "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge --ros-args "
-            "-p bridge_address:=localhost:50052 -p use_sim_time:=true &) && "
+            "-p bridge_address:=localhost:50052 -p use_sim_time:=true "
+            "-p parent_pid:=$$ &) && "
             "exec ros2 launch autoware_launch e2e_simulator.launch.xml "
             "bridge_address:=localhost:50052"
         )
@@ -2181,6 +2182,47 @@ def test_command_launcher_fills_in_the_scenario_bridge(
     assert "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge" in written
     assert "-p bridge_address:=localhost:7" in written
     assert "-p use_sim_time:=true -p auto_engage:=false" in written
+
+
+def test_the_scenario_bridge_is_given_the_pid_of_the_shell_that_starts_the_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2405: ``$$`` in the ``( ... &)`` subshell is the ``bash -c``'s pid,
+    the one that ``exec``s the launch, so the node ends with the stack."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    args_file = tmp_path / "args.txt"
+    python3 = bin_dir / "python3"
+    python3.write_text(
+        f'#!/bin/sh\necho "$@" > {args_file}.tmp\nmv {args_file}.tmp {args_file}\n'
+    )
+    python3.chmod(0o755)
+    shell_pid = tmp_path / "shell_pid.txt"
+    launcher = CommandAutowareLauncher(
+        [
+            "bash",
+            "-c",
+            f"({{scenario_bridge}} &) && echo $$ > {shell_pid} && exec sleep 30",
+        ],
+        env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+    launcher.prepare()
+    launcher.start(name="x", bridge_address="localhost:7")
+    try:
+        _wait_for(lambda: args_file.exists() and shell_pid.exists())
+        args = args_file.read_text().split()
+        pid = shell_pid.read_text().strip()
+        assert args[-2:] == ["-p", f"parent_pid:={pid}"]
+        assert launcher.poll() is None  # the shell, now the launch, lives on
+    finally:
+        launcher.stop()
+
+
+def test_parent_pid_is_not_a_bridge_parameter_to_set() -> None:
+    """#2405: the launcher sets it, to the pid of the stack's shell."""
+    with pytest.raises(ValueError, match=r"^parent_pid is not a bridge parameter"):
+        bridge_ros_args("h:1", {"parent_pid": 1})
 
 
 def test_the_host_python_root_replaces_a_stale_link(tmp_path: Path) -> None:

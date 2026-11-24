@@ -5122,7 +5122,7 @@ if route is not None:
     frame = scenario_route_frame()
     lanelet_id, along = frame.locate(route.length / 2.0)
     x, y, heading = frame.point(frame.length)
-    logger.info("%d %f %f %f %f %d", lanelet_id, along, x, y, heading, frame.lanelet_at(0.0).id)
+    logger.info("%d %f %f %f %f", lanelet_id, along, x, y, heading)
 """
 
 _MEMBERS_EXTRA = """
