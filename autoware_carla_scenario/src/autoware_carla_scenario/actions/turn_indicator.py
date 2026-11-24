@@ -76,9 +76,10 @@ class TurnIndicatorAction(BaseAction):
         """Set the named vehicle's turn indicators."""
         actor = find_actor_in_list(world.get_actors(), self._entity_name)
         if actor is None:
-            logger.warning(
-                "TurnIndicatorAction: entity '%s' not found", self._entity_name
-            )
+            if self._report_missing():
+                logger.warning(
+                    "TurnIndicatorAction: entity '%s' not found", self._entity_name
+                )
             return
         if not is_vehicle(actor):
             logger.warning(

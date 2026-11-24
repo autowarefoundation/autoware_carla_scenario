@@ -127,6 +127,7 @@ class BaseAction(ABC):
     _lifecycle: ActionState
     _overrides: bool
     _claims_control: bool
+    _missing_reported: bool
 
     def __init__(
         self,
@@ -165,6 +166,7 @@ class BaseAction(ABC):
         # False for an action another drives as a part of its own run (an
         # adversity's path), whose domains that one holds.
         self._claims_control = True
+        self._missing_reported = False
 
     @property
     def timing(self) -> TickTiming:
@@ -329,6 +331,21 @@ class BaseAction(ABC):
         the action takes one."""
         return
 
+    def _report_missing(self) -> bool:
+        """Whether to log that the entity the action names is not in the
+        world: ``True`` the first time it is asked in a run, ``False`` after.
+
+        An entity despawned (:class:`~.despawn.DespawnAction`), or never
+        spawned, is looked up again on every tick an action still naming it
+        executes -- every tick for one that reissues or repeats -- and saying
+        so each time only floods the log (#2430).  The action logs it once and
+        does nothing; :meth:`reset` lets the next run say it again.
+        """
+        if self._missing_reported:
+            return False
+        self._missing_reported = True
+        return True
+
     def _release_control(self) -> None:
         """Give back the domains the action took, as its run ends."""
         _SLOTS.release(self)
@@ -356,6 +373,7 @@ class BaseAction(ABC):
         """
         self._done = False
         self._lifecycle = ActionState.STANDBY
+        self._missing_reported = False
         self._condition.reset()
         if self._until is not None:
             # Annotated, so Codon unwraps the Optional (docs/typecheck.md).

@@ -2028,6 +2028,50 @@ def test_closing_the_backend_forgets_its_lane_closures() -> None:
     assert traci.allowed["0.fwd_0"] == ["passenger"]
 
 
+class _LaneChangeTraci:
+    """The TraCI calls a lane change asked for after some driving makes, and
+    the lane-change mode it sets and gives back (#2430)."""
+
+    def __init__(self) -> None:
+        self.modes: list[int] = []
+        self.vehicle = self
+
+    def getDistance(self, sumo_id: str) -> float:
+        return 0.0
+
+    def getLaneChangeMode(self, sumo_id: str) -> int:
+        return 1621
+
+    def setLaneChangeMode(self, sumo_id: str, mode: int) -> None:
+        self.modes.append(mode)
+
+
+def _lane_change_backend() -> tuple[Any, _LaneChangeTraci, Any]:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    traci = _LaneChangeTraci()
+    backend._running = True
+    backend._traci = traci
+    entity = SimpleNamespace(actor=None)
+    backend._driven["veh0"] = entity
+    return backend, traci, entity
+
+
+def test_a_cancelled_lane_change_is_dropped_and_its_mode_given_back() -> None:
+    backend, traci, entity = _lane_change_backend()
+    backend.change_lane(entity, None, LaneChangeDirection.LEFT, 20.0, 0.0)
+    assert "veh0" in backend._lane_change_requests
+    backend.cancel_lane_change(entity, None)
+    assert backend._lane_change_requests == {}
+    assert traci.modes[-1] == 1621
+    # Again, or for a vehicle with none asked for: nothing to do.
+    modes = list(traci.modes)
+    backend.cancel_lane_change(entity, None)
+    backend.cancel_lane_change(SimpleNamespace(actor=None), None)
+    assert traci.modes == modes
+
+
 @needs_sumo
 def test_ambient_traffic_is_mirrored_into_carla_and_cleaned_up(
     crossroads: Path, tmp_path: Path

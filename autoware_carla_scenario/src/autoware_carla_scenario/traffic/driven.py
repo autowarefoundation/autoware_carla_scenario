@@ -163,6 +163,12 @@ class BackendDriven(DrivenEntity):
         entity: DrivenEntity = self
         return self._resolve_backend().lane_change_finished(entity, world)
 
+    def cancel_lane_change(self, world: "carla.World") -> None:
+        """Drop a lane change :meth:`change_lane` asked for that is still
+        being carried out (:meth:`TrafficBackend.cancel_lane_change`)."""
+        entity: DrivenEntity = self
+        self._resolve_backend().cancel_lane_change(entity, world)
+
     def set_desired_speed(self, world: "carla.World", speed_kmh: float) -> None:
         """Aim for *speed_kmh* from now on."""
         entity: DrivenEntity = self

@@ -645,6 +645,57 @@ def _check_persistent_child(out: _Collector, path: str, node: ConditionNode) -> 
         )
 
 
+#: Where a condition tree is read for whether it has fired at all -- any
+#: result, a pass or a failure -- rather than for a pass, keyed by what the
+#: warning calls it.
+_FIRING_ROOTS = {
+    "trigger": "an action's trigger, which fires on any result",
+    "pass": "a pass condition, which is met by any result",
+    "fail": "a fail condition, which fails the run on any result",
+}
+
+
+def _check_firing_nots(
+    out: _Collector, path: str, node: ConditionNode, root: str
+) -> None:
+    """Warn about a NOT that, where it stands, fires when its child does
+    (#2430).
+
+    By default a NOT flips the verdict of a child that has fired and says
+    nothing while the child says nothing.  A trigger, a pass condition and a
+    fail condition count any result, so ``NOT(distance < 10 m)`` there fires
+    once the ego *is* within 10 m.  ANY and ALL pass that on (they fire on
+    their children's firing).  Persistent and Sticky count only passes, not
+    firing, so the walk stops there.  A child that only ever reports a
+    failure (:data:`FAILURE_ONLY_CONDITIONS`) is what such a NOT is for: it
+    turns that failure into a pass.  A warning, not an error: the semantics
+    stay, and documents built this way still run.
+    """
+    if node.type in ("persistent", "sticky"):
+        return
+    if node.type != "not":
+        for index, child in enumerate(node.children):
+            _check_firing_nots(out, f"{path}.children[{index}]", child, root)
+        return
+    if read_bool(_value(node, "holds_when_pending")) is not False:
+        return
+    if not node.children or any(
+        child.type in FAILURE_ONLY_CONDITIONS for child in node.children
+    ):
+        return
+    spec = get_condition_spec(node.children[0].type)
+    title = spec.title if spec is not None else node.children[0].type
+    out.warn(
+        path,
+        f"This NOT fires when {title} does, not when it does not: by default a "
+        "NOT only flips the verdict of a child that has fired and says nothing "
+        f"while the child says nothing, and it stands in {_FIRING_ROOTS[root]}. "
+        "For a logical NOT -- one that holds while the child has not fired -- "
+        "tick *Holds while the child does not* (holds_when_pending).",
+        node.id,
+    )
+
+
 #: An entity filter's bounds, in pairs: the runtime's EntityFilter refuses a
 #: lower bound above its upper one.
 _FILTER_RANGES = ("distance", "ahead", "left")
@@ -805,6 +856,7 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
 
     if node.trigger is not None:
         _check_condition(out, f"{path}.trigger", node.trigger, refs, node.id)
+        _check_firing_nots(out, f"{path}.trigger", node.trigger, "trigger")
     _check_advance_conditions(out, path, node, spec.vertex_conditions, refs)
 
 
@@ -1877,10 +1929,12 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
         _check_condition(
             out, f"assertions.pass[{index}]", condition, refs, verdict="pass"
         )
+        _check_firing_nots(out, f"assertions.pass[{index}]", condition, "pass")
     for index, condition in enumerate(document.assertions.fail_conditions):
         _check_condition(
             out, f"assertions.fail[{index}]", condition, refs, verdict="fail"
         )
+        _check_firing_nots(out, f"assertions.fail[{index}]", condition, "fail")
 
     if not document.assertions.pass_conditions:
         out.error(

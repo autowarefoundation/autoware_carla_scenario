@@ -482,6 +482,19 @@ never fire. Use a Collision or Timeout on its own: it keeps its failure once
 it has fired, so under a `NOT` it would only fail the run later. Put Off the
 road or Exists, which check again on every tick, under a `NOT` first.
 
+`NOT` is not a plain inverter by default: it reports a result only when its
+child does, and flips that result's verdict. A trigger, a pass condition and a
+fail condition count any result, so `NOT(Distance < 10 m)` there fires when the
+entity *is* within 10 m. Most conditions report only a pass, so under
+`Persistent` or `Sticky`, which count only passes, such a `NOT` never fires
+either. The default is what a `NOT` around a Collision, Off the road, Exists or
+Timeout card wants: it turns their failure into a pass. Tick **Holds while the
+child does not** (`holds_when_pending: true`) for a logical NOT: it holds on
+every tick its child has not fired, and says nothing while it has. The
+validator warns on a `NOT` without it used as a trigger, a pass condition or a
+fail condition (on its own or under `ALL` or `ANY`), unless its child is one of
+those four cards.
+
 ## Fixed or searched: every lanelet, one question
 
 **Edit** on any lanelet field opens the map, and the panel beside it asks the

@@ -78,7 +78,10 @@ class EmergencyAction(BaseAction):
         if entity is None:
             # A pedestrian is not a vehicle that is missing (#2273).
             fail_if_pedestrian(self._entity_name, "set_emergency")
-            logger.warning("EmergencyAction: entity '%s' not found", self._entity_name)
+            if self._report_missing():
+                logger.warning(
+                    "EmergencyAction: entity '%s' not found", self._entity_name
+                )
             return
         # Logged only when it took: a vehicle that is not an emergency vehicle
         # stays as it was, as set_emergency has warned (#2191).

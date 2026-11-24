@@ -202,9 +202,10 @@ class SetSpeedAction(BaseAction):
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
             fail_if_pedestrian(self._entity_name, "set_desired_speed")
-            logger.warning(
-                "SetSpeedAction: entity '%s' not found", str(self._entity_name)
-            )
+            if self._report_missing():
+                logger.warning(
+                    "SetSpeedAction: entity '%s' not found", str(self._entity_name)
+                )
             return
 
         if self._rate_kmh_s is None:

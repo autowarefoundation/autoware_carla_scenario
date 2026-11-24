@@ -116,10 +116,11 @@ class PerceptionFaultInjectionAction(BaseAction):
             )
         actor = find_actor_in_list(world.get_actors(), self._entity_name)
         if actor is None:
-            logger.warning(
-                "PerceptionFaultInjectionAction: entity '%s' not found",
-                self._entity_name,
-            )
+            if self._report_missing():
+                logger.warning(
+                    "PerceptionFaultInjectionAction: entity '%s' not found",
+                    self._entity_name,
+                )
             return
         set_perception_fault(int(actor.id), self._fault)
         logger.info(

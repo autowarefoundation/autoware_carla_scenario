@@ -188,12 +188,13 @@ class TrafficParametersAction(BaseAction):
             if entity is None:
                 # A pedestrian is not a vehicle that is missing (#2273).
                 fail_if_pedestrian(name, "override_vehicle_parameters")
-                logger.warning(
-                    "%s '%s': vehicle '%s' not found",
-                    type(self).__name__,
-                    self.label,
-                    name,
-                )
+                if self._report_missing():
+                    logger.warning(
+                        "%s '%s': vehicle '%s' not found",
+                        type(self).__name__,
+                        self.label,
+                        name,
+                    )
                 return
             if vehicles is not None:
                 # A typed local: Codon unwraps the Optional here.

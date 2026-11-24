@@ -1080,6 +1080,27 @@ class TrafficManagerBackend(TrafficBackend):
             "%s: forced a %s lane change", _entity_name(entity), direction.value
         )
 
+    def cancel_lane_change(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Drop *entity*'s lane change still waiting for its ``start_after_m``
+        or still being stretched over its ``lane_change_length_m``
+        (:meth:`TrafficBackend.cancel_lane_change`): the vehicle is left to the
+        TrafficManager, its lane offset taken off and its own speed and lane
+        changes given back (:meth:`_end_lane_change_request`).  A lane change
+        that is done, or that was forced at once, has no request left to drop.
+        """
+        for pending in self._lane_change_requests:
+            if pending.entity is entity:
+                tm = self._require_tm("cancel_lane_change")
+                if tm is not None:
+                    self._end_lane_change_request(pending, tm)
+                self._lane_change_requests.remove(pending)
+                logger.info(
+                    "%s: the %s lane change asked for was cancelled",
+                    _entity_name(entity),
+                    pending.direction.value,
+                )
+                return
+
     def _aim_lane_change(
         self,
         entity: DrivenEntity,

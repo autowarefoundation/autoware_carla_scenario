@@ -10,7 +10,13 @@ from typing import Any, Optional
 import pytest
 
 from autoware_carla_scenario import LaneChangeAction
+from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions.base import BaseAction
+from autoware_carla_scenario.conditions.base import BaseCondition, ScenarioResult
+from autoware_carla_scenario.control_domain import ControlDomain
+from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 from autoware_carla_scenario.traffic import LaneChangeDirection
+from autoware_carla_scenario.traffic.base import NullTrafficBackend
 from autoware_carla_scenario.traffic.driven import BackendDriven
 from autoware_carla_scenario.traffic.traffic_manager import (
     TrafficManagerBackend,
@@ -427,6 +433,118 @@ class TestLength:
         run.ask(100.0, 0.0)
         assert run.tm.offsets[-1] == 0.0
         assert len(run.backend._lane_change_requests) == 1
+
+
+class TestCancel:
+    """A lane change whose action was stopped is dropped (#2430)."""
+
+    def test_one_waiting_for_its_distance_never_starts(self) -> None:
+        run = _Run()
+        run.ask(20.0, 0.0)
+        run.backend.cancel_lane_change(run.entity, run.world)
+        assert run.backend._lane_change_requests == []
+        # Its own lane changes are given back.
+        assert run.tm.auto == [False, True]
+        run.drive_to(40.0)
+        assert run.tm.forced == []
+
+    def test_one_being_stretched_has_its_offset_taken_off(self) -> None:
+        run = _Run()
+        run.ask(0.0, 40.0)
+        run.drive_to(10.0, -0.5)
+        assert run.tm.offsets[-1] != 0.0
+        run.backend.cancel_lane_change(run.entity, run.world)
+        assert run.tm.offsets[-1] == 0.0
+        assert run.backend._lane_change_requests == []
+        offsets = len(run.tm.offsets)
+        run.drive_to(20.0, -1.0)
+        assert len(run.tm.offsets) == offsets
+
+    def test_one_that_is_done_is_left_alone(self) -> None:
+        run = _Run()
+        run.ask(0.0, 40.0)
+        run.drive_to(41.0, -LANE_WIDTH_M)
+        calls = (list(run.tm.offsets), list(run.tm.auto), list(run.tm.forced))
+        run.backend.cancel_lane_change(run.entity, run.world)
+        assert (run.tm.offsets, run.tm.auto, run.tm.forced) == calls
+
+    def test_one_forced_at_once_is_left_alone(self) -> None:
+        run = _Run()
+        run.ask(0.0, 0.0)
+        run.backend.cancel_lane_change(run.entity, run.world)
+        assert run.tm.forced == [False]
+        assert run.tm.auto == []
+
+    def test_another_vehicle_s_is_kept(self) -> None:
+        run = _Run()
+        other = _Vehicle(_Actor(2, 0.0, 3.5))
+        run.world.actors.append(other.actor)
+        run.backend.change_lane(other, run.world, LaneChangeDirection.LEFT, 20.0, 0.0)
+        run.ask(20.0, 0.0)
+        run.backend.cancel_lane_change(run.entity, run.world)
+        assert [r.entity for r in run.backend._lane_change_requests] == [other]
+
+    def test_the_base_backend_does_nothing(self) -> None:
+        run = _Run()
+        NullTrafficBackend().cancel_lane_change(run.entity, run.world)
+
+
+class _Never(BaseCondition):
+    def __init__(self) -> None:
+        super().__init__(label="never")
+
+    def check(self, world: object, elapsed: float) -> Optional[ScenarioResult]:
+        return None
+
+
+class _TakesTheLane(BaseAction):
+    """An action that takes over the vehicle's lateral domain, as a turn does."""
+
+    def __init__(self) -> None:
+        super().__init__(label="turn", until=_Never(), overrides=True)
+
+    def _control_claims(self) -> list[tuple[str, ControlDomain]]:
+        return [("npc", ControlDomain.LATERAL)]
+
+    def execute(self, world: object) -> None:
+        pass
+
+
+class _Driven(_Vehicle):
+    def __init__(self, actor: _Actor, backend: TrafficManagerBackend) -> None:
+        super().__init__(actor)
+        self._traffic_backend = backend
+
+
+class TestOverriddenAction:
+    """A lane change another action overrides does not happen later (#2430)."""
+
+    def test_its_request_is_cancelled(self) -> None:
+        run = _Run()
+        entity = _Driven(run.actor, run.backend)
+        register_entity("npc", entity)
+        try:
+            action = LaneChangeAction(
+                "npc", LaneChangeDirection.LEFT, start_after_m=40.0, until=_Never()
+            )
+            action.tick(run.world, 0.0)
+            action.tick(run.world, 0.05)
+            assert action.state is ActionState.RUNNING
+            assert len(run.backend._lane_change_requests) == 1
+            _TakesTheLane().tick(run.world, 0.1)
+            assert action.state is ActionState.COMPLETE
+            assert run.backend._lane_change_requests == []
+            run.drive_to(60.0)
+            assert run.tm.forced == []
+        finally:
+            unregister_entity("npc")
+
+    def test_a_missing_entity_is_nothing_to_cancel(self) -> None:
+        action = LaneChangeAction("nobody", LaneChangeDirection.LEFT, until=_Never())
+        action.tick(None, 0.0)
+        action.tick(None, 0.05)
+        action._stop_overridden(None, "TurnAction 'turn'")
+        assert action.state is ActionState.COMPLETE
 
 
 class TestWayAhead:

@@ -310,6 +310,10 @@ class LaneChanging(Protocol):
         """Whether the manoeuvre has settled."""
         ...
 
+    def cancel_lane_change(self, world: "carla.World") -> None:
+        """Drop the manoeuvre if it is still to be carried out."""
+        ...
+
 
 @runtime_checkable
 class SettingSpeed(Protocol):
@@ -836,6 +840,21 @@ class TrafficBackend:
         timeout's job.
         """
         return False
+
+    def cancel_lane_change(self, entity: DrivenEntity, world: "carla.World") -> None:
+        """Drop *entity*'s lane change that is still being carried out: the
+        action that asked for it was stopped (#2430).
+
+        A lane change asked for after some driving (``start_after_m``) or
+        stretched over some (``lane_change_length_m``) is kept until it is
+        done; without this, one whose action another overrode would still
+        start later.  One that is done is left as it is, and so is a lane
+        change the backend has already handed to whatever drives the vehicle.
+
+        Must be safe to repeat, and to call for a vehicle with no lane change
+        asked for.  The base does nothing, which is right for a backend that
+        keeps no lane change to carry out later.
+        """
 
     def set_desired_speed(
         self, entity: DrivenEntity, world: "carla.World", speed_kmh: float
