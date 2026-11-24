@@ -457,6 +457,31 @@ class TestTrafficManagerClose:
         backend.prepare(_context(client))
         backend.close()
 
+    def test_a_failing_step_still_restores_and_shuts_down(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The next case must not draw this one's overrides, nor reuse its
+        manager (#2426)."""
+
+        class _Broken:
+            def forget_lane_change(self) -> None:
+                raise ValueError("broken entity")
+
+        client = _Client()
+        backend = TrafficManagerBackend(client=client)
+        backend.prepare(_context(client))
+        backend._lane_changed = [_Broken()]  # type: ignore[list-item]
+        restored: List[bool] = []
+        backend._restore_parameters = lambda: restored.append(True)  # type: ignore[method-assign]
+
+        with caplog.at_level(logging.WARNING):
+            backend.close()
+
+        assert restored == [True]
+        assert client.tm.shut_downs == 1
+        assert backend._lane_changed == []
+        assert "forgetting a lane change failed" in caplog.text
+
     def test_it_reports_what_drove_the_run(self) -> None:
         client = _Client()
         backend = TrafficManagerBackend(TrafficManagerBackendConfig(port=8123))

@@ -6651,6 +6651,42 @@ def test_close_closes_sumo_after_the_steps_were_given_up_on(
 
 
 @needs_sumo
+def test_close_closes_sumo_even_when_an_earlier_step_fails(
+    crossroads: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A TrafficManager or clock log that fails to close still leaves the
+    parameters restored and SUMO disconnected and stopped: an orphaned SUMO
+    would refuse the next start as "already active" (#2426)."""
+    traci = _DeadTraci("traci")
+    backend, _context = _dead_sumo_backend(crossroads, tmp_path, traci, monkeypatch)
+
+    def refuse() -> None:
+        raise RuntimeError("TrafficManager gone")
+
+    monkeypatch.setattr(backend._tm, "close", refuse)
+    clock_log = SimpleNamespace(close=refuse)
+    backend._clock_log = clock_log
+    restored: list[bool] = []
+    monkeypatch.setattr(backend, "_restore_parameters", lambda: restored.append(True))
+
+    with caplog.at_level(logging.WARNING):
+        backend.close()
+
+    assert restored == [True]
+    assert traci.closes == [(False,)]
+    assert _DeadTraci.active == set()
+    assert backend._sumo_process is None
+    assert all(p.returncode is not None for p in _SumoProcess.started)
+    assert not backend._connected
+    assert backend._clock_log is None
+    assert "closing the TrafficManager failed" in caplog.text
+    assert "closing the clock log failed" in caplog.text
+
+
+@needs_sumo
 @pytest.mark.parametrize("name", ["traci", "libsumo"])
 def test_sumo_starts_again_after_the_steps_were_given_up_on(
     crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str

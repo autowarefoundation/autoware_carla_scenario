@@ -7,6 +7,7 @@ server.
 
 from __future__ import annotations
 
+import logging
 import math
 from concurrent import futures
 from types import SimpleNamespace
@@ -1096,6 +1097,26 @@ def test_traffic_runs_up_onto_the_first_frame_with_the_ego() -> None:
     assert (final.x, final.y) == pytest.approx((8.0, 0.0))
     light.freeze.assert_called_with(False)
     assert entity.carried_actor_ids == frozenset()
+
+
+def test_a_failed_light_thaw_does_not_skip_the_rest_of_teardown(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A dead server times out every ``freeze`` RPC (#2426): the session still
+    closes, and the next attempt does not thaw the lights again."""
+    entity, client, _ = _warming_entity(speed_mps=5.0, warmup_s=1.0)
+    world, light = _warmup_world()
+    entity.on_scenario_start(world)
+    entity.on_tick(world, 0.0)
+    assert not entity.is_initialized  # still running up
+    light.freeze.side_effect = RuntimeError("time-out of 5000ms while waiting")
+
+    with caplog.at_level(logging.WARNING):
+        entity.on_scenario_end(world)  # must not raise
+
+    assert client.closed == 1
+    assert entity._warmup is None  # noqa: SLF001 - cleared despite the failure
+    assert "Failed to thaw the lights" in caplog.text
 
 
 def test_without_a_warm_up_the_ego_is_ready_at_once() -> None:

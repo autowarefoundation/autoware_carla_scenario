@@ -40,6 +40,14 @@ _CONF = (
 # ---------------------------------------------------------------------------
 
 
+class _WalkerAIController:
+    def __init__(self, actor: "_Actor") -> None:
+        self._actor = actor
+
+    def stop(self) -> None:
+        self._actor.world.events.append(("stop", self._actor.type_id))
+
+
 class _Actor:
     def __init__(
         self,
@@ -56,6 +64,11 @@ class _Actor:
         self.transform = "origin"
         #: A destroy the server refuses (returns False and the actor stays).
         self.stuck = False
+
+    def as_walker_ai_controller(self) -> "_WalkerAIController":
+        # Like typesafe_carla's plain Actor: no stop() without the conversion.
+        assert self.type_id.startswith("controller.ai.walker")
+        return _WalkerAIController(self)
 
     def destroy(self) -> bool:
         if self.stuck:
@@ -283,7 +296,12 @@ class TestSoftResetOnTheSameMap:
 
         runner.reset_world("Case0")
 
-        destroyed = [t for kind, t in server.world.events if kind == "destroy"]
+        events = server.world.events
+        destroyed = [t for kind, t in events if kind == "destroy"]
+        # CARLA's order (#2426): the walker's controller is stopped first.
+        assert events.index(("stop", "controller.ai.walker")) < events.index(
+            ("destroy", "sensor.camera.rgb")
+        )
         assert destroyed[:3] == [
             "sensor.camera.rgb",
             "sensor.other.collision",

@@ -221,6 +221,34 @@ def _destroy_order(type_id: str) -> int:
     return 4
 
 
+def ready_to_destroy(actors: List[carla.Actor]) -> List[carla.Actor]:
+    """*actors* in the order to destroy them, every walker AI controller stopped.
+
+    CARLA's order for a pedestrian is ``controller.stop()``, then the
+    controller is destroyed, then the walker: a controller destroyed while it
+    still walks its walker, or a walker destroyed under its controller, leaves
+    the server's crowd navigation with an agent it no longer has.  So each
+    ``controller.ai.walker`` is stopped here (one already gone is passed
+    over), and the list comes back sensors and controllers first, then
+    walkers, then vehicles (:func:`_destroy_order`).  The soft reset and the
+    runner's leftover sweep both destroy in this order.
+
+    ``world.get_actors()`` hands out plain ``carla.Actor`` handles, and
+    typesafe_carla's CPython ``Actor`` has no ``stop()`` (the Python-API
+    shortcuts are Codon-only): the checked ``as_walker_ai_controller()``
+    conversion comes first.
+    """
+    for actor in actors:
+        if str(actor.type_id).startswith("controller.ai.walker"):
+            try:
+                actor.as_walker_ai_controller().stop()
+            except RuntimeError:  # destroyed meanwhile
+                logger.debug("walker controller %d is gone", int(actor.id))
+    ordered = list(actors)
+    ordered.sort(key=lambda a: _destroy_order(str(a.type_id)))
+    return ordered
+
+
 def soft_reset_world(
     client: carla.Client,
     world: carla.World,
@@ -231,7 +259,8 @@ def soft_reset_world(
 
     In this order: the recorder is stopped; every actor the baseline does not
     list (other than a traffic light, a sign or the spectator) is destroyed
-    (sensors and controllers first), then the world is
+    (walker AI controllers stopped, then sensors and controllers first:
+    :func:`ready_to_destroy`), then the world is
     ticked; the traffic lights get their timing back, are reset to the start
     of their cycle and frozen as they were; the weather and the spectator are
     put back, the world is ticked once more, and the episode settings are
@@ -271,9 +300,8 @@ def soft_reset_world(
     for actor in world.get_actors():
         if int(actor.id) not in kept and not _belongs_to_the_map(str(actor.type_id)):
             doomed.append(actor)
-    doomed.sort(key=lambda a: _destroy_order(str(a.type_id)))
     destroyed = 0
-    for actor in doomed:
+    for actor in ready_to_destroy(doomed):
         if actor.destroy():
             destroyed += 1
     world.tick()
