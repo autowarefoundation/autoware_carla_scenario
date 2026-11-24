@@ -336,7 +336,8 @@ heavy one costs nothing until a scenario judges on it. The heavy ones
 (`HEAVY_METRICS`, `crime_ttr_s` today) can also be turned off for a run that
 should not wait on them, a quick iteration on a scenario that judges on TTR:
 a metric condition on one is then not judged -- the run neither fails nor
-passes on it, and a warning says so. They are on by default; turn them off
+passes on it, a warning says so, and so does its status in the result
+(`not judged: heavy metrics off`, `"judged": false`). They are on by default; turn them off
 with `metrics.heavy=false`, `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS=0`, or
 `configure_commonroad_metrics(heavy_metrics=False)`:
 
@@ -503,10 +504,16 @@ it must hold), and so does `register_pass_condition`. A run that passed, or
 failed later than the metric did, fails on the metric: the earliest wins, its
 failure records the condition, when and what it found. Every metric
 condition's status in the result says what it found: `ng_seconds`, when it
-first went NG (`first_ng_at`) and its most critical value (`worst`; `null`
+first went NG (`first_ng_at`) and its most critical value (`worst`: the
+lowest under a `<` or `<=` rule, the highest over a `>` or `>=` one, the
+closest to the threshold under `=`; `null`
 when it is not finite, a CriMe BTN of infinity say: the result files are
 strict JSON, which has no `NaN` or `Infinity`, and any value of a result that
-is not finite is written as `null`). In the
+is not finite is written as `null`). A metric condition the run was not
+judged on -- its metric is heavy and the heavy metrics are off, or the run
+recorded no frame -- neither fails nor passes it, and its status says so: the
+message `not judged: heavy metrics off` (or `not judged: no frame recorded`),
+and `"judged": false` and the `reason` in its details. In the
 [Scenario Editor](scenario_editor.md) it is the **Metric** card, under World,
 with its **Max NG seconds**.
 
@@ -529,14 +536,16 @@ the simulation never waits on a metric. When the run is over, while its CARLA
 map is still loaded, the frames are replayed: AlpaSim's metrics and the run's
 own every tick, in order, by the code that reads them off a live world, on a
 stand-in world answering with the recorded actors and the run's map; the
-CommonRoad metrics every 0.1 s, by the workers at once. A metric that raises
+CommonRoad metrics every `period_s` (0.1 s by default; `crime_ttr_s` every
+0.5 s -- see `metric_periods_s`), by the workers at once. A metric that raises
 in a frame reads nothing there, the first exception logged with a warning;
 one that raises in every frame evaluated (a map whose `get_waypoint` raises,
 say) fails the run with `MetricEvaluationError`
 (`autoware_carla_scenario.metric_batch`), as a CommonRoad metric failing in
 every frame does with `CommonRoadWorkerError` (below): a fail condition on it
 would otherwise pass without having judged anything. Then each metric
-condition judges its metric's series. The metrics, and each metric condition's NG frames,
+condition judges its metric's series; a run that recorded no frame judges
+none of them (each is `not judged: no frame recorded`). The metrics, and each metric condition's NG frames,
 go into the run's trajectory log (`metric` and `condition` records) and so
 into its Rerun recording ([Metrics in the recording](usage.md#metrics-in-the-recording)).
 

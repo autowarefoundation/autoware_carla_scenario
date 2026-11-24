@@ -2026,3 +2026,124 @@ def test_a_replay_that_fails_leaves_the_module_as_it_found_it() -> None:
         assert metrics._CACHE.carla_map is None
     finally:
         metrics.set_importance_sampling_weight(None)
+
+
+# ---------------------------------------------------------------------------
+# Not judged (#2436)
+# ---------------------------------------------------------------------------
+
+
+def test_a_metric_condition_not_judged_says_so_and_leaves_the_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the heavy metrics off, a condition on one is not judged: the run's
+    verdict stands, and its status says why rather than "judged after the
+    run"."""
+    import json
+
+    from autoware_carla_scenario.commonroad import session as cr_session
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    settings = cr_session.CommonRoadSettings(heavy_metrics=False)
+    monkeypatch.setattr(cr_session, "commonroad_settings", lambda: settings)
+    ttr = MetricCondition(
+        metrics.CRIME_TTR_S, ComparisonRule.LESS_THAN, 1.0, label="ttr"
+    )
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=3.0)
+    result = _judged_run(ttr, result=passed, worlds=_hit_at_two())
+
+    assert result is passed and result.passed
+    (status,) = result.condition_statuses
+    assert status.label == "fail[0](ttr)"
+    assert not status.satisfied
+    assert status.message == "not judged: heavy metrics off"
+    assert status.details["judged"] is False
+    assert status.details["reason"] == "heavy metrics off"
+    assert "ng_seconds" not in status.details
+    written = json.loads(result.to_json())["condition_statuses"][0]
+    assert written["details"]["judged"] is False
+    assert written["message"] == "not judged: heavy metrics off"
+
+
+def test_a_skipped_condition_is_not_among_a_failures_other_conditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.commonroad import session as cr_session
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    settings = cr_session.CommonRoadSettings(heavy_metrics=False)
+    monkeypatch.setattr(cr_session, "commonroad_settings", lambda: settings)
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=3.0)
+    result = _judged_run(
+        MetricCondition(
+            metrics.CRIME_TTR_S, ComparisonRule.LESS_THAN, 1.0, label="ttr"
+        ),
+        MetricCondition(COLLISION_AT_FAULT, label="hit"),
+        result=passed,
+        worlds=_hit_at_two(),
+    )
+
+    assert not result.passed
+    assert result.failure.condition == "fail[1](hit)"
+    assert result.failure.also_triggered == []
+    statuses = {s.label: s for s in result.condition_statuses}
+    assert statuses["fail[0](ttr)"].message == "not judged: heavy metrics off"
+    assert statuses["fail[1](hit)"].satisfied
+
+
+def test_no_recorded_frame_judges_no_metric_condition() -> None:
+    """A run that recorded no frame does not hold its metric conditions with
+    no NG time: they are not judged, and the run's verdict stands."""
+    from autoware_carla_scenario.conditions import ScenarioResult
+    from autoware_carla_scenario.scenario_runner import _judge_metrics
+
+    scenario = _Scenario(
+        EgoConfig(vehicle_type="vehicle.x", spawn_location=SpawnPointIndex(0))
+    )
+    scenario.register_fail_condition(MetricCondition(COLLISION_AT_FAULT, label="hit"))
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=0.0)
+    log = _Log()
+    result = _judge_metrics(
+        scenario,
+        FrameRecorder(),
+        _world(),  # type: ignore[arg-type]
+        passed,
+        "test",
+        log,
+    )
+
+    assert result is passed and result.passed
+    (status,) = result.condition_statuses
+    assert status.message == "not judged: no frame recorded"
+    assert status.details["judged"] is False
+    assert status.details["reason"] == "no frame recorded"
+    assert "ng_seconds" not in status.details
+    assert log.metrics == [] and log.conditions == []
+
+
+def test_an_empty_series_judges_nothing() -> None:
+    condition = MetricCondition(COLLISION_AT_FAULT, label="hit")
+    assert condition.judge([], [], None) is None
+    details = condition.get_details()
+    assert details["judged"] is False
+    assert details["reason"] == "no frame recorded"
+    assert "ng_seconds" not in details
+    # A later judgement, or a reset, forgets it.
+    condition.judge([0.0], [0.0], 0.1)
+    assert "judged" not in condition.get_details()
+    condition.mark_not_judged("heavy metrics off")
+    condition.reset()
+    assert "judged" not in condition.get_details()
+
+
+def test_the_worst_of_an_equal_to_rule_is_the_closest_to_its_threshold() -> None:
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.EQUAL_TO,
+        2.0,
+        tolerance=0.5,
+        label="at 2 m",
+    )
+    verdict = condition.judge([0.0, 0.1, 0.2, 0.3], [1.6, 2.4, 2.05, 1.8], 0.4)
+    assert verdict is not None
+    assert condition.get_details()["worst"] == 2.05
