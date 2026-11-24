@@ -740,6 +740,24 @@ class TestFollowingTheGrip:
         assert follow_tire_friction not in scenario._post_tick_callbacks
 
 
+def test_scaling_a_vehicles_wheels_is_a_wheel_friction_change() -> None:
+    """The grip the action applies is a change a follower's powertrain reads
+    again (utils.powertrain.follow_wheel_grip, #2458); the same grip again
+    is none."""
+    from autoware_carla_scenario.actions.environment import forget_tire_friction
+    from autoware_carla_scenario.utils import powertrain
+
+    world = _world_with(_Vehicle(1))
+    before = powertrain._WHEEL_FRICTION_CHANGES[0]
+    apply_tire_friction(world, 0.5)
+    after = powertrain._WHEEL_FRICTION_CHANGES[0]
+    assert after > before
+    apply_tire_friction(world, 0.5)
+    assert powertrain._WHEEL_FRICTION_CHANGES[0] == after
+    forget_tire_friction(world)
+    assert powertrain._WHEEL_FRICTION_CHANGES[0] > after
+
+
 class TestVisibility:
     """How far drivers see is the number the action is given: worked out from
     the conditions before the run (resolve_environment), not by the action."""
@@ -781,6 +799,70 @@ class TestVisibility:
         EnvironmentAction(**settings).execute(world)
         # Thick fog: 12-18 m, at its median.
         assert self._seen(world) == pytest.approx(15.0)
+
+    def _mid_run(self, sun_altitude_angle: float, config: dict[str, Any]) -> MagicMock:
+        """A world in its own episode, at night or by day, after the config's
+        ``environment`` *config* ran (as the runner builds it)."""
+        from autoware_carla_scenario.weather_rules import resolve_environment
+
+        forget_weather_conditions()
+        world = _world(sun_altitude_angle=sun_altitude_angle)
+        world.id = next(_world_ids)
+        settings = resolve_environment(config)
+        settings.pop("time_of_day", None)
+        EnvironmentAction(**settings).execute(world)
+        return world
+
+    def test_a_mid_run_rain_keeps_the_runs_fog_at_night(self) -> None:
+        """The issue's case: fog 50 m at night in the config, then a rain-only
+        resolve mid-run -- the drivers keep the fog's 50 m, not the rain's
+        206 m (#2458)."""
+        from autoware_carla_scenario.weather_rules import resolve_environment
+
+        world = self._mid_run(
+            -45.0, {"fog_visibility_range_m": 50.0, "time_of_day": "night"}
+        )
+        assert self._seen(world) == pytest.approx(50.0)
+        rain = resolve_environment({"rainfall_rate_mm_h": 5.0})
+        assert rain["visibility_m"] == pytest.approx(205.88, abs=0.01)
+        EnvironmentAction(**rain).execute(world)
+        assert self._seen(world) == pytest.approx(50.0)
+        forget_weather_conditions()
+
+    def test_a_mid_run_rain_at_night_is_seen_in_the_nights_light(self) -> None:
+        from autoware_carla_scenario.weather_rules import resolve_environment
+
+        world = self._mid_run(-45.0, {"time_of_day": "night"})
+        EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5.0})).execute(
+            world
+        )
+        expected = resolve_environment(
+            {"rainfall_rate_mm_h": 5.0, "time_of_day": "night"}
+        )
+        assert self._seen(world) == pytest.approx(expected["visibility_m"])
+        forget_weather_conditions()
+
+    def test_the_first_action_keeps_its_own(self) -> None:
+        """Nothing recorded before it: the config's own visibility, as it was."""
+        from autoware_carla_scenario.weather_rules import resolve_environment
+
+        forget_weather_conditions()
+        world = _world(sun_altitude_angle=-45.0)
+        world.id = next(_world_ids)
+        rain = resolve_environment({"rainfall_rate_mm_h": 5.0})
+        EnvironmentAction(**rain).execute(world)
+        assert self._seen(world) == pytest.approx(rain["visibility_m"])
+        forget_weather_conditions()
+
+    def test_a_visibility_given_outright_mid_run_is_kept(self) -> None:
+        world = self._mid_run(
+            -45.0, {"fog_visibility_range_m": 50.0, "time_of_day": "night"}
+        )
+        EnvironmentAction(rainfall_rate_mm_h=5.0, visibility_m=80.0).execute(world)
+        assert self._seen(world) == 80.0
+        EnvironmentAction(visibility_m=300.0).execute(world)
+        assert self._seen(world) == 300.0
+        forget_weather_conditions()
 
     def test_the_probe_reads_it(self) -> None:
         from autoware_carla_scenario.odd import probes

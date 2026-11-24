@@ -461,6 +461,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         # attribute of a union (docs/typecheck.md).
         if isinstance(command, TrajectoryCommand):
             trajectory: TrajectoryCommand = command
+            self._follower.follow_wheel_grip(actor)
             vehicle_command = self._follower.step(
                 self._plan(trajectory, selection.received_us),
                 observation.pose,

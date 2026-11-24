@@ -43,7 +43,7 @@ import math
 from typing import TYPE_CHECKING, FrozenSet, List, Mapping, Tuple
 
 from ..kinematics.angle import normalize_angle_deg
-from ..utils.powertrain import ChaosPowertrain
+from ..utils.powertrain import ChaosPowertrain, follow_wheel_grip
 from ..utils.vehicles import release_vehicle
 
 if TYPE_CHECKING:
@@ -261,6 +261,7 @@ class _CarriedVehicle:
         self.actor.set_target_angular_velocity(
             carla.Vector3D(x=spin.x, y=spin.y, z=turn / self._step_s)
         )
+        self._powertrain = follow_wheel_grip(self._powertrain, self.actor)
         throttle, _ = self._powertrain.pedals(
             0.0, self.speed, int(self.actor.get_control().gear)
         )

@@ -25,9 +25,11 @@ from autoware_carla_scenario.actions.environment import (
 from autoware_carla_scenario.odd import probes
 from autoware_carla_scenario.odd.backend import CARLA_BACKEND
 from autoware_carla_scenario.weather_rules import (
+    CARLA_QUANTITIES,
     DEFAULT_RULES,
     RulesError,
     check_weather_rules,
+    merged_visibility,
     resolve_environment,
     road_water,
     use_weather_rules,
@@ -1114,6 +1116,113 @@ class TestResolveEnvironment:
         # What follows from the precipitation in the rules still does.
         assert out["wetness"] == pytest.approx(60.0)
         assert "names no condition" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("altitude", "azimuth", "time"),
+        [(-45.0, None, "night"), (30.0, None, "day"), (-3.0, 270.0, "dusk")],
+    )
+    def test_a_sun_given_as_an_angle_is_the_light_the_causes_are_seen_in(
+        self, altitude: float, azimuth: "float | None", time: str
+    ) -> None:
+        """No time of day named, a sun set: the visibility reads the time of
+        day that sun renders, as the probes do (#2458)."""
+        settings: dict = {"rainfall_rate_mm_h": 0.5, "sun_altitude_angle": altitude}
+        if azimuth is not None:
+            settings["sun_azimuth_angle"] = azimuth
+        out = resolve_environment(settings)
+        expected = resolve_environment({"rainfall_rate_mm_h": 0.5, "time_of_day": time})
+        assert out["visibility_m"] == pytest.approx(expected["visibility_m"])
+        # Read, not worked out from: the world keeps its own azimuth.
+        assert ("sun_azimuth_angle" in out) == (azimuth is not None)
+
+    def test_a_night_sun_given_as_an_angle_leaves_the_nights_sight(self) -> None:
+        out = resolve_environment(
+            {"rainfall_rate_mm_h": 0.5, "sun_altitude_angle": -45.0}
+        )
+        assert out["visibility_m"] == pytest.approx(100.0)
+
+    def test_a_sun_alone_names_no_condition_and_gets_no_visibility(
+        self, caplog
+    ) -> None:
+        out = resolve_environment({"sun_altitude_angle": -45.0})
+        assert out == {"sun_altitude_angle": -45.0}
+        assert "names no condition" in caplog.text
+
+
+class TestMergedVisibility:
+    """How far drivers see once an action's causes meet the run's (#2458)."""
+
+    def test_the_runs_fog_and_night_hold_against_a_rain_only_resolve(self) -> None:
+        own = resolve_environment({"rainfall_rate_mm_h": 5.0})
+        merged = merged_visibility(
+            own["visibility_m"],
+            {f: v for f, v in own.items() if f in CARLA_QUANTITIES},
+            {"rainfall_rate_mm_h": 5.0},
+            {},
+            {"fog_visibility_range_m": 50.0},
+            {"time_of_day": "night"},
+        )
+        whole = resolve_environment(
+            {
+                "rainfall_rate_mm_h": 5.0,
+                "fog_visibility_range_m": 50.0,
+                "time_of_day": "night",
+            }
+        )
+        assert merged == pytest.approx(whole["visibility_m"]) == pytest.approx(50.0)
+
+    @pytest.mark.parametrize("quantile", [0.1, 0.5, 0.9])
+    def test_the_quantile_of_the_actions_own_is_kept(self, quantile: float) -> None:
+        own = resolve_environment(
+            {"rainfall_rate_mm_h": 5.0, "visibility_quantile": quantile}
+        )
+        merged = merged_visibility(
+            own["visibility_m"],
+            {},
+            {"rainfall_rate_mm_h": 5.0},
+            {},
+            {},
+            {"time_of_day": "night"},
+        )
+        whole = resolve_environment(
+            {
+                "rainfall_rate_mm_h": 5.0,
+                "time_of_day": "night",
+                "visibility_quantile": quantile,
+            }
+        )
+        assert merged == pytest.approx(whole["visibility_m"])
+
+    def test_a_cause_the_action_restates_wins(self) -> None:
+        own = resolve_environment({"fog_visibility_range_m": 400.0})
+        merged = merged_visibility(
+            own["visibility_m"],
+            {},
+            {"fog_visibility_range_m": 400.0},
+            {},
+            {"fog_visibility_range_m": 15.0},
+            {},
+        )
+        assert merged == pytest.approx(own["visibility_m"])
+
+    def test_a_visibility_outside_what_the_causes_leave_is_kept(self) -> None:
+        assert (
+            merged_visibility(
+                80.0,
+                {},
+                {"rainfall_rate_mm_h": 5.0},
+                {},
+                {"fog_visibility_range_m": 50.0},
+                {},
+            )
+            == 80.0
+        )
+
+    def test_nothing_to_merge_keeps_it(self) -> None:
+        assert (
+            merged_visibility(200.0, {}, {"rainfall_rate_mm_h": 5.0}, {}, {}, {})
+            == 200.0
+        )
 
 
 @pytest.mark.parametrize(

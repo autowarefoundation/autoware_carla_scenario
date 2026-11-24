@@ -1091,7 +1091,12 @@ measured off CARLA's cloudiness.
 
 A config that sets CARLA's fields alone names no condition: the ODD's
 weather is not measured, and drivers see as they always did (a warning says
-so). CARLA's own fields have controls too, for an ODD that names them:
+so). Where a condition does give the visibility, a `sun_altitude_angle`
+set without a `time_of_day` (as the `illumination` knob sets it) is the
+light it is seen in: the time of day that sun renders, a value the
+visibility reads and not a condition, so the sun alone still gives none --
+rain at a sun 45 degrees below the horizon leaves the night's sight
+(#2458). CARLA's own fields have controls too, for an ODD that names them:
 
 | Probe | Key | Ranges |
 |---|---|---|
@@ -1161,6 +1166,32 @@ The precipitation and the fog density set the LiDAR noise as well: each
 A scenario that sets the weather itself has the last word over the config:
 its own `EnvironmentAction`, with numbers -- worked out from conditions with
 `EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5.0}))`.
+
+`resolve_environment` reads no run state: it works out what the conditions
+it is given lead to, alone. An action that runs during the run merges them
+with the run's where they meet (#2458):
+
+- **The visibility** is worked out again from the merged causes: the
+  action's own, and the rainfall rate, fog visibility range, wind speed and
+  cloud cover the run recorded (the config's `environment`, an earlier
+  action) and the action does not restate, and the time of day the sun
+  renders (`weather_rules.merged_visibility`). The action's `visibility_m`
+  is read as the quantile it is of what its own causes leave, and the
+  drivers get that quantile of what the merged ones leave. So with fog
+  visibility 50 m at night in the config, a mid-run
+  `resolve_environment({"rainfall_rate_mm_h": 5.0})` keeps the drivers'
+  50 m, as CARLA keeps drawing the fog, rather than the rain's 206 m. A
+  `visibility_m` outside what the action's own causes leave is one given
+  outright, and is kept; so is one an action gives with no cause.
+- **The road's water** an action that sets the rain and not the water
+  leaves follows the merged conditions too ([below](#tire-friction-follows-the-weather)).
+- **Every other CARLA field** is the action's own, as `resolve_environment`
+  worked it out for its conditions alone: the action cannot tell a field
+  worked out from one given. So a rain-only resolve's `cloudiness` (the
+  rain's clouds) replaces a sky the config set `clear`, though the cloud
+  cover the run is measured at stays `clear`. Restate what should hold
+  (`resolve_environment({"rainfall_rate_mm_h": 5.0, "cloud_cover": "clear"})`),
+  or pass the fields to keep out of the action.
 
 ### Tire friction follows the weather
 

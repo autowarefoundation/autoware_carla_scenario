@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 import numpy as np
 
 from ..carla_release import default_max_steer_angle_deg, default_steer_exponent
-from ..utils.powertrain import ChaosPowertrain
+from ..utils.powertrain import ChaosPowertrain, follow_wheel_grip
 from .geometry import Pose, Trajectory
 
 if TYPE_CHECKING:
@@ -1168,6 +1168,16 @@ class TrajectoryFollower:
     def config(self) -> ControlConfig:
         """Return the controller configuration."""
         return self._config
+
+    def follow_wheel_grip(self, actor: "carla.Actor") -> None:
+        """Read the powertrain's grip again off *actor*, the vehicle it
+        drives, where a wheel friction changed since it was read
+        (:func:`~..utils.powertrain.follow_wheel_grip`): a follower asks every
+        tick, so a grip the weather changes during the run reaches it
+        (#2458).  Nothing where it has no powertrain."""
+        powertrain = self.powertrain
+        if powertrain is not None:
+            self.powertrain = follow_wheel_grip(powertrain, actor)
 
     @property
     def control_state(self) -> int:

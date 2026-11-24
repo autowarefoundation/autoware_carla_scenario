@@ -187,3 +187,69 @@ def test_a_vehicle_without_a_drivetrain_is_refused() -> None:
 def test_the_model_is_a_value() -> None:
     assert dataclasses.is_dataclass(mkz_powertrain())
     assert mkz_powertrain() == mkz_powertrain()
+
+
+class _Follower:
+    """A vehicle a follower drives, its wheels' friction as CARLA holds it."""
+
+    def __init__(self) -> None:
+        self.physics = mkz_physics()
+        self.reads = 0
+
+    def get_physics_control(self) -> object:
+        self.reads += 1
+        return self.physics
+
+
+def test_a_powertrain_follows_the_wheel_grip_once_it_changes() -> None:
+    """A follower built once keeps the grip the weather leaves (#2458)."""
+    from autoware_carla_scenario.utils.powertrain import (
+        follow_wheel_grip,
+        note_wheel_friction_change,
+    )
+
+    actor = _Follower()
+    powertrain = ChaosPowertrain.from_physics_control(actor.physics)
+    # Nothing changed: the same powertrain, nothing asked of the server.
+    assert follow_wheel_grip(powertrain, actor) is powertrain  # type: ignore[arg-type]
+    assert actor.reads == 0
+    for wheel in actor.physics.wheels:
+        wheel.friction_force_multiplier = 3.5 * 0.5
+    note_wheel_friction_change()
+    followed = follow_wheel_grip(powertrain, actor)  # type: ignore[arg-type]
+    assert followed.wheel_grip_n == pytest.approx(powertrain.wheel_grip_n * 0.5)
+    assert followed.road_friction == powertrain.road_friction
+    assert actor.reads == 1
+    # Read once per change.
+    assert follow_wheel_grip(followed, actor) is followed  # type: ignore[arg-type]
+    assert actor.reads == 1
+
+
+def test_an_unreadable_vehicle_keeps_its_powertrain() -> None:
+    from autoware_carla_scenario.utils.powertrain import (
+        follow_wheel_grip,
+        note_wheel_friction_change,
+    )
+
+    powertrain = mkz_powertrain()
+    note_wheel_friction_change()
+    assert follow_wheel_grip(powertrain, object()) is powertrain  # type: ignore[arg-type]
+
+
+def test_a_trajectory_follower_follows_its_vehicles_grip() -> None:
+    from autoware_carla_scenario.driver.control import TrajectoryFollower
+    from autoware_carla_scenario.utils.powertrain import note_wheel_friction_change
+
+    actor = _Follower()
+    follower = TrajectoryFollower(
+        powertrain=ChaosPowertrain.from_physics_control(actor.physics)
+    )
+    before = follower.powertrain
+    assert before is not None
+    for wheel in actor.physics.wheels:
+        wheel.friction_force_multiplier = 3.5 * 0.75
+    note_wheel_friction_change()
+    follower.follow_wheel_grip(actor)  # type: ignore[arg-type]
+    assert follower.powertrain is not None
+    assert follower.powertrain.wheel_grip_n == pytest.approx(before.wheel_grip_n * 0.75)
+    TrajectoryFollower().follow_wheel_grip(actor)  # type: ignore[arg-type]

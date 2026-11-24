@@ -62,7 +62,7 @@ from .weather_inputs import EGO_KEY as EGO_KEY
 from .weather_inputs import QUANTITIES as QUANTITIES
 from .weather_inputs import WEATHER_INPUTS as WEATHER_INPUTS
 from .weather_inputs import rule_values as rule_values
-from .weather_inputs import vehicle_entry
+from .weather_inputs import time_of_day_level, vehicle_entry
 
 if TYPE_CHECKING:
     from .odd.backend import CarlaBackend
@@ -81,6 +81,7 @@ __all__ = [
     "check_weather_rules",
     "custom_rules_in_use",
     "default_rules",
+    "merged_visibility",
     "resolve_environment",
     "road_water",
     "rule_values",
@@ -345,6 +346,10 @@ RESOLVED_QUANTITIES: tuple[str, ...] = (*CARLA_QUANTITIES.values(), "visibility"
 
 _FIELD_OF: dict[str, str] = {q: field for field, q in CARLA_QUANTITIES.items()}
 
+#: The sun's azimuth, degrees, where a run sets its altitude alone: CARLA's
+#: default (``carla.WeatherParameters``).  It tells dawn from dusk only.
+_DEFAULT_SUN_AZIMUTH: float = 0.0
+
 
 def resolve_environment(
     settings: Mapping[str, Any],
@@ -364,7 +369,12 @@ def resolve_environment(
 
     The visibility follows the causes alone, so a config that sets CARLA's
     fields but names no cause gets none: its drivers see as they always did
-    (a warning says so), and the ODD's weather is not measured.
+    (a warning says so), and the ODD's weather is not measured.  Where the
+    causes give one and *settings* names no ``time_of_day`` but sets the sun
+    (``sun_altitude_angle``), the light it is seen in is the time of day that
+    sun renders (:func:`~.weather_inputs.time_of_day_level`, at CARLA's
+    default azimuth when *settings* sets none): a value the visibility reads,
+    not a cause (#2458).
 
     Raises:
         RulesError: When the rules cannot give a quantity at the values given
@@ -393,6 +403,17 @@ def _work_out(
 ) -> tuple[dict[str, Any], set[str]]:
     """*settings* with what the weather rules give worked out, as
     :func:`resolve_environment` documents, and the causes it names."""
+    out, causes, _ = _work_out_seen(settings, quantiles)
+    return out, causes
+
+
+def _work_out_seen(
+    settings: Mapping[str, Any],
+    quantiles: Optional[Mapping[str, float]] = None,
+) -> tuple[dict[str, Any], set[str], Optional[dict[str, Any]]]:
+    """:func:`_work_out`'s, and the values the visibility was read at, where
+    the rules gave it (``None`` where they did not)."""
+    seen: Optional[dict[str, Any]] = None
     out: dict[str, Any] = dict(settings)
     known: dict[str, Any] = {}
     for key, cause in CAUSE_SETTINGS.items():
@@ -401,7 +422,7 @@ def _work_out(
     causes = set(known)
     rules = _backend().active_rules
     if rules is None:
-        return out, causes
+        return out, causes, seen
     wanted = dict(quantiles or {})
     if "visibility" not in wanted and settings.get("visibility_quantile") is not None:
         wanted["visibility"] = float(settings["visibility_quantile"])
@@ -412,6 +433,18 @@ def _work_out(
     given = set(known)
     if settings.get("visibility_m") is not None:
         given.add("visibility")
+    # The time of day the sun renders, where no time of day is named: what
+    # the visibility's light reads, as the probes, the grip and the road's
+    # water read the time of day off the sun (#2458).  Only a value read,
+    # never a cause: the sun alone leads to no visibility, and nothing else
+    # (the sun's azimuth) is worked out from it.
+    light: Optional[str] = None
+    if "time_of_day" not in known and settings.get("sun_altitude_angle") is not None:
+        azimuth = settings.get("sun_azimuth_angle")
+        light = time_of_day_level(
+            float(settings["sun_altitude_angle"]),
+            _DEFAULT_SUN_AZIMUTH if azimuth is None else float(azimuth),
+        )
     for quantity in rules.order:
         if quantity not in RESOLVED_QUANTITIES or quantity in given:
             continue
@@ -421,13 +454,76 @@ def _work_out(
         led = reads & causes if quantity == "visibility" else reads & set(known)
         if not led:
             continue
-        value = rules.quantile(quantity, known, wanted.get(quantity, 0.5), wanted)
+        inputs = known
+        if quantity == "visibility" and light is not None:
+            inputs = {**known, "time_of_day": light}
+        value = rules.quantile(quantity, inputs, wanted.get(quantity, 0.5), wanted)
         known[quantity] = value
         if quantity == "visibility":
             out["visibility_m"] = value
+            seen = inputs
         else:
             out[_FIELD_OF[quantity]] = value
-    return out, causes
+    return out, causes, seen
+
+
+def merged_visibility(
+    visibility_m: float,
+    fields: Mapping[str, float],
+    conditions: Mapping[str, float],
+    labels: Mapping[str, str],
+    run_conditions: Mapping[str, float],
+    run_labels: Mapping[str, str],
+) -> float:
+    """How far drivers see once an action that gives *visibility_m* with
+    causes of its own is merged into the run's: the visibility the merged
+    causes leave, at the quantile *visibility_m* is of what the action's own
+    leave.
+
+    The action's causes are *conditions* (``rainfall_rate_mm_h``, ...) and
+    *labels* (``cloud_cover``, ``time_of_day``), by their ``environment``
+    key (:data:`CAUSE_SETTINGS`), beside the CARLA fields it sets (*fields*,
+    by field name: its sun is the light it is seen in where it names no time
+    of day, as :func:`resolve_environment` reads it).  The run's are
+    *run_conditions* and *run_labels*: the conditions an earlier action
+    recorded and the time of day the sun renders, each merged in where the
+    action does not restate it -- as :func:`road_water` merges them.  So
+    ``EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5}))``
+    during a run in fog at night leaves its drivers the fog's and the night's
+    sight, not the rain's alone (#2458).
+
+    *visibility_m* is kept as it is where the rules give the action's causes
+    no visibility, where it is outside the range they give them (a
+    visibility given outright), or where the run has nothing to merge.
+    """
+    rules = _backend().active_rules
+    if rules is None:
+        return visibility_m
+    own: dict[str, Any] = {
+        f: float(v) for f, v in fields.items() if f in CARLA_QUANTITIES
+    }
+    for given in (conditions, labels):
+        for key, value in given.items():
+            if key in CAUSE_SETTINGS:
+                own[key] = value
+    merged: dict[str, Any] = dict(own)
+    for run in (run_conditions, run_labels):
+        for key, value in run.items():
+            if key in CAUSE_SETTINGS and key not in merged:
+                merged[key] = value
+    if merged == own:
+        return visibility_m
+    _, _, inputs = _work_out_seen(own)
+    if inputs is None:
+        return visibility_m
+    low, high = rules.range("visibility", inputs)
+    if not low <= visibility_m <= high:
+        return visibility_m
+    quantile = rules.cdf("visibility", inputs, visibility_m)
+    out, _ = _work_out(merged, {"visibility": quantile})
+    if out.get("visibility_m") is None:
+        return visibility_m
+    return float(out["visibility_m"])
 
 
 #: CARLA's fields for the road's water, which the grip reads:

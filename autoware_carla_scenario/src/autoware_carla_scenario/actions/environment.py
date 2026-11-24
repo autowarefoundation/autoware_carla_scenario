@@ -33,12 +33,14 @@ import math
 from typing import TYPE_CHECKING, Optional
 
 from ..conditions.base import BaseCondition
+from ..utils.powertrain import note_wheel_friction_change
 from ..utils.vehicles import apply_physics_control, as_vehicle
 from ..visibility import set_world_visibility, world_visibility
 from ..entity_role import _role_name
 from ..weather_inputs import cloud_cover_level, time_of_day_level
 from ..weather_rules import (
     custom_rules_in_use,
+    merged_visibility,
     road_water,
     vehicle_at,
     vehicle_rules_in_use,
@@ -297,6 +299,8 @@ def _scale_wheels(
         # Not vehicle.apply_physics_control: CARLA 0.10 would put its curves'
         # leading keys in twice and weaken the vehicle's steering.
         apply_physics_control(actor, physics)
+        # A follower's powertrain reads its grip again (#2458).
+        note_wheel_friction_change()
 
 
 def _vehicle_factor(world_id: int, actor: "carla.Actor", factor: float) -> float:
@@ -450,7 +454,9 @@ def forget_tire_friction(world: "carla.World") -> None:
     spawns (:func:`follow_tire_friction`) the grip the last run set.  The
     vehicles that grip was applied to mostly went with that run, but not
     every one: an ego that attaches to an actor someone else spawned outlives
-    the run, and a retried run gets no reset at all.  Such a vehicle gets its
+    the run, and every vehicle does where the world reset before the next
+    run failed (``ScenarioRunner.reset_world`` logs it; a retried attempt is
+    reset as any other run is).  Such a vehicle gets its
     spawned grip back before its base is forgotten, so the next run's grip
     scales that rather than what the last one left.  Nothing is asked of the
     server when no grip was ever applied.
@@ -620,7 +626,18 @@ class EnvironmentAction(BaseAction):
     **How far drivers see** is *visibility_m*, when given: the action records
     it (:func:`~autoware_carla_scenario.visibility.set_world_visibility`), and
     a traffic backend that models drivers' sight (``sumo``) holds its traffic
-    to it, and the TrafficManager with ``follow_visibility: true``.
+    to it, and the TrafficManager with ``follow_visibility: true``.  During
+    a run -- once an earlier action (the config's ``environment``) recorded
+    a condition or a visibility -- an action that names causes of its own
+    with *visibility_m* sees through the run's too: its visibility is read
+    as the quantile it is of what its own causes leave, and set to that
+    quantile of what the merged causes leave -- its own, the rainfall rate,
+    the visibility through the fog, the wind speed and the cloud cover the
+    run recorded and it does not restate, and the time of day the sun
+    renders (:func:`~autoware_carla_scenario.weather_rules.merged_visibility`,
+    #2458).  So ``resolve_environment({"rainfall_rate_mm_h": 5.0})`` in a
+    foggy night keeps the fog's and the night's sight.  A *visibility_m*
+    outside what its causes leave is a visibility given outright, and kept.
 
     **The road's grip follows the water on it.**  An action that sets the
     rain (*precipitation*) and not the road's *wetness* or standing water
@@ -842,6 +859,55 @@ class EnvironmentAction(BaseAction):
             applied[name] = value
         return applied
 
+    def _visibility(
+        self, world_id: int, weather: "carla.WeatherParameters", visibility_m: float
+    ) -> float:
+        """How far drivers see once the action has run in the world
+        *world_id*, its weather *weather* as the action leaves it: the
+        action's *visibility_m*, or, during a run (an earlier action recorded
+        a condition or a visibility) where the action names causes of its
+        own, the visibility the merged causes leave
+        (:func:`~autoware_carla_scenario.weather_rules.merged_visibility`):
+        this action's, and the ones the run recorded and it does not restate
+        -- the rainfall rate, the visibility through the fog, the wind speed,
+        the cloud cover -- and the time of day the sun renders, as
+        :meth:`_applied` merges them for the road's water (#2458)."""
+        if not self.sets_conditions:
+            return visibility_m
+        if (
+            world_id not in _RAINFALL
+            and world_id not in _FOG_VISIBILITY
+            and world_id not in _WIND_SPEED
+            and world_id not in _CLOUD_COVER
+            and world_visibility(world_id) is None
+        ):
+            return visibility_m
+        conditions: dict[str, float] = {}
+        run_conditions: dict[str, float] = {}
+        for key, store, own in (
+            ("rainfall_rate_mm_h", _RAINFALL, self._rainfall_rate_mm_h),
+            ("fog_visibility_range_m", _FOG_VISIBILITY, self._fog_visibility_range_m),
+            ("wind_speed_kmh", _WIND_SPEED, self._wind_speed_kmh),
+        ):
+            if own is not None:
+                conditions[key] = own
+            if world_id in store:
+                run_conditions[key] = store[world_id]
+        labels: dict[str, str] = {}
+        sky = self._cloud_cover
+        if sky is not None:
+            labels["cloud_cover"] = sky
+        run_labels: dict[str, str] = {
+            "time_of_day": time_of_day_level(
+                float(weather.sun_altitude_angle), float(weather.sun_azimuth_angle)
+            )
+        }
+        if world_id in _CLOUD_COVER:
+            run_labels["cloud_cover"] = _CLOUD_COVER[world_id]
+        return merged_visibility(
+            visibility_m, self._settings, conditions, labels, run_conditions, run_labels
+        )
+
     @property
     def sets_tire_friction(self) -> bool:
         """Whether the action sets the vehicles' grip: it names a tire
@@ -891,6 +957,12 @@ class EnvironmentAction(BaseAction):
                 self.label,
                 ", ".join(f"{name}={value:g}" for name, value in applied.items()),
             )
+        # Before this action's conditions are recorded: merged with the
+        # run's, as it leaves the sun.
+        seen: Optional[float] = None
+        given = self._visibility_m
+        if given is not None:
+            seen = self._visibility(world.id, weather, given)
         rainfall = self._rainfall_rate_mm_h
         if rainfall is not None:
             _record_condition(_RAINFALL, world.id, rainfall)
@@ -904,7 +976,6 @@ class EnvironmentAction(BaseAction):
         if sky is not None:
             _record_label(_CLOUD_COVER, world.id, sky)
         # Before the grip, which may read it.
-        seen = self._visibility_m
         if seen is not None:
             set_world_visibility(world.id, seen)
             logger.info("Drivers see %.0f m", seen)
