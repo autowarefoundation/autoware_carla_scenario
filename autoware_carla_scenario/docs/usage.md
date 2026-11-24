@@ -32,7 +32,7 @@ neither starts the other.
 
 ## `scenario` - Scenario Runner
 
-Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/) for configuration management. Requires a running CARLA server.
+Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/) for configuration management. Uses a CARLA server already listening on `server.host`/`server.port`, or launches one: `CARLA_EXECUTABLE`, else the one `scenario-setup` installed.
 
 ### How It Works
 
@@ -1916,7 +1916,7 @@ See [HILS Bridge](hils.md).
 
 ## `detect-no-3d-model` - 3D Model Detection
 
-Detects lanelets that do not have a matching 3D ground model in CARLA. Useful for identifying areas where vehicle ground-projection ray casting will fail. Requires a running CARLA server with the target map loaded.
+Detects lanelets that do not have a matching 3D ground model in CARLA. Useful for identifying areas where vehicle ground-projection ray casting will fail. Requires a running CARLA server; it loads the map itself (step 2).
 
 ### How It Works
 
