@@ -5504,6 +5504,10 @@ class TestMapRootsGuardEveryRead:
             "OpenDRIVE written to m.xodr."
         )
         assert fetched == [str(roots)]
+        # A NUL byte, which resolve() raises ValueError for, is refused too.
+        document.map.directory = str(roots) + "\x00"
+        with pytest.raises(EditorError, match="outside the editor's map roots"):
+            service.fetch_opendrive(document, host="localhost", port=2000)
 
 
 class TestDerivedCachesAreLeastRecentlyUsed:
