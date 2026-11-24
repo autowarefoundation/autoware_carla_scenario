@@ -1435,8 +1435,9 @@ class ResolvedTrajectory:
         """Vertex *index* at rest, facing as the clock has it there.
 
         That is its resolved heading, but within a corner that turns through
-        a pause (:meth:`_find_corners`), where the clock spends part of the
-        turn on the spot; untimed, the two are the same.
+        a pause, or a stop between two legs (:meth:`_find_corners`), where the
+        clock spends part or all of the turn on the spot; untimed, the two
+        are the same.
         """
         return TrajectorySample(
             self.xs[index], self.ys[index], self.zs[index], self._clock_headings[index]

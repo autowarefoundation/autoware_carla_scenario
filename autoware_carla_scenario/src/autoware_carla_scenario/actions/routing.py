@@ -285,10 +285,14 @@ class RoutingAction(TrajectoryRun):
 
     It routes an entity already in the scene: one spawned out of the world
     is brought in by a :class:`~.spawn.SpawnAction` first (the routing card
-    triggered on the spawn card completing).  A run starts where the entity
-    stands, at the nearest point of its path within :data:`_ON_PATH_M` (past
-    *initial_distance_offset*): a spawn moved along its lane to a clear spot
-    starts its route there.
+    triggered on the spawn card completing).  Only a ``driver`` run starts
+    where the entity stands, at the nearest point of its path within
+    :data:`_ON_PATH_M` (past *initial_distance_offset*): a spawn moved along
+    its lane to a clear spot starts its route there.  ``follow`` and
+    ``position`` keep the trajectory's clock instead: on an absolute
+    *time_reference* the entity is placed at (or driven to keep) its pose for
+    the current time, so one whose spawn was held back joins its track part
+    way; on a relative one the clock starts when the run does.
 
     **In ``driver`` mode** the route starts where the entity is and goes
     through every vertex after it.  With nothing to time it is handed over once and the run

@@ -702,6 +702,48 @@ class TestHeadings:
             )
             assert got.yaw_rate == pytest.approx(expected.yaw_rate)
 
+    def test_a_reversal_at_a_stop_turns_alike_written_either_way(self) -> None:
+        """A 180 degree turn back at a stop turns the same way, at the same
+        rate, written as one pause or as several samples."""
+        once = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0],
+            ys=[0.0] * 4,
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 1.0, 3.0, 4.0],
+        )
+        samples = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0, 10.0, 0.0],
+            ys=[0.0] * 6,
+            zs=[0.0] * 6,
+            yaws=[None] * 6,
+            times=[0.0, 1.0, 1.5, 2.0, 3.0, 4.0],
+        )
+        for tick in range(0, 401):
+            time = tick * 0.01
+            expected = once.at_time(time)
+            got = samples.at_time(time)
+            assert math.remainder(got.yaw - expected.yaw, 360.0) == pytest.approx(
+                0.0, abs=1e-9
+            )
+            assert got.yaw_rate == pytest.approx(expected.yaw_rate)
+        assert samples.at_time(2.0).yaw_rate == pytest.approx(-90.0)
+
+    def test_a_stop_on_a_closed_path_turns_over_the_stop(self) -> None:
+        """A stop written as samples inside a closed path (not at its seam)
+        turns over its whole time too."""
+        stop = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0, 10.0, 0.0],
+            ys=[0.0, 0.0, 0.0, 0.0, 10.0, 10.0],
+            zs=[0.0] * 6,
+            yaws=[None] * 6,
+            times=[0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+            closed=True,
+        )
+        assert stop.at_time(1.5).yaw == pytest.approx(22.5)
+        assert stop.at_time(2.5).yaw == pytest.approx(67.5)
+        assert stop.at_time(2.5).yaw_rate == pytest.approx(45.0)
+
     def test_a_stop_with_a_given_yaw_keeps_it(self) -> None:
         """A stop whose samples have yaws of their own is not spread: the
         given yaws are what the clock faces."""
