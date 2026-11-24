@@ -2004,6 +2004,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Where reports go">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-maps-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map's commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-environment-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The environment pin
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2358,6 +2397,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Where reports go">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-maps-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The map's commit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-environment-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The environment pin
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2462,9 +2540,10 @@ directory:</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                   # breadcrumbs (the recent log records), installed packages
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── traceback.txt   # the traceback, chained exceptions included
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── log.txt         # the last log records of the process (5000 by default)
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── context.json    # command line, overrides, output directory, versions, environment
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── config.yaml     # the case's composed config (none outside a case)
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>└── repro.sh        # the command that runs the same case again
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── context.json    # command line, overrides, output directory, versions, environment,
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│                   # the environment pin, the map's commit
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├── config.yaml     # the case's composed config (none outside a case)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>└── repro.sh        # the command that runs the same case again
 </code></pre></div>
 <table>
 <thead>
@@ -2498,8 +2577,51 @@ anything whose name looks like a secret is left out), and runs <code>scenario</c
 the case's own overrides. Run again, the case writes to an output directory of
 its own. A SLURM case's runs locally, without the batch's <code>launcher=</code> and
 <code>launcher.*</code> overrides; a report of a SLURM task that failed outside any case
-runs the task's worker again. Extra arguments are passed through:</p>
+runs the task's worker again. A report written outside any case (a batch's,
+before its cases are known) runs the command line again, without its
+<code>hydra.run.dir=</code> and <code>hydra.sweep.dir=</code>: the batch's directory is no longer
+empty, and a batch refuses one that is not, so the rerun writes to a new one.
+Extra arguments are passed through:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>sh<span class="w"> </span>outputs/.../crash_reports/20261122T011500Z-RuntimeError-1a2b3c4d/repro.sh
+</code></pre></div>
+<p>The environment <code>repro.sh</code> exports is the one <code>scenario</code> started with, read
+before the framework sets any variable of its own. It never exports the
+variables the framework sets for a run's processes
+(<code>AUTOWARE_CARLA_SCENARIO_SWEEPER_OWNS_RETRIES</code>,
+<code>AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED</code>), nor <code>SLURM_*</code>; in a SLURM
+task it also leaves out <code>AUTOWARE_CARLA_SCENARIO_TYPECHECK</code> (the worker turns
+the static check off, the submitting process having run it) and
+<code>CUDA_VISIBLE_DEVICES</code> (the GPUs SLURM gave the task). <code>context.json</code> keeps
+them all.</p>
+<h3 id="the-maps-commit">The map's commit<a class="headerlink" href="#the-maps-commit" title="Permanent link">&para;</a></h3>
+<p>When the map was read from <code>map.source</code>, <code>context.json</code> names the commit it
+resolved to (<code>"map": {"source": ..., "commit": ..., "pinned": ...}</code>). A
+branch or a tag moves, so a case's <code>repro.sh</code> reads the map at that commit: it
+runs with <code>map.source='&lt;source&gt;@&lt;commit&gt;'</code> in place of the case's own
+<code>map.source=</code>, and says so in a comment. Leave that override out to read the
+ref's current tip instead. A report written outside any case names the commit
+in a comment only. A source that names a commit already is run as it is.</p>
+<h3 id="the-environment-pin">The environment pin<a class="headerlink" href="#the-environment-pin" title="Permanent link">&para;</a></h3>
+<p>A run that raised writes no <code>{ScenarioName}_requirements.lock</code> nor
+<code>_environment.json</code> (they are written with a verdict; see
+<a href="../usage/">Usage</a>), so <code>context.json</code> names the
+environment in brief under <code>environment_pin</code>: the lock's id, and the
+framework's and the scenario's package with their version, how they were
+installed, and the commit and uncommitted changes (<code>dirty</code>) of a checkout.
+It is <code>null</code> when the environment cannot be read; the report is written all
+the same.</p>
+<h3 id="credentials">Credentials<a class="headerlink" href="#credentials" title="Permanent link">&para;</a></h3>
+<p>A URL may carry credentials, a map source's most often
+(<code>map.source=https://oauth2:TOKEN@host/o/r</code>). Everything a report writes or
+sends shows them redacted, as the rest of the framework does
+(<code>https://oauth2:***@host/o/r</code>; see <a href="../maps/">Maps</a>): <code>context.json</code>,
+<code>config.yaml</code>, <code>log.txt</code>, <code>traceback.txt</code>, every string of <code>event.json</code> (the
+local variables, the command line, the breadcrumbs) and <code>repro.sh</code> too. Only
+the userinfo of a URL is redacted, not a token in its query. A <code>repro.sh</code>
+that holds a redacted URL does not run as it is: a comment at its top says so.
+Put the credentials back (<code>***</code>) before running it, or pass the source again
+as an extra argument, which comes after the script's own and wins:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>sh<span class="w"> </span>.../repro.sh<span class="w"> </span><span class="s2">"map.source='https://oauth2:</span><span class="nv">$TOKEN</span><span class="s2">@host/o/r@&lt;commit&gt;'"</span>
 </code></pre></div>
 <h2 id="what-is-reported">What is reported<a class="headerlink" href="#what-is-reported" title="Permanent link">&para;</a></h2>
 <ul>
@@ -2545,7 +2667,7 @@ you host yourself, which takes events from the Sentry SDK unchanged:</p>
 <li>Create an organization and a project in it, and copy the project's DSN.</li>
 <li>
 <p>Export it where <code>scenario</code> runs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_DSN</span><span class="o">=</span><span class="s2">"https://&lt;key&gt;@glitchtip.example.org/&lt;project-id&gt;"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_DSN</span><span class="o">=</span><span class="s2">"https://&lt;key&gt;@glitchtip.example.org/&lt;project-id&gt;"</span>
 </code></pre></div>
 </li>
 </ol>
@@ -2642,8 +2764,8 @@ used. A crash report never stops a run.</p>
 </table>
 <p>The value is a comma-separated list of items, <code>all</code>, <code>none</code>, or <code>all</code> with
 some items removed by a leading <code>-</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_ITEMS</span><span class="o">=</span>all,-locals<span class="w">          </span><span class="c1"># everything but local variables</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_SEND_ITEMS</span><span class="o">=</span>log,config,repro<span class="w">  </span><span class="c1"># write all, send less</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_ITEMS</span><span class="o">=</span>all,-locals<span class="w">          </span><span class="c1"># everything but local variables</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_SEND_ITEMS</span><span class="o">=</span>log,config,repro<span class="w">  </span><span class="c1"># write all, send less</span>
 </code></pre></div>
 <p><code>SCENARIO_CRASH_REPORT_SEND_ITEMS</code> takes the same form and chooses what is
 sent. Only what a report holds can be sent. The files on disk are written
@@ -2694,7 +2816,7 @@ write:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 11:03:08 UTC"><span class="timeago" datetime="2026-11-23T11:03:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 11:03:08 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 23:44:47 UTC"><span class="timeago" datetime="2026-11-24T23:44:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 23:44:47 UTC">2026-11-24</span>
   </span>
 
     
