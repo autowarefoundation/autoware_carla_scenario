@@ -865,8 +865,15 @@ waiting for one is a statement about the junction rather than about a colour.
 The one-light pair and the controllers find a Lanelet2 light's CARLA lights alike,
 `coordinate.find_traffic_lights_for_lanelet2_id`: through the OpenDRIVE
 controller named after it, or, on a map where none is (a roadgen map), by the
-CARLA light whose stop waypoint lies on its stop line. A light an action sets
-is therefore the light a condition reads and a controller's phases drive.
+lanes (`utils.light_lanes.lights_of_element`): from each CARLA light's stop
+waypoint, the lanelets it is on are walked forward, up to `LIGHT_SEARCH_M`
+(50 m) of lanelets, to the first lanelet on each branch that carries a
+`traffic_light` regulatory element, and the light shows the elements found
+there. Not the element whose stop line is nearest the waypoint: CARLA puts its
+stop waypoints where its own junction starts, often metres before the map's stop
+line. The walk can run on through a junction whose lanelets carry no light. A
+light an action sets is therefore the light a condition reads and a
+controller's phases drive.
 
 A junction is declared in two halves, split along what changes between
 scenarios and what does not.
@@ -929,6 +936,22 @@ junction's impossible state is the thing under test.
 `duration_seconds` and then hands over to the next, looping. No runner change
 was needed — durations are differences, so the controller reads the world's own
 simulated elapsed seconds directly.
+
+A controller that starts with the run (no `reference`, or references whose
+delays add up to zero) also shows its **first phase in the init phase**, an
+init callback (`SignalController.prime`) that sets and freezes its lights. So
+the wait for the ego and a policy's run-up (`driver.warmup_s`) see the junction
+the run starts from, frozen, and leave it alone. Only the lights: the cycle
+still starts on the run's first tick, so phase 0 lasts its `duration_seconds`
+from the run's start however long the wait took, and that tick does not set the
+lights again. A controller with a delay is left to CARLA until its delay is
+over, as before.
+
+A `traffic_signal` card on a light a controller's phases drive therefore holds
+only **until that controller's next phase change**, which sets every light the
+phase names. An init-phase or untriggered card shows over phase 0 until phase 0
+ends; the validator warns about one, since an author who wrote it usually
+meant it to hold.
 
 The action **jumps** to a named phase and the cycle carries on from there, so a
 junction forced green does not thereby stay green; holding it is a separate

@@ -364,7 +364,11 @@ class DeclarativeScenario(BaseScenario):
         Registered as pre-tick callbacks rather than as actions: a controller
         is not something the storyboard does, it is a part of the road that
         keeps running underneath it, and registering it as an action would put
-        it in the list an ``action_completed`` condition can name.
+        it in the list an ``action_completed`` condition can name.  Each is
+        also registered as an init callback that shows its phase 0
+        (:meth:`~autoware_carla_scenario.signals.SignalController.prime`), so
+        the wait for the ego and a policy's run-up see the junction the run
+        starts from, frozen; the cycle itself still starts on the first tick.
 
         Cleared first, because the registry outlives a single scenario and a
         controller left over from the previous one would go on driving lights
@@ -378,6 +382,7 @@ class DeclarativeScenario(BaseScenario):
         )
         for controller in controllers:
             register_signal_controller(controller)
+            self.register_init(controller.prime)
             self.register_pre_tick(controller.tick)
         if controllers:
             logger.info(

@@ -2548,6 +2548,90 @@ def _check_signal_controllers(out: _Collector, document: ScenarioDocument) -> No
         name: declared[index] for name, index in checked.controller_index.items()
     }
     _check_signal_uses(out, document, by_name)
+    _check_signal_cards_on_controlled_lights(out, document)
+
+
+def _check_signal_cards_on_controlled_lights(
+    out: _Collector, document: ScenarioDocument
+) -> None:
+    """Warn about an init or untriggered light card a controller overrides.
+
+    A signal controller shows its phase 0 from the init phase, and sets every
+    light a phase names at each phase change.  A ``traffic_signal`` card that
+    runs before the run's first phase change -- in the init phase, or with no
+    trigger -- on one of those lights therefore shows over phase 0 only until
+    phase 0 ends (or, for a controller with a delay, until it starts), which an
+    author who wrote it rarely means.  A warning, not an error: a scenario may
+    want exactly that, a light out of step until the cycle catches it up.
+
+    Cards with ``target: ids`` are judged by their ids, and ``target: all``
+    whenever a controller drives a light at all; ``target: route`` finds its
+    lights on the run's map when it fires, so it is not judged here.
+    """
+    members: dict[str, list[int]] = {}
+    for declared in document.map.signal_groups:
+        members[declared.name] = [
+            int(i) for i in declared.lanelet2_regulatory_element_ids
+        ]
+    drivers: dict[int, list[str]] = {}
+    for controller in document.map.traffic_signal_controllers:
+        for phase in controller.phases:
+            for entry in phase.states:
+                group = (entry.group or "").strip()
+                if group:
+                    ids = members.get(group, [])
+                elif entry.lanelet2_regulatory_element_id is not None:
+                    ids = [int(entry.lanelet2_regulatory_element_id)]
+                else:
+                    ids = []
+                for signal in ids:
+                    names = drivers.setdefault(signal, [])
+                    if controller.name not in names:
+                        names.append(controller.name)
+    if not drivers:
+        return
+
+    for index, action in enumerate(document.actions):
+        if action.type != "traffic_signal":
+            continue
+        if action.phase != "init" and action.trigger is not None:
+            continue
+        target = _value(action, "target")
+        if target == "all":
+            hit = sorted(drivers)
+        elif target == "ids":
+            raw = action.params.get("lanelet2_traffic_light_ids")
+            if not isinstance(raw, (list, tuple)) or not _is_int_list(raw):
+                continue  # reported against the field
+            hit = sorted({int(str(v).strip()) for v in raw} & drivers.keys())
+        else:
+            continue
+        if not hit:
+            continue
+        controllers: list[str] = []
+        for signal in hit:
+            for name in drivers[signal]:
+                if name not in controllers:
+                    controllers.append(name)
+        when = (
+            "in the initialization phase"
+            if action.phase == "init"
+            else "with no trigger, on the first tick"
+        )
+        out.warn(
+            f"actions[{index}].lanelet2_traffic_light_ids"
+            if target == "ids"
+            else f"actions[{index}].target",
+            f"{action.title or action.type!r} sets {when} "
+            f"regulatory element(s) {', '.join(str(i) for i in hit)}, which "
+            f"signal controller(s) {', '.join(repr(n) for n in controllers)} "
+            "drive: the state lasts only until that controller's next phase "
+            "change (or, for one with a start delay, until it starts), when "
+            "its phase sets every light it names. Leave those "
+            "lights to the controller (jump it to a phase with a Set Junction "
+            "Phase card), or trigger the card later.",
+            action.id,
+        )
 
 
 def _check_signal_uses(

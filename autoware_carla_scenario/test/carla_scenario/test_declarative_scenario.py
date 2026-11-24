@@ -581,13 +581,28 @@ class TestSignalControllersStart:
         assert find_signal_controller("crossing") is not None
         assert len(scenario._pre_tick_callbacks) == before + 1
 
+    def test_its_phase_0_is_shown_in_the_init_phase(self) -> None:
+        """An init callback primes it (#2450), so the wait for the ego and a
+        policy's run-up see the junction the run starts from, frozen."""
+        scenario = _scenario(self._with_a_crossing())
+        before = len(scenario._init_callbacks)
+
+        scenario._start_signal_controllers()
+
+        controller = find_signal_controller("crossing")
+        assert controller is not None
+        assert len(scenario._init_callbacks) == before + 1
+        assert scenario._init_callbacks[-1] == controller.prime
+
     def test_a_document_without_controllers_registers_nothing(self) -> None:
         scenario = _scenario()
         before = len(scenario._pre_tick_callbacks)
+        before_init = len(scenario._init_callbacks)
 
         scenario._start_signal_controllers()
 
         assert len(scenario._pre_tick_callbacks) == before
+        assert len(scenario._init_callbacks) == before_init
 
     def test_the_previous_scenarios_controllers_do_not_carry_over(self) -> None:
         """The registry outlives one scenario; a leftover would drive lights

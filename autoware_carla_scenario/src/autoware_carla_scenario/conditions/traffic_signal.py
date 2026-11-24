@@ -23,8 +23,10 @@ class TrafficSignalCondition(BaseCondition):
     :class:`~autoware_carla_scenario.actions.TrafficSignalAction` and the
     signal controllers do
     (:func:`~autoware_carla_scenario.coordinate.traffic_light.find_traffic_lights_for_lanelet2_id`:
-    by OpenDRIVE controller, or by stop line on a map where no controller is
-    named after the light), and caches their actor ids.  Subsequent calls read
+    by OpenDRIVE controller, or, on a map where no controller is named after
+    the light, by the lanes: the CARLA lights whose stop waypoint's lanelets,
+    walked forward up to :data:`~autoware_carla_scenario.utils.light_lanes.LIGHT_SEARCH_M`,
+    reach this element first), and caches their actor ids.  Subsequent calls read
     those actors' current state and compare it against the expected state.
 
     The condition fires (returns ``passed=True``) only while every matching
@@ -102,7 +104,8 @@ class TrafficSignalCondition(BaseCondition):
                 logger.warning(
                     "TrafficSignalCondition [%s]: no traffic light actor found "
                     "for Lanelet2 regulatory element ID %d (neither by OpenDRIVE "
-                    "controller nor by stop line), so this condition cannot "
+                    "controller nor by the lanes ahead of a light's stop "
+                    "waypoint), so this condition cannot "
                     "fire until one is.",
                     self.label,
                     self._lanelet2_id,
