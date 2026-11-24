@@ -1084,7 +1084,8 @@ class ResolvedTrajectory:
             :data:`_STOP_MIN_S` or longer) are not corners: they face along
             the path, a stop keeping the heading it arrived with, and a
             segment that does not move turns from one vertex's heading to the
-            next's -- a stop turns on the spot.
+            next's -- a stop turns on the spot, over its whole time however
+            many samples it is written as (:meth:`_find_corners`).
         times: Vertex times, or ``None`` for an untimed trajectory.  On a
             closed trajectory they are the written vertices' times: the
             closing segment has none, so the clock starts at the first vertex
@@ -1434,8 +1435,9 @@ class ResolvedTrajectory:
         """Vertex *index* at rest, facing as the clock has it there.
 
         That is its resolved heading, but within a corner that turns through
-        a pause (:meth:`_find_corners`), where the clock spends part of the
-        turn on the spot; untimed, the two are the same.
+        a pause, or a stop between two legs (:meth:`_find_corners`), where the
+        clock spends part or all of the turn on the spot; untimed, the two
+        are the same.
         """
         return TrajectorySample(
             self.xs[index], self.ys[index], self.zs[index], self._clock_headings[index]
@@ -1543,8 +1545,17 @@ class ResolvedTrajectory:
         segment and the first -- the same point as the closing vertex, which
         mirrors it.  A run with a given yaw is not a corner, nor, on a timed
         trajectory, one that stays put for :data:`_STOP_MIN_S` or longer: a
-        stop, which keeps the heading it arrived with and turns on the spot
-        (:meth:`_fill_headings`).
+        stop, which keeps the heading it arrived with (:meth:`_fill_headings`)
+        and turns on the spot.
+
+        A stop between two moving segments turns on the clock over its whole
+        time, as a pause does but with no windows (the legs either side face
+        their own way): each of its vertices faces, on the clock, the arriving
+        direction turned by the share of the stop's time elapsed there, so a
+        stop written as many samples (a recording standing still) turns at the
+        same steady rate as one written as a single pause, not all in its
+        last sample interval (#2438).  Its resolved headings are left as
+        :meth:`_fill_headings` gave them.
 
         The window reaches back along the arriving segment
         :data:`_CORNER_HALF_WIDTH_M` or half of it, whichever is shorter, and
@@ -1633,8 +1644,7 @@ class ResolvedTrajectory:
                 pause = self._elapsed(run[0], seam) + self._elapsed(0, run[-1])
             else:
                 pause = self._elapsed(run[0], run[-1])
-            if pause >= _STOP_MIN_S - _EPSILON_S:
-                continue
+            stop = pause >= _STOP_MIN_S - _EPSILON_S
             # A timed closed path's clock never drives the closing segment:
             # it starts at the first vertex and stops at the last one written,
             # so on the clock a corner the closing segment is part of is no
@@ -1645,18 +1655,26 @@ class ResolvedTrajectory:
                 and self.times is not None
                 and (arriving == seam or leaving == seam or crosses)
             )
+            if stop and untimed:
+                continue
             turn = _wrap_degrees(math.degrees(after) - math.degrees(before))
             span_in = self._arc[arriving + 1] - self._arc[arriving]
             span_out = self._arc[leaving + 1] - self._arc[leaving]
-            reach_in = min(_CORNER_HALF_WIDTH_M, 0.5 * span_in)
-            reach_out = min(_CORNER_HALF_WIDTH_M, 0.5 * span_out)
-            # The time each window takes, and the whole corner's.
+            reach_in = 0.0
+            reach_out = 0.0
+            if not stop:
+                reach_in = min(_CORNER_HALF_WIDTH_M, 0.5 * span_in)
+                reach_out = min(_CORNER_HALF_WIDTH_M, 0.5 * span_out)
+            # The time each window takes, and the whole corner's.  A stop has
+            # no windows: the legs either side face their own way, and the
+            # whole turn is on the spot, spread over the stop's time however
+            # many samples it is written as (#2438).
             moving = (reach_in / span_in) * self._segment_duration(arriving) + (
                 reach_out / span_out
             ) * self._segment_duration(leaving)
             total = moving + pause
             share = 0.5
-            if untimed:
+            if untimed or stop:
                 share = 0.0
             elif total >= _EPSILON_S:
                 share = 0.5 * moving / total
@@ -1677,10 +1695,15 @@ class ResolvedTrajectory:
                 if self.closed and vertex == 0:
                     indices.append(count - 1)
                 for index in indices:
+                    clock[index] = _wrap_degrees(heading)
+                    if stop:
+                        # A stop's vertices keep their resolved headings (the
+                        # one it arrived with, the last the leaving one's):
+                        # only its clock turns.
+                        continue
                     corner_turn[index] = turn
                     corner_share[index] = share
                     self._headings[index] = middle
-                    clock[index] = _wrap_degrees(heading)
                     if position == 0:
                         corner_before[index] = reach_in
                     if position == len(run) - 1:
@@ -1714,7 +1737,8 @@ class ResolvedTrajectory:
         path there: the segment leaving it, or the one arriving at the last
         vertex.  A vertex where the path does not move (a stop) takes the
         heading of the nearest vertex before it that has one, so a vehicle that
-        stopped does not spin to face East.
+        stopped does not spin to face East; on the clock a stop between two
+        legs turns over its whole time (:meth:`_find_corners`).
         """
         count = len(self.xs)
         headings: list[Optional[float]] = []
