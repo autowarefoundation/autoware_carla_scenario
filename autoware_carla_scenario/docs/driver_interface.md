@@ -674,7 +674,10 @@ each file given rather than converted in it too: see below), so a set is written
 once per map and a changed map gets a new id. The id does not depend on the formats:
 a run asking for a format the set lacks writes it again with the formats it already
 holds and the new ones, under the same id, so a set only grows -- except by a format
-this version or its roadgen cannot write, which is dropped with a warning. The new set
+this version or its roadgen cannot write, which is dropped with a warning. A set whose
+manifest records a `roadgen_version` other than the installed roadgen's (or none) has its
+converted formats converted again, under the same id, when a run next asks for it; the
+formats given rather than converted are kept as they are. The new set
 is built beside the old one and renamed into its place whole. An old set a run could
 neither replace nor put back (another run's set took its place meanwhile, or the run was
 killed) stays in `<map_dir>/.<map_id>.*/old`: later runs read its formats into the set

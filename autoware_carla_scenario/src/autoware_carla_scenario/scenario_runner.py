@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import math
-import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Collection, Dict, Optional, Union
@@ -40,7 +39,7 @@ from .perception_fault import reset_perception_faults
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail
-from .maps.opendrive import map_asset_env_var, map_asset_path
+from .maps.opendrive import install_xodr, map_asset_env_var, map_asset_path
 from .maps.resolver import _short_map_name
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
@@ -1382,7 +1381,11 @@ class ScenarioRunner:
         (e.g. ``NishishinjukuMap`` → ``NISHISHINJUKU_MAP_PATH``).
 
         This allows using the full CARLA map assets (meshes, textures, etc.)
-        while replacing only the road network definition.
+        while replacing only the road network definition.  The installed file
+        stays overwritten after the run; its original is kept beside it as
+        ``<file>.orig`` before the first overwrite, and copies derived from
+        the installation are taken from that (``maps.opendrive.install_xodr``,
+        #2446).
 
         Args:
             xodr_path: Path to the ``.xodr`` file that will overwrite the
@@ -1410,7 +1413,9 @@ class ScenarioRunner:
                 f"inside the CARLA installation "
                 f"(e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/{_short_map_name(map_name)}.xodr)."
             )
-        shutil.copy2(xodr_path, dest)
+        # The installation's original kept once, replaced in one rename, and
+        # left alone when it holds these bytes already (#2446).
+        install_xodr(xodr_path, dest)
         self._xodr_path = xodr_path
         self._load_map(map_name, capture_baseline)
         # After _load_map(), which forgets any OpenDRIVE: the map is to

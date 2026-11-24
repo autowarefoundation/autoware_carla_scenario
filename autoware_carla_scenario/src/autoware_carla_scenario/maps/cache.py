@@ -1481,25 +1481,48 @@ def _write_atomically(path: Path, text: str) -> None:
     write_text_atomically(path, text)
 
 
-def _copy_atomically(source: Path, path: Path) -> None:
-    """Replace *path* with a copy of *source*, in one rename.
+def _copy_atomically(source: Path, path: Path, keep_existing: bool = False) -> bool:
+    """Replace *path* with a copy of *source*, in one rename; whether *path*
+    was written.
 
     :func:`_write_atomically` for a file rather than a text: ``shutil.copy2``
     copies the bytes, mode and modification time exactly, whatever the
     encoding and line endings, into a scratch file in *path*'s directory that
     is then renamed over *path*.  The scratch file is removed when the copy
     fails.
+
+    With *keep_existing*, a *path* that exists is left as it is and ``False``
+    returned: the copy is hard-linked into place, which fails, atomically,
+    when *path* is there -- so of two processes saving the same file once
+    (:func:`~autoware_carla_scenario.maps.opendrive.install_xodr` keeping the
+    CARLA installation's original), the first one's copy stays.  On a file
+    system without hard links it is renamed into place when *path* is not
+    there yet.
     """
     fd, name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
     os.close(fd)
+    written = True
     try:
         shutil.copy2(str(source), name)
-        os.replace(name, str(path))
+        if keep_existing:
+            try:
+                os.link(name, str(path))
+            except FileExistsError:
+                written = False
+            except OSError:  # a file system without hard links
+                if path.exists():
+                    written = False
+                else:
+                    os.replace(name, str(path))
+            Path(name).unlink(missing_ok=True)
+        else:
+            os.replace(name, str(path))
     except BaseException:
         Path(name).unlink(missing_ok=True)
         raise
+    return written
 
 
 def _json_object(fields: list[tuple[str, str]]) -> str:

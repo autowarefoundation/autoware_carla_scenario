@@ -20,6 +20,7 @@ __all__ = [
     "READ_FILE",
     "READ_TRACE_FILE",
     "SOURCE_FILE",
+    "converted_by_another_roadgen",
     "map_id_for",
 ]
 
@@ -72,3 +73,16 @@ def map_id_for(
     for format_name, file_digest in entries:
         digest.update(b"\0" + format_name.encode() + b"\0" + file_digest)
     return f"{name}-{digest.hexdigest()[:12]}"
+
+
+def converted_by_another_roadgen(set_version: str, installed_version: str) -> bool:
+    """Whether the formats a set's roadgen ``set_version`` converted (its
+    manifest's ``roadgen_version``) are to be converted again by the installed
+    roadgen ``installed_version``: whenever the two differ (#2446).
+
+    :func:`map_id_for` digests the inputs only, so a set converted by an older
+    roadgen keeps its id; its converted formats count as missing instead, and
+    the set is written again under that id. The formats given rather than
+    converted are another matter: their files are the input.
+    """
+    return set_version != installed_version

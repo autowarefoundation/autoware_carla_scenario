@@ -789,3 +789,86 @@ def test_a_t4_map_is_written_as_given_into_the_set(
 def test_a_t4_map_is_not_converted(opendrive: str, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="driver.t4_scene"):
         export_map(opendrive, "Town", tmp_path, formats=("t4",))
+
+
+def _age_set(directory: Path, version: str) -> None:
+    """Make the set in ``directory`` read as converted by roadgen ``version``."""
+    manifest = _manifest(directory)
+    manifest["roadgen_version"] = version
+    (directory / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1))
+
+
+def test_a_set_an_older_roadgen_converted_is_converted_again(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    """#2446: the id digests the inputs only, so a set converted by another
+    roadgen keeps its id; its converted formats count as missing and are
+    converted again, the given file copied as it is."""
+    maps = tmp_path / "maps"
+    map_id = export_map(
+        opendrive, "Town", maps, formats=("opendrive",), lanelet2_path=local_osm
+    )
+    directory = maps / map_id
+    _age_set(directory, "0.0.1")
+    (directory / "roadgen.xodr").write_text("converted by roadgen 0.0.1")
+
+    assert (
+        export_map(
+            opendrive, "Town", maps, formats=("opendrive",), lanelet2_path=local_osm
+        )
+        == map_id
+    ), "the id is unchanged"
+
+    manifest = _manifest(directory)
+    assert manifest["roadgen_version"] == roadgen.__version__
+    assert set(manifest["formats"]) == {"opendrive", "lanelet2"}
+    assert (directory / "roadgen.xodr").read_text() != "converted by roadgen 0.0.1"
+    assert manifest["formats"]["lanelet2"]["provided"] is True
+    assert (directory / "lanelet2_map.osm").read_text() == _LOCAL_OSM
+    assert [p.name for p in maps.iterdir()] == [map_id], "left scratch behind"
+
+
+def test_a_converted_format_not_asked_for_is_converted_again_too(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A set only grows: a stale format this run does not ask for is converted
+    again rather than dropped. Faked here as a new roadgen installed."""
+    from autoware_carla_scenario.driver import hdmap_export  # noqa: PLC0415
+
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("lanelet2", "osm"))
+    written = (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns
+    monkeypatch.setattr(hdmap_export, "_installed_roadgen_version", lambda: "99.0")
+
+    assert export_map(opendrive, "Town", tmp_path, formats=("osm",)) == map_id
+
+    assert (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns != written
+    assert set(_manifest(tmp_path / map_id)["formats"]) == {"lanelet2", "osm"}
+
+
+def test_a_set_of_given_formats_only_is_never_converted_again(
+    opendrive: str, local_osm: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.driver import hdmap_export  # noqa: PLC0415
+
+    map_id = export_map(
+        opendrive, "Town", tmp_path, formats=(), lanelet2_path=local_osm
+    )
+    written = (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns
+    monkeypatch.setattr(hdmap_export, "_installed_roadgen_version", lambda: "99.0")
+
+    export_map(opendrive, "Town", tmp_path, formats=(), lanelet2_path=local_osm)
+
+    assert (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns == written
+
+
+def test_without_roadgen_a_set_another_roadgen_converted_is_reused(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing could convert it again: the set is read as it is."""
+    map_id = export_map(opendrive, "Town", tmp_path, formats=("lanelet2",))
+    _age_set(tmp_path / map_id, "0.0.1")
+    written = (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns
+    monkeypatch.setitem(sys.modules, "roadgen", None)  # importing it now fails
+
+    assert export_map(opendrive, "Town", tmp_path) == map_id
+    assert (tmp_path / map_id / MANIFEST_FILE).stat().st_mtime_ns == written

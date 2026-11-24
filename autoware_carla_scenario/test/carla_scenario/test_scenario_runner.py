@@ -1125,6 +1125,32 @@ class TestOverwritingTheOpenDrive:
         assert (home / "installed.xodr").read_text() == "<OpenDRIVE/>"
         assert not (tmp_path / "~").exists()
 
+    def test_the_installations_original_is_kept_and_a_reload_writes_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """#2446: the original is kept as ``<file>.orig`` before the first
+        overwrite, and reloading the batch's map leaves the installed file,
+        which already holds the bytes, alone."""
+        xodr = tmp_path / "odaiba.xodr"
+        xodr.write_text("<OpenDRIVE/>")
+        installed = tmp_path / "installed.xodr"
+        installed.write_text("<OpenDRIVE>carla</OpenDRIVE>")
+        monkeypatch.setenv("ODAIBA_GENERATED_PATH", str(installed))
+        server = _SharedServer(("Odaiba_generated",), "Odaiba_generated")
+        runner = _runner_on(server)
+
+        runner.load_map_by_overwriting_xodr(xodr, "Odaiba_generated")
+        assert installed.read_text() == "<OpenDRIVE/>"
+        original = tmp_path / "installed.xodr.orig"
+        assert original.read_text() == "<OpenDRIVE>carla</OpenDRIVE>"
+        inode = installed.stat().st_ino
+
+        runner.reset_world("Case0")
+
+        assert server.loads == ["Odaiba_generated", "Odaiba_generated"]
+        assert installed.stat().st_ino == inode, "rewrote the same bytes"
+        assert original.read_text() == "<OpenDRIVE>carla</OpenDRIVE>"
+
     @pytest.mark.parametrize("value", [None, "", "   "])
     def test_an_unset_or_blank_destination_is_an_error(
         self, tmp_path, monkeypatch, value

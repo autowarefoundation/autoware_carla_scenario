@@ -51,7 +51,6 @@ from pathlib import Path
 
 import copy
 import os
-import shutil
 from collections.abc import Sequence
 from typing import Any, NoReturn
 
@@ -79,6 +78,7 @@ from autoware_carla_scenario.maps import (
     resolve_map_paths,
 )
 from autoware_carla_scenario.maps.opendrive import (
+    install_xodr,
     map_asset_env_var,
     map_asset_path,
 )
@@ -617,7 +617,7 @@ def _load_world(client: carla.Client, paths: MapPaths) -> carla.World:
                 f"internal .xodr file of {paths.name} inside the CARLA installation"
             )
         logger.info("Overwriting CARLA XODR: %s -> %s", install, dest)
-        shutil.copy2(install, dest)
+        install_xodr(install, dest)
     logger.info("Loading CARLA map %s ...", paths.name)
     return client.load_world(paths.name)
 
