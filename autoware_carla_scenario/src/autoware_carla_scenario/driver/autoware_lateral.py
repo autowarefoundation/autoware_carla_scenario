@@ -34,7 +34,7 @@ counter-clockwise), and steering angles are tire angles, positive to the left.
 from __future__ import annotations
 
 import logging
-import math
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -145,42 +145,29 @@ class LateralChainConfig:
     (``OPT_T0=1``)."""
 
     def __post_init__(self) -> None:
+        from ..value_text import shown  # noqa: PLC0415
+
         if self.controller not in LATERAL_CONTROLLERS:
             raise ValueError(
                 f"controller must be one of {list(LATERAL_CONTROLLERS)}, "
-                f"got {self.controller!r}"
+                f"got {shown(self.controller)}"
             )
         if self.trajectory_optimizer not in TRAJECTORY_OPTIMIZERS:
             raise ValueError(
                 f"trajectory_optimizer must be one of {list(TRAJECTORY_OPTIMIZERS)}, "
-                f"got {self.trajectory_optimizer!r}"
+                f"got {shown(self.trajectory_optimizer)}"
             )
-        for name in ("wheelbase_m", "ctrl_period_s"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"{name} must be a number, got {value!r}")
-            if not (math.isfinite(value) and value > 0.0):
-                raise ValueError(f"{name} must be positive, got {value!r}")
-        for name in ("publish_delay_s", "localization_lag_s"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"{name} must be a number, got {value!r}")
-            if not (math.isfinite(value) and value >= 0.0):
-                raise ValueError(f"{name} must be zero or more, got {value!r}")
-        for name in (
-            "mpc_companion",
-            "tso_v0_from_ego",
-            "tso_upstream_semantics",
-            "tso_bounds",
-            "tso_t0_point",
+        # wheelbase_m and ctrl_period_s divide; the delays only shift a clock.
+        for name, positive in (
+            ("wheelbase_m", True),
+            ("ctrl_period_s", True),
+            ("publish_delay_s", False),
+            ("localization_lag_s", False),
         ):
-            if not isinstance(getattr(self, name), bool):
-                raise ValueError(
-                    f"{name} must be true or false, got {getattr(self, name)!r}"
-                )
-        for name in ("mpc_param_file", "tso_param_file"):
-            if not isinstance(getattr(self, name), str):
-                raise ValueError(f"{name} must be a path, got {getattr(self, name)!r}")
+            value = getattr(self, name)
+            if not (value > 0.0 if positive else value >= 0.0):
+                domain = "positive" if positive else "zero or more"
+                raise ValueError(f"{name} must be {domain}, got {value}")
 
     @property
     def enabled(self) -> bool:
@@ -188,8 +175,11 @@ class LateralChainConfig:
         return self.controller == "mpc"
 
     @classmethod
-    def from_mapping(cls, mapping: Optional[Mapping[str, Any]]) -> "LateralChainConfig":
-        """The config of a ``driver.lateral`` mapping; ``None`` is the default (off).
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "LateralChainConfig":
+        """The config of a ``driver.lateral`` mapping, as
+        :meth:`~.control.ControlConfig.from_mapping` reads ``driver.control``: a
+        null value is the key's default, and each value is checked as its
+        field's default says (a number, true or false, a path).
 
         Raises:
             ValueError: naming the key, for a key this config does not define or a
@@ -197,10 +187,10 @@ class LateralChainConfig:
         """
         from dataclasses import fields  # noqa: PLC0415
 
-        if mapping is None:
-            return cls()
-        if not isinstance(mapping, Mapping):
-            raise ValueError(f"must be a mapping, got {mapping!r}")
+        from ..utils.config import null_as_default  # noqa: PLC0415
+        from ..value_text import shown  # noqa: PLC0415
+        from .control import _config_number  # noqa: PLC0415
+
         known = {f.name for f in fields(cls)}
         unknown = sorted(set(mapping) - known)
         if unknown:
@@ -208,14 +198,18 @@ class LateralChainConfig:
                 f"{unknown[0]}: Unknown LateralChainConfig key(s) {unknown}. "
                 f"Known keys: {sorted(known)}"
             )
-        values = dict(mapping)
-        for name in ("mpc_param_file", "tso_param_file"):
-            if values.get(name) is None and name in values:
-                values[name] = ""
-        for name, value in list(values.items()):
-            if isinstance(getattr(cls, name), float) and isinstance(value, int):
+        values = null_as_default(cls, mapping)
+        for name, value in values.items():
+            field_default = getattr(cls, name)
+            if isinstance(field_default, bool):
                 if not isinstance(value, bool):
-                    values[name] = float(value)
+                    raise ValueError(
+                        f"{name} must be true or false, got {shown(value)}"
+                    )
+            elif isinstance(field_default, float):
+                values[name] = _config_number(name, value)
+            elif not isinstance(value, str):
+                raise ValueError(f"{name} must be a string, got {shown(value)}")
         return cls(**values)
 
 
@@ -461,8 +455,6 @@ class MpcReference:
         self.x, self.y, self.yaw, self.v, self.t, self.k = x, y, yaw, v, t, k
         self.steer = pts[:, 6].copy() if pts.shape[1] > 6 else np.zeros(len(x))
         self.has_steer = bool(np.any(np.abs(self.steer) > 1e-6))
-        #: The trajectory as published, for the stop handling.
-        self.pub_pts = pts
 
     def at(self, tau: Any) -> Tuple[Any, Any, Any, Any, Any]:
         """x, y, yaw, v and curvature at time(s) *tau* from the stamp."""
@@ -1085,8 +1077,6 @@ class TimeSequenceRawOptimizer:
         self._ok: Optional[np.ndarray] = None
         self._steer_hold = False
         self._latched = 0.0
-        #: How many solves did not converge.
-        self.unconverged = 0
 
     def _stopped_reference(self, pts: np.ndarray) -> bool:
         """is_stopped_reference_trajectory."""
@@ -1111,7 +1101,6 @@ class TimeSequenceRawOptimizer:
             pts, self._u_prev, X, status = tso_optimized_points(
                 self.params, raw, speed, steer, accel, self.wheelbase, warm, prev
             )
-            self.unconverged += int(status == 0)
             self._prev = (X, now)
             self._ok = pts
         except (np.linalg.LinAlgError, ValueError) as error:
@@ -1151,7 +1140,6 @@ class PublishedPlan:
     """A trajectory as the planning stack publishes it.
 
     Attributes:
-        stamp_us: Its stamp, when the plan was asked for.
         visible_us: When the controllers take it (the stamp plus the publish delay).
         points: ``[N, >= 6]`` x, y, yaw, v, a, t (time from the stamp), and with the
             TSO, the front wheel angle; in the local frame.
@@ -1161,7 +1149,6 @@ class PublishedPlan:
         accelerations: With *velocities*, its accelerations.
     """
 
-    stamp_us: int
     visible_us: int
     points: np.ndarray
     reference: MpcReference
@@ -1205,15 +1192,7 @@ class AutowareLateralChain:
             mpc_file, wheelbase=config.wheelbase_m, ctrl_period=config.ctrl_period_s
         )
         if config.mpc_companion:
-            stop = MpcStopParams(
-                entry_ego=stop.entry_ego,
-                entry_target=stop.entry_target,
-                hold=9999.0,
-                slew=False,
-                l_min=stop.l_min,
-                l_ref=stop.l_ref,
-                rate_min=stop.rate_min,
-            )
+            stop = dataclasses.replace(stop, hold=9999.0, slew=False)
         self.stop_params = stop
         self.tso: Optional[TimeSequenceRawOptimizer] = None
         if config.trajectory_optimizer == "tso":
@@ -1243,7 +1222,8 @@ class AutowareLateralChain:
         self._hold_since: Optional[float] = None
         self._conf_since: Optional[float] = None
         self._poses: List[_PoseSample] = []
-        self.ticks: List[Dict[str, float]] = []
+        #: How many MPC ticks ran.
+        self.tick_count = 0
         if self.tso is not None:
             self.tso.reset()
 
@@ -1274,9 +1254,9 @@ class AutowareLateralChain:
         if not keep.any():
             return
         positions = plan.positions[keep]
-        yaws = np.array([p.yaw for i, p in enumerate(plan.poses) if keep[i]])
+        yaws = np.array([p.yaw for p in plan.poses])[keep]
         times = times[keep]
-        stamps = [int(t) for t, k in zip(plan.timestamps_us, keep) if k]
+        stamps = np.asarray(plan.timestamps_us, dtype=np.int64)[keep].tolist()
         base = np.asarray(pose.position, dtype=np.float64)
         speeds, _, pose_index = plan_velocities(
             positions,
@@ -1312,7 +1292,6 @@ class AutowareLateralChain:
             )
         self._pending.append(
             PublishedPlan(
-                stamp_us=stamp_us,
                 visible_us=stamp_us
                 + int(round(self.config.publish_delay_s * _US_PER_S)),
                 points=pts,
@@ -1349,8 +1328,8 @@ class AutowareLateralChain:
         else:
             self._poses.append(sample)
         lag = self.config.localization_lag_s
-        horizon = now - lag - 1.0
-        while len(self._poses) > 2 and self._poses[1].t < horizon:
+        # The samples from the last one at or before now - lag on are all it reads.
+        while len(self._poses) > 2 and self._poses[1].t <= now - lag:
             self._poses.pop(0)
         if lag <= 0.0 or len(self._poses) < 2:
             return sample.x, sample.y, sample.yaw
@@ -1388,15 +1367,12 @@ class AutowareLateralChain:
         if not self._mpc_started:
             self.mpc.reset(steer_rad)
             self._cmd_prev = steer_rad
-            self._cmd = steer_rad
             self._mpc_started = True
         period = self.mpc_params.ctrl_period
         while now >= self._next_tick - 1e-9:
             raw = self.mpc.step(active.reference, now, seen, steer_rad)
             self._cmd = self._lateral_stop(raw, seen, now, speed_mps, active)
-            self.ticks.append({"t": now, "cmd": self._cmd, **self.mpc.last})
-            if len(self.ticks) > 1000:
-                del self.ticks[: len(self.ticks) - 1000]
+            self.tick_count += 1
             self._next_tick += period
         return self._cmd
 
@@ -1414,15 +1390,12 @@ class AutowareLateralChain:
         eligible = abs(speed) <= S.entry_ego and abs(min_v) < S.entry_target
         if not eligible:
             self._hold_since = None
-        elif self._hold_since is None:
-            self._hold_since = now
-        if (
-            eligible
-            and self._hold_since is not None
-            and now - self._hold_since > S.hold
-        ):
-            self.mpc.reset(self._cmd_prev)  # syncMpcSteerStateToCommand
-            return self._cmd_prev
+        else:
+            if self._hold_since is None:
+                self._hold_since = now
+            if now - self._hold_since > S.hold:
+                self.mpc.reset(self._cmd_prev)  # syncMpcSteerStateToCommand
+                return self._cmd_prev
         if S.slew:
             conf = float(
                 np.clip((ahead - S.l_min) / max(S.l_ref - S.l_min, 1e-6), 0.0, 1.0)

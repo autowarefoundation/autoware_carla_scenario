@@ -67,7 +67,7 @@ def _plan(pts: np.ndarray, stamp_us: int) -> Trajectory:
 
 
 def test_the_default_is_pure_pursuit() -> None:
-    config = LateralChainConfig.from_mapping(None)
+    config = LateralChainConfig.from_mapping({})
     assert config == LateralChainConfig()
     assert not config.enabled
 
@@ -87,8 +87,25 @@ def test_the_config_names_the_key_it_refuses() -> None:
         LateralChainConfig.from_mapping({"wheelbase_m": True})
     with pytest.raises(ValueError, match="^lookahead: Unknown LateralChainConfig"):
         LateralChainConfig.from_mapping({"lookahead": 1.0})
-    with pytest.raises(ValueError, match="^must be a mapping"):
-        LateralChainConfig.from_mapping("mpc")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="^tso_bounds must be true or false"):
+        LateralChainConfig.from_mapping({"tso_bounds": "yes"})
+
+
+def test_a_null_value_is_the_default() -> None:
+    config = LateralChainConfig.from_mapping(
+        {"mpc_param_file": None, "publish_delay_s": None}
+    )
+    assert config == LateralChainConfig()
+
+
+def test_run_names_the_lateral_section() -> None:
+    from autoware_carla_scenario.examples.run import _lateral_config
+
+    assert _lateral_config({"lateral": None}) == LateralChainConfig()
+    with pytest.raises(ValueError, match="^driver.lateral must be a mapping"):
+        _lateral_config({"lateral": "mpc"})
+    with pytest.raises(ValueError, match="^driver.lateral.controller must be one of"):
+        _lateral_config({"lateral": {"controller": "stanley"}})
 
 
 def test_an_int_is_taken_as_a_float() -> None:
@@ -197,7 +214,7 @@ def test_the_mpc_ticks_on_its_own_clock() -> None:
     for k in range(21):  # 1 s of 50 ms ticks
         chain.step(k * 50_000, pose, 5.0, 0.0)
     # 0, 0.03, ..., 0.99: 34 MPC ticks in a second of CARLA's 21.
-    assert len(chain.ticks) == 34
+    assert chain.tick_count == 34
 
 
 def test_the_localization_trails_the_vehicle() -> None:

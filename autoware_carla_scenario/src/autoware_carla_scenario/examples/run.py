@@ -3355,7 +3355,8 @@ def _check_driver_settings(cfg: DictConfig) -> None:
 
 
 def _lateral_config(section: Mapping[str, Any]) -> "LateralChainConfig":
-    """The lateral control chain of ``driver.lateral``: ``null`` (or none) is
+    """The lateral control chain of ``driver.lateral``, read as
+    :func:`_control_config` reads ``driver.control``: ``null`` (or none) is
     the default, pure pursuit; anything else but a mapping is refused.
 
     Raises:
@@ -3364,14 +3365,17 @@ def _lateral_config(section: Mapping[str, Any]) -> "LateralChainConfig":
     from autoware_carla_scenario.driver.autoware_lateral import (  # noqa: PLC0415
         LateralChainConfig,
     )
+    from autoware_carla_scenario.value_text import shown  # noqa: PLC0415
 
+    lateral = section.get("lateral")
+    if lateral is None:
+        lateral = {}
+    if not isinstance(lateral, Mapping):
+        raise ValueError(f"driver.lateral must be a mapping, got {shown(lateral)}")
     try:
-        return LateralChainConfig.from_mapping(section.get("lateral"))
+        return LateralChainConfig.from_mapping(lateral)
     except ValueError as exc:
-        text = str(exc)
-        if text.startswith("must be"):
-            raise ValueError(f"driver.lateral {text}") from None
-        raise ValueError(f"driver.lateral.{text}") from None
+        raise ValueError(f"driver.lateral.{exc}") from None
 
 
 def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":

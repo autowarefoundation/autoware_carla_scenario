@@ -464,8 +464,11 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         if self._t4 is not None:
             self._record_t4(world, elapsed, actor, observation)
 
+        # The tire angle Autoware's chain reads, once a tick (two wheel queries).
+        steer = self._measured_steer(actor) if self._lateral is not None else 0.0
+
         if self._is_policy_step():
-            self._run_policy_step(actor, observation)
+            self._run_policy_step(actor, observation, steer)
 
         if self._warmup is not None:
             # The policy plans, but the run-up carries the ego.
@@ -476,7 +479,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                     "Policy warm-up over after %d policy step(s)", self._drive_count
                 )
             return
-        self._apply_control(actor, observation)
+        self._apply_control(actor, observation, steer)
 
     def _await_stack(self, world: "carla.World", actor: "carla.Actor") -> bool:
         """Poll the bridged stack; whether the policy may drive on this tick.
@@ -766,9 +769,10 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         return self._sim_time_us - self._last_policy_time_us >= interval_us
 
     def _run_policy_step(
-        self, actor: "carla.Actor", observation: EgoObservation
+        self, actor: "carla.Actor", observation: EgoObservation, steer: float
     ) -> None:
-        """Submit observations, ask the policy to plan, and cache the result."""
+        """Submit observations, ask the policy to plan, and cache the result
+        (*steer*, the measured tire angle, for Autoware's chain)."""
         self._submit_camera_frames()
         self._submit_route(actor, observation)
         self._client.submit_egomotion_observation(self._pending_egomotion)
@@ -789,7 +793,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 self._sim_time_us,
                 observation.pose,
                 observation.speed_mps,
-                self._measured_steer(actor),
+                steer,
                 float(observation.linear_acceleration[0]),
             )
         self._drive_count += 1
@@ -1016,33 +1020,26 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # CARLA steers positive right; the rig frame is positive left.
         return -steer_angle(steer, self._follower.config)
 
-    def _apply_control(self, actor: "carla.Actor", observation: EgoObservation) -> None:
-        """Track the cached plan and push the resulting control to CARLA."""
-        if self._lateral is not None:
-            self._apply_chain_control(actor, observation, self._lateral)
-            return
-        command = self._follower.step(
-            self._plan,
-            observation.pose,
-            observation.speed_mps,
-            _FIXED_DELTA_S,
-            yaw_rate_rps=float(observation.angular_velocity[2]),
-            now_us=observation.timestamp_us,
-            gear=int(actor.get_control().gear),
-        )
-        actor.apply_control(command.to_carla_control())
-
-    def _apply_chain_control(
-        self,
-        actor: "carla.Actor",
-        observation: EgoObservation,
-        chain: "AutowareLateralChain",
+    def _apply_control(
+        self, actor: "carla.Actor", observation: EgoObservation, steer: float
     ) -> None:
-        """The control of Autoware's chain: the longitudinal controller on the
-        published trajectory, the steering the MPC's."""
+        """Track the plan and push the resulting control to CARLA.
+
+        With Autoware's chain, the plan tracked is the trajectory it published
+        (its speeds and accelerations too, with the TSO), and the steering is
+        the MPC's, from the measured tire angle *steer*.
+        """
         now_us = observation.timestamp_us
-        published = chain.published(now_us)
-        plan = Trajectory.empty() if published is None else published.trajectory
+        plan = self._plan
+        velocities: Optional[List[float]] = None
+        accelerations: Optional[List[float]] = None
+        chain = self._lateral
+        if chain is not None:
+            published = chain.published(now_us)
+            plan = Trajectory.empty() if published is None else published.trajectory
+            if published is not None:
+                velocities = published.velocities
+                accelerations = published.accelerations
         command = self._follower.step(
             plan,
             observation.pose,
@@ -1051,22 +1048,16 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             yaw_rate_rps=float(observation.angular_velocity[2]),
             now_us=now_us,
             gear=int(actor.get_control().gear),
-            plan_velocities_mps=None if published is None else published.velocities,
-            plan_accelerations_mps2=(
-                None if published is None else published.accelerations
-            ),
+            plan_velocities_mps=velocities,
+            plan_accelerations_mps2=accelerations,
         )
-        angle = chain.step(
-            now_us,
-            observation.pose,
-            observation.speed_mps,
-            self._measured_steer(actor),
-        )
-        if angle is not None and math.isfinite(angle):
-            # Rig frame positive left; CARLA steers positive right.
-            command = dataclasses.replace(
-                command, steer=-steer_command(angle, self._follower.config)
-            )
+        if chain is not None:
+            angle = chain.step(now_us, observation.pose, observation.speed_mps, steer)
+            if angle is not None and math.isfinite(angle):
+                # Rig frame positive left; CARLA steers positive right.
+                command = dataclasses.replace(
+                    command, steer=-steer_command(angle, self._follower.config)
+                )
         actor.apply_control(command.to_carla_control())
 
     def debug_markers(self) -> DebugMarkers:
