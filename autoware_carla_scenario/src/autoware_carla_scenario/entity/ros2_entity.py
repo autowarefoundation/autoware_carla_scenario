@@ -510,8 +510,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         # whose steer_accel step ``acceleration * speed_horizon_s``, fit a
         # float32 (command_is_applicable), so this does not fire for a speed a
         # vehicle reaches.  Were the target out of float32's range all the
-        # same, CARLA would take it as an infinity and drive at full throttle:
-        # the ego brakes instead.
+        # same, typesafe_carla would refuse the control with a CarlaError (an
+        # infinity once rounded to float32), ending the run: the ego brakes
+        # instead.
         if not (
             fits_float32(steer_rad)
             and fits_float32(speed_mps)

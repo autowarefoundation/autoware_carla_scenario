@@ -206,8 +206,9 @@ refused before arbitration, with a warning once per source. So is a `control` or
 `steer_accel` command with a number that would reach CARLA's Ackermann controller out
 of float32's range (magnitude above 3.4028234663852886e38):
 `carla.VehicleAckermannControl` holds each field as a float32, where such a value
-becomes an infinity (an infinite target speed, which the controller chases at full
-throttle). For
+becomes an infinity, which typesafe_carla refuses with a `CarlaError` as the control
+is applied (it would end the run; the official client would hand CARLA an infinite
+target speed, which its controller chases at full throttle). For
 `steer_accel` that includes what the source makes of it -- `steering_sign * steering`
 and the target speed's step `acceleration * speed_horizon_s` -- so an acceleration of
 `1e39`, or of `2e38` over a 2 s horizon, is refused rather than selected or held.
