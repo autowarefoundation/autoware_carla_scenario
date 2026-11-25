@@ -2588,20 +2588,52 @@ given:</p>
   was built by someone running <code>rosdep install</code> in it; a fresh container
   per scenario does not, so the launcher does it once, and again only
   when a <code>package.xml</code> or the dev container's image changes
-  (<code>autoware.launcher.rosdep=false</code> leaves the workspace's out). The
-  output goes to <code>autoware-deps.log</code>.</li>
+  (<code>autoware.launcher.rosdep=false</code> leaves the workspace's out). A dev
+  container image the host's Docker does not have (a SLURM node where
+  the dev container was never opened) is pulled first. The output, the
+  pull's included, goes to <code>autoware-deps-&lt;host&gt;_&lt;pid&gt;.log</code>, named after
+  the run, so the tasks of a SLURM batch sharing a directory each keep
+  their own; an error names the file.</li>
+<li>The dependency image is shared by every user of the host's Docker, so
+  it carries nothing of the run that made it: the install container gets
+  none of <code>autoware.launcher.env</code>, the dev container's <code>containerEnv</code>,
+  <code>HOST_UID</code>/<code>HOST_GID</code>, <code>user</code>, <code>gpus</code>, <code>mounts</code> or <code>docker_args</code>, and
+  the image is committed with the dev container image's own <code>USER</code> and
+  <code>WORKDIR</code>. Its environment is the dev container image's; the stack's
+  containers get <code>env</code> and the rest when they start. The install reaches
+  the network as the host's Docker does: a host behind a proxy sets it in
+  Docker's client configuration (<code>proxies</code> in <code>~/.docker/config.json</code>),
+  which Docker passes to every container, this one included (and so
+  into the image), not in <code>autoware.launcher.env</code>.
+  A dependency image made by a version before this one (#2501) may hold
+  the <code>env</code> of the run that made it, a token among them. Its tag is not
+  used any more -- the image is made again once, under a new digest --
+  but it stays on disk until removed:
+  <code>docker image ls autoware-carla-scenario-deps</code> lists them, and
+  <code>docker image rm autoware-carla-scenario-deps:&lt;old digest&gt;</code> removes
+  one.</li>
 <li>The workspace is built (<code>colcon build</code> in that image) when
   <code>autoware.launcher.build</code> says so: <code>auto</code> builds it only when
   <code>install/setup.bash</code> is missing, <code>always</code> before every batch, <code>never</code>
-  leaves building to you. The output goes to <code>autoware-build.log</code>.
-  When there is a dependency image to make or a build to run, it is done
-  under a lock, <code>.autoware_carla_scenario-build.lock</code> at the root of the
-  workspace (kept there, not in a cache directory of yours, so runs on
-  every node that shares the workspace see it): a second run waits for
-  the first's (up to 4 hours, then fails saying so), and with <code>auto</code>
-  uses its build rather than build again. A run with nothing to make
-  takes no lock. The file stays; git shows it as untracked unless you
-  add it to the workspace's <code>.git/info/exclude</code>.</li>
+  leaves building to you. The output goes to
+  <code>autoware-build-&lt;host&gt;_&lt;pid&gt;.log</code>, named after the run as the
+  dependencies' log is.
+  A build is run under a lock, <code>.autoware_carla_scenario-build.lock</code> at
+  the root of the workspace (kept there, not in a cache directory of
+  yours, so runs on every node that shares the workspace see it): a
+  second run waits for the first's (up to 4 hours, then fails saying so),
+  and with <code>auto</code> uses its build rather than build again. The file stays;
+  git shows it as untracked unless you add it to the workspace's
+  <code>.git/info/exclude</code>. The dependency image lives in each host's Docker,
+  so it is made under a lock of that host's instead,
+  <code>&lt;host&gt;-autoware-carla-scenario-deps_&lt;digest&gt;.lock</code> in
+  <code>${XDG_CACHE_HOME:-~/.cache}/autoware_carla_scenario/locks/</code> (the host
+  in its name, so a cache directory on a home the nodes share does not
+  make them wait for each other): a second run of yours on the host
+  waits for the first's, up to 4 hours too, and uses its image. Runs of
+  another user on the host have a cache directory of their own and may
+  make the same image beside yours, which only costs the time. A run
+  with nothing to make or build takes no lock.</li>
 <li>A workspace whose <code>autoware_carla_interface</code> launch takes no
   <code>scenario_mode</code> -- one built from a branch without scenario support --
   is refused here, not after the first scenario has timed out waiting for
@@ -2629,8 +2661,9 @@ given:</p>
   the batch here (a call it needs) or is logged and gone on without (the
   leftover containers' removal), rather than hang it. A dependency image
   whose <code>docker image inspect</code> does not answer fails the batch too: it is
-  not taken for a missing one, installed and committed again. The dependencies'
-  install and the build stream their output and are not bounded.</li>
+  not taken for a missing one, installed and committed again. The base
+  image's pull, the dependencies' install and the build stream their
+  output and are not bounded.</li>
 </ul>
 </li>
 <li><strong>For each scenario</strong>, once the ego is spawned and the mission served:
@@ -2880,7 +2913,7 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <tr>
 <td><code>env</code></td>
 <td><code>{}</code></td>
-<td>Variables set in the container, over the dev container's own. Passed to <code>docker run</code> by name (<code>--env KEY</code>), so a value (a token) does not show in <code>ps</code>; one the Docker CLI reads itself (<code>PATH</code>, <code>HOME</code>, <code>DOCKER_*</code>, <code>LD_*</code>, <code>PYTHON*</code>, <code>*_PROXY</code>, <code>SSL_*</code>, ...) stays <code>KEY=VALUE</code> on the command line</td>
+<td>Variables set in the container, over the dev container's own. Passed to <code>docker run</code> by name (<code>--env KEY</code>), so a value (a token) does not show in <code>ps</code>; one the Docker CLI reads itself (<code>PATH</code>, <code>HOME</code>, <code>DOCKER_*</code>, <code>LD_*</code>, <code>PYTHON*</code>, <code>*_PROXY</code>, <code>SSL_*</code>, ...) stays <code>KEY=VALUE</code> on the command line. Not passed to the dependency image's install (<a href="#a-local-workspace-in-its-dev-container">above</a>)</td>
 </tr>
 <tr>
 <td><code>ros_domain_ids</code></td>
@@ -3154,7 +3187,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 04:12:12 UTC"><span class="timeago" datetime="2026-11-25T04:12:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 04:12:12 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 17:03:30 UTC"><span class="timeago" datetime="2026-11-25T17:03:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 17:03:30 UTC">2026-11-25</span>
   </span>
 
     
