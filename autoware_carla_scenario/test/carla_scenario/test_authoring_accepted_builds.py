@@ -1260,19 +1260,10 @@ def _validated(card: Any, params: dict[str, Any]) -> tuple[ValidationReport, Any
 _OUT_OF_DOMAIN: tuple[float, ...] = (-1.0, -0.001, 101.0, 1e12)
 
 
-def _lanelet_s(spec: FieldSpec, fields: tuple[FieldSpec, ...]) -> bool:
-    """Whether *spec* is an ``s`` along a lanelet another of *fields* names:
-    bounded by that lanelet's length, which the map sets, not the card, and
-    refused past it when the place is converted (#2469)."""
-    return spec.name == "s" and any(f.kind == "lanelet" for f in fields)
-
-
 def _unbounded(fields: tuple[FieldSpec, ...]) -> Iterator[FieldSpec]:
     for spec in fields:
         if spec.kind == "record_list":
             yield from _unbounded(spec.item_fields)
-        elif _lanelet_s(spec, fields):
-            continue
         elif (
             spec.kind in ("number", "int")
             and (
@@ -1320,23 +1311,6 @@ def test_an_accepted_value_of_an_unbounded_field_builds(
     finally:
         logging.disable(logging.NOTSET)
     assert not failures, "\n".join(failures)
-
-
-@pytest.mark.parametrize("type_id", ["entity_lane_of", "ttc_to_position"])
-@pytest.mark.parametrize("s", [-1.0, 101.0])
-def test_a_place_off_its_lanelet_is_refused_when_built(
-    type_id: str, s: float, samples: dict[tuple[str, str], Any]
-) -> None:
-    """A place's ``s`` past its lanelet's end (or before its start) is the
-    map's to refuse, not the validator's: building the card says so rather
-    than placing it on the lanelet's end (#2469)."""
-    card = next(c for c in _ALL_SPECS if c.type_id == type_id)
-    params = _with_value(type_id, card.fields, "s", s, samples)
-    report, build = _validated(card, params)
-    assert report.ok, _errors(report)
-    failure = _built_or_failure(build)
-    assert failure is not None
-    assert f"is not on lanelet {_LANELET}" in failure
 
 
 def _binding_values(spec: FieldSpec) -> list[float]:

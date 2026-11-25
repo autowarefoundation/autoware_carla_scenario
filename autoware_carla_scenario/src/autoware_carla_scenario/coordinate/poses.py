@@ -26,10 +26,11 @@ class Lanelet2Pose:
     Positive t is to the left of the driving direction.
 
     ``s`` runs from 0 to the lanelet's length, measured in plan view along its
-    centerline.  Converting a pose whose ``s`` is outside that range by more
-    than float error (1e-6 m) raises ``ValueError``, naming the lanelet, ``s``
-    and the length, rather than clamping it onto the lanelet's end (#2469): a
-    point further on belongs on the lanelet that follows.
+    centerline.  A pose whose ``s`` is outside that range by more than float
+    error (1e-6 m) is converted clamped onto the lanelet's nearer end, with a
+    WARNING naming the lanelet, ``s`` and the length (once per lanelet and
+    ``s`` a run, #2469): a point further on belongs on the lanelet that
+    follows.  A NaN ``s`` raises ``ValueError``.
     """
 
     FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2

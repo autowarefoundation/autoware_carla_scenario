@@ -30,7 +30,8 @@ pose is.
 The initial pose is where the ego actually stands: when a spawn retry has
 moved it off the scenario's snapped spawn (`entity.spawn_retry_t_step` across
 its lane per retry), Autoware is given the actor's own position and heading,
-at the snapped spawn's road height, and the shift is logged. An ego attached
+at the snapped spawn's road height, and a shift of more than 0.01 m is logged
+(a warning above 1 m). An ego attached
 to an actor something else spawned keeps the scenario's pose, and a
 disagreement of more than a metre is warned about.
 

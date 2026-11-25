@@ -53,7 +53,7 @@ from .metrics import (
     track_ego_progress,
 )
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
-from .coordinate.transform import to_opendrive
+from .coordinate.transform import _clear_clamped_s_warnings, to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
 from .entity_role import canonical_role_name
 from .ego_base_link import clear_ego_base_link
@@ -1867,6 +1867,9 @@ class ScenarioRunner:
         clear_signal_controllers()
         _set_warmup_done(False)
         _clear_entry_speeds()
+        # An off-lanelet s the last run was warned about is warned about
+        # again in this run's log.
+        _clear_clamped_s_warnings()
         # And where the last run's ego had its base_link: this run's ego says
         # where its own is when its scenario starts.
         clear_ego_base_link()
