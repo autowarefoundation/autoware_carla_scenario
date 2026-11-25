@@ -44,8 +44,14 @@ def _normalize_host(name: str) -> str:
 
 
 def is_wildcard(host: str) -> bool:
-    """Whether *host* is an address that binds every interface (``0.0.0.0``, ``::``)."""
-    return _normalize_host(host) in ("0.0.0.0", "::", "")  # noqa: S104
+    """Whether *host* is an address that binds every interface (``0.0.0.0``, ``::``).
+
+    Every spelling of the unspecified address counts -- ``0``, ``0.0``,
+    ``::0``, ``0:0:0:0:0:0:0:0`` bind every interface as well -- and an empty
+    one: an address made of nothing but zeros, dots and colons is one of them
+    (or no address at all, which nothing binds to)."""
+    name = _normalize_host(host)
+    return all(c in "0.:" for c in name)
 
 
 class HostAllowlist:

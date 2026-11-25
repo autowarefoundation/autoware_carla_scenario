@@ -275,3 +275,22 @@ def test_a_request_is_refused_as_before(seed: int) -> None:
         served += expected is None
     # The inputs reach both outcomes.
     assert refused and served
+
+
+@pytest.mark.parametrize(
+    "bound", ["0", "0.0", "0.0.0", "::0", "0::", "0:0:0:0:0:0:0:0", "[::0]", "00.0.0.0"]
+)
+def test_every_spelling_of_the_unspecified_address_is_a_wildcard(bound: str) -> None:
+    """``--host 0`` binds every interface as ``0.0.0.0`` does: it must check no
+    Host either, not refuse every other machine while warning it is exposed
+    (#2497)."""
+    assert web_origin.is_wildcard(bound)
+    assert web_origin.HostAllowlist(bound).allows("192.168.1.5")
+
+
+@pytest.mark.parametrize(
+    "bound", ["127.0.0.1", "::1", "10.0.0.1", "0.0.0.1", "localhost"]
+)
+def test_an_address_with_anything_but_zeros_is_no_wildcard(bound: str) -> None:
+    assert not web_origin.is_wildcard(bound)
+    assert not web_origin.HostAllowlist(bound).allows("192.168.1.5")
