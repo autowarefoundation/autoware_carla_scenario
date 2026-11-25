@@ -21,6 +21,7 @@ from autoware_carla_scenario.adversity import (
     CommandKind,
     adversity_command,
 )
+from autoware_carla_scenario.adversity.command import plan_command
 from autoware_carla_scenario.adversity.idm import DEFAULT_IDM, IdmParameters
 from autoware_carla_scenario.adversity.location import location_of
 from autoware_carla_scenario.adversity.observation import (
@@ -135,7 +136,7 @@ def test_a_cut_in_in_front_of_the_vehicle_too_close_behind(
     seen = _scene(features, _car("ego", -40.0), _car("side", -46.0, OUTER)).vehicle(
         "ego"
     )
-    assert cut_in(seen) == AdversarialCommand.change_lane("right", 1.0)
+    assert cut_in(seen, features) == AdversarialCommand.change_lane("right", 1.0)
 
 
 @pytest.mark.parametrize(
@@ -147,28 +148,40 @@ def test_a_cut_in_in_front_of_the_vehicle_too_close_behind(
     ],
 )
 def test_no_cut_in(features: MapFeatures, others: list[AgentSnapshot]) -> None:
-    assert cut_in(_scene(features, _car("ego", -40.0), *others).vehicle("ego")) is None
+    seen = _scene(features, _car("ego", -40.0), *others).vehicle("ego")
+    assert cut_in(seen, features) is None
 
 
-@pytest.mark.parametrize("speed", [0.0, 0.49])
-def test_no_cut_in_from_standstill(features: MapFeatures, speed: float) -> None:
-    # A follower at 10 m/s within the secure gap of a stopped agent (a red-light
-    # queue): changing lanes with no forward speed would slide it straight
-    # sideways, its yaw snapped across the lane (#2465).
-    stopped = _car("ego", -40.0, speed=speed)
-    seen = _scene(features, stopped, _car("side", -46.0, OUTER)).vehicle("ego")
-    assert cut_in(seen) is None
-    scene = _scene(features, stopped, _car("side", -46.0, OUTER))
+@pytest.mark.parametrize("speed", [0.0, 0.49, 2.0, 3.5])
+def test_no_cut_in_too_slow_to_cross_moving(
+    features: MapFeatures, speed: float
+) -> None:
+    # A follower at 10 m/s within the secure gap of a stopped or creeping
+    # agent (a red-light queue): crossing the 3.5 m in 1 s takes 3.5 m/s
+    # sideways out of its speed, and with no forward speed left the change
+    # would slide it straight sideways, its yaw snapped across the lane (#2465).
+    slow = _car("ego", -40.0, speed=speed)
+    seen = _scene(features, slow, _car("side", -46.0, OUTER)).vehicle("ego")
+    assert cut_in(seen, features) is None
+    scene = _scene(features, slow, _car("side", -46.0, OUTER))
     command = adversity_command(
         AdversityKind.CUT_IN, scene, "ego", AdversityLocation.ANY, random.Random(0)
     )
     assert command is None
 
 
-def test_a_cut_in_at_the_standstill_speed(features: MapFeatures) -> None:
-    moving = _car("ego", -40.0, speed=DEFAULT_THRESHOLDS.standstill_speed)
+def test_a_cut_in_fast_enough_to_cross_moving(features: MapFeatures) -> None:
+    # Just fast enough to keep the standstill speed forward while crossing.
+    speed = math.hypot(3.5, DEFAULT_THRESHOLDS.standstill_speed) + 1e-6
+    moving = _car("ego", -40.0, speed=speed)
     seen = _scene(features, moving, _car("side", -46.0, OUTER)).vehicle("ego")
-    assert cut_in(seen) == AdversarialCommand.change_lane("right", 1.0)
+    command = cut_in(seen, features)
+    assert command == AdversarialCommand.change_lane("right", 1.0)
+    path = plan_command(features, seen, command)
+    crossed = [state for state in path if state.t <= 1.0]
+    # It moves on as it crosses, never turned straight across the lane.
+    assert crossed[-1].x - crossed[0].x >= DEFAULT_THRESHOLDS.standstill_speed - 1e-3
+    assert all(abs(state.yaw) < math.radians(85.0) for state in path)
 
 
 # -- LANE_CHANGE_ABORT ------------------------------------------------------------
@@ -199,7 +212,7 @@ def test_no_lane_change_abort_where_its_lanelet_ends_too_soon(
     seen = _scene(features, _car("ego", -18.0), _car("side", -24.0, OUTER)).vehicle(
         "ego"
     )
-    assert cut_in(seen) is not None
+    assert cut_in(seen, features) is not None
     assert lane_change_abort(seen, features) is None
 
 

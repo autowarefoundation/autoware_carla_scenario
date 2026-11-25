@@ -219,6 +219,26 @@ def _accelerate(
     return states
 
 
+def _crossing_speed(
+    features: MapFeatures,
+    lane: LanePosition,
+    side: SideLane,
+    speed: float,
+    duration: float,
+) -> float:
+    """The forward speed left to an agent at *speed* crossing from where it
+    is on *lane* onto *side*'s centreline in *duration* (TeraSim's lane-change
+    longitudinal speed), the one :func:`_change_lane` drives at.
+
+    The crossing's sideways speed is taken out of *speed*: an agent slower
+    than it has none left, and its crossing slides it straight sideways.
+    """
+    cx, cy, yaw = _LaneWalk(features, lane.lanelet, lane.s).at(0.0)
+    ox, oy = _offset(cx, cy, yaw, lane.t)
+    nx, ny, _n = _LaneWalk(features, side.lanelet, side.s).at(0.0)
+    return lane_change_longitudinal_speed(speed, math.hypot(nx - ox, ny - oy), duration)
+
+
 def _change_lane(
     features: MapFeatures,
     lane: LanePosition,
@@ -240,17 +260,13 @@ def _change_lane(
     times = _times(max(span, command.duration), resolution)
     xs: list[float] = []
     ys: list[float] = []
-    speed = agent.speed
-    for i, t in enumerate(times):
+    # The lanes' separation, sideways out of the speed: the triggers that
+    # change lanes ask the same (CUT_IN, MERGE), so none plans a slide.
+    speed = _crossing_speed(features, lane, side, agent.speed, command.duration)
+    for t in times:
         cx, cy, own_yaw = own.at(speed * t)
         ox, oy = _offset(cx, cy, own_yaw, lane.t)
         nx, ny, _n = beside.at(speed * t)
-        if i == 0:
-            # The lanes' separation, sideways out of the speed (TeraSim's
-            # lane-change longitudinal speed); from here on, at that speed.
-            speed = lane_change_longitudinal_speed(
-                agent.speed, math.hypot(nx - ox, ny - oy), command.duration
-            )
         f = min(t / command.duration, 1.0)
         xs.append(ox + (nx - ox) * f)
         ys.append(oy + (ny - oy) * f)
