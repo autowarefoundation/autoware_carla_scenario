@@ -12,13 +12,14 @@ import ast
 import dataclasses
 import enum
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 import pytest
 
 from autoware_carla_scenario.typecheck import cli
-from autoware_carla_scenario.typecheck.driver import render_driver
+from autoware_carla_scenario.typecheck.driver import _field_hints, render_driver
 from autoware_carla_scenario.typecheck.library_driver import render_library_checks
 from autoware_carla_scenario.typecheck.toolchain import (
     Toolchain,
@@ -132,6 +133,31 @@ def test_a_variadic_tuple_is_a_list_and_a_fixed_one_is_typed_per_item() -> None:
     assert _by_key(empty) == {"scenario.pts": "config.pts = []"}
 
 
+@dataclasses.dataclass
+class _Point:
+    x: float = 0.0
+
+
+@dataclasses.dataclass
+class _PointTuple:
+    points: tuple[_Point, ...] = ()
+
+    def __post_init__(self) -> None:
+        self.points = tuple(
+            _Point(**p) if isinstance(p, dict) else p for p in self.points
+        )
+
+
+def test_a_tuple_of_dataclasses_is_rendered_from_its_mappings() -> None:
+    # The config made each mapping a `_Point`: each is built field by field,
+    # an int for its float field a float checked strictly, not its repr().
+    driver = render_driver(_Scenario, _PointTuple, {"points": [{"x": 1}]})
+    lines = driver.source.splitlines()
+    assert "    config.points = [_Point(" in lines
+    assert "x=1.0," in lines
+    assert "    _acs_as_float(1.0)" in lines
+
+
 # ---------------------------------------------------------------------------
 # 3. One annotation that does not resolve drops that field's hint only
 # ---------------------------------------------------------------------------
@@ -179,6 +205,48 @@ def test_a_dataclass_the_config_holds_is_rendered_as_its_type() -> None:
     assert "    config.leg = _Leg(" in driver.source.splitlines()
 
 
+def test_a_base_field_resolves_in_its_own_module(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The subclass's module has a `Pose` of its own and a TYPE_CHECKING-only
+    # name, so the field `pose` its base declares is resolved on its own: in
+    # the base's module, where `Pose` is the base's.
+    package = tmp_path / "acs_mro_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "base.py").write_text(
+        "from __future__ import annotations\n"
+        "import dataclasses\n"
+        "@dataclasses.dataclass\n"
+        "class Pose:\n"
+        "    x: float = 0.0\n"
+        "@dataclasses.dataclass\n"
+        "class Base:\n"
+        "    pose: Pose = dataclasses.field(default_factory=Pose)\n"
+    )
+    (package / "config.py").write_text(
+        "from __future__ import annotations\n"
+        "import dataclasses\n"
+        "from typing import TYPE_CHECKING, Optional\n"
+        "from acs_mro_pkg.base import Base\n"
+        "if TYPE_CHECKING:\n"
+        "    from not_installed_anywhere import Actor\n"
+        "@dataclasses.dataclass\n"
+        "class Pose:\n"
+        "    y: int = 0\n"
+        "@dataclasses.dataclass\n"
+        "class Config(Base):\n"
+        "    actor: Optional[Actor] = None\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in ("acs_mro_pkg", "acs_mro_pkg.base", "acs_mro_pkg.config"):
+        # Unimported again after the test.
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    from acs_mro_pkg import base, config  # type: ignore[import-not-found]
+
+    assert _field_hints(config.Config)["pose"] is base.Pose
+
+
 # ---------------------------------------------------------------------------
 # 4. A bare ClassVar is no constructor argument
 # ---------------------------------------------------------------------------
@@ -194,6 +262,23 @@ def test_a_bare_class_var_is_not_a_dataclass_field() -> None:
             "class Point:\n"
             "    kind: ClassVar = 'p'\n"
             "    limit: ClassVar[int] = 3\n"
+            "    x: float\n"
+        )
+    )
+    calls = [c for c in checks.source.splitlines() if c.startswith("    Point(")]
+    assert calls == ["    Point(_acs_value(float))"]
+
+
+def test_a_class_var_of_an_aliased_typing_is_not_a_dataclass_field() -> None:
+    checks = render_library_checks(
+        ast.parse(
+            "import dataclasses\n"
+            "import typing as t\n"
+            "\n"
+            "@dataclasses.dataclass\n"
+            "class Point:\n"
+            "    kind: t.ClassVar = 'p'\n"
+            "    limit: t.ClassVar[int] = 3\n"
             "    x: float\n"
         )
     )

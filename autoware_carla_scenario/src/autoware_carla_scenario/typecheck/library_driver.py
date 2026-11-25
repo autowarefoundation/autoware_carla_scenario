@@ -1028,7 +1028,7 @@ class _Renderer:
                 continue
             if (_dotted(stmt.annotation) or "").endswith("KW_ONLY"):
                 break  # keyword-only fields: not modelled, so not called
-            if _is_class_var(stmt.annotation):
+            if _names_class_var(stmt.annotation):
                 continue  # `ClassVar[T]` or a bare `ClassVar`: no field
             value = stmt.value
             if isinstance(value, ast.Call) and any(
@@ -1176,6 +1176,19 @@ def _is_class_var(annotation: ast.expr) -> bool:
     if isinstance(annotation, ast.Subscript):
         annotation = annotation.value
     return _dotted(annotation) in _CLASS_VAR
+
+
+def _names_class_var(annotation: ast.expr) -> bool:
+    """Whether *annotation* is a ``ClassVar``, by whatever module it is read.
+
+    :func:`_is_class_var`, and also ``t.ClassVar[T]`` / ``t.ClassVar`` of a
+    ``typing`` (or ``typing_extensions``) imported under another name: a
+    dataclass has no field of either, so its constructor takes none (#2511).
+    """
+    if isinstance(annotation, ast.Subscript):
+        annotation = annotation.value
+    name = _dotted(annotation) or ""
+    return name == "ClassVar" or name.endswith(".ClassVar")
 
 
 def _class_var_type(annotation: ast.expr) -> ast.expr | None:

@@ -47,6 +47,7 @@ import collections.abc
 import copy
 import dataclasses
 import enum
+import inspect
 import math
 import sys
 import types
@@ -231,7 +232,10 @@ def _render(
     if isinstance(actual, enum.Enum) and not isinstance(value, enum.Enum):
         value = actual
     elif isinstance(actual, tuple) and isinstance(value, list):
-        value = actual
+        # A tuple of the config's own items, each rendered against the item
+        # the runner holds: an item the config converted (a mapping it made
+        # a dataclass) is rendered from its mapping, not as its repr().
+        value = tuple(value) if len(value) == len(actual) else actual
     if isinstance(value, enum.Enum):
         cls = imports.name(type(value))
         return f"<{cls}>" if imports.shape else f"{cls}.{value.name}"
@@ -340,11 +344,14 @@ def _field_hints(cls: type) -> dict[str, Any]:
 def _field_hint(cls: type, name: str, annotation: Any) -> Any:
     """The type field *name* of *cls* is annotated *annotation*, or _UNKNOWN.
 
-    Resolved in the namespace of each class of *cls*'s MRO in turn (a field
-    a base declares names what that base's module imports).
+    Resolved in the namespace of the class of *cls*'s MRO that declares the
+    field first (a field a base declares names what that base's module
+    imports, even where *cls*'s module has a class of the same name), then
+    in each other class's in turn.
     """
     holder = type("_AcsField", (), {"__annotations__": {name: annotation}})
-    for base in cls.__mro__:
+    declaring = [b for b in cls.__mro__ if name in _own_annotations(b)][:1]
+    for base in [*declaring, *(b for b in cls.__mro__ if b not in declaring)]:
         module = sys.modules.get(base.__module__)
         try:
             return typing.get_type_hints(
@@ -355,6 +362,14 @@ def _field_hint(cls: type, name: str, annotation: Any) -> Any:
         except Exception:  # noqa: BLE001, S112 - unresolvable here: the next base
             continue
     return _UNKNOWN
+
+
+def _own_annotations(cls: type) -> dict[str, Any]:
+    """The annotations *cls* itself declares (not a base's), or ``{}``."""
+    try:
+        return inspect.get_annotations(cls)
+    except Exception:  # noqa: BLE001 - one that does not evaluate: none known
+        return {}
 
 
 def _render_dataclass(
