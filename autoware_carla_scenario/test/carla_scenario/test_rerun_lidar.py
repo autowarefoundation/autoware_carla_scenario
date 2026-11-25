@@ -539,60 +539,109 @@ def test_a_converter_records_cameras_without_the_lidar(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-#: The names (as the kernel truncates them) of the threads a rerun
-#: ``RecordingStream`` starts: what a closed recording would leave behind.
-_STREAM_THREADS = ("ChunkBatcher", "RecordingStream", "file_writer")
-
-
-def _threads() -> int:
-    """How many of the process's threads are a recording stream's.
-
-    Counted by name, not all of them: under xdist a thread an earlier test
-    left starting or ending would move a plain count by one (#2489)."""
-    import os
-
-    task = Path(f"/proc/{os.getpid()}/task")
-    if not task.is_dir():
-        pytest.skip("needs /proc to name the process's threads")
-    count = 0
-    for thread in task.iterdir():
-        try:
-            name = (thread / "comm").read_text().strip()
-        except OSError:  # the thread ended while being read
-            continue
-        count += name.startswith(_STREAM_THREADS)
-    return count
-
-
 def test_the_fake_stream_records_no_wall_clock(tmp_path: Path) -> None:
     sdk = _Sdk()
     LidarRecorder(tmp_path / "r.sensors.rrd", "r", 0, sdk=sdk).close()
     assert sdk.streams[0].log_time is False
 
 
+#: Five recordings through the real SDK in a process of their own, printing
+#: the stream threads alive after the first and after the last on a
+#: ``threads:`` line.
+_LEAK_PROBE = """
+import sys
+import time
+from pathlib import Path
+import numpy as np
+from rerun_bindings import rerun_bindings as bindings
+from autoware_carla_scenario.rerun import RerunConverter
+from autoware_carla_scenario.rerun_lidar import active_recorder
+
+NAMES = ("ChunkBatcher", "RecordingStream", "file_writer")
+
+
+def threads():
+    count = 0
+    for thread in Path("/proc/self/task").iterdir():
+        try:
+            name = (thread / "comm").read_text().strip()
+        except OSError:
+            continue
+        count += name.startswith(NAMES)
+    return count
+
+
+class Converter:
+    def convert(self, jsonl, out_rrd, *, strict=False):
+        Path(out_rrd).write_bytes(b"RRD")
+        return {"ok": True}
+
+
+def one_run(out, i):
+    converter = RerunConverter(converter=Converter(), lidar_max_points=0)
+    converter.start_sensors(out / f"Run-{i}.trajectory.jsonl", f"Run-{i}", 0)
+    recorder = active_recorder()
+    assert recorder is not None
+    recorder.log_sweep("top", 1, np.ones((4, 3), np.float32), np.eye(3), np.zeros(3))
+    converter.stop_sensors()
+    converter.close()
+    assert bindings.check_for_rrd_footer(str(out / f"Run-{i}.sensors.rrd")), i
+
+
+def settled(at_most=None):
+    # A cleaned-up stream's threads end on their own a moment later: wait for
+    # the count to reach *at_most* (or to hold still), up to a few seconds.
+    deadline = time.monotonic() + 5.0
+    count = threads()
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+        now = threads()
+        if (at_most is not None and now <= at_most) or (at_most is None and now == count):
+            return now
+        count = now
+    return count
+
+
+out = Path(sys.argv[1])
+one_run(out, 0)
+before = settled()
+for i in range(1, 6):
+    one_run(out, i)
+print("threads:", before, settled(before), flush=True)
+"""
+
+
 def test_sensor_recordings_leave_no_threads_behind(tmp_path: Path) -> None:
     """Rerun 0.38 never joins a closed stream's two threads unless told to
-    clean up: a batch would grow by two a case."""
+    clean up: a batch would grow by two a case.  Counted in a process of its
+    own: under xdist the worker holds other tests' streams, whose threads come
+    and go on their own (#2489, #2502)."""
+    import subprocess
+
     pytest.importorskip("rerun")
-    from rerun_bindings import rerun_bindings as bindings
-
-    def one_run(i: int) -> Path:
-        converter = RerunConverter(converter=_Converter(), lidar_max_points=0)
-        converter.start_sensors(tmp_path / f"Run-{i}.trajectory.jsonl", f"Run-{i}", 0)
-        recorder = active_recorder()
-        assert recorder is not None
-        recorder.log_sweep("top", 1, np.ones((4, 3), np.float32), _IDENTITY, _ORIGIN)
-        converter.stop_sensors()
-        converter.close()
-        return tmp_path / f"Run-{i}.sensors.rrd"
-
-    # One first: the SDK starts threads of its own once.
-    assert bindings.check_for_rrd_footer(str(one_run(0)))
-    before = _threads()
-    for i in range(1, 6):
-        # Still a whole recording: its footer is written.
-        assert bindings.check_for_rrd_footer(str(one_run(i)))
-    assert _threads() <= before
+    if not Path("/proc/self/task").is_dir():
+        pytest.skip("needs /proc to name the process's threads")
+    result = subprocess.run(
+        [sys.executable, "-c", _LEAK_PROBE, str(tmp_path)],
+        # Not the repository root: its autoware_carla_scenario/ directory is
+        # on a ``-c`` script's path first.
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    # The counts are on the probe's own line: the SDK or a logger may print
+    # to stdout too, before it or at exit.
+    counts = [
+        line for line in result.stdout.splitlines() if line.startswith("threads:")
+    ]
+    assert counts, result.stdout
+    before, after = (int(n) for n in counts[-1].split()[1:])
+    # Still a whole recording each time (the probe asserts its footer), and no
+    # stream left running: two threads a case would make it 10 more.
+    assert after <= before, result.stdout
 
 
 def test_closing_a_recording_keeps_the_global_one(tmp_path: Path) -> None:
