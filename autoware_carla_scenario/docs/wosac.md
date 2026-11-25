@@ -194,11 +194,11 @@ Each agent's `object_id` has to be the same in every rollout, though CARLA
 gives its actor a new id in every run. It is derived from what does stay the
 same, the agent's role name, which the scenario gives the entity
 (`npc1`, `background3`, ...): the first 4 bytes of the SHA-256 of its
-canonical role name (`ego` and `hero` are `Ego`), read as a big-endian
-integer with the top bit cleared (`int(sha256(name).hexdigest()[:8], 16) &
-0x7FFFFFFF`), `object_id_of()`. A
-scenario replaying a Waymo scenario gives its entities the tracks' ids with
-`--object-ids` (`object_ids=`).
+canonical role name in UTF-8 (`ego` and `hero`, in any case, are `Ego`),
+read as a big-endian integer with the top bit cleared
+(`int(sha256(name.encode()).hexdigest()[:8], 16) & 0x7FFFFFFF`),
+`object_id_of()`. A scenario replaying a Waymo scenario gives its entities
+the tracks' ids with `--object-ids` (`object_ids=`).
 
 `.wosac.pb` files merge as Protobuf merges messages: two of one
 `scenario_id`, concatenated, are one `ScenarioRollouts` holding both
