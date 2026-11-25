@@ -3215,6 +3215,7 @@ def test_a_captured_opendrive_replaces_the_file_whole(tmp_path: Path) -> None:
     assert [p.name for p in destination.parent.iterdir()] == [destination.name]
 
 
+@pytest.mark.usefixtures("umask_022")
 def test_a_captured_opendrive_takes_a_scratch_name_of_its_own(tmp_path: Path) -> None:
     """The scratch file is unique whichever host and pid: one another process
     left (here, in the way as a directory) is not the one written."""

@@ -21,6 +21,7 @@ does not skip the session: its result is a failed one, and its
 
 from __future__ import annotations
 
+import os
 import socket
 from collections.abc import Iterator
 
@@ -86,6 +87,19 @@ another_immediate_result = CarlaScenarioFixture(
 # ---------------------------------------------------------------------------
 
 carla_queue = _queue.as_fixture()
+
+
+@pytest.fixture
+def umask_022() -> Iterator[None]:
+    """The umask set to 022 for the test: a file written as ``write_text``
+    writes it gets ``0o666`` less the umask (atomic_file, #2507), so a test
+    that expects ``0o644`` pins the umask rather than inherit the host's
+    (002 on many desktops)."""
+    previous = os.umask(0o022)
+    try:
+        yield
+    finally:
+        os.umask(previous)
 
 
 @pytest.fixture

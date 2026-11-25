@@ -14,7 +14,7 @@ not even for an integer too long for ``repr()``.
 from __future__ import annotations
 
 import math
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 from .value_text import shown
 
@@ -28,7 +28,8 @@ def number_setting(key: str, value: Union[float, str], *, text: bool = False) ->
     holds whatever its mapping did: Hydra reads ``=true`` as a bool, which
     ``float()`` would take as 1.0, and a quoted ``='1.5'`` as a string.  An
     int or a float is a number, and so is anything else ``float()`` reads
-    but a bool or a string; a bool never is (``true`` is not 1).  A string is
+    but a bool or a string; a bool never is (``true`` is not 1), numpy's
+    ``bool_`` and a 0-d bool array included.  A string is
     read as the number it spells only with *text* -- the run's ``ego.*`` and
     ``entity.*`` numbers, a declarative scenario's spawn override and an
     authored card's field, which read ``'1.5'`` as 1.5 -- and refused
@@ -42,6 +43,12 @@ def number_setting(key: str, value: Union[float, str], *, text: bool = False) ->
         ValueError: naming *key*.
     """
     if isinstance(value, bool) or (isinstance(value, str) and not text):
+        raise ValueError(f"{key} must be a number, got {shown(value)}")
+    if TYPE_CHECKING:
+        pass
+    elif getattr(getattr(value, "dtype", None), "kind", None) == "b":
+        # numpy's bool_ (or a 0-d bool array), which float() takes as 0 or 1,
+        # as seed.check_whole_number refuses it (#1900, #2507).
         raise ValueError(f"{key} must be a number, got {shown(value)}")
     try:
         return float(value)

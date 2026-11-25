@@ -130,10 +130,11 @@ def cached_z_offset(
         return value
 
     value = compute()
-    # Through a scratch file mkstemp names, so two writers storing the same
-    # key -- other processes, or other hosts sharing the map root -- never
-    # write one file (#2165); the rename is atomic, so a reader sees one whole
-    # entry or none, and the scratch file is removed when the write fails.
+    # Through a scratch file of a random name, created exclusively, so two
+    # writers storing the same key -- other processes, or other hosts sharing
+    # the map root -- never write one file (#2165); the rename is atomic, so a
+    # reader sees one whole entry or none, and the scratch file is removed
+    # when the write fails.
     try:
         entry.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomically(

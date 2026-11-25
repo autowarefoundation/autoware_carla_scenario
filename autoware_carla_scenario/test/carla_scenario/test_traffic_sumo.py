@@ -6174,6 +6174,22 @@ def test_the_cache_dir_resolves_to_the_default_only_when_null(tmp_path: Path) ->
     assert given.resolved_cache_dir() == tmp_path
 
 
+def test_the_default_cache_dir_follows_xdg_cache_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under the user's cache directory, as every other cache is (#2187,
+    #2507): ``$XDG_CACHE_HOME``, found without a home directory."""
+    from autoware_carla_scenario.traffic.sumo.config import default_cache_dir
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    def no_home() -> Path:
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(Path, "home", staticmethod(no_home))
+    assert default_cache_dir() == tmp_path / "autoware_carla_scenario" / "sumo"
+
+
 def test_null_bicycle_blueprints_are_the_default_list() -> None:
     """Null was ``[]`` before #2174, which keeps every bicycle out of CARLA."""
     config = BicycleConfig.from_mapping({"blueprints": None})

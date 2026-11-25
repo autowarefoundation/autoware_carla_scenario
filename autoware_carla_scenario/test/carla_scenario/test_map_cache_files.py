@@ -315,6 +315,7 @@ def test_a_tip_json_being_rewritten_reads_as_the_old_one(
     assert cache.last_tip(_SOURCE) == newer
 
 
+@pytest.mark.usefixtures("umask_022")
 def test_meta_and_tip_leave_no_scratch_file_behind(cache: GitMapCache) -> None:
     entry = _entry(cache)
     GitMapCache._write_meta(entry, _SOURCE, _COMMIT)

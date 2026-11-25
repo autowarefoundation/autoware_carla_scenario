@@ -1467,10 +1467,11 @@ def _write_atomically(path: Path, text: str) -> None:
     scratch file in the same directory instead, closed (so flushed) and then
     renamed over *path*: a reader sees the old file or the new one, whole.
 
-    The scratch name is ``mkstemp``'s, unique whichever thread, process or host
-    (the cache may be shared) writes; it starts with a dot and ends in
-    ``.tmp``, and is removed when the write fails, so nothing that looks for
-    entries or notes finds one.
+    The scratch name is random and the file created exclusively (``O_EXCL``),
+    so it is unique whichever thread, process or host (the cache may be
+    shared) writes; it starts with a dot and ends in ``.tmp``, and is removed
+    when the write fails, so nothing that looks for entries or notes finds
+    one.
 
     :mod:`~autoware_carla_scenario.maps.opendrive` writes the ``.xodr`` files
     of the ``derived`` directory through it too, for the same reason.

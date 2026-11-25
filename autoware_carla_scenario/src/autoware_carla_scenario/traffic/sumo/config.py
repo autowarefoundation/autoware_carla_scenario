@@ -20,6 +20,7 @@ from ...constants import (
 )
 from ..config import check_port
 from ..fidelity import MesoscopicConfig, _number
+from ...utils.cache_dir import user_cache_dir
 from ...value_text import shown
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
 from .signal_states import sumo_step
@@ -541,7 +542,8 @@ class SumoBackendConfig:
         use_libsumo: Run SUMO in-process through libsumo (faster, no GUI);
             otherwise as a TraCI subprocess running ``binary``.
         cache_dir: Where converted networks are kept, keyed by the OpenDRIVE
-            they came from; ``~/.cache/autoware_carla_scenario/sumo`` by
+            they came from; ``autoware_carla_scenario/sumo`` under the user's
+            cache directory (``$XDG_CACHE_HOME``, else ``~/.cache``) by
             default.
         fcd_output: Record every SUMO vehicle's state each step (SUMO's
             floating car data) to ``<output_dir>/{stem}.sumo/fcd.xml``, for
@@ -736,4 +738,4 @@ class SumoBackendConfig:
 def default_cache_dir() -> Path:
     """Where converted networks are cached unless ``cache_dir`` says
     otherwise: one cache for every backend that converts the world's map."""
-    return Path.home() / ".cache" / "autoware_carla_scenario" / "sumo"
+    return user_cache_dir() / "autoware_carla_scenario" / "sumo"
