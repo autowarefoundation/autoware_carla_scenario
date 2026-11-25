@@ -108,7 +108,11 @@ A camera in `cameras` takes the rendering and mount fields of a
 numbers (`960`, or `960.0` kept as the int `960`, so CARLA is given
 `image_size_x="960"`; not `960.5`, a bool or a string), `fps` positive and
 finite, `fov` in (0, 180) degrees, and the mount finite. A camera out of these bounds is
-refused as the config is read, not when it attaches after the ego spawned. Its frames go
+refused as the config is read, not when it attaches after the ego spawned. As a driver
+camera's, its frame period is rounded to whole 0.05 s ticks: `fps` above 20 publishes at
+20 Hz, and an `fps` whose `1 / fps` is not a whole number of ticks (`15`) alternates
+between the two around it, 50 or 100 ms apart; the run warns once as the config is read,
+naming the rate it publishes at (#2499). Its frames go
 out from the sensor's own thread as they are rendered, the way CARLA's own interface
 publishes them, and under the names a node already subscribes to:
 

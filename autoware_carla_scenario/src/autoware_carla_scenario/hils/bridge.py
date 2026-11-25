@@ -525,7 +525,9 @@ class _SensorDevice:
         was measured.
 
         The ego's motion from the client's last snapshot (no call to the
-        server), turned into the sensor's frame by the measurement's transform;
+        server), carried to the sensor's mount -- the ego origin's velocity
+        plus ``w x r``, *r* the sensor's offset from the ego origin (#2499) --
+        and turned into the sensor's frame by the measurement's transform;
         still when it cannot be read.
         """
         ego = self._ego
@@ -534,14 +536,26 @@ class _SensorDevice:
         try:
             v = ego.get_velocity()
             w = ego.get_angular_velocity()
+            origin = ego.get_transform().location
+            mount = data.transform.location
             inverse = np.asarray(data.transform.get_inverse_matrix(), dtype=np.float64)[
                 :3, :3
             ]
         except Exception:  # noqa: BLE001 - the ego may be gone; send the points as measured
             return (0.0,) * 6
-        vs = inverse @ np.array([v.x, v.y, v.z], dtype=np.float64)
-        # A rotation turns the angular velocity (deg/s, world axes) as it does a vector.
-        ws = inverse @ np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
+        # CARLA's angular velocity is in deg/s, about the world axes.
+        w_world = np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
+        lever = np.array(
+            [mount.x - origin.x, mount.y - origin.y, mount.z - origin.z],
+            dtype=np.float64,
+        )
+        # CARLA's axes are left-handed and its angular velocity follows the
+        # left-hand rule, so the cross product's components are the usual
+        # ones: a yaw rate (z) moves a mount ahead (+x) to the right (+y).
+        v_world = np.array([v.x, v.y, v.z], dtype=np.float64) + np.cross(w_world, lever)
+        vs = inverse @ v_world
+        # A rotation turns the angular velocity as it does a vector.
+        ws = inverse @ w_world
         return (*(float(c) for c in vs), *(float(c) for c in ws))
 
     def _message(self, measured: Tuple[float, Any, Any, int, int]) -> Optional[Any]:

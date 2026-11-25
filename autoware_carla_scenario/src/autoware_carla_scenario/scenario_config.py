@@ -437,7 +437,8 @@ class DriverLidarSpec:
     weather_noise: float = 1.0
     #: ``null`` takes the run's seed, mixed with ``logical_id``.
     noise_seed: int | None = None
-    fog_density_scale: float = 0.001
+    #: ``null`` takes ``server.fog_density_scale``, else 0.001 (#2499).
+    fog_density_scale: float | None = None
     position_x: float = 0.0
     position_y: float = 0.0
     position_z: float = 2.0

@@ -62,6 +62,37 @@ def sensor_interval_ticks(interval_s: float) -> int:
     return max(1, int(ticks))
 
 
+def frame_ticks(fps: float) -> tuple[int, int]:
+    """The fewest and the most ticks from one frame to the next of a camera
+    set to *fps* (positive): a sensor fires at most once a tick, on a tick.
+
+    ``(1, 1)`` from one frame a tick up; ``(n, n)`` when ``1 / fps`` is *n*
+    whole ticks; otherwise the two whole numbers of ticks around it, which
+    the frames alternate between -- on average *fps*, with a tick of jitter
+    (#2499).
+    """
+    period = 1.0 / (fps * FIXED_DELTA_SECONDS)
+    if period <= 1.0 + 1e-9:
+        return (1, 1)
+    nearest = round(period)
+    if abs(period - nearest) <= 1e-9:
+        return (int(nearest), int(nearest))
+    return (int(math.floor(period)), int(math.ceil(period)))
+
+
+def frame_rate_text(fps: float) -> str:
+    """The rate a camera set to *fps* delivers frames at, as the tick allows:
+    ``"10 fps"``, ``"20 fps (30 fps set; one frame a tick)"``, or
+    ``"15 fps on average (a frame every 1-2 ticks)"`` (:func:`frame_ticks`)."""
+    fewest, most = frame_ticks(fps)
+    if fewest != most:
+        return f"{fps:g} fps on average (a frame every {fewest}-{most} ticks)"
+    effective = 1.0 / (fewest * FIXED_DELTA_SECONDS)
+    if abs(effective - fps) <= 1e-6 * effective:
+        return f"{effective:g} fps"
+    return f"{effective:g} fps ({fps:g} fps set; one frame a tick)"
+
+
 #: What a sensor's queue holds: a camera's frames, a LiDAR's sweeps.
 _Item = TypeVar("_Item")
 

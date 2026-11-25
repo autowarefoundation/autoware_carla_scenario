@@ -817,7 +817,9 @@ def test_a_noise_seed_given_is_the_noise_of_every_lidar_given_it(
     rear = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_rear"))
     np.testing.assert_array_equal(top, rear)
     weather = LidarWeather(precipitation=100.0, fog_density=0.0, fog_distance=0.0)
-    np.testing.assert_array_equal(top, apply_weather(_ring(40.0), weather, 1.0, 3, 10))
+    # The sweep of frame 10, read first on frame 10, is drawn for frame 1: counted
+    # from the first read, an interval on (#2499).
+    np.testing.assert_array_equal(top, apply_weather(_ring(40.0), weather, 1.0, 3, 1))
 
 
 def test_the_driver_entity_and_the_t4_recorder_name_their_lidars_by_logical_id(
