@@ -70,6 +70,35 @@ def test_ready_needs_autonomous_engaged_with_control():
     assert agg.ready is True
 
 
+def test_not_ready_while_the_change_to_autonomous_is_in_transition():
+    """#2463: the AD API reports AUTONOMOUS as soon as it accepts the change; a
+    transition can still fall back, so ready waits for it to be over."""
+    agg = _initialized_and_routed()
+    agg.update_operation_mode(
+        mode=OPERATION_MODE_AUTONOMOUS,
+        is_control_enabled=True,
+        is_autonomous_available=True,
+        is_in_transition=True,
+    )
+    assert agg.autonomous_mode is True
+    assert agg.autonomous_engaged is False
+    assert agg.ready is False
+
+    agg.update_operation_mode(
+        mode=OPERATION_MODE_AUTONOMOUS,
+        is_control_enabled=True,
+        is_autonomous_available=True,
+        is_in_transition=False,
+    )
+    assert agg.ready is True
+
+    agg.update_operation_mode(
+        mode=1, is_control_enabled=False, is_autonomous_available=True
+    )
+    assert agg.autonomous_mode is False
+    assert agg.ready is False
+
+
 def test_missing_localization_blocks_ready():
     agg = ReadinessAggregator()
     agg.update_routing(ROUTE_STATE_SET)

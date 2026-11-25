@@ -45,18 +45,20 @@ class GetMissionRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetMissionResponse(_message.Message):
-    __slots__ = ("available", "initial_pose", "goal", "waypoints", "mission_version")
+    __slots__ = ("available", "initial_pose", "goal", "waypoints", "mission_version", "session_id")
     AVAILABLE_FIELD_NUMBER: _ClassVar[int]
     INITIAL_POSE_FIELD_NUMBER: _ClassVar[int]
     GOAL_FIELD_NUMBER: _ClassVar[int]
     WAYPOINTS_FIELD_NUMBER: _ClassVar[int]
     MISSION_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     available: bool
     initial_pose: Pose
     goal: Pose
     waypoints: _containers.RepeatedCompositeFieldContainer[Pose]
     mission_version: int
-    def __init__(self, available: bool = ..., initial_pose: _Optional[_Union[Pose, _Mapping]] = ..., goal: _Optional[_Union[Pose, _Mapping]] = ..., waypoints: _Optional[_Iterable[_Union[Pose, _Mapping]]] = ..., mission_version: _Optional[int] = ...) -> None: ...
+    session_id: str
+    def __init__(self, available: bool = ..., initial_pose: _Optional[_Union[Pose, _Mapping]] = ..., goal: _Optional[_Union[Pose, _Mapping]] = ..., waypoints: _Optional[_Iterable[_Union[Pose, _Mapping]]] = ..., mission_version: _Optional[int] = ..., session_id: _Optional[str] = ...) -> None: ...
 
 class ReportReadinessRequest(_message.Message):
     __slots__ = ("ready",)

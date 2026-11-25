@@ -354,6 +354,41 @@ def test_a_closed_bridge_starts_afresh() -> None:
         server.close()
 
 
+def test_each_start_is_a_session_of_its_own() -> None:
+    """#2463: every response names the session; a restart draws a new one, so
+    a client that outlives a session tells the next one's mission, whose
+    version may repeat, from a re-route."""
+    server = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    try:
+        with _client(server) as stub:
+            before = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+            server.configure(_INITIAL, _GOAL)
+            first = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+            server.reroute(_GOAL)
+            rerouted = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+        server.close()
+        server.start()
+        with _client(server) as stub:
+            restarted = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    finally:
+        server.close()
+    other = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    try:
+        other.configure(_INITIAL, _GOAL)
+        with _client(other) as stub:
+            another = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    finally:
+        other.close()
+
+    assert before.session_id  # in an unavailable answer too
+    assert before.session_id == first.session_id == rerouted.session_id
+    assert not restarted.available
+    assert restarted.session_id not in ("", first.session_id)
+    # Another server's first mission: the same version, another session.
+    assert another.mission_version == first.mission_version
+    assert another.session_id not in ("", first.session_id, restarted.session_id)
+
+
 # ---------------------------------------------------------------------------
 # Re-routing (#873)
 # ---------------------------------------------------------------------------

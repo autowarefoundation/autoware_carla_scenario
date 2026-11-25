@@ -11,7 +11,11 @@ initiates, the three RPCs are direction-inverted from a "framework pushes" model
   called, so the interface node can start polling before the scenario hands over
   the mission.  Each :meth:`configure` and :meth:`reroute` bumps the response's
   ``mission_version``, which is how the client, still polling once Autoware is
-  driving, tells a re-route from the route it already set.
+  driving, tells a re-route from the route it already set.  Every response
+  carries the ``session_id`` :meth:`start` drew: the versions count within one
+  session, and a client that outlives it -- a ``scenario_bridge`` node started
+  by hand for a batch -- tells the next scenario's (or attempt's) mission, whose
+  version starts over, from a re-route by it.
 * ``ReportReadiness`` - the client pushes its readiness once Autoware is
   initialized, routed, engaged, and driving.  The value is latched so
   :meth:`is_ready` can be polled once per world tick by
@@ -49,6 +53,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from concurrent import futures
 from collections.abc import Sequence
 from typing import Optional, Tuple
@@ -147,6 +152,8 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         #: Bumped by every configure() and reroute(); never reset, so a version
         #: is never handed out twice by one bridge, even across a restart.
         self._mission_version: int = 0
+        #: Drawn afresh by every start(); empty before the first.
+        self._session_id: str = ""
         self._ready: bool = False
         self._contacted: bool = False
         #: time.monotonic() of the newest GetMission; None before the first.
@@ -183,10 +190,16 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         client yet -- which is what a retried scenario, whose entity and bridge
         are the attempt before's, needs from it: a gRPC server cannot be
         restarted, so a new one is made.
+
+        Each start is a new bridge session, with a ``session_id`` of its own in
+        every ``GetMission`` response, so a ``scenario_bridge`` node that
+        outlives the session -- one started by hand -- starts Autoware afresh
+        for the next one rather than taking its mission for a re-route.
         """
         if self._port is not None and not self._closed:
             return
         with self._lock:
+            self._session_id = uuid.uuid4().hex
             self._mission = None
             self._ready = False
             self._contacted = False
@@ -283,9 +296,10 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         with self._lock:
             mission = self._mission
             version = self._mission_version
+            session_id = self._session_id
             self._last_mission_poll = time.monotonic()
         if mission is None:
-            return pb2.GetMissionResponse(available=False)
+            return pb2.GetMissionResponse(available=False, session_id=session_id)
         initial, goal, waypoints = mission
         return pb2.GetMissionResponse(
             available=True,
@@ -293,6 +307,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             goal=_pose_to_proto(goal),
             waypoints=[_pose_to_proto(pose) for pose in waypoints],
             mission_version=version,
+            session_id=session_id,
         )
 
     def _record_readiness(self, ready: bool) -> None:

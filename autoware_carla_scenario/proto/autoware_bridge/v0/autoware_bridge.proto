@@ -108,6 +108,17 @@ message GetMissionResponse {
   // was: localization is already running. 0 is a server that predates this
   // field and never re-routes.
   uint64 mission_version = 5;
+
+  // Which bridge session this is: a value the server draws afresh each time it
+  // starts serving -- one scenario, or one attempt of it, on a server built
+  // (or restarted) for it -- and sends in every response, available or not.
+  // mission_version counts within a session only: a new session starts it
+  // over, so a client that outlives one session (a scenario_bridge node
+  // started by hand for a batch of scenarios) tells a new session's mission
+  // from a re-route by this, and starts Autoware's startup afresh for it --
+  // localization included -- instead of re-routing. Empty is a server that
+  // predates this field; a client then takes the session as unchanged.
+  string session_id = 6;
 }
 
 message ReportReadinessRequest {
