@@ -122,27 +122,38 @@ def _vector(x: float, y: float, z: float) -> SimpleNamespace:
     return SimpleNamespace(x=x, y=y, z=z)
 
 
-def _turning_motion(yaw_deg: float, mount: tuple[float, float, float]) -> np.ndarray:
-    """The sensor motion of an ego at the origin, turning in place at 30 deg/s,
-    with its yaw at *yaw_deg*, a sensor at world *mount* yawed alike."""
+def _turning_motion(
+    yaw_deg: float,
+    mount: tuple[float, float, float],
+    ego_location: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """The sensor motion of an ego turning in place at 30 deg/s, with its yaw
+    at *yaw_deg*, a sensor mounted at *mount* (the ego's frame) and not
+    rotated on it; the snapshot puts the ego at *ego_location*."""
     from autoware_carla_scenario.hils.bridge import _SensorDevice  # noqa: PLC0415
+    from autoware_carla_scenario.hils.sensor_spec import SensorSpec  # noqa: PLC0415
 
+    yaw = math.radians(yaw_deg)
+    # The ego-to-world rotation of an ego yawed by *yaw* (CARLA, left-handed),
+    # and the world-to-sensor rotation of the sensor on it.
+    matrix = np.eye(4)
+    matrix[:2, :2] = [[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]]
+    inverse = matrix.T
     ego = SimpleNamespace(
         get_velocity=lambda: _vector(0.0, 0.0, 0.0),
         get_angular_velocity=lambda: _vector(0.0, 0.0, 30.0),
-        get_transform=lambda: SimpleNamespace(location=_vector(0.0, 0.0, 0.0)),
+        get_transform=lambda: SimpleNamespace(
+            location=_vector(*ego_location), get_matrix=lambda: matrix.tolist()
+        ),
     )
-    yaw = math.radians(yaw_deg)
-    # The world-to-sensor rotation of a sensor yawed by *yaw* (CARLA, left-handed).
-    inverse = np.eye(4)
-    inverse[:2, :2] = [[math.cos(yaw), math.sin(yaw)], [-math.sin(yaw), math.cos(yaw)]]
     data = SimpleNamespace(
-        transform=SimpleNamespace(
-            location=_vector(*mount), get_inverse_matrix=lambda: inverse.tolist()
-        )
+        transform=SimpleNamespace(get_inverse_matrix=lambda: inverse.tolist())
     )
     device = _SensorDevice.__new__(_SensorDevice)
     device._ego = ego  # noqa: SLF001
+    device.sensor_spec = SensorSpec(
+        blueprint="sensor.lidar.ray_cast", transform=(*mount, 0.0, 0.0, 0.0)
+    )
     return np.array(device._sensor_motion(data))  # noqa: SLF001
 
 
@@ -153,9 +164,17 @@ def test_a_sensor_off_the_ego_origin_moves_as_the_ego_turns() -> None:
     motion = _turning_motion(0.0, (1.5, 0.0, 0.0))
     np.testing.assert_allclose(motion[:3], [0.0, 1.5 * w, 0.0], atol=1e-12)
     np.testing.assert_allclose(motion[3:], [0.0, 0.0, w], atol=1e-12)
-    # The ego yawed 90 degrees (facing +y): the sensor ahead of it, at +y,
-    # moves to the ego's right (-x in the world), its own +y.
-    motion = _turning_motion(90.0, (0.0, 1.5, 0.0))
+    # The ego yawed 90 degrees (facing +y): the sensor ahead of it, at +y in
+    # the world, moves to the ego's right (-x in the world), its own +y.
+    motion = _turning_motion(90.0, (1.5, 0.0, 0.0))
+    np.testing.assert_allclose(motion[:3], [0.0, 1.5 * w, 0.0], atol=1e-12)
+
+
+def test_the_lever_arm_is_the_mount_not_a_snapshot_a_tick_off() -> None:
+    """The snapshot may be a tick off the measurement: where it puts the ego
+    does not join the lever arm, the sensor's mount alone is it (#2499)."""
+    w = math.radians(30.0)
+    motion = _turning_motion(0.0, (1.5, 0.0, 0.0), ego_location=(-0.75, 0.0, 0.0))
     np.testing.assert_allclose(motion[:3], [0.0, 1.5 * w, 0.0], atol=1e-12)
 
 

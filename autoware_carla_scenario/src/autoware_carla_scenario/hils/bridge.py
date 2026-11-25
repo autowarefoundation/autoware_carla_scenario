@@ -526,9 +526,12 @@ class _SensorDevice:
 
         The ego's motion from the client's last snapshot (no call to the
         server), carried to the sensor's mount -- the ego origin's velocity
-        plus ``w x r``, *r* the sensor's offset from the ego origin (#2499) --
-        and turned into the sensor's frame by the measurement's transform;
-        still when it cannot be read.
+        plus ``w x r``, *r* the sensor's mount (its spawn offset on the ego)
+        turned into world axes by the ego's rotation (#2499) -- and turned into
+        the sensor's frame by the measurement's transform; still when it cannot
+        be read.  *r* is not the measurement's location less the ego's: the
+        snapshot may be a tick off the measurement, and the ego's travel in
+        that tick would join the lever arm.
         """
         ego = self._ego
         if ego is None:
@@ -536,8 +539,9 @@ class _SensorDevice:
         try:
             v = ego.get_velocity()
             w = ego.get_angular_velocity()
-            origin = ego.get_transform().location
-            mount = data.transform.location
+            ego_rotation = np.asarray(
+                ego.get_transform().get_matrix(), dtype=np.float64
+            )[:3, :3]
             inverse = np.asarray(data.transform.get_inverse_matrix(), dtype=np.float64)[
                 :3, :3
             ]
@@ -545,10 +549,8 @@ class _SensorDevice:
             return (0.0,) * 6
         # CARLA's angular velocity is in deg/s, about the world axes.
         w_world = np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
-        lever = np.array(
-            [mount.x - origin.x, mount.y - origin.y, mount.z - origin.z],
-            dtype=np.float64,
-        )
+        x, y, z = self.sensor_spec.transform[:3]
+        lever = ego_rotation @ np.array([x, y, z], dtype=np.float64)
         # CARLA's axes are left-handed and its angular velocity follows the
         # left-hand rule, so the cross product's components are the usual
         # ones: a yaw rate (z) moves a mount ahead (+x) to the right (+y).
