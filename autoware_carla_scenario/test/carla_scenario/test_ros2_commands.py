@@ -21,8 +21,11 @@ from autoware_carla_scenario.driver.geometry import Pose
 from autoware_carla_scenario.ros2.commands import (
     Command,
     SteerAccelPairer,
+    command_is_applicable,
     command_is_finite,
+    fits_float32,
 )
+from autoware_carla_scenario.ros2.config import FLOAT32_MAX
 from autoware_carla_scenario.ros2.transport import Received
 
 _VP = CommandSourceConfig(
@@ -195,6 +198,115 @@ def test_a_non_finite_command_does_not_keep_its_source_fresh() -> None:
     selection = arbiter.select(_us(1.4))
     assert selection is not None
     assert selection.source.name == "vp"
+
+
+# ---------------------------------------------------------------------------
+# Float32 range (#2505)
+# ---------------------------------------------------------------------------
+
+
+def test_float32_max_is_the_largest_finite_float32() -> None:
+    assert FLOAT32_MAX == float(np.finfo(np.float32).max)
+    with np.errstate(over="ignore"):
+        assert np.isinf(np.float32(3.5e38))
+
+
+@pytest.mark.parametrize("value", [0.0, -1.5, FLOAT32_MAX, -FLOAT32_MAX, 1e38])
+def test_a_value_within_float32_s_range_fits(value: float) -> None:
+    assert fits_float32(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        math.nan,
+        math.inf,
+        -math.inf,
+        1e39,
+        -1e39,
+        1e308,
+        np.nextafter(FLOAT32_MAX, math.inf),
+    ],
+)
+def test_a_value_beyond_float32_s_range_does_not_fit(value: float) -> None:
+    assert not fits_float32(value)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        SteerAccelCommand(1e39, 0.5),
+        SteerAccelCommand(0.1, 1e39),
+        SteerAccelCommand(0.1, -1e39),
+        ControlCommand(1e39, 2.0, -3.0),
+        ControlCommand(0.1, 1e39, -3.0),
+        ControlCommand(0.1, 2.0, -1e39),
+        ControlCommand(0.1, 2.0, -3.0, jerk_mps3=1e39),
+    ],
+)
+def test_a_command_beyond_float32_s_range_is_refused(command: Command) -> None:
+    """#2505: finite as a double, but an infinity once CARLA's
+    VehicleAckermannControl stores it as a float32."""
+    assert not command_is_finite(command)
+    assert not CommandArbiter([_VP, _SI]).observe(
+        "vp" if isinstance(command, SteerAccelCommand) else "si", command, 0
+    )
+
+
+def test_a_trajectory_is_not_bounded_to_float32() -> None:
+    """A trajectory is read by the framework's follower, in doubles."""
+    assert command_is_finite(_trajectory(velocity=1e39))
+
+
+@pytest.mark.parametrize(
+    "acceleration",
+    [
+        # Each fits a float32 itself; the step, twice it, does not.
+        2e38,
+        FLOAT32_MAX,
+        -FLOAT32_MAX,
+    ],
+)
+def test_a_steer_accel_step_beyond_float32_s_range_is_refused(
+    acceleration: float,
+) -> None:
+    """#2505: ``acceleration * speed_horizon_s`` (2 s) is the target speed's
+    step; it must fit a float32 too, or CARLA gets an infinite target."""
+    command = SteerAccelCommand(0.1, acceleration)
+    assert command_is_finite(command)
+    assert not command_is_applicable(command, _VP)
+    assert not CommandArbiter([_VP]).observe("vp", command, 0)
+
+
+def test_a_steer_accel_step_within_float32_s_range_is_applicable() -> None:
+    command = SteerAccelCommand(0.1, FLOAT32_MAX / 2.0)
+    assert command_is_applicable(command, _VP)  # the step is FLOAT32_MAX
+
+
+def test_a_steer_accel_steering_scaled_beyond_float32_s_range_is_refused() -> None:
+    source = CommandSourceConfig(
+        name="vp",
+        kind="steer_accel",
+        steering_topic="/s",
+        acceleration_topic="/a",
+        steering_sign=1e10,
+    )
+    assert command_is_applicable(SteerAccelCommand(1e28, 0.5), source)
+    assert not command_is_applicable(SteerAccelCommand(1e29, 0.5), source)
+
+
+def test_an_overflowing_command_is_never_selected_or_held() -> None:
+    """#2505: the last good command drives on, then the source goes stale."""
+    arbiter = CommandArbiter([_VP])
+    assert arbiter.observe("vp", SteerAccelCommand(0.1, 0.5), _us(1.0))
+    for seconds in (1.1, 1.2, 1.3, 1.4):
+        assert not arbiter.observe("vp", SteerAccelCommand(0.1, 1e308), _us(seconds))
+    selection = arbiter.select(_us(1.3))
+    assert selection is not None
+    assert (selection.command, selection.fresh) == (SteerAccelCommand(0.1, 0.5), True)
+    selection = arbiter.select(_us(1.4))
+    assert selection is not None
+    assert (selection.command, selection.fresh) == (SteerAccelCommand(0.1, 0.5), False)
 
 
 def test_a_source_with_only_non_finite_commands_never_drives() -> None:

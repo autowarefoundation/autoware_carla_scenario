@@ -462,6 +462,12 @@ def test_a_source_takes_an_int_for_a_float() -> None:
         ("speed_horizon_s", 0.0, "speed_horizon_s must be positive, got 0.0"),
         ("speed_horizon_s", -2.0, "speed_horizon_s must be positive, got -2.0"),
         ("jerk_mps3", -1.0, "jerk_mps3 must not be negative, got -1.0"),
+        (
+            "jerk_mps3",
+            1e39,
+            "jerk_mps3 must be at most 3.4028234663852886e+38 (float32's range), "
+            "got 1e+39",
+        ),
         ("steering_sign", 0.0, "steering_sign must not be zero, got 0.0"),
         ("steering_sign", 0, "steering_sign must not be zero, got 0"),
     ],
@@ -482,6 +488,12 @@ def test_a_source_takes_a_negative_or_scaled_steering_sign(sign: float) -> None:
     assert CommandSourceConfig.from_mapping(
         _source(steering_sign=sign)
     ).steering_sign == pytest.approx(sign)
+
+
+def test_a_source_takes_float32_s_largest_jerk() -> None:
+    """#2505: the jerk reaches CARLA as a float32; its largest value fits."""
+    jerk = 3.4028234663852886e38
+    assert CommandSourceConfig.from_mapping(_source(jerk_mps3=jerk)).jerk_mps3 == jerk
 
 
 def test_a_source_takes_a_zero_jerk_carlas_default() -> None:

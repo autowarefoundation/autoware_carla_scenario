@@ -31,6 +31,7 @@ from autoware_carla_scenario.ros2 import (
     TrajectoryCommand,
     TrajectoryCommandPoint,
 )
+from autoware_carla_scenario.ros2.config import FLOAT32_MAX
 
 from ._vehicle_physics import mkz_physics
 
@@ -323,27 +324,18 @@ def test_a_control_command_keeps_its_own_jerk_when_it_defines_one() -> None:
     assert _last_ackermann(actor).jerk == pytest.approx(2.5)
 
 
-def test_a_control_command_s_negative_jerk_reaches_carla_as_its_magnitude(
+def test_a_control_command_s_negative_jerk_reaches_carla_as_given(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """#1804: Autoware's jerk is signed; CARLA's Ackermann jerk is a limit."""
+    """#2505: CARLA's Ackermann controller stores the jerk's magnitude and
+    never reads it, so the entity hands Autoware's signed jerk over unchanged
+    and logs nothing about it (#1804 used to negate it, a no-op)."""
     entity, transport, actor, clock = _started()
     with caplog.at_level("INFO", logger="autoware_carla_scenario.entity.ros2_entity"):
         transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=-2.5))
         _tick(entity, clock)
-        assert _last_ackermann(actor).jerk == pytest.approx(2.5)
-        transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=-1.5))
-        _tick(entity, clock)
-        assert _last_ackermann(actor).jerk == pytest.approx(1.5)
-    # Logged once, not every tick: a braking Autoware sends one every cycle.
-    assert [
-        record.getMessage()
-        for record in caplog.records
-        if "negative jerk" in record.getMessage()
-    ] == [
-        "Command source 'si' sent a negative jerk (-2.5 m/s^3); CARLA's "
-        "Ackermann controller takes its magnitude as the jerk limit (logged once)"
-    ]
+    assert _last_ackermann(actor).jerk == pytest.approx(-2.5)
+    assert not [r for r in caplog.records if "jerk" in r.getMessage()]
 
 
 def test_the_safety_island_overrides_visionpilot_while_fresh() -> None:
@@ -579,15 +571,105 @@ def test_a_first_non_finite_steer_accel_command_brakes(bad: SteerAccelCommand) -
     actor.apply_ackermann_control.assert_not_called()
 
 
-def test_a_steer_accel_target_speed_overflowing_to_infinity_brakes() -> None:
+@pytest.mark.parametrize(
+    "acceleration",
+    [
+        1e308,  # overflows the double target speed (#2435)
+        1e39,  # finite as a double, an infinity as CARLA's float32 (#2505)
+    ],
+)
+def test_a_first_steer_accel_command_overflowing_its_target_brakes(
+    acceleration: float,
+) -> None:
     """A finite acceleration can still overflow ``speed + acceleration *
-    speed_horizon_s``: CARLA must not be handed an infinite target speed."""
+    speed_horizon_s``: refused before arbitration, so the source has not
+    spoken and the ego stays on its brakes."""
     entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
-    transport.deliver("vp", SteerAccelCommand(0.1, 1e308))
+    transport.deliver("vp", SteerAccelCommand(0.1, acceleration))
     _tick(entity, clock)
+    assert entity.active_source is None
+    assert _last_control(actor).brake == pytest.approx(1.0)
+    actor.apply_ackermann_control.assert_not_called()
+
+
+_REFUSED_VP = (
+    "Command source 'vp' sent a non-finite command (NaN, infinite, or out of "
+    "float32's range where it reaches CARLA): refused, and it does not keep the "
+    "source fresh; its last good command drives on until the source goes stale "
+    "(logged once per source)"
+)
+
+
+@pytest.mark.parametrize("acceleration", [1e308, 1e39])
+@pytest.mark.parametrize("on_stale", ["hold", "brake"])
+def test_an_overflowing_steer_accel_command_is_never_selected(
+    acceleration: float, on_stale: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2505: the overflowing command used to be selected, keep its source
+    fresh, and be held once stale, so the ego braked (or, past float32's
+    range, drove at full throttle) for the rest of the run.  Now the last good
+    command drives on until the source goes stale, and then on_stale applies."""
+    entity, transport, actor, clock = _started(on_stale=on_stale)
+    transport.deliver("vp", SteerAccelCommand(0.1, 1.0))
+    _tick(entity, clock)
+    good = _last_ackermann(actor)
+    assert good.speed == pytest.approx(5.0 + 1.0 * 2.0)
+    active = []
+    with caplog.at_level(
+        "WARNING", logger="autoware_carla_scenario.entity.ros2_entity"
+    ):
+        for _ in range(10):
+            transport.deliver("vp", SteerAccelCommand(0.1, acceleration))
+            _tick(entity, clock)
+            active.append(entity.active_source)
+    # Every Ackermann control handed over is the good command's, finite.
+    for call in actor.apply_ackermann_control.call_args_list:
+        control = call.args[0]
+        assert (control.steer, control.speed, control.acceleration) == (
+            good.steer,
+            good.speed,
+            good.acceleration,
+        )
+        assert math.isfinite(control.speed) and math.isfinite(control.acceleration)
+    # Within stale_s (0.3 s, six ticks) the good command drove on; the source is
+    # stale from the seventh, and on_stale applies.
+    assert active == ["vp"] * 10
+    assert not entity._active_fresh
+    if on_stale == "hold":
+        assert actor.apply_ackermann_control.call_count == 11
+        actor.apply_control.assert_not_called()
+    else:
+        assert actor.apply_ackermann_control.call_count == 1 + 6
+        assert _last_control(actor).brake == pytest.approx(1.0)
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages[0] == _REFUSED_VP
+    # The refusal is logged once; nothing says the ego braked for the command.
+    assert messages.count(_REFUSED_VP) == 1
+    assert not [m for m in messages if "brakes on each tick" in m]
+
+
+def test_a_target_out_of_float32_s_range_at_apply_time_brakes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Defence in depth: a step that fits a float32 is accepted, but were the
+    ego's speed to push the target past float32's range, the ego brakes
+    rather than hand CARLA an infinity, and says so."""
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=1e23))
+    with caplog.at_level(
+        "WARNING", logger="autoware_carla_scenario.entity.ros2_entity"
+    ):
+        for _ in range(2):
+            # The step, twice it, is float32's largest value.
+            transport.deliver("vp", SteerAccelCommand(0.1, FLOAT32_MAX / 2.0))
+            _tick(entity, clock)
     assert entity.active_source == "vp"
     assert _last_control(actor).brake == pytest.approx(1.0)
     actor.apply_ackermann_control.assert_not_called()
+    assert [record.getMessage() for record in caplog.records] == [
+        "Command source 'vp' drives with an Ackermann target out of float32's "
+        "range, which CARLA would take as infinite: the ego brakes on each tick "
+        "this command drives (logged once per source)"
+    ]
 
 
 def test_a_refused_command_does_not_take_over_from_a_lower_priority_source() -> None:
@@ -643,11 +725,7 @@ def test_a_source_sending_only_non_finite_commands_brakes_once_stale() -> None:
     assert _last_control(actor).brake == pytest.approx(1.0)
 
 
-_REFUSED_SI = (
-    "Command source 'si' sent a non-finite command (NaN or infinite): refused, "
-    "and it does not keep the source fresh; its last good command drives on "
-    "until the source goes stale (logged once per source)"
-)
+_REFUSED_SI = _REFUSED_VP.replace("'vp'", "'si'")
 
 
 def _straight_command(y_m: float = 2.0, velocity_mps: float = 5.0) -> TrajectoryCommand:

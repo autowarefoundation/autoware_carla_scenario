@@ -15,9 +15,11 @@ applies its command:
   ``/carla/hero/ackermann_control_cmd``.
 
 A command that is not all finite (a NaN or an infinity in a pose, a speed, an
-acceleration, a steering angle or a jerk) is refused before the arbiter sees it: it
-neither drives nor keeps its source fresh.  The source's last good command drives
-on until the source goes stale; with none, the source does not drive.
+acceleration, a steering angle or a jerk), or one that would reach CARLA's
+Ackermann controller out of float32's range (a ``steer_accel`` target speed
+included), is refused before the arbiter sees it: it neither drives nor keeps
+its source fresh.  The source's last good command drives on until the source
+goes stale; with none, the source does not drive.
 
 Nothing waits for a command: the loop runs at the pace
 ``ScenarioRunner`` sets (``max_tick_rate_hz``), and a source that falls silent
@@ -52,6 +54,7 @@ from ..ros2.commands import (
     Selection,
     SteerAccelCommand,
     TrajectoryCommand,
+    fits_float32,
 )
 from ..ros2.config import CommandSourceConfig, Ros2EgoConfig
 from ..ros2.transport import CameraFrame, Ros2EgoTransport
@@ -158,10 +161,11 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     #: from the speed at the tick it was first applied: a held or repeated
     #: command keeps its target, as a relay node's does.
     _steer_accel: Optional[Tuple[SteerAccelCommand, Tuple[float, float, float, float]]]
-    #: The sources a non-finite command has been refused from, each logged once.
+    #: The sources a command has been refused from, each logged once.
     _refused_sources: Set[str]
-    #: Whether a control command's negative jerk has been logged.
-    _negative_jerk_logged: bool
+    #: The sources braked for at apply time (out of float32's range), each
+    #: logged once.
+    _braked_sources: Set[str]
 
     def __init__(
         self,
@@ -187,7 +191,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._tracking = False
         self._steer_accel = None
         self._refused_sources = set()
-        self._negative_jerk_logged = False
+        self._braked_sources = set()
 
     # ------------------------------------------------------------------
     # Properties
@@ -262,7 +266,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._tracking = False
         self._steer_accel = None
         self._refused_sources = set()
-        self._negative_jerk_logged = False
+        self._braked_sources = set()
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
         mount: "carla.Actor" = actor
@@ -285,8 +289,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         state, observation = self._state(world, actor)
         transport.publish_state(state)
         for source_name, command in transport.poll():
-            # A non-finite command is refused here, before it could keep its
-            # source fresh: a source sending nothing else goes stale.
+            # A non-finite command, or one out of float32's range where it
+            # reaches CARLA, is refused here, before it could be selected or
+            # keep its source fresh: a source sending nothing else goes stale.
             if not self._arbiter.observe(source_name, command, state.stamp_us):
                 self._refuse_non_finite(source_name)
         selection = self._arbiter.select(state.stamp_us)
@@ -494,27 +499,27 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             steer_rad = -control.steering_tire_angle_rad
             speed_mps = control.velocity_mps
             acceleration_mps2 = control.acceleration_mps2
+            # Handed over as given, its sign included: CARLA's Ackermann
+            # controller does not use the jerk (it stores the magnitude and
+            # never reads it), so it has no effect on the vehicle.
             jerk_mps3 = source.jerk_mps3
             control_jerk = control.jerk_mps3
             if control_jerk is not None:
                 jerk_mps3 = control_jerk
-                if control_jerk < 0.0:
-                    # Autoware's jerk is signed (negative while the
-                    # deceleration grows); CARLA's Ackermann jerk is a limit,
-                    # so it takes the magnitude.
-                    self._note_negative_jerk(control_jerk)
-                    jerk_mps3 = -control_jerk
-        # The arbiter took only finite commands (command_is_finite), but a
-        # finite steer_accel command can still overflow its target speed
-        # (``speed + acceleration * speed_horizon_s``) to infinity: CARLA would
-        # take that as given, so the ego brakes instead.
+        # Defence in depth: the arbiter took only commands whose numbers, and
+        # whose steer_accel step ``acceleration * speed_horizon_s``, fit a
+        # float32 (command_is_applicable), so this does not fire for a speed a
+        # vehicle reaches.  Were the target out of float32's range all the
+        # same, typesafe_carla would refuse the control with a CarlaError (an
+        # infinity once rounded to float32), ending the run: the ego brakes
+        # instead.
         if not (
-            math.isfinite(steer_rad)
-            and math.isfinite(speed_mps)
-            and math.isfinite(acceleration_mps2)
-            and math.isfinite(jerk_mps3)
+            fits_float32(steer_rad)
+            and fits_float32(speed_mps)
+            and fits_float32(acceleration_mps2)
+            and fits_float32(jerk_mps3)
         ):
-            self._refuse_non_finite(source.name)
+            self._brake_out_of_range(source.name)
             actor.apply_control(VehicleCommand(brake=1.0).to_carla_control())
             return
         import typesafe_carla.carla as _carla  # noqa: PLC0415
@@ -566,20 +571,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             return target
         return cached[1]
 
-    def _note_negative_jerk(self, jerk_mps3: float) -> None:
-        """Log, once a session, that a negative jerk was taken as its magnitude."""
-        if not self._negative_jerk_logged:
-            logger.info(
-                "Command source %r sent a negative jerk (%g m/s^3); CARLA's "
-                "Ackermann controller takes its magnitude as the jerk limit "
-                "(logged once)",
-                self._active,
-                jerk_mps3,
-            )
-            self._negative_jerk_logged = True
-
     def _refuse_non_finite(self, source_name: str) -> None:
-        """Log, once a session per source, that a non-finite command was refused.
+        """Log, once a session per source, that a command was refused: not all
+        finite, or out of float32's range where it reaches CARLA.
 
         A source can send one every cycle: logged each time, it would flood the
         log at its rate.  The refusals that follow are silent; the source going
@@ -589,10 +583,23 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             return
         self._refused_sources.add(source_name)
         logger.warning(
-            "Command source %r sent a non-finite command (NaN or infinite): "
-            "refused, and it does not keep the source fresh; its last good "
-            "command drives on until the source goes stale (logged once per "
-            "source)",
+            "Command source %r sent a non-finite command (NaN, infinite, or "
+            "out of float32's range where it reaches CARLA): refused, and it "
+            "does not keep the source fresh; its last good command drives on "
+            "until the source goes stale (logged once per source)",
+            source_name,
+        )
+
+    def _brake_out_of_range(self, source_name: str) -> None:
+        """Log, once a session per source, that the selected command's
+        Ackermann target was out of float32's range, and the ego braked."""
+        if source_name in self._braked_sources:
+            return
+        self._braked_sources.add(source_name)
+        logger.warning(
+            "Command source %r drives with an Ackermann target out of "
+            "float32's range, which CARLA would take as infinite: the ego "
+            "brakes on each tick this command drives (logged once per source)",
             source_name,
         )
 

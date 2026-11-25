@@ -202,21 +202,43 @@ command has arrived, the ego is held on its brakes.
 
 A command that is not all finite (a NaN or an infinity in a steering angle, a speed,
 an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
-refused before arbitration, with a warning once per source. A refused command does
-not keep its source fresh: the source's last good command drives on until it is
-`stale_s` old, and then the source ages out as one that fell silent does -- a
-lower-priority fresh source takes over, or with none, `on_stale` applies. A source
-that has sent no good command does not drive at all.
+refused before arbitration, with a warning once per source. So is a `control` or
+`steer_accel` command with a number that would reach CARLA's Ackermann controller out
+of float32's range (magnitude above 3.4028234663852886e38):
+`carla.VehicleAckermannControl` holds each field as a float32, where such a value
+becomes an infinity, which typesafe_carla refuses with a `CarlaError` as the control
+is applied (it would end the run; the official client would hand CARLA an infinite
+target speed, which its controller chases at full throttle). For
+`steer_accel` that includes what the source makes of it -- `steering_sign * steering`
+and the target speed's step `acceleration * speed_horizon_s` -- so an acceleration of
+`1e39`, or of `2e38` over a 2 s horizon, is refused rather than selected or held.
+(Were the target speed still out of range once the ego's speed is added, the ego
+brakes for the ticks that command drives, logged once per source.) A refused command
+is never selected or held, and it does not keep its source fresh: the source's last
+good command drives on until it is `stale_s` old, and then the source ages out as one
+that fell silent does -- a lower-priority fresh source takes over, or with none,
+`on_stale` applies. A source that has sent no good command does not drive at all.
 
 With `on_stale: brake`, a source that comes back after it went stale starts its
 trajectory follower afresh (its integrators and state are reset), as the ego was
 braked rather than tracked meanwhile; with `hold`, the follower kept tracking the
 held trajectory and carries on.
 
-A `control` command's jerk is signed in Autoware (negative while the deceleration
-grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
-magnitude, logged once a session. A `control` command that leaves its jerk undefined,
-and every `steer_accel` command, takes the source's `jerk_mps3`.
+CARLA's Ackermann controller does not use the jerk:
+`FAckermannController::SetTargetPoint` stores its magnitude and nothing reads it
+again (checked against `AckermannController.cpp` and `.h` at CARLA 0.10.0 and
+`ue5-dev`). A `control`
+command's jerk (signed in Autoware) and a source's `jerk_mps3` are still handed over,
+the command's as given and `jerk_mps3` for a `control` command that leaves its jerk
+undefined and for every `steer_accel` command, but neither has any effect on the
+vehicle; `jerk_mps3` is kept for compatibility.
+
+The acceleration is not applied as given either. CARLA reads only its magnitude, as
+the bound of its speed controller: the controller drives toward the target speed with
+an acceleration clamped to `[-|acceleration|, |acceleration|]`, and an acceleration of
+`0` means CARLA's own maximum, 3 m/s² speeding up and 8 m/s² slowing down. Its sign
+does nothing: whether the ego speeds up or slows down follows from the target speed
+(for `steer_accel`, `speed + acceleration * speed_horizon_s`).
 
 ```yaml
 ros2:
@@ -253,8 +275,10 @@ and joined the domain:
 * A source's `speed_horizon_s` is positive: zero would pin a `steer_accel` target
   speed to the current speed, and a negative horizon would turn a request to
   accelerate into braking.
-* A source's `jerk_mps3` is not negative. `0` is allowed: it is the jerk
-  `carla.VehicleAckermannControl` takes by default.
+* A source's `jerk_mps3` is not negative, and at most 3.4028234663852886e38 (it is
+  handed to CARLA as a float32). `0` is allowed: it is the jerk
+  `carla.VehicleAckermannControl` takes by default. CARLA does not use it (see
+  above).
 * A source's `steering_sign` is not zero, which would pin the steering straight. Its
   magnitude scales the steering and a negative value flips it, so both are kept.
 * `sources` and `cameras` are lists of mappings (null is the default); `false` or a
@@ -329,5 +353,7 @@ installed. They are written in XCDR1, the representation `rmw_cyclonedds_cpp` wr
   the odometry's twist.
 * A `trajectory` source is tracked forward only: the follower does not reverse.
 * `control` and `steer_accel` hand the acceleration to CARLA's Ackermann controller as
-  given, as VisionPilot's relay does; the controller's own settings
+  given, as VisionPilot's relay does, and CARLA takes its magnitude as the bound on
+  its speed controller (`0` is its own 3 m/s² up, 8 m/s² down), not as an
+  acceleration to follow; the controller's own settings
   (`AckermannControllerSettings`) are CARLA's defaults.
