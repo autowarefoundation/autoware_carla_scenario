@@ -519,6 +519,9 @@ def test_literal_string_types_read_as_str() -> None:
         "during the realization of _keyword_only(extra: Tuple[str], where: 'X') [actions.codon:454]",
         "during the realization of _required_str(value: _Required, where: 'T') [conditions.codon:636]",
         "during the realization of __init__(self: T, *_kw: Tuple, label: _Required) [m.py:28]",
+        # The check's helpers, called from the author's rewritten file.
+        "during the realization of _acs_dict_into(out: Dict[str,int], items: Tuple[Tuple[str,str]]) [scenario.py:12]",
+        "during the realization of _acs_with__lanes(self: Plan, lanes: Tuple[int,int]) [scenario.py:69]",
     ],
 )
 def test_model_frames_are_internal(frame: str) -> None:
@@ -528,7 +531,7 @@ def test_model_frames_are_internal(frame: str) -> None:
 def test_the_authors_frames_are_kept() -> None:
     assert not is_internal_frame("during the realization of val(self: Scn) [m.py:29]")
     # A helper of the author's named like the model's (#2515).
-    for name in ("_required_speed", "_acs_helper", "_keyword_only"):
+    for name in ("_required_speed", "_keyword_only"):
         frame = f"during the realization of {name}(cfg: Cfg) [scenario.py:30]"
         assert not is_internal_frame(frame), frame
 

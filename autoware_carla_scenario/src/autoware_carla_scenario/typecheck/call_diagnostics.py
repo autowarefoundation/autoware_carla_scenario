@@ -41,12 +41,14 @@ _MISMATCH = re.compile(
 )
 #: Codon prints a static string type inside the quotes the check adds.
 _LITERAL_TYPE = re.compile(r"(?<=[\s(,\[])''[^']*''(?=[\s),\]:]|$)")
-#: Frames located in the model (``_keyword_only``, ``_required_str``,
-#: ``_acs_list`` ... at ``[conditions.codon:636]``) and of a ``__init__`` that
-#: encodes keyword-only parameters as ``*_kw``: Codon realizing the model,
-#: not the author's code.  A helper's name alone says nothing: the author's
-#: own ``_required_speed()`` at ``[scenario.py:30]`` is kept.
-_INTERNAL_FRAME = re.compile(r"\*_kw\b|\[[^\]\[]*\.codon:\d+\]$")
+#: Frames located in the model (``_keyword_only``, ``_required_str`` ... at
+#: ``[conditions.codon:636]``), of a ``__init__`` that encodes keyword-only
+#: parameters as ``*_kw``, and of the check's own ``_acs_`` helpers, which
+#: the rewritten module calls from the author's file (``_acs_dict_into``,
+#: ``_acs_tuple``, ``_acs_with__lanes`` ... at ``[scenario.py:12]``): Codon
+#: realizing the model, not the author's code.  Any other name says nothing:
+#: the author's own ``_required_speed()`` at ``[scenario.py:30]`` is kept.
+_INTERNAL_FRAME = re.compile(r"^_acs_\w+\(|\*_kw\b|\[[^\]\[]*\.codon:\d+\]$")
 
 Resolver = Callable[[str], Any]
 
