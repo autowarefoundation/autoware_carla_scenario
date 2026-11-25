@@ -209,9 +209,11 @@ hils-setup = [
 # core in one abi3 wheel) finds the pack in a GitHub repository the user can
 # read, downloads and verifies it, hands back its map data by format
 # (Lanelet2, the Autoware map, OpenDRIVE) and installs it for the server to
-# mount. 0.3 reads a pack's map data by format (`Client.map_data`).
+# mount. 0.3 reads a pack's map data by format (`Client.map_data`); 0.4
+# reads packs on Google Drive through rclone; 0.5 uses cached packs without
+# the network (a pinned SHA-256, CARLA_PACK_OFFLINE).
 pack = [
-    "carla-pack-registry>=0.3.2,<0.4",
+    "carla-pack-registry>=0.5,<0.6",
 ]
 # `scenario-agent` (docs/coding_agents.md): agent-skill-installer
 # (omry/agent-skill-installer), which installs the scenario-writing skills
