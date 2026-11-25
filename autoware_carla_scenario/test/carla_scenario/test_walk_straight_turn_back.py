@@ -8,6 +8,7 @@ fixture road around its reference line.
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 from pathlib import Path
@@ -17,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 import typesafe_carla.carla as carla
 
-from autoware_carla_scenario.carla_release import walker_speed_scale
+from autoware_carla_scenario.carla_release import CARLA_REF_ENV, walker_speed_scale
 from autoware_carla_scenario import (
     PedestrianEntity,
     PedestrianEntityConfig,
@@ -29,6 +30,7 @@ from autoware_carla_scenario.actions import walk_straight as walk_module
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, OpenDrivePose
 from autoware_carla_scenario.coordinate.transform import to_carla_world, to_opendrive
+from autoware_carla_scenario.entity import _walker_ai
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
 _DATA = Path(__file__).resolve().parents[3] / "data"
@@ -153,6 +155,7 @@ class _Scene:
         self.entity._walker = self.walker  # type: ignore[assignment]
         self.vehicles = vehicles
         self.world = MagicMock()
+        self.world.get_snapshot.return_value.timestamp.delta_seconds = DT
         self.world.get_actors.return_value.filter.side_effect = (
             lambda pattern: list(self.vehicles) if pattern == "vehicle.*" else []
         )
@@ -330,6 +333,99 @@ def test_a_backend_that_walks_it_is_told_to_walk_it_back(scene: Any) -> None:
     assert calls[1] == (SPEED, pytest.approx(s.walker.yaw + 180.0))
     assert calls[-1][0] == 0.0
     assert action.state is ActionState.COMPLETE
+
+
+def test_a_walk_back_blocked_stands_where_it_is_after_the_stall_time(
+    scene: Any,
+) -> None:
+    """Its steps back get it no nearer (#2487): it stands short of the kerb
+    once BACK_STALL_S has passed, and the walk is settled, as a routed
+    walker's turn-back is."""
+    s = scene(_Vehicle(CROSSING_S + 30.0))
+    action = _action(turn_back_distance_m=10.0)
+    blocked: list[bool] = []
+
+    def close_in(scene: _Scene) -> None:
+        if scene.t > KERB_T + 0.5 and not blocked:
+            scene.vehicles[0].s = CROSSING_S + 8.0
+        if scene.reversed and not blocked:
+            blocked.append(True)
+            # Something behind it: the walker no longer moves.
+            scene.walker.step = lambda: None  # type: ignore[method-assign]
+
+    s.run(action, 1.0, close_in)
+    assert s.reversed
+    assert action.state is not ActionState.COMPLETE
+    # Still walking back while within the stall time.
+    assert s.walker.speed == pytest.approx(SPEED)
+    s.run(action, _walker_ai.BACK_STALL_S + 0.2)
+    assert s.walker.speed == 0.0
+    # Short of the kerb, where it was stopped.
+    assert s.t > KERB_T
+    assert action.settled
+    assert action.state is ActionState.COMPLETE
+
+
+def test_a_walk_back_that_progresses_slowly_is_not_stalled(scene: Any) -> None:
+    """Under the progress step a tick, but over it in a few: not stalled."""
+    s = scene(_Vehicle(CROSSING_S + 30.0))
+    action = WalkStraightAction("walker1", speed_ms=0.8, turn_back_distance_m=10.0)
+
+    def close_in(scene: _Scene) -> None:
+        if scene.t > KERB_T + 0.3:
+            scene.vehicles[0].s = CROSSING_S + 8.0
+
+    s.run(action, 4.0, close_in)
+    assert s.reversed
+    s.run(action, 2.0)
+    assert s.walker.speed == 0.0
+    # Back behind the kerb, not stopped short of it.
+    assert s.t < KERB_T - 0.4
+    assert action.state is ActionState.COMPLETE
+
+
+def test_a_speed_over_the_servers_walker_maximum_is_held_at_it(
+    scene: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """CARLA 0.10 walks a walker at 2 m/s at most (#2487): 3 m/s asked is
+    held at 2, said once, and the walk back is at 2 as well."""
+    monkeypatch.setenv(CARLA_REF_ENV, "ue5-dev")
+    s = scene(_Vehicle(CROSSING_S + 30.0))
+    calls: list[tuple[float, Optional[float]]] = []
+    original = s.entity.walk_straight
+
+    def walk_straight(speed_ms: float, yaw_deg: Optional[float] = None) -> None:
+        calls.append((speed_ms, yaw_deg))
+        original(speed_ms, yaw_deg=yaw_deg)
+
+    s.entity.walk_straight = walk_straight  # type: ignore[method-assign]
+    action = WalkStraightAction("walker1", speed_ms=3.0, turn_back_distance_m=10.0)
+
+    def close_in(scene: _Scene) -> None:
+        if scene.t > KERB_T + 0.5:
+            scene.vehicles[0].s = CROSSING_S + 8.0
+
+    with caplog.at_level(logging.WARNING):
+        s.run(action, 2.0, close_in)
+    assert calls[0] == (2.0, None)
+    assert calls[1][0] == 2.0
+    assert calls[-1][0] == 0.0
+    held = [r.getMessage() for r in caplog.records if "held at" in r.getMessage()]
+    assert len(held) == 1
+    assert "3.00" in held[0] and "2.00" in held[0]
+    assert action.state is ActionState.COMPLETE
+
+
+def test_a_speed_the_server_walks_is_not_held(
+    scene: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(CARLA_REF_ENV, "1.0")
+    s = scene(_Vehicle(CROSSING_S + 130.0))
+    action = WalkStraightAction("walker1", speed_ms=3.0)
+    with caplog.at_level(logging.WARNING):
+        s.run(action, 0.1)
+    assert s.walker.speed == pytest.approx(3.0)
+    assert not [r for r in caplog.records if "held at" in r.getMessage()]
 
 
 def test_without_turn_back_options_the_walk_is_over_at_once(scene: Any) -> None:

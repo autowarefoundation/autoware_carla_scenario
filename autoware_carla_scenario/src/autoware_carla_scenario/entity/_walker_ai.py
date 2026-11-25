@@ -106,11 +106,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "BACK_STALL_S",
     "CARLA_CROSS_FACTOR",
     "REACHED_M",
     "RETARGET_S",
     "TARGET_SPACING_M",
     "at_walk_end",
+    "back_progress",
     "drive",
     "forget_all",
     "give_way",
@@ -634,6 +636,21 @@ def _turns_back(
     return _walk_back(walker, driven, location, speed)
 
 
+def back_progress(
+    gap: float, nearest: float, stalled_s: float, tick_s: float
+) -> tuple[float, float]:
+    """A tick of a turned-back walker *gap* (m) from where it walks back to:
+    the nearest it has come (by :data:`_BACK_PROGRESS_M`) and the seconds it
+    has come no nearer, from the *nearest* and *stalled_s* before this tick
+    of *tick_s* s.  Stalled for :data:`BACK_STALL_S`, its steps back are
+    blocked.  Start with *nearest* ``math.inf``.  The turn-back both a routed
+    walker (:func:`_walk_back`) and
+    :class:`~..actions.walk_straight.WalkStraightAction` stall by."""
+    if gap < nearest - _BACK_PROGRESS_M:
+        return gap, 0.0
+    return nearest, stalled_s + tick_s
+
+
 def _walk_back(
     walker: "carla.Actor",
     driven: _Driven,
@@ -652,11 +669,14 @@ def _walk_back(
     assert target is not None
     dx, dy = target.x - location.x, target.y - location.y
     gap = math.hypot(dx, dy)
-    if gap < driven.back_gap - _BACK_PROGRESS_M:
-        driven.back_gap = gap
-        driven.back_stalled = 0.0
-    else:
-        driven.back_stalled += tick_seconds_or_fixed(walker.get_world())
+    nearest, stalled_s = back_progress(
+        gap,
+        driven.back_gap,
+        driven.back_stalled,
+        tick_seconds_or_fixed(walker.get_world()),
+    )
+    driven.back_gap = nearest
+    driven.back_stalled = stalled_s
     if gap <= _BACK_REACHED_M or driven.back_stalled >= BACK_STALL_S:
         walker.apply_control(carla.WalkerControl(speed=0.0))
         driven.turning_back = False

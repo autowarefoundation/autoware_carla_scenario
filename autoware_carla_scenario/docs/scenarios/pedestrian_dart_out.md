@@ -71,8 +71,9 @@ the vehicles as it goes (`WalkStraightAction`'s turn-back options):
 - **Where it can.** Up to `turn_back_within_m` onto the road -- a driving lane
   under it, measured from where it stepped off -- it turns round, walks back to
   half a metre behind the kerb (no further back than where it set off) and
-  stands. One not on the road yet steps back the same way. Further out, it
-  keeps going.
+  stands -- or, if its steps back get it no nearer for 1.5 s (something
+  behind it), stands where it is. One not on the road yet steps back the
+  same way. Further out, it keeps going.
 
 ```bash
 uv run scenario scenario=pedestrian_dart_out/pedestrian_dart_out map=<map> \

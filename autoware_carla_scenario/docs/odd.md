@@ -1304,6 +1304,14 @@ The example scenarios declare these, each a node of their `scenario_rules`:
 | `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `crossing_pedestrian_gap`, 8-30 m | `trigger_distance_m` |
 | `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `crossing_pedestrian_speed`, 0.8-3 m/s | `walk_speed_ms` |
 
+A pedestrian walks no faster than the server walks a walker
+(`carla_release.walker_max_speed_mps()`): 10 m/s on CARLA 1.0, the default,
+but 2 m/s on CARLA 0.10. `WalkStraightAction` holds a faster `walk_speed_ms`
+at that speed and says so in a warning, so on CARLA 0.10 a draw of
+`crossing_pedestrian_speed` above 2 m/s walks at 2 m/s, which
+`crossing_pedestrian_speed_ms` reads; the case still records the speed drawn.
+The range is not narrowed for it: CARLA 1.0 walks all of it.
+
 `traffic_light_compliance` declares none, but has what a control needs:
 `stop_line_distance_m` (`target: measure`: the ego is moved along the lane its
 spawn pose is on until `stop_line_distance_m` reads it,

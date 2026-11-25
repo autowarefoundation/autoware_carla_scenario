@@ -9,9 +9,11 @@ from typing import Optional, Union
 import typesafe_carla.carla as carla
 
 from ..action_state import ActionState
+from ..constants import tick_seconds_or_fixed
 from ..conditions.base import BaseCondition, ScenarioResult
 from ..coordinate.map_manager import run_carla_map
-from ..entity.pedestrian_entity import PedestrianEntity
+from ..entity._walker_ai import BACK_STALL_S, back_progress
+from ..entity.pedestrian_entity import PedestrianEntity, walker_held_speed
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..metrics import _driving_lane_at
@@ -45,7 +47,11 @@ class WalkStraightAction(BaseAction):
     around the vehicle the scenario is about.
 
     Setting *speed_ms* to zero stops the walker where it stands, so a scenario
-    can start one walking and stop it later with a second card.
+    can start one walking and stop it later with a second card.  A speed
+    above the fastest the server walks a walker
+    (:func:`~autoware_carla_scenario.carla_release.walker_max_speed_mps`:
+    2 m/s on CARLA 0.10, 10 m/s on 1.0) is held at it, said once in a
+    warning, and is the speed it walks, and walks back, at (#2487).
 
     **Turning back.**  Given *turn_back_ttc_s* or *turn_back_distance_m*, the
     pedestrian watches the vehicles while it walks, and turns back when one
@@ -65,7 +71,11 @@ class WalkStraightAction(BaseAction):
       last place it stood off the road -- the kerb, where it stepped out.
       Within *turn_back_within_m* of the kerb it turns round and walks back
       at *speed_ms*, to half a metre behind the kerb (no further back than
-      where it set off), and stands there.  Further out, it keeps going.
+      where it set off), and stands there -- or where it is, once its steps
+      back have got it no nearer for
+      :data:`~autoware_carla_scenario.entity._walker_ai.BACK_STALL_S` (a
+      walker or an obstacle behind it), as a routed pedestrian turned back
+      does.  Further out, it keeps going.
     * Not on the road yet, it steps back the same way rather than step out.
 
     Either way the walk ends there: the pedestrian stands until another
@@ -103,6 +113,7 @@ class WalkStraightAction(BaseAction):
     # Declared for the static check (docs/typecheck.md).
     _entity_name: str
     _speed_ms: float
+    _held_ms: float
     _turn_back_ttc_s: Optional[float]
     _turn_back_distance_m: Optional[float]
     _turn_back_within_m: float
@@ -116,6 +127,8 @@ class WalkStraightAction(BaseAction):
     _start_y: float
     _target_x: float
     _target_y: float
+    _back_nearest_m: float
+    _back_stalled_s: float
 
     def __init__(
         self,
@@ -173,6 +186,7 @@ class WalkStraightAction(BaseAction):
         )
         self._entity_name = str(entity_name)
         self._speed_ms = speed_ms
+        self._held_ms = speed_ms
         self._turn_back_ttc_s = turn_back_ttc_s
         self._turn_back_distance_m = turn_back_distance_m
         self._turn_back_within_m = turn_back_within_m
@@ -186,6 +200,8 @@ class WalkStraightAction(BaseAction):
         self._start_y = 0.0
         self._target_x = 0.0
         self._target_y = 0.0
+        self._back_nearest_m = math.inf
+        self._back_stalled_s = 0.0
 
     @property
     def turns_back(self) -> bool:
@@ -228,6 +244,8 @@ class WalkStraightAction(BaseAction):
         self._start_y = 0.0
         self._target_x = 0.0
         self._target_y = 0.0
+        self._back_nearest_m = math.inf
+        self._back_stalled_s = 0.0
 
     def execute(self, world: "carla.World") -> None:
         """Tell the named pedestrian to start walking, then, for a walk that
@@ -243,14 +261,25 @@ class WalkStraightAction(BaseAction):
         walker = self._find_walker()
         if walker is None:
             return
-        walker.walk_straight(self._speed_ms)
+        # Held at what the server walks a walker, once for the walk: the
+        # speed it walks, and walks back, at (#2487).
+        self._held_ms = walker_held_speed(self._speed_ms)
+        if self._held_ms < self._speed_ms:
+            logger.warning(
+                "WalkStraightAction: '%s' asked to walk at %.2f m/s, held at "
+                "%.2f m/s, the fastest CARLA walks a pedestrian",
+                self._entity_name,
+                self._speed_ms,
+                self._held_ms,
+            )
+        walker.walk_straight(self._held_ms)
         logger.info(
             "WalkStraightAction: '%s' walking at %.2f m/s",
             self._entity_name,
-            self._speed_ms,
+            self._held_ms,
         )
         actor = walker.actor
-        if not self.turns_back or self._speed_ms <= 0.0 or actor is None:
+        if not self.turns_back or self._held_ms <= 0.0 or actor is None:
             return
         # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
         walking: carla.Actor = actor
@@ -304,7 +333,7 @@ class WalkStraightAction(BaseAction):
         pedestrian: carla.Actor = actor
         location = pedestrian.get_transform().location
         if self._phase == _TURNING_BACK:
-            self._walk_back(walker, location)
+            self._walk_back(world, walker, location)
             return
 
         on_road = self._mark_kerb(world, location)
@@ -339,7 +368,7 @@ class WalkStraightAction(BaseAction):
         )
         self._target_x = self._kerb_x + step * math.cos(back)
         self._target_y = self._kerb_y + step * math.sin(back)
-        walker.walk_straight(self._speed_ms, yaw_deg=self._back_yaw_deg())
+        walker.walk_straight(self._held_ms, yaw_deg=self._back_yaw_deg())
         logger.info(
             "WalkStraightAction: '%s' turns back %.2f m onto the road (%s)",
             self._entity_name,
@@ -347,16 +376,44 @@ class WalkStraightAction(BaseAction):
             threat,
         )
         self._phase = _TURNING_BACK
-        self._walk_back(walker, location)
+        self._back_nearest_m = math.inf
+        self._back_stalled_s = 0.0
+        self._walk_back(world, walker, location)
 
-    def _walk_back(self, walker: PedestrianEntity, location: carla.Location) -> None:
+    def _walk_back(
+        self,
+        world: "carla.World",
+        walker: PedestrianEntity,
+        location: carla.Location,
+    ) -> None:
         """Stand the pedestrian walking back once it has reached where it is
-        to stand."""
+        to stand -- or once its steps back have got it no nearer for
+        :data:`~..entity._walker_ai.BACK_STALL_S`: blocked, it stands where
+        it is (:func:`~..entity._walker_ai.back_progress`)."""
         back = math.radians(self._back_yaw_deg())
         ahead = (self._target_x - location.x) * math.cos(back) + (
             self._target_y - location.y
         ) * math.sin(back)
         if ahead > 0.0:
+            nearest, stalled_s = back_progress(
+                ahead,
+                self._back_nearest_m,
+                self._back_stalled_s,
+                tick_seconds_or_fixed(world),
+            )
+            self._back_nearest_m = nearest
+            self._back_stalled_s = stalled_s
+            if stalled_s < BACK_STALL_S:
+                return
+            walker.walk_straight(0.0)
+            logger.info(
+                "WalkStraightAction: '%s' gets no nearer the kerb in %.1f s, "
+                "stands %.2f m short of it",
+                self._entity_name,
+                stalled_s,
+                ahead,
+            )
+            self._phase = _SETTLED
             return
         walker.walk_straight(0.0)
         logger.info(
