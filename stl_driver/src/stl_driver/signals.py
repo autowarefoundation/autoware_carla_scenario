@@ -103,7 +103,7 @@ def column(name: str, index: Col) -> Predicate:
 
 
 def signal_from_columns(**columns: torch.Tensor) -> torch.Tensor:
-    """Assemble a signal from named columns, for tests and fallback plans.
+    """Assemble a signal from named columns, for tests.
 
     Missing columns are filled with values that satisfy every rule
     comfortably, so a test can state only the column it is exercising.  The

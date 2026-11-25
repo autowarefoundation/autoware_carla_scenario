@@ -99,11 +99,12 @@ class RobustnessOptimizer:
         self.device = config.resolved_device()
         self.rules = rules.to(self.device)
         self._seeds = self._build_seeds().to(self.device)
-        # Set on the first failure, then honoured for the rest of the session
-        # by every batched stage (`_vmapped`). Batching relies on `vmap`
-        # seeing through upstream's hardcoded `reshape([T, 1])`; it works on
-        # the pinned versions, but a policy that crashed on a torch upgrade
-        # would be a poor trade for the speed.
+        # Set on the first failure, then honoured for the rest of this
+        # optimizer's life -- every session the policy serves, not only the
+        # one that failed -- by every batched stage (`_vmapped`). Batching
+        # relies on `vmap` seeing through upstream's hardcoded
+        # `reshape([T, 1])`; it works on the pinned versions, but a policy
+        # that crashed on a torch upgrade would be a poor trade for the speed.
         self._vmap_ok = True
         # Populated by `prepare()` when compilation is enabled; the eager
         # paths are used until then, and again if compilation fails.
@@ -446,7 +447,7 @@ class RobustnessOptimizer:
         eagerly, as :meth:`prepare` does when compilation fails: compilation is
         lazy, and its errors (``torch._dynamo`` raises ``RuntimeError``
         subclasses) are no evidence that ``vmap`` is broken, so they must not
-        switch the policy to the much slower loop path for the session.
+        switch the policy to the much slower loop path for good.
 
         Every batched stage of the search goes through here, so a ``vmap``
         failure anywhere -- sampling, a refinement step, the final scoring --

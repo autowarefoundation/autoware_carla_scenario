@@ -323,9 +323,7 @@ def forecast_actors(
     lead_station, lead_speed = _lead_station(
         boxes, in_lane.any(axis=2), along, table, station0_m, config
     )
-    centres_over_time, radii, offsets = _drop_traffic_out_of_lane(
-        centres_over_time, radii, offsets, config
-    )
+    centres_over_time, radii = _drop_traffic_out_of_lane(centres_over_time, radii, offsets, config)
     centres_over_time = _drop_traffic_behind(centres_over_time, config)
     centres_over_time, radii = _drop_traffic_out_of_reach(centres_over_time, radii, config)
 
@@ -386,7 +384,7 @@ def _drop_traffic_out_of_lane(
     radii: np.ndarray,
     offsets: np.ndarray,
     config: STLDriverConfig,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Drop discs no plan could ever touch, because they are beside the road.
 
     `collision_free` is a minimum over every disc, so a vehicle that cannot be
@@ -417,18 +415,17 @@ def _drop_traffic_out_of_lane(
     are chosen rather than here.
     """
     if centres_over_time.shape[1] == 0:
-        return centres_over_time, radii, offsets
+        return centres_over_time, radii
 
     _, ego_radius = config.ego_footprint()
     limits = config.limits
     reach = limits.lane_half_width_m + ego_radius + limits.collision_margin_m + radii
     keep = np.abs(offsets).min(axis=0) <= reach
     if keep.all():
-        return centres_over_time, radii, offsets
+        return centres_over_time, radii
     return (
         np.ascontiguousarray(centres_over_time[:, keep]),
         np.ascontiguousarray(radii[keep]),
-        np.ascontiguousarray(offsets[:, keep]),
     )
 
 
@@ -496,9 +493,9 @@ def _drop_traffic_behind(
 
     "Behind" is measured along the rig frame's own ``+x`` -- straight ahead --
     rather than by route station.  Station would be the natural choice, but
-    the route is published from the ego forward, and projecting onto it clamps
-    everything behind the start to station zero: every follower would look
-    like it was exactly beside us, and none would ever be dropped.
+    the route is published from the ego forward: behind the table's start,
+    projecting onto it only extends the first segment backward, which says
+    nothing about the road a follower is actually on.
     """
     limits = config.limits
     # The rear bumper, relative to the rig origin at the rear axle.
@@ -547,6 +544,12 @@ class _Boxes:
     #: ``(A,)`` lengths and widths, floored as the discs' are.
     lengths: np.ndarray
     widths: np.ndarray
+    #: ``(A, 2)`` box centres and unit headings now, at t = 0: as observed,
+    #: not predicted. The forecast starts a step in.
+    centres_now: np.ndarray
+    headings_now: np.ndarray
+    #: ``(A, n_discs)`` each disc's offset along its body from the centre.
+    disc_offsets: np.ndarray
 
 
 def _disc_forecast(
@@ -605,7 +608,15 @@ def _disc_forecast(
     )
     predicted = predicted.reshape(len(times), -1, 2)
 
-    boxes = _Boxes(centres=predicted_centres, headings=headings, lengths=lengths, widths=widths)
+    boxes = _Boxes(
+        centres=predicted_centres,
+        headings=headings,
+        lengths=lengths,
+        widths=widths,
+        centres_now=centres,
+        headings_now=np.stack([np.cos(yaws), np.sin(yaws)], axis=1),
+        disc_offsets=offsets,
+    )
     return predicted, np.repeat(radii, n_discs), boxes
 
 
@@ -654,12 +665,19 @@ def _predict_centres(
     stations, offsets = project_to_frenet(table, centres)
 
     # Frenet coordinates only describe the space the route actually
-    # parameterises. Projection clamps at both ends, so a vehicle *behind* the
-    # table's start -- which is at the ego, or a spacing or two behind it when
-    # the table reaches back over the ego -- comes back at station zero, which
-    # would teleport every follower onto our front bumper.
+    # parameterises. Beyond either end of the table projection extends the
+    # first or last segment, so a vehicle *behind* the table's start -- which
+    # is at the ego, or a spacing or two behind it when the table reaches back
+    # over the ego -- would be carried along a straight line that is not the
+    # road it is on, and one past the end along a guess at it.
     # A vehicle far off to the side is no better described: the frame folds
     # where the road bends away from it.
+    #
+    # Its *prediction* may leave the table, though: `frenet_to_xy_many`
+    # extrapolates a station past either end rather than clamping it, so a
+    # lead running past the end keeps moving and an oncoming car passes
+    # behind us -- where `_drop_traffic_behind` drops it -- rather than either
+    # stopping dead at the end it reached.
     #
     # Outside that region the straight line is the more honest answer, so the
     # two models are chosen per actor rather than globally.
@@ -720,11 +738,9 @@ def _box_stations(
     The four corners are projected and the extremes kept, so a vehicle at an
     angle to the road -- turning in, or cutting across -- reaches back by its
     diagonal rather than by half its length: on a straight road that is exact,
-    on a bend it is as close as the projection itself. Projecting points
-    rather than offsetting the centre's station by a half-extent also keeps the
-    table's clamp honest: a corner behind the table's start reads as the
-    start, while ``centre - extent`` with the centre clamped there would put a
-    long vehicle beside us metres ahead of where it is.
+    on a bend it is as close as the projection itself. A corner beyond either
+    end of the table reads off the first or last segment extended, as
+    `project_to_frenet` gives it.
 
     Args:
         centres, headings: ``(N, 2)``.
@@ -766,7 +782,7 @@ def _lead_station(
     ahead is already travelling, not only on how fast we are.
 
     Args:
-        boxes: every actor's predicted box.
+        boxes: every actor's box, now and predicted.
         in_lane: ``(T, A)``, whether the actor is in our lane at each step --
             some disc centre within `lead_capture_half_width_m` of the route.
             The *centre* has to be in our lane, not merely an edge of it.
@@ -794,7 +810,16 @@ def _lead_station(
     # every vehicle's disc spacing -- and the ego queued that much further
     # back than `standstill_gap_m`.
     rear_now, front_now = _box_stations(
-        table, boxes.centres[0], boxes.headings[0], boxes.lengths, boxes.widths
+        table, boxes.centres_now, boxes.headings_now, boxes.lengths, boxes.widths
+    )
+    # In our lane now, by the same test as `in_lane`, on the discs as observed.
+    discs_now = (
+        boxes.centres_now[:, None, :]
+        + boxes.disc_offsets[:, :, None] * boxes.headings_now[:, None, :]
+    )
+    _, offsets_now = project_to_frenet(table, discs_now.reshape(-1, 2))
+    in_lane_now = (
+        (np.abs(offsets_now) < limits.lead_capture_half_width_m).reshape(n_actors, -1).any(axis=1)
     )
 
     # Who we are following is decided *now*, and then that vehicle is followed.
@@ -833,7 +858,7 @@ def _lead_station(
     # `safe_headway` asks for exactly the room the merge needs. Something
     # wholly level with our back half is the merger's to yield to, not ours,
     # and is `collision_free`'s business.
-    ahead_now = (front_now > station0_m + limits.ego_rear_axle_to_centre_m) & in_lane[0]
+    ahead_now = (front_now > station0_m + limits.ego_rear_axle_to_centre_m) & in_lane_now
     if not ahead_now.any():
         return none
 
