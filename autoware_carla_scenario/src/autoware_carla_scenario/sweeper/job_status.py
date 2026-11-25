@@ -178,8 +178,8 @@ def owned_dirs(
 #: of their own, which :func:`..run_outputs.run_output_stems` reads as the
 #: CARLA recorder log of a run (``X.log``): a containerised backend's
 #: (``backend_<name>.log``, appended to), Autoware's (``autoware-<n>-<name>.log``
-#: or, in a batch, ``autoware-<stem>.log``, ``autoware-build.log``,
-#: ``autoware-deps.log``) and the viewer runner's.
+#: or, in a batch, ``autoware-<stem>.log``, ``autoware-build-<host>_<pid>.log``,
+#: ``autoware-deps-<host>_<pid>.log``) and the viewer runner's.
 #: An earlier sweep's are not a run of the job, and stay.
 _SERVICE_LOGS: tuple[str, ...] = (
     "backend_*.log",

@@ -793,8 +793,8 @@ uv run scenario scenario='intersection_passing/*' \
   Autoware stack writes to `autoware-<stem>.log`, named by the case's stem
   (#2248), and a case run again appends to its log, so the resumed run
   follows the killed one in the same file, and a Docker stack's
-  dependency and build logs (`autoware-deps.log`, `autoware-build.log`) are
-  written over.
+  dependency and build logs (`autoware-deps-<host>_<pid>.log`,
+  `autoware-build-<host>_<pid>.log`) are the resumed run's own.
 - `--resume-into` is for a local batch: with `launcher=slurm`, or on a
   single run or a Hydra sweep (which resumes into its own directory with
   `hydra.sweep.dir=`, [Lanelet Constraint Sweeping](#lanelet-constraint-sweeping)),
