@@ -550,6 +550,7 @@ def test_the_fake_stream_records_no_wall_clock(tmp_path: Path) -> None:
 #: ``threads:`` line.
 _LEAK_PROBE = """
 import sys
+import time
 from pathlib import Path
 import numpy as np
 from rerun_bindings import rerun_bindings as bindings
@@ -587,12 +588,26 @@ def one_run(out, i):
     assert bindings.check_for_rrd_footer(str(out / f"Run-{i}.sensors.rrd")), i
 
 
+def settled(at_most=None):
+    # A cleaned-up stream's threads end on their own a moment later: wait for
+    # the count to reach *at_most* (or to hold still), up to a few seconds.
+    deadline = time.monotonic() + 5.0
+    count = threads()
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+        now = threads()
+        if (at_most is not None and now <= at_most) or (at_most is None and now == count):
+            return now
+        count = now
+    return count
+
+
 out = Path(sys.argv[1])
 one_run(out, 0)
-before = threads()
+before = settled()
 for i in range(1, 6):
     one_run(out, i)
-print("threads:", before, threads(), flush=True)
+print("threads:", before, settled(before), flush=True)
 """
 
 
