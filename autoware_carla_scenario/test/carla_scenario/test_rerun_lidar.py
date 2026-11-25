@@ -539,12 +539,29 @@ def test_a_converter_records_cameras_without_the_lidar(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+#: The names (as the kernel truncates them) of the threads a rerun
+#: ``RecordingStream`` starts: what a closed recording would leave behind.
+_STREAM_THREADS = ("ChunkBatcher", "RecordingStream", "file_writer")
+
+
 def _threads() -> int:
+    """How many of the process's threads are a recording stream's.
+
+    Counted by name, not all of them: under xdist a thread an earlier test
+    left starting or ending would move a plain count by one (#2489)."""
     import os
-    import threading
 
     task = Path(f"/proc/{os.getpid()}/task")
-    return len(list(task.iterdir())) if task.is_dir() else threading.active_count()
+    if not task.is_dir():
+        pytest.skip("needs /proc to name the process's threads")
+    count = 0
+    for thread in task.iterdir():
+        try:
+            name = (thread / "comm").read_text().strip()
+        except OSError:  # the thread ended while being read
+            continue
+        count += name.startswith(_STREAM_THREADS)
+    return count
 
 
 def test_the_fake_stream_records_no_wall_clock(tmp_path: Path) -> None:
