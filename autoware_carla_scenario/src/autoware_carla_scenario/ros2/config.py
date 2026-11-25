@@ -18,6 +18,7 @@ from ..sensor.carla_camera import CarlaCameraSensorConfig, warn_of_frame_rate
 
 __all__ = [
     "COMMAND_KINDS",
+    "FLOAT32_MAX",
     "ON_STALE_ACTIONS",
     "CommandSourceConfig",
     "Ros2CameraConfig",
@@ -42,6 +43,12 @@ COMMAND_KINDS: Tuple[str, ...] = ("trajectory", "steer_accel", "control")
 #:   commands to CARLA does when its upstream stops.
 #: * ``"brake"`` -- brake to a stop.
 ON_STALE_ACTIONS: Tuple[str, ...] = ("hold", "brake")
+
+#: The largest finite float32.  ``carla.VehicleAckermannControl`` holds each of
+#: its fields as a float32, and a larger value becomes an infinity there
+#: (#2505): every number the entity hands CARLA's Ackermann controller is at most
+#: this in magnitude.
+FLOAT32_MAX: float = 3.4028234663852886e38
 
 
 # A mapping (a Hydra node) is not coerced: a field annotated float may hold a
@@ -140,10 +147,13 @@ class CommandSourceConfig:
             VisionPilot's ``carla_control_publisher`` builds it.  Positive: zero
             would pin the target to the current speed, and a negative horizon
             would turn a request to accelerate into braking.
-        jerk_mps3: The Ackermann jerk limit, for ``steer_accel`` and for a
-            ``control`` command that leaves its jerk undefined.  Not negative;
-            ``0`` is allowed, the jerk ``carla.VehicleAckermannControl`` takes
-            by default.
+        jerk_mps3: The jerk handed to CARLA's Ackermann controller, for
+            ``steer_accel`` and for a ``control`` command that leaves its jerk
+            undefined.  CARLA's controller does not use it (it stores the
+            magnitude and never reads it again), so it has no effect on the
+            vehicle; it is kept for compatibility (#2505).  Not negative and at
+            most :data:`FLOAT32_MAX`; ``0`` is allowed, the jerk
+            ``carla.VehicleAckermannControl`` takes by default.
         pair_window_s: For ``steer_accel``, how far apart (in the publisher's
             clock, by the samples' DDS source timestamps) the steering and the
             acceleration of one cycle may be written.  A half with no partner
@@ -254,6 +264,13 @@ class CommandSourceConfig:
             raise ValueError(
                 f"command source {self.name!r}: jerk_mps3 must not be negative, "
                 f"got {self.jerk_mps3}"
+            )
+        # Handed to CARLA as a float32: a larger one would reach it as an
+        # infinity, and the entity would brake on every command it fills in.
+        if self.jerk_mps3 > FLOAT32_MAX:
+            raise ValueError(
+                f"command source {self.name!r}: jerk_mps3 must be at most "
+                f"{FLOAT32_MAX!r} (float32's range), got {self.jerk_mps3}"
             )
 
     @property

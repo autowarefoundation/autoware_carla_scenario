@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from ..driver.geometry import Pose
-from .config import CommandSourceConfig
+from .config import FLOAT32_MAX, CommandSourceConfig
 
 __all__ = [
     "Command",
@@ -30,7 +30,9 @@ __all__ = [
     "SteerAccelPairer",
     "TrajectoryCommand",
     "TrajectoryCommandPoint",
+    "command_is_applicable",
     "command_is_finite",
+    "fits_float32",
 ]
 
 
@@ -79,7 +81,8 @@ class ControlCommand:
         steering_tire_angle_rad: Tyre angle, positive to the left (Autoware's).
         velocity_mps: Target speed.
         acceleration_mps2: Desired acceleration.
-        jerk_mps3: Jerk limit, ``None`` when the message leaves it undefined.
+        jerk_mps3: Jerk, ``None`` when the message leaves it undefined.
+            CARLA's Ackermann controller does not use it.
     """
 
     steering_tire_angle_rad: float
@@ -121,12 +124,31 @@ class TrajectoryCommand:
 Command = Union[SteerAccelCommand, ControlCommand, TrajectoryCommand]
 
 
+def fits_float32(value: float) -> bool:
+    """Whether *value* is finite and within float32's range
+    (:data:`~.config.FLOAT32_MAX`).
+
+    ``carla.VehicleAckermannControl`` holds each field as a float32: a double
+    beyond that range reaches CARLA as an infinity (#2505).  The bound is
+    float32's largest value itself, so the few doubles above it that would
+    still round down to it are refused too.
+    """
+    return math.isfinite(value) and abs(value) <= FLOAT32_MAX
+
+
 def command_is_finite(command: Command) -> bool:
-    """Whether every number of *command* is finite.
+    """Whether every number of *command* is finite, and each that is handed to
+    CARLA's Ackermann controller as given also fits a float32.
 
     A steering angle, a speed, an acceleration, a jerk (when the command sets
     one), and each of a trajectory's poses, speeds and accelerations: a NaN or
     an infinity in any of them makes the command one no controller can apply.
+    A ``control`` or ``steer_accel`` command's numbers reach
+    ``carla.VehicleAckermannControl``, whose fields are float32, so each is
+    also at most :data:`~.config.FLOAT32_MAX` in magnitude
+    (:func:`fits_float32`); a trajectory's are read by the framework's own
+    follower, in doubles.  What a ``steer_accel`` command becomes once its
+    source's settings apply is checked by :func:`command_is_applicable`.
     """
     # Each branch names the command as its class: Codon 0.19 reads no
     # attribute of a union (docs/typecheck.md).
@@ -148,20 +170,46 @@ def command_is_finite(command: Command) -> bool:
         return True
     if isinstance(command, SteerAccelCommand):
         steer_accel: SteerAccelCommand = command
-        return math.isfinite(steer_accel.steering_rad) and math.isfinite(
+        return fits_float32(steer_accel.steering_rad) and fits_float32(
             steer_accel.acceleration_mps2
         )
     control: ControlCommand = command
     jerk = control.jerk_mps3
     if jerk is not None:
         jerk_mps3: float = jerk
-        if not math.isfinite(jerk_mps3):
+        if not fits_float32(jerk_mps3):
             return False
     return (
-        math.isfinite(control.steering_tire_angle_rad)
-        and math.isfinite(control.velocity_mps)
-        and math.isfinite(control.acceleration_mps2)
+        fits_float32(control.steering_tire_angle_rad)
+        and fits_float32(control.velocity_mps)
+        and fits_float32(control.acceleration_mps2)
     )
+
+
+def command_is_applicable(command: Command, source: CommandSourceConfig) -> bool:
+    """Whether *command*, from *source*, can be handed to its controller.
+
+    :func:`command_is_finite`, and for a ``steer_accel`` command, what the
+    source's settings make of it: the steering ``steering_sign * steering_rad``
+    and the target speed's step ``acceleration * speed_horizon_s`` each fit a
+    float32 (:func:`fits_float32`).  A finite acceleration can overflow that
+    step (``1e308`` over a 2 s horizon, or ``1e39``, past float32's range),
+    which would reach CARLA as an infinite target speed: refused here, before
+    the arbiter could select or hold it.
+
+    The target speed adds the ego's speed at the tick the command is first
+    applied, which this cannot know; a vehicle's speed is far too small to push
+    a step that fits past float32's range, and the entity checks the sum again
+    before it hands it over.
+    """
+    if not command_is_finite(command):
+        return False
+    if isinstance(command, SteerAccelCommand):
+        steer_accel: SteerAccelCommand = command
+        return fits_float32(
+            source.steering_sign * steer_accel.steering_rad
+        ) and fits_float32(steer_accel.acceleration_mps2 * source.speed_horizon_s)
+    return True
 
 
 #: How many recent write intervals :class:`SteerAccelPairer` estimates the
@@ -335,10 +383,11 @@ class CommandArbiter:
     configured last wins.  When every source is stale, :meth:`select` returns the command that drove
     last, marked not fresh, so the caller can hold it or brake.
 
-    A command that is not all finite (:func:`command_is_finite`) is refused by
-    :meth:`observe`: it neither drives nor keeps its source fresh, so a source
-    that sends nothing else goes stale after its ``stale_s``, and until then its
-    last good command is the one that drives.
+    A command that is not all finite, or that would reach CARLA out of
+    float32's range (:func:`command_is_applicable`), is refused by
+    :meth:`observe`: it is never selected or held, and it does not keep its
+    source fresh, so a source that sends nothing else goes stale after its
+    ``stale_s``, and until then its last good command is the one that drives.
 
     Args:
         sources: The configured sources.
@@ -362,14 +411,16 @@ class CommandArbiter:
 
         Returns:
             Whether it was recorded: ``False`` for a command that is not all
-            finite, which is refused and leaves the source as it was.
+            finite or does not fit a float32 where it reaches CARLA
+            (:func:`command_is_applicable`), which is refused and leaves the
+            source as it was.
 
         Raises:
             KeyError: If *source_name* is not a configured source.
         """
         if source_name not in self._sources:
             raise KeyError(f"unknown command source {source_name!r}")
-        if not command_is_finite(command):
+        if not command_is_applicable(command, self._sources[source_name]):
             return False
         self._sequence += 1
         self._latest[source_name] = (command, now_us, self._sequence)
