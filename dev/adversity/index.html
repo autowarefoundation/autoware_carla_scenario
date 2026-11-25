@@ -2723,7 +2723,7 @@ accelerate), and a negative or non-finite <code>minimum_gap</code> or <code>time
 <td><code>CUT_IN</code></td>
 <td><code>AdversarialCutInAction</code></td>
 <td>LaneChange</td>
-<td>A lane beside is blocked only by the vehicle behind there (closer than SUMO's secure gap).</td>
+<td>A lane beside is blocked only by the vehicle behind there (closer than SUMO's secure gap), and the agent is fast enough to cross into it in 1 s still moving forward: at least 0.5 m/s once the crossing's sideways speed is taken out of its speed (about 3.5 m/s across a 3.5 m lane); slower, the change would slide it straight sideways.</td>
 <td>Changes into that lane in 1 s.</td>
 </tr>
 <tr>
@@ -2752,7 +2752,7 @@ accelerate), and a negative or non-finite <code>minimum_gap</code> or <code>time
 <td><code>AdversarialMergeAction</code></td>
 <td>Merge</td>
 <td>It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane).</td>
-<td>One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s² and it and its leader are not both stopped, for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway.</td>
+<td>One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s² and it and its leader are not both stopped, for 2 s. Two lanes over: changes into the lane between in 1 s, when it is fast enough to cross as for <code>CUT_IN</code> and nobody there is within 2 s of headway.</td>
 </tr>
 <tr>
 <td><code>JAYWALKING</code></td>
@@ -2787,6 +2787,15 @@ fires, the command the condition found is planned on the map and driven
 (<code>following_mode</code>: <code>FOLLOW</code> by default, or <code>POSITION</code>, as TeraSim's
 <code>moveToXY</code> does). At the end of the path the vehicle is handed back to its
 traffic backend.</p>
+<p>The entity is another road user, never the ego: an action built for <code>ego</code>
+(or an alias of it, such as <code>hero</code>, in any case) raises <code>ValueError</code>, as
+<code>PerceptionFaultInjectionAction</code> does. An ego its own driver drives
+(Autoware, ROS 2, HILS, <code>carla_driver</code>) would never take the planned path,
+so the action would never finish and would hold the ego's movement for the
+whole run.</p>
+<p><code>JaywalkAction</code> and <code>StopCrossingAction</code> draw at random (a jaywalker's
+speed, a stopped crosser's wait); their <code>seed</code> (<code>Seed</code> in the editor)
+seeds the draws, and <code>None</code> follows the run's seed.</p>
 <p>A <code>condition</code> given instead decides when the action fires. On that tick
 the adversity's own trigger is still asked; when it does not hold, nothing is
 done and a warning is logged. To require both, give the <code>AndCondition</code> of
@@ -3307,7 +3316,7 @@ action starts from these values.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 12:30:14 UTC"><span class="timeago" datetime="2026-11-24T12:30:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 12:30:14 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 02:10:45 UTC"><span class="timeago" datetime="2026-11-25T02:10:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 02:10:45 UTC">2026-11-25</span>
   </span>
 
     

@@ -3261,7 +3261,8 @@ value, so the result is not checked:</p>
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
   <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>pedestrian/soma</code>,
   <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>number_settings</code> (what
-  the example scenarios' configs check their numbers with, #2398),
+  the example scenarios' configs check their numbers with, #2398), <code>seed</code>
+  (what they check a seed with, #2465),
   <code>scaffold/generator</code>,
   <code>commonroad/session</code>, <code>commonroad/worker</code>, <code>hils/config</code> and
   <code>utils/traffic_light</code>, each declaring exactly the names compared;
@@ -5104,8 +5105,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 362 of the package's 494
-modules (73%; about 115,400 of
-193,700 lines) are <code>CHECKED</code>: the kinematics, the
+modules (73%; about 115,500 of
+193,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6946,7 +6947,7 @@ the first:</p>
 <li><code>authoring.models</code>: imports pydantic</li>
 <li><code>authoring.package_export</code>: imports more of importlib.metadata than its shim declares (<code>metadata()</code>), annotates a field and a parameter <code>dict[str, Any]</code>, which Codon cannot express, and, at module level, authoring.models (pydantic), authoring.persistence (yaml), authoring.hydra_config and authoring.validator (pydantic, through authoring.models), templating (jinja2) and authoring.wheelhouse (jinja2, packaging.specifiers), which are not checked and have no model; its naming rules and the framework pin's README lines are the checked authoring.package_names'</li>
 <li><code>authoring.persistence</code>: imports yaml, and authoring.models (pydantic), which is not checked and has no model</li>
-<li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes; the spec table is built when the module is imported (243 FieldSpec calls), so no UNCALLED entry can leave the Any-typed defaults out, and typing FieldSpec.default would change what the editor, validator and codegen read</li>
+<li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes; the spec table is built when the module is imported (249 FieldSpec calls), so no UNCALLED entry can leave the Any-typed defaults out, and typing FieldSpec.default would change what the editor, validator and codegen read</li>
 <li><code>authoring.starter</code>: reaches pydantic models through authoring.models</li>
 <li><code>authoring.validator</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model; the id rules it reports are the checked authoring.package_names'; the checks of the signal table (a signal group's name, members and conflicts, a controller's name, phases, states and start delay, the references between controllers and <code>PERMISSIVE_SIGNAL_STATES</code>) are the checked authoring.signal_checks' (<code>check_signal_table()</code>, #2364), over plain copies of the document's models, and a field's numeric bounds, their message and the means of a Traffic/Vehicle Parameters card (<code>within_bounds()</code>, <code>bounds_text()</code>, <code>traffic_mean_bounds()</code>) the checked authoring.field_bounds' (#2364); which bound of the route an anchor is pinned to and the warning of a route-progress target off the route (<code>route_bound()</code>, <code>route_progress_warning()</code>) are the checked authoring.route_progress_checks', and a construction zone's and a stalled object's spans, a highway zone's length against its tapers and buffer and a trajectory's vertex times (<code>check_spans()</code>, <code>check_highway_zone_length()</code>, <code>check_vertex_times()</code>) the checked authoring.span_checks' (#2386); what stays reads the pydantic document: it builds those copies and turns the findings back into issues (_check_signal_controllers(), _check_spans(), _check_vertex_times(), _check_route_progress_bounds()), reads a card's numbers, a route's segment kinds and <code>FOREVER_S</code> for them (_node_number(), _route_bound(), _stalled_forever_s()), checks the actions and conditions naming a controller and a phase (_check_signal_uses(), signal_controller_nodes()) and reads a field's bounds off its spec (_check_bounds())</li>
 <li><code>authoring.wheelhouse</code>: imports jinja2, packaging.specifiers (which the packaging model does not declare), tomllib, tomli and, at module level, <code>ThreadPoolExecutor</code> from concurrent.futures; its requirements pinning is checked as authoring.requirements_pin</li>
@@ -9226,7 +9227,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 23, 2026 21:15:10 UTC"><span class="timeago" datetime="2026-11-23T21:15:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 23, 2026 21:15:10 UTC">2026-11-23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 02:10:45 UTC"><span class="timeago" datetime="2026-11-25T02:10:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 02:10:45 UTC">2026-11-25</span>
   </span>
 
     
