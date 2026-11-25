@@ -937,6 +937,52 @@ def test_the_time_to_react(evaluator: Evaluator) -> None:
     assert trapped["crime_ttr_s"] == 0.0
 
 
+def test_the_time_to_brake(evaluator: Evaluator) -> None:
+    ego = on_road(50, 1.75, 15.0, 1)
+    keys = ["crime_ttb_s", "crime_ttc_s"]
+    values, errors = evaluator.evaluate(ego, [on_road(80, 1.75, 5.0, 2)], keys)
+    assert errors == {}
+    assert 0.0 < values["crime_ttb_s"] < values["crime_ttc_s"]
+    # Braking at full no longer avoids a car standing 12 m ahead at 15 m/s:
+    # 0, not CriMe's -inf.
+    trapped, errors = evaluator.evaluate(ego, [on_road(62, 1.75, 0.0, 2)], ["crime_ttb_s"])
+    assert errors == {}
+    assert trapped["crime_ttb_s"] == 0.0
+    # In contact already (CriMe's TTC* 0): 0 too.
+    touching, errors = evaluator.evaluate(ego, [on_road(53, 1.75, 0.0, 2)], ["crime_ttb_s"])
+    assert errors == {}
+    assert touching["crime_ttb_s"] == 0.0
+
+
+def test_no_one_ahead_in_the_lane_reads_none_is(evaluator: Evaluator) -> None:
+    """With a road user beside the ego but none ahead in its lane, the lane
+    measures read that none is (inf, or 0); with no road user at all, the
+    road-user measures read nothing."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    keys = [
+        "crime_ttc_s",
+        "crime_thw_s",
+        "crime_hw_m",
+        "crime_a_long_req_mps2",
+        "crime_a_lat_req_mps2",
+        "crime_btn",
+        "crime_stn",
+    ]
+    beside, errors = evaluator.evaluate(ego, [on_road(80, 5.25, 15.0, 2)], keys)
+    assert errors == {}
+    assert beside == {
+        "crime_ttc_s": math.inf,
+        "crime_thw_s": math.inf,
+        "crime_hw_m": math.inf,
+        "crime_a_long_req_mps2": 0.0,
+        "crime_a_lat_req_mps2": 0.0,
+        "crime_btn": 0.0,
+        "crime_stn": 0.0,
+    }
+    alone, _ = evaluator.evaluate(ego, [], keys)
+    assert alone == dict.fromkeys(keys)
+
+
 def test_workers_started_together_import_reach_one_at_a_time(tmp_path: Path) -> None:
     """CommonRoad-Reach compiles a Cython module into ~/.pyxbld on its first
     import: workers that start together must not load each other's

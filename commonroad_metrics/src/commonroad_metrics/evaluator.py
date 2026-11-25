@@ -66,6 +66,15 @@ CRIME_MEASURES: dict[str, str] = {
 #: steering left or right) still avoids the collision.  CriMe reads ``-inf``
 #: when none does even now, read ``0`` here as :data:`CRIME_WTTR_S` is.
 CRIME_TTR_S = "crime_ttr_s"
+#: CriMe's TTB: the latest time braking at full still avoids the collision.
+#: A TTM, as TTR is, CriMe reads it ``-inf`` when braking no longer avoids it
+#: even now (no step does, or the ego is in contact already: TTC* ``0``),
+#: read ``0`` here as TTR is.
+CRIME_TTB_S = "crime_ttb_s"
+#: The measures CriMe reads ``-inf`` when no manoeuvre is left even now, read
+#: ``0`` here: the time left is none, not less than none, and ``min``
+#: aggregation must not report ``-inf`` as a run's least time left.
+_NO_TIME_LEFT: frozenset[str] = frozenset({CRIME_TTR_S, CRIME_TTB_S})
 #: CommonRoad-Reach's: the area of the ego's drivable area at the end of the
 #: horizon (m^2), and summed over the horizon's steps (CriMe's DA, m^2 * steps).
 REACH_DRIVABLE_AREA_M2 = "reach_drivable_area_m2"
@@ -520,7 +529,7 @@ class Evaluator:
                 try:
                     measure = signed.get(name, getattr(crime_measure, name))(config)
                     value = _finite_or_none(measure.compute_criticality(0, verbose=False))
-                    if key == CRIME_TTR_S and value == -math.inf:
+                    if key in _NO_TIME_LEFT and value == -math.inf:
                         value = 0.0
                     values[key] = value
                 except Exception as exc:  # a measure undefined here, not a broken worker
