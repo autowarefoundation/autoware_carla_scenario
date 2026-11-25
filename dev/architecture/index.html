@@ -4585,11 +4585,13 @@ registered a timeout of its own, as a pass or a fail condition.</p>
     L2 --&gt;|"to_carla_world()"| CW
     OD --&gt;|"to_carla_world()"| CW
     CW --&gt;|"to_lanelet2()"| L2
+    L2 --&gt;|"snap_to_carla_road()"| CW
     OD --&gt;|"snap_to_carla_road()"| CW
     CW --&gt;|"to_opendrive()"| OD</code></pre>
 <p><strong><code>MapManager</code></strong> is a singleton that holds the <code>LaneletMap</code>, <code>RoadNetwork</code>, and a precomputed z-offset (averaged from CARLA spawn points, leaving out those matched to a lanelet on another level of stacked roads). It is initialized once per <code>ScenarioQueue.start()</code> when both <code>xodr_path</code> and <code>lanelet2_path</code> are provided.</p>
 <p><code>to_carla_world()</code> returns a <code>CarlaWorldPose</code>; <code>to_carla_location()</code> takes any of the three (or a <code>carla.Location</code>) and returns the <code>carla.Location</code> of its <code>CarlaWorldPose</code>.</p>
-<p><strong><code>snap_to_carla_road()</code></strong> uses CARLA's ray-cast API to project an OpenDRIVE position onto the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world.</p>
+<p><strong><code>snap_to_carla_road()</code></strong> puts a pose on the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world. A <code>Lanelet2Pose</code> keeps the x, y and yaw its own lanelet gives it, and an <code>OpenDrivePose</code> those of its road's reference line; neither is projected onto the other map. A <code>CarlaWorldPose</code> is moved onto the nearest road with CARLA's waypoint API. In every case only z comes from CARLA, from a ray cast down onto the ground from the pose's own level of road.</p>
+<p>A <code>Lanelet2Pose</code>'s <code>s</code> must lie on its lanelet, from 0 to the lanelet's length (1e-6 m of float error either side is accepted): one past either end is clamped onto the nearer end with a warning naming the lanelet, <code>s</code> and the length, logged once per lanelet and <code>s</code> in a run so a pose converted on every tick does not flood the log. A point further on belongs on the next lanelet. A NaN <code>s</code> raises <code>ValueError</code>.</p>
 <hr />
 <h2 id="entity-management">Entity Management<a class="headerlink" href="#entity-management" title="Permanent link">&para;</a></h2>
 <pre class="mermaid"><code>classDiagram
@@ -4599,6 +4601,8 @@ registered a timeout of its own, as a pass or a fail condition.</p>
         +vehicle_type: str
         +initial_speed_kmh: float
         +spawn_retry_max_count: int
+        +spawn_retry_t_step: float
+        +spawn_retry_z_step: float
     }
 
     class EgoConfig {
@@ -4611,11 +4615,11 @@ registered a timeout of its own, as a pass or a fail condition.</p>
     }
 
     class SpawnTransform {
-        +transform: carla.Transform
+        +value: carla.Transform
     }
 
     class SpawnPointIndex {
-        +index: int
+        +value: int
     }
 
     class VehicleEntity {
@@ -4734,7 +4738,7 @@ a driver policy reads no goal, so a scenario may name none and the routing actio
 simply not registered. The goal reaches the ego config from <code>ego.goal_lanelet_id</code> or from
 the scenario itself — <code>IntersectionPassingScenario</code> derives it from the route it asserts,
 through <code>BaseScenario.derive_goal_from_route()</code>.</p>
-<p><strong>Spawn retry logic</strong>: When a vehicle fails to spawn (e.g., collision with existing geometry), the spawn system retries with lateral (<code>t_step</code>) and vertical (<code>z_step</code>) offsets, up to <code>spawn_retry_max_count</code> attempts.</p>
+<p><strong>Spawn retry logic</strong>: When a vehicle fails to spawn at a <code>SpawnTransform</code> (e.g., collision with existing geometry), the spawn system retries with lateral (<code>t_step</code>, across the transform's heading, both sides) and vertical (<code>z_step</code>, up and down) offsets from that transform, up to <code>spawn_retry_max_count</code> attempts; <code>0</code> turns the retries off. A <code>SpawnPointIndex</code> is the map's own placement and is tried once. A declarative NPC that waits hidden under the map (<code>spawn.hidden</code>, parked or not) is never retried: nothing is in the way there. <code>od_pose</code> is accepted for compatibility and plays no part. An ego the framework spawned is localized where it actually stands, so the stack starts at the shifted position, not the planned one; a shift of more than 0.01 m is logged (a warning above 1 m).</p>
 <hr />
 <h2 id="lanelet-constraint-sweeper">Lanelet Constraint Sweeper<a class="headerlink" href="#lanelet-constraint-sweeper" title="Permanent link">&para;</a></h2>
 <p>The sweeper enables automated parameter sweeps across lanelets that match specified constraints:</p>
@@ -4989,7 +4993,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 18:07:59 UTC"><span class="timeago" datetime="2026-11-24T18:07:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 18:07:59 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 04:12:12 UTC"><span class="timeago" datetime="2026-11-25T04:12:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 04:12:12 UTC">2026-11-25</span>
   </span>
 
     
