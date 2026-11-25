@@ -16,10 +16,13 @@ from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
 
 import numpy as np
 
+from ..constants import FIXED_DELTA_SECONDS
 from .base import (
     CameraSensorBase,
     CameraSensorConfig,
     drain,
+    frame_rate_text,
+    frame_ticks,
     put_dropping_oldest,
     sensor_interval_ticks,
     sensor_tick_s,
@@ -34,6 +37,44 @@ logger = logging.getLogger(__name__)
 #: frame :meth:`CarlaCameraSensor.latest_image` knows is due, or any frame for
 #: :meth:`CarlaCameraSensor.get_image`.
 _FRAME_TIMEOUT: float = 1.0
+
+#: The ``(owner, fps)`` of every camera :func:`warn_of_frame_rate` warned of.
+_WARNED_FRAME_RATES: set[tuple[str, float]] = set()
+
+
+def warn_of_frame_rate(owner: str, fps: float) -> None:
+    """Warn, once for *owner* and *fps*, when a camera set to *fps* cannot
+    deliver frames at that rate on the tick.
+
+    A sensor fires at most once a tick, on a tick: above one frame a tick
+    the frames come once a tick, and a ``1 / fps`` that is not a whole
+    number of ticks alternates between the two around it.  Neither is
+    refused -- such configs run today -- but the warning names the rate
+    the camera delivers (:func:`~.base.frame_rate_text`, #2499).
+    """
+    fewest, most = frame_ticks(fps)
+    if fewest == most and abs(fewest * FIXED_DELTA_SECONDS * fps - 1.0) <= 1e-6:
+        return
+    key = (owner, fps)
+    if key in _WARNED_FRAME_RATES:
+        return
+    _WARNED_FRAME_RATES.add(key)
+    if fps * FIXED_DELTA_SECONDS > 1.0 + 1e-9:
+        logger.warning(
+            "%s: fps=%g is above one frame a %g s tick; it delivers %s",
+            owner,
+            fps,
+            FIXED_DELTA_SECONDS,
+            frame_rate_text(fps),
+        )
+    else:
+        logger.warning(
+            "%s: 1/fps=%g s is not a whole number of %g s ticks; it delivers %s",
+            owner,
+            1.0 / fps,
+            FIXED_DELTA_SECONDS,
+            frame_rate_text(fps),
+        )
 
 
 @dataclass(frozen=True)
@@ -387,11 +428,11 @@ class CarlaCameraSensor(CameraSensorBase):
         self._attached = True
 
         logger.info(
-            "CarlaCameraSensor attached: %dx%d fov=%.1f @ %.0f fps -> %s",
+            "CarlaCameraSensor attached: %dx%d fov=%.1f @ %s -> %s",
             cfg.image_width,
             cfg.image_height,
             cfg.fov,
-            cfg.fps,
+            frame_rate_text(cfg.fps),
             actor.type_id,
         )
 

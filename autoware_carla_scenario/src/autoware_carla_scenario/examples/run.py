@@ -1685,15 +1685,23 @@ def server_extra_args(cfg: DictConfig) -> list[str]:
 
 
 def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str, Any]:
-    """*driver* with ``server.fog_density_scale`` on every LiDAR that sets none."""
+    """*driver* with ``server.fog_density_scale`` on every LiDAR that sets none.
+
+    A LiDAR's ``fog_density_scale: null`` sets none, as an absent one does
+    (docs/driver_interface.md): it takes the server's scale too, and only
+    without one does the LiDAR's own default (0.001) apply (#2499).
+    """
     scale = _fog_density_scale(cfg)
     lidars = driver.get("lidars")
     if scale is None or not lidars:
         return driver
-    return {
-        **driver,
-        "lidars": [{"fog_density_scale": scale, **dict(lidar)} for lidar in lidars],
-    }
+    filled: list[dict[str, Any]] = []
+    for lidar in lidars:
+        entry = dict(lidar)
+        if entry.get("fog_density_scale") is None:
+            entry["fog_density_scale"] = scale
+        filled.append(entry)
+    return {**driver, "lidars": filled}
 
 
 def _map_source(cfg: DictConfig, map_paths: Any) -> str | None:

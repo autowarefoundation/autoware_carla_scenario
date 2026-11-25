@@ -14,7 +14,7 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 from ..constants import MAX_ROS_DOMAIN_ID, US_PER_S
 from ..seed import check_whole_number
-from ..sensor.carla_camera import CarlaCameraSensorConfig
+from ..sensor.carla_camera import CarlaCameraSensorConfig, warn_of_frame_rate
 
 __all__ = [
     "COMMAND_KINDS",
@@ -386,6 +386,8 @@ class Ros2CameraConfig:
                 f"and finite, got {self.image_width}x{self.image_height} "
                 f"at {self.fps} fps"
             )
+        # A rate off the tick runs, as it always has, but not at that rate.
+        warn_of_frame_rate(owner, self.fps)
         # CARLA renders a pinhole of the horizontal fov, which only spans
         # (0, 180) degrees.
         if not 0.0 < self.fov < 180.0:

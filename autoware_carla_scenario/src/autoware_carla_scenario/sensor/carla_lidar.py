@@ -176,7 +176,10 @@ class CarlaLidarSensor:
             driver LiDAR's ``logical_id``); empty (the default) for its mount.
             Without a ``noise_seed`` of its own, its weather noise is drawn from
             the run's seed and this, so two LiDARs alike draw different noise
-            and the same LiDAR the same in every run of a seed (#2018).
+            and the same LiDAR the same in every run of a seed (#2018).  The
+            noise of a sweep is drawn for its frame counted from the sensor's
+            first read, not the server's frame, which a reused server keeps
+            counting across runs (#2499).
 
     Raises:
         ValueError: If *sweep_interval_s* is not a positive whole number of ticks.
@@ -291,11 +294,13 @@ class CarlaLidarSensor:
             generation = self._generation
         self._sensor.listen(lambda data: self._on_sensor_data(data, generation))
         logger.info(
-            "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s, "
+            "CarlaLidarSensor attached: %d channels, %.0f m, %d pts/s "
+            "(%d pts a sweep: one revolution a tick), "
             "a sweep every %d tick(s) -> %s",
             cfg.channels,
             cfg.range_m,
             cfg.points_per_second,
+            int(round(cfg.points_per_second * FIXED_DELTA_SECONDS)),
             self._interval_ticks,
             actor.type_id,
         )
@@ -454,7 +459,7 @@ class CarlaLidarSensor:
                 weather,
                 self._config.weather_noise,
                 self._noise_seed,
-                sweep[0],
+                self._noise_frame(sweep[0]),
                 self._noise_stream,
             ),
         )
@@ -462,6 +467,17 @@ class CarlaLidarSensor:
         self._weathered_frame = sweep[0]
         self._newest = result
         return result
+
+    def _noise_frame(self, frame: int) -> int:
+        """The frame the weather noise of a sweep taken on *frame* is drawn for.
+
+        Counted from the first read since attaching (:attr:`_first_read`),
+        not the server's frame: that keeps counting across runs on a reused
+        server (a soft world reset), so the same seed and scenario would
+        draw different noise (#2499).  Offset by an interval, so it is never
+        negative: a sweep kept is less than an interval older than the read.
+        """
+        return max(frame - self._first_read + self._interval_ticks, 0)
 
     def _weather(self, world: "carla.World") -> Optional[LidarWeather]:
         """*world*'s rain and fog now; ``None`` when reading them failed."""

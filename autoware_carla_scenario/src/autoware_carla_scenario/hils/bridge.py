@@ -525,8 +525,13 @@ class _SensorDevice:
         was measured.
 
         The ego's motion from the client's last snapshot (no call to the
-        server), turned into the sensor's frame by the measurement's transform;
-        still when it cannot be read.
+        server), carried to the sensor's mount -- the ego origin's velocity
+        plus ``w x r``, *r* the sensor's mount (its spawn offset on the ego)
+        turned into world axes by the ego's rotation (#2499) -- and turned into
+        the sensor's frame by the measurement's transform; still when it cannot
+        be read.  *r* is not the measurement's location less the ego's: the
+        snapshot may be a tick off the measurement, and the ego's travel in
+        that tick would join the lever arm.
         """
         ego = self._ego
         if ego is None:
@@ -534,14 +539,25 @@ class _SensorDevice:
         try:
             v = ego.get_velocity()
             w = ego.get_angular_velocity()
+            ego_rotation = np.asarray(
+                ego.get_transform().get_matrix(), dtype=np.float64
+            )[:3, :3]
             inverse = np.asarray(data.transform.get_inverse_matrix(), dtype=np.float64)[
                 :3, :3
             ]
         except Exception:  # noqa: BLE001 - the ego may be gone; send the points as measured
             return (0.0,) * 6
-        vs = inverse @ np.array([v.x, v.y, v.z], dtype=np.float64)
-        # A rotation turns the angular velocity (deg/s, world axes) as it does a vector.
-        ws = inverse @ np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
+        # CARLA's angular velocity is in deg/s, about the world axes.
+        w_world = np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
+        x, y, z = self.sensor_spec.transform[:3]
+        lever = ego_rotation @ np.array([x, y, z], dtype=np.float64)
+        # CARLA's axes are left-handed and its angular velocity follows the
+        # left-hand rule, so the cross product's components are the usual
+        # ones: a yaw rate (z) moves a mount ahead (+x) to the right (+y).
+        v_world = np.array([v.x, v.y, v.z], dtype=np.float64) + np.cross(w_world, lever)
+        vs = inverse @ v_world
+        # A rotation turns the angular velocity as it does a vector.
+        ws = inverse @ w_world
         return (*(float(c) for c in vs), *(float(c) for c in ws))
 
     def _message(self, measured: Tuple[float, Any, Any, int, int]) -> Optional[Any]:

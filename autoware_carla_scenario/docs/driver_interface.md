@@ -240,6 +240,15 @@ renders the pinhole of the horizontal `fov` -- and its mount (`position_x/y/z`,
 `roll`, `pitch`, `yaw`) finite. A camera out of these bounds is refused as the
 config is read, not when it attaches after the ego spawned.
 
+A camera renders at most once a 0.05 s tick, on a tick, so its frame period is
+rounded to whole ticks: an `fps` above 20 delivers 20 frames a second, and an
+`fps` whose `1 / fps` is not a whole number of ticks alternates between the two
+around it (`fps: 15` sends a frame after 1, then 2 ticks: 15 on average, with
+50 or 100 ms between frames). Neither is refused; the run warns once as the
+config is read, naming the rate the camera delivers, and the camera's
+`CarlaCameraSensor attached` log line gives that rate (#2499). `fps` 20, 10,
+5, ... are whole numbers of ticks.
+
 A `null` setting of a `driver.cameras` or `driver.lidars` entry is its default,
 as an absent one, the way a ROS 2 camera's is: `logical_id: null` is
 `camera_front_wide_120fov` (a LiDAR's `lidar_top`), `fov: null` 120 degrees,
@@ -604,7 +613,12 @@ the same numbers here.
 The contract has no LiDAR submission RPC, so sweeps ride in `renderer_data` too. Each
 `driver.lidars` entry mounts a `sensor.lidar.ray_cast` (mount in CARLA's convention, like
 a camera) that sweeps once per policy step (`policy_timestep_s`), and each policy step
-sends that sweep, already converted into the rig frame. The sweep may come from an
+sends that sweep, already converted into the rig frame. The LiDAR turns once a tick
+(20 Hz), so a sweep is one revolution, taken within its tick, and holds
+`points_per_second × 0.05` points -- 60000 at the default 1200000 -- however long the
+policy step: copying a 10 Hz sensor's `points_per_second` gives half its points a
+revolution, so double it to keep its angular density. The LiDAR's
+`CarlaLidarSensor attached` log line gives the points a sweep (#2499). The sweep may come from an
 earlier simulation tick of the step than the one the step is sent on; it is stamped
 with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
 within a second is left out rather than replaced by an older one. CARLA first sweeps
@@ -655,7 +669,7 @@ Each grows with its intensity (0-100). Clear weather leaves a sweep as CARLA cas
 | Field | Default | |
 |---|---|---|
 | `weather_noise` | `1.0` | Scale of the weather noise: 0 off, 1 as tuned, more exaggerates it |
-| `noise_seed` | `null` | Seed of the noise; with the sweep's frame, it repeats a run's sweeps. Null takes the run's `seed`, mixed with the LiDAR's `logical_id`, so that LiDARs alike draw different noise on the same frame and each the same in every run of a seed; a seed given is used as it is, so two LiDARs given the same one draw the same noise |
+| `noise_seed` | `null` | Seed of the noise; with the sweep's frame counted from the LiDAR's first read (not the server's frame, which a reused server keeps counting across runs), it repeats a run's sweeps. Null takes the run's `seed`, mixed with the LiDAR's `logical_id`, so that LiDARs alike draw different noise on the same frame and each the same in every run of a seed; a seed given is used as it is, so two LiDARs given the same one draw the same noise |
 | `fog_density_scale` | `server.fog_density_scale`, else `0.001` | The server's `carla.Weather.FogDensityScale`; normally left to `server` |
 
 How thick a `fog_density` looks is the server's `carla.Weather.FogDensityScale`, and the

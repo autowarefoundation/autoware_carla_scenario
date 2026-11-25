@@ -24,7 +24,7 @@ from ..config_flags import check_flag
 from ..constants import tick_multiple
 from ..number_settings import finite_number_setting, number_setting
 from ..seed import check_seed, check_whole_number
-from ..sensor.carla_camera import CarlaCameraSensorConfig
+from ..sensor.carla_camera import CarlaCameraSensorConfig, warn_of_frame_rate
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from .geometry import Pose, Trajectory
 from .hdmap_files import MAP_FORMATS
@@ -277,6 +277,8 @@ class DriverCameraConfig:
                 f"and finite, got {self.image_width}x{self.image_height} "
                 f"at {self.fps} fps"
             )
+        # A rate off the tick runs, as it always has, but not at that rate.
+        warn_of_frame_rate(owner, self.fps)
         # CARLA renders a pinhole of the horizontal fov, which only spans
         # (0, 180) degrees; a lens camera is still made with it.
         if not 0.0 < self.fov < 180.0:
