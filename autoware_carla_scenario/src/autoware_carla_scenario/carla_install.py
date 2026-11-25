@@ -196,15 +196,6 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
         # moved aside but not yet deleted. Neither is ever trusted as an install.
         for leftover in (_staging(target), _replaced(target)):
             shutil.rmtree(leftover, ignore_errors=True)
-        # Checked before the download: the swap needs the name free, and would
-        # otherwise fail only once the whole package is unpacked.
-        if _replaced(target).exists():
-            raise RuntimeError(
-                f"{_replaced(target)}, a previous install moved aside, cannot be "
-                "deleted (files held open by a CARLA server, perhaps on another "
-                "node, or owned by another user such as root); delete it and run "
-                "scenario-setup again"
-            )
     request = urllib.request.Request(
         url,
         headers={
@@ -231,6 +222,17 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
             return _launcher_of(target)
         if not writable:
             raise _cannot_install(target)
+        # Checked before the download, not before finding the install current
+        # (a leftover that cannot be deleted does not stop a run that keeps the
+        # install): the swap needs the name free, and would otherwise fail only
+        # once the whole package is unpacked.
+        if _replaced(target).exists():
+            raise RuntimeError(
+                f"{_replaced(target)}, a previous install moved aside, cannot be "
+                "deleted (files held open by a CARLA server, perhaps on another "
+                "node, or owned by another user such as root); delete it and run "
+                "scenario-setup again"
+            )
         size = int(source["size"]) if source["size"] else None
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = _staging(target)
@@ -638,7 +640,8 @@ def _unpack(stream: IO[bytes], destination: Path) -> None:
     """
     _require_extraction_filters()
     destination.mkdir(parents=True)
-    # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
+    # 1 MiB reads of the unpacked tar, not tarfile's default 10 KiB. The progress
+    # bar counts gzip's reads of the download (8 KiB before 3.12, 128 KiB on).
     with gzip.GzipFile(fileobj=stream, mode="rb") as unzipped:
         with tarfile.open(fileobj=unzipped, mode="r|", bufsize=1 << 20) as archive:
             try:

@@ -777,8 +777,12 @@ def test_an_old_install_that_cannot_be_deleted_is_reported_before_downloading(
 
     monkeypatch.setattr(shutil, "rmtree", rmtree)
     monkeypatch.setattr(carla_install, "_unpack", no_download)
-    _carla(archive, b"a later night")
     capsys.readouterr()
+    # A current install is kept, which needs no swap: the leftover does not
+    # stop that run.
+    assert carla_install.main(["--url", archive.as_uri()]) == 0
+    assert "up to date" in capsys.readouterr().out
+    _carla(archive, b"a later night")
     assert carla_install.main(["--url", archive.as_uri(), "--force"]) == 1
     captured = capsys.readouterr()
     assert captured.err == (
