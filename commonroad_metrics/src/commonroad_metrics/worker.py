@@ -16,7 +16,13 @@ and speaks to it one line at a time, each request answered by one line:
     ``Infinity`` (JSON as Python writes it: no conflict, TTC never comes),
     ``-Infinity`` (ALongReq when no braking avoids the collision within the
     horizon; BTN is ``Infinity`` then) or ``null`` (nothing to measure, or
-    the measure failed: its message is in ``errors``).  A road user with a NaN
+    the measure failed: its message is in ``errors``).  TTB and TTR read
+    ``0``, never CriMe's ``-Infinity``, when braking at full (TTB) or every
+    evasive manoeuvre (TTR) no longer avoids the collision even now.  A
+    measure of the road user ahead in the ego's lane (TTC, THW, HW, ALongReq
+    and the rest) is ``null`` when the frame has no other road user at all,
+    but with road users and none ahead in the ego's lane it reads that none
+    is (TTC ``Infinity``, ALongReq ``0``).  A road user with a NaN
     or an infinity among its numbers is a reading gone bad in this frame, not
     a request out of protocol: every measure asked is ``null`` and failed with
     the message naming the field (``"vx must be finite, got nan"``), and the

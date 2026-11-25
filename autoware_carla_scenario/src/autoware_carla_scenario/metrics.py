@@ -173,7 +173,8 @@ CRIME_THW_S = "crime_thw_s"
 #: lane (CriMe's HW, headway).
 CRIME_HW_M = "crime_hw_m"
 #: Seconds left before the ego must brake at full to avoid a collision
-#: (CriMe's TTB, time-to-brake).
+#: (CriMe's TTB, time-to-brake); ``inf`` when it hits no one, ``0`` when
+#: braking at full no longer avoids it even now.
 CRIME_TTB_S = "crime_ttb_s"
 #: Seconds until the ego and a road user come closest, both going on as they
 #: go (CriMe's TTCE, time-to-closest-encounter).
@@ -1580,7 +1581,8 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             title="Time to brake (CriMe)",
             unit="s",
             text="Seconds left before the ego must brake at full to avoid a "
-            "collision (CriMe TTB)",
+            "collision; inf when it hits no one, 0 when braking at full no "
+            "longer avoids it even now (CriMe TTB)",
             aggregation="min",
         ),
         Metric(

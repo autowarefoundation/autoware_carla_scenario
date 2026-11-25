@@ -193,7 +193,7 @@ of the collisions.
 | `crime_ttc_s` | s | Until the ego hits a road user ahead in its lane, both holding their acceleration until they stop (CriMe TTC); `inf` when they never meet, however far off | min |
 | `crime_thw_s` | s | Until the ego reaches where the road user ahead is now (CriMe THW) | min |
 | `crime_hw_m` | m | From the ego's front to the rear of the road user ahead, along the lane (CriMe HW) | min |
-| `crime_ttb_s` | s | Left before the ego must brake at full to avoid a collision (CriMe TTB) | min |
+| `crime_ttb_s` | s | Left before the ego must brake at full to avoid a collision (CriMe TTB); `inf` when it hits no one, `0` when braking at full no longer avoids it even now | min |
 | `crime_ttce_s` | s | Until the ego and a road user come closest (CriMe TTCE) | min |
 | `crime_dce_m` | m | Between the ego and a road user when they come closest; `0` when they would collide (CriMe DCE) | min |
 | `crime_a_long_req_mps2` | m/s^2 | The longitudinal acceleration the ego needs not to hit the road user ahead, negative to brake: the least deceleration that avoids it, counting a contact within the prediction horizon (`horizon_s`, 3 s) after the ego has stopped (CriMe ALongReq); `-inf` when braking alone cannot avoid a contact within it | min |
@@ -205,9 +205,19 @@ of the collisions.
 | `reach_drivable_area_m2` | m^2 | The road the ego can still reach without a collision at the end of the horizon (CommonRoad-Reach); `0` when every way it can go meets a road user: a collision it can no longer avoid | min |
 | `reach_drivable_area_sum_m2` | m^2 | The same, summed over the horizon's steps (CriMe's DA) | min |
 
-A measure with no one to measure from (no road user ahead for TTC) reads
-nothing, and so does every one while the ego is on no lanelet. A run failed on
-one is a `safety_margin` failure. They are watched like any other metric:
+A measure of the road user ahead in the ego's lane -- TTC, THW, HW,
+ALongReq, BTN, and ALatReq and STN, which take TTC -- reads nothing when no
+other road user is within `radius_m` of the ego. With road users within it
+but none ahead in the ego's lane (beside it, behind it, in another lane),
+CriMe reads that none is: TTC, THW and HW `inf`, ALongReq, ALatReq, BTN and
+STN `0`. The same frame with no one ahead thus reads nothing alone on the
+road and `inf` or `0` with a car in the next lane. TTCE and DCE read the
+closest road user within `radius_m`, in the ego's lane or not. TTB, TTR, WTTR
+and the drivable area read the ego's own way on: TTB and TTR `inf` when its
+predicted path hits nothing (CriMe's TTC\*, which counts the road's boundary
+as an obstacle too), whoever is around. Every measure reads nothing while the
+ego is on no lanelet. A run failed on a CommonRoad metric is a `safety_margin`
+failure. They are watched like any other metric:
 
 ```python
 from autoware_carla_scenario import ComparisonRule, MetricCondition

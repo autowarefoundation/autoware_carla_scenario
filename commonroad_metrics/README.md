@@ -138,7 +138,19 @@ braking, kick-down, steering left or right, each simulated -- still avoids the
 collision, at or under WTTR. It takes about 2 s a frame with a collision
 ahead (next to nothing without one), which is why the framework evaluates it
 every 0.5 s rather than every 0.1 s. CriMe reads `-Infinity` when no manoeuvre
-is left even now; the worker reads `0`, as for WTTR.
+is left even now; the worker reads `0`, as for WTTR. TTB is CriMe's too, the
+same search with braking at full alone, and reads `0` likewise when braking
+no longer avoids the collision even now (CriMe's `-Infinity`: no step does, or
+the ego is in contact already).
+
+A measure of the road user ahead in the ego's lane reads `null` when the
+frame has no other road user at all. With road users around but none ahead in
+the ego's lane -- beside it, behind it, in another lane -- CriMe reads that
+none is: TTC, THW and HW `Infinity`, ALongReq, ALatReq, BTN and STN `0`. TTCE
+and DCE read the closest road user, in the ego's lane or not. TTB and TTR
+search the ego's own predicted path (CriMe's TTC\*, which counts the road's
+boundary as an obstacle) and WTTR its reachable set: `Infinity` when it hits
+nothing, with road users around or not.
 
 ## Protocol
 
@@ -201,8 +213,10 @@ A road user is `id` (positive), `kind` (`car`, `truck`, `bus`, `motorcycle`,
 `length` and `width`, every number finite (a frame with one that is not
 fails its measures, above). A value is a number, `Infinity` (no conflict: TTC never
 comes), `-Infinity` (ALongReq when no braking avoids a contact within the
-horizon; BTN is `Infinity` then) or `null` (nothing to measure from); a measure that failed is `null`
-with its error. While the ego is on no lanelet every measure is `null`.
+horizon; BTN is `Infinity` then) or `null` (nothing to measure from: no other
+road user in the frame, above); a measure that failed is `null`
+with its error. TTB and TTR are never `-Infinity`: `0` when no manoeuvre is
+left even now. While the ego is on no lanelet every measure is `null`.
 `settings` takes `dt` and `radius_m`, finite and positive, and `horizon_steps`,
 an integer of at least 1 (`init` refuses anything else), and `reach_settings`:
 overrides of CommonRoad-Reach's configuration by section and key (`{"reachable_set": {"size_grid": 0.3}}`). A
