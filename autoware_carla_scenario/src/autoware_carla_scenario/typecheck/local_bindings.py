@@ -22,7 +22,9 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from .scopes import own_bindings
 
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef)
 _OTHER_SCOPES = (
@@ -58,6 +60,9 @@ class _Binding:
     value: ast.expr | None
     annotated: bool = False
     augmented: bool = False
+    #: How it is bound (:class:`.scopes.Bound`).
+    kind: str = "assign"
+    node: ast.AST | None = field(default=None, compare=False)
 
 
 def _own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
@@ -72,55 +77,50 @@ def _own_nodes(scope: ast.AST) -> Iterator[ast.AST]:
         stack.extend(ast.iter_child_nodes(node))
 
 
+#: How a local can be bound (:class:`.scopes.Bound` kinds): not ``del``,
+#: ``global`` / ``nonlocal`` (:func:`_declared_elsewhere`) or a parameter.
+_LOCAL_KINDS = frozenset(
+    {
+        "assign",
+        "unpack",
+        "annotated",
+        "augmented",
+        "loop",
+        "with",
+        "walrus",
+        "except",
+        "capture",
+        "import",
+        "definition",
+        "alias",
+    }
+)
+
+
 def _bindings(scope: ast.AST) -> list[_Binding]:
-    """The bindings of plain names in *scope*'s own body, in source order."""
+    """The bindings of plain names in *scope*'s own body, in source order:
+    every binder Python has (:func:`.scopes.own_bindings`), ``except ... as``,
+    match captures, imports, ``def`` / ``class`` and a walrus inside a
+    comprehension included (#2513)."""
     found: list[_Binding] = []
-    for node in _own_nodes(scope):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    found.append(
-                        _Binding(target.id, node.lineno, target.col_offset, node.value)
-                    )
-                else:
-                    found.extend(
-                        _Binding(n.id, n.lineno, n.col_offset, None)
-                        for n in ast.walk(target)
-                        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
-                    )
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            found.append(
-                _Binding(
-                    node.target.id,
-                    node.lineno,
-                    node.target.col_offset,
-                    node.value,
-                    annotated=True,
-                )
+    for bound in own_bindings(scope):
+        if bound.kind not in _LOCAL_KINDS:
+            continue
+        # A binding with no single value (a loop target, an unpacking, an
+        # import) keeps ``value=None``: it is no ``= None``.
+        value = None if bound.kind in ("unpack", "loop", "with") else bound.value
+        found.append(
+            _Binding(
+                bound.name,
+                bound.line,
+                bound.column,
+                value,
+                annotated=bound.kind == "annotated",
+                augmented=bound.kind == "augmented",
+                kind=bound.kind,
+                node=bound.node,
             )
-        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-            found.append(
-                _Binding(
-                    node.target.id,
-                    node.lineno,
-                    node.target.col_offset,
-                    node.value,
-                    augmented=True,
-                )
-            )
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.withitem, ast.NamedExpr)):
-            bound: ast.expr | None = (
-                node.optional_vars if isinstance(node, ast.withitem) else node.target
-            )
-            if bound is None:
-                continue
-            value = node.value if isinstance(node, ast.NamedExpr) else None
-            found.extend(
-                _Binding(n.id, n.lineno, n.col_offset, value)
-                for n in ast.walk(bound)
-                if isinstance(n, ast.Name)
-            )
-    found.sort(key=lambda b: (b.line, b.column))
+        )
     return found
 
 
@@ -330,6 +330,13 @@ def _type_of(
         return type(value.value).__name__
     if isinstance(value, ast.Name) and value.id in annotations:
         return ast.unparse(annotations[value.id])
+    if (
+        binding.kind == "except"
+        and isinstance(binding.node, ast.ExceptHandler)
+        and isinstance(binding.node.type, (ast.Name, ast.Attribute))
+    ):
+        # `except ValueError as err`: a single class
+        return ast.unparse(binding.node.type)
     if value is None:
         # A loop target over an annotated container: `for x in xs`.
         for node in _own_nodes(scope):

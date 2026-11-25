@@ -391,13 +391,42 @@ Two declared return types Codon does not enforce are refused from the syntax,
 before Codon runs (#529): a `return` of a literal, an f-string or a display in
 a function declared `-> bool` (Codon converts it to a `bool`; Python returns
 the `str`), and a function declared to return a type other than `None`,
-`Optional[...]`, `Any` or `NoReturn` whose body can run off its end. The flow
-analysis follows `if`, `while`, `for`, `try`, `with` and `match`; a `while
-True` without a `break`, a `raise`, `assert False`, `sys.exit()` and a call of
-a function declared `NoReturn` end a path, and a body that is only `...`,
-`pass` or a docstring (an abstract method, an overload) is not checked. A
-returned expression whose type is not obvious from its syntax
+`Optional[...]`, `Any` or `NoReturn` whose body can run off its end. An alias
+the scenario's modules define at module level (`MaybeF = Optional[float]`,
+`MaybeF: TypeAlias = ...`, `type MaybeF = float | None`), or import from one
+another, is read as what it names (#2513). The flow analysis follows `if`,
+`while`, `for`, `try`, `with` and `match`. A `while True` without a `break`,
+a `raise`, `assert False` and a call that never returns end a path:
+`sys.exit()`, `os._exit()`, `os.abort()`, `os.execv()` and the rest of
+`os.exec*()`, `pytest.fail()` / `skip()` / `xfail()` / `exit()`, `exit()`,
+`quit()`, `assert_never()`, and a function declared `NoReturn`. Such a
+function ends a path where the call is known to be it: a module-level
+function of the scenario's modules called by its name or through an import,
+or a method called on `self`, `cls`, `super()` or a parameter annotated with
+one of their classes, looked up in that class and its bases (#2513:
+`b.stop()` of a `b: B` whose `stop` returns `None` ends no path because some
+other class's `stop` is `NoReturn`). A body that is only `...`, `pass` or a
+docstring (an abstract method, an overload) is not checked. A
+`with contextlib.suppress(...)` block goes on after it when its body raises,
+so a `return` inside one ends no path. A `match` runs off its end when a
+case's body does, and when no case catches every subject: every case has a
+guard (`case _ if ready:`), or the subject is a parameter annotated `int`,
+`float`, `str`, `bytes` or `complex` and the cases without a guard are all
+literals (`case 1:` then `case n if n > 0:`). A match whose cases may be
+exhaustive (class patterns, an enum's members, a `bool`) is taken to be, as
+mypy does. A returned expression whose type is not obvious from its syntax
 (`return some_str`) is not judged.
+
+Where the check cannot tell what a call stands for, it errs on accepting:
+a method called on an object whose class is not one of the scenario's
+modules (a framework base class, `unittest.TestCase`, an unannotated
+parameter or a local variable) ends a path when its name is one of `exit`,
+`_exit`, `abort`, `fail`, `skip`, `xfail`, `quit`, `assert_never` or that of
+any function of the scenario declared `NoReturn`, so `parser.exit()` of an
+`ArgumentParser` is not refused, nor is `x.fail()` of any other `x`. A
+context manager other than `contextlib.suppress` that swallows an exception,
+an alias defined outside the scenario's modules, and a match the subject's
+type makes exhaustive in a way the syntax does not show are not caught.
 
 **Then mypy checks that an `Optional` is tested for `None` before it is
 used** (#239). Codon unwraps an `Optional[T]` implicitly wherever a `T` is
@@ -1189,7 +1218,9 @@ scenario has to do itself:
   assigns reads as `0` (or `""`, an empty list) in the check, and Python
   raises `AttributeError` at its first read. The check refuses a bare
   class-level annotation (no default; not a dataclass, `NamedTuple`,
-  `TypedDict` or `Protocol` field, nor a `ClassVar`) that a method of the
+  `TypedDict` or `Protocol` field, nor a `ClassVar`, `Final` or `InitVar`,
+  read by the exact name of the annotation's head: `FinalPose` is a class
+  like any other, #2513) that a method of the
   class or of a subclass reads (`self._count`, `self._count += 1`: an
   augmented assignment reads first) when nothing assigns it, at the
   annotation:
@@ -1242,8 +1273,11 @@ scenario has to do itself:
     `= None` line, each unannotated local of the checked modules that is first
     bound to `None` and rebound, as a likely cause. The type comes from what
     the local is rebound to where the source says it plainly (a literal, an
-    annotated parameter, the element of an annotated list it loops over);
-    otherwise it is written `<T>`:
+    annotated parameter, the element of an annotated list it loops over, the
+    class of an `except ValueError as best`); otherwise it is written `<T>`.
+    Every binder counts as a rebinding: an assignment, a loop or `with`
+    target, `except ... as`, a match capture, an import, a `def` or `class`
+    of the name, and a walrus, also inside a comprehension (#2513):
 
     ```text
     error: Codon failed without a diagnostic: exit status -11
@@ -2040,7 +2074,11 @@ runs (`typecheck/static_raises.py`):
   the other aliases of `typing`, "Subscripted generics cannot be used with
   class and instance checks"); in a tuple or a union, once the value is none
   of the classes before it (a `|` union on Python 3.10: at once). Test against the bare
-  class (`isinstance(v, list)`) and check the elements separately; for a
+  class (`isinstance(v, list)`) and check the elements separately (the same
+  for the other generic classes of `typing`, `collections.abc` and
+  `collections`, and `re.Pattern[str]`, `re.Match[str]`,
+  `typing.ContextManager[int]`, `contextlib.AbstractContextManager[int]`,
+  `collections.abc.Coroutine[...]`, `AsyncGenerator[...]`, #2513); for a
   `Literal[...]`, compare the value. `isinstance(x, int | float)`, an
   unsubscripted `typing.List`, `Optional[int]` and an index into a tuple of
   classes (`TYPES[0]`) are left alone, and so is a name the module binds
@@ -3578,7 +3616,11 @@ What Codon 0.19 needs that Python does not, beyond
   is not; that is Codon's, and only `JSONValue`, whose type is opaque by
   design, is rewritten. The check warns, without failing, when the static
   type of the subject is certain from the syntax (an annotated parameter or
-  local, a local bound once to a literal, an annotated `self` attribute) and
+  local, a local bound once to a literal and by nothing else: no `except ...
+  as`, match capture, import, `def`, `class` or walrus of the same name, an
+  annotated `self` attribute of the enclosing class; a class name two
+  classes of the module share, a function's own `class Holder` beside the
+  module's, names neither) and
   cannot be the class: `isinstance(x, str): x is statically int here, so this
   branch is not checked by the static check; an error in it is not reported`,
   #565.) (A module that never imports `json` but gets a

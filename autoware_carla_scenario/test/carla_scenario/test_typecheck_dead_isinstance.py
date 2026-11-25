@@ -82,3 +82,50 @@ def test_a_match_capture_rebinding_the_subject_is_silent() -> None:
         "        pass\n"
     )
     assert dead_isinstances(ast.parse(source)) == []
+
+
+def test_a_local_class_does_not_stand_for_the_modules_class_of_its_name() -> None:
+    """#2513: a function's own `class Holder` is not the module's."""
+    source = (
+        "class Holder:\n"
+        "    value: int | str\n"
+        "    def show(self) -> None:\n"
+        "        if isinstance(self.value, str):\n"
+        "            pass\n"
+        "def make() -> None:\n"
+        "    class Holder:\n"
+        "        value: int\n"
+    )
+    assert dead_isinstances(ast.parse(source)) == []
+
+
+def test_each_class_reads_its_own_attributes() -> None:
+    source = (
+        "class A:\n"
+        "    value: int\n"
+        "    def show(self) -> None:\n"
+        "        isinstance(self.value, str)\n"
+        "def make() -> None:\n"
+        "    class B:\n"
+        "        value: str\n"
+        "        def show(self) -> None:\n"
+        "            isinstance(self.value, str)\n"
+    )
+    (found,) = dead_isinstances(ast.parse(source))
+    assert found.line == 4
+
+
+@pytest.mark.parametrize(
+    "rebinding",
+    [
+        "    try:\n        pass\n    except Exception as x:\n        pass\n",
+        "    [x := s for s in 'ab']\n",
+        "    import x\n",
+        "    def x() -> None: ...\n",
+        "    class x: ...\n",
+        "    for x in 'ab':\n        pass\n",
+    ],
+)
+def test_a_subject_rebound_by_any_binder_is_silent(rebinding: str) -> None:
+    source = "def f() -> None:\n    x = 1\n" + rebinding + "    isinstance(x, str)\n"
+    assert dead_isinstances(ast.parse(source)) == []

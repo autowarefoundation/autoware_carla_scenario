@@ -42,9 +42,12 @@ import importlib
 import inspect
 import os
 import sys
-from functools import lru_cache
+import types
 import typing
+from functools import lru_cache
 from typing import Any, NamedTuple
+
+from .scopes import node_bindings
 
 __all__ = [
     "LITERAL_CHECKED",
@@ -82,12 +85,14 @@ _GENERICS = frozenset(
             for module in ("typing", "collections.abc")
             for n in (
                 "AbstractSet",
+                "AsyncGenerator",
                 "AsyncIterable",
                 "AsyncIterator",
                 "Awaitable",
                 "Callable",
                 "Collection",
                 "Container",
+                "Coroutine",
                 "Generator",
                 "ItemsView",
                 "Iterable",
@@ -108,8 +113,10 @@ _GENERICS = frozenset(
             f"typing.{n}"
             for n in (
                 "Annotated",
+                "AsyncContextManager",
                 "ChainMap",
                 "ClassVar",
+                "ContextManager",
                 "Counter",
                 "DefaultDict",
                 "Deque",
@@ -118,7 +125,9 @@ _GENERICS = frozenset(
                 "FrozenSet",
                 "List",
                 "Literal",
+                "Match",
                 "OrderedDict",
+                "Pattern",
                 "Tuple",
                 "Type",
             )
@@ -127,6 +136,10 @@ _GENERICS = frozenset(
             f"collections.{n}"
             for n in ("ChainMap", "Counter", "OrderedDict", "defaultdict", "deque")
         ),
+        "re.Pattern",
+        "re.Match",
+        "contextlib.AbstractContextManager",
+        "contextlib.AbstractAsyncContextManager",
     }
 )
 #: The unions whose members are classes in their own right.
@@ -178,23 +191,15 @@ def _imported_names(tree: ast.Module) -> dict[str, str | None]:
 
 
 def _rebound(tree: ast.Module) -> set[str]:
-    """Each name *tree* binds other than by an import: what an import or a
-    builtin of that name stands for is not certain there."""
-    bound: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            bound.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bound.add(node.name)
-        elif isinstance(node, ast.arg):
-            bound.add(node.arg)
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            bound.update(node.names)
-    return bound
+    """Each name *tree* binds other than by an import, anywhere in the module
+    (:func:`.scopes.node_bindings`): what an import or a builtin of that name
+    stands for is not certain there."""
+    return {
+        bound.name
+        for node in ast.walk(tree)
+        for bound in node_bindings(node)
+        if bound.kind != "import"
+    }
 
 
 class _Names:
@@ -384,10 +389,7 @@ def _fits(value: Any, hint: Any) -> bool:
         return value is None
     origin = typing.get_origin(hint)
     args = typing.get_args(hint)
-    if origin is typing.Union or (
-        sys.version_info >= (3, 10)
-        and origin is getattr(__import__("types"), "UnionType")
-    ):
+    if origin is typing.Union or origin is types.UnionType:
         return any(_fits(value, a) for a in args)
     if origin is typing.Literal:
         return value in args

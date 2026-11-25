@@ -60,6 +60,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from .scopes import parse_string_annotation
+
 _PACKAGE = "autoware_carla_scenario"
 
 #: Modules whose classes add no instance attributes an author's class relies on.
@@ -398,21 +400,34 @@ def _reads(tree: ast.AST, name: str) -> int | None:
     return min(lines) if lines else None
 
 
-def _is_class_var(annotation: ast.expr) -> bool:
-    for node in ast.walk(annotation):
+#: The annotation heads that make a class-level annotation no instance
+#: attribute: ``ClassVar[T]``, ``Final[T]`` / ``Final``, ``InitVar[T]``.
+_NOT_INSTANCE_HEADS = frozenset({"ClassVar", "Final", "InitVar"})
+
+
+def _is_class_var(annotation: ast.expr | None) -> bool:
+    """Whether *annotation* is ``ClassVar``, ``Final`` or ``InitVar`` (bare,
+    subscripted, qualified as ``typing.Final``, quoted, or the first argument
+    of ``Annotated``), by the exact name of its outermost head: ``FinalPose``
+    or ``InitVarianceModel`` is a class like any other (#2513)."""
+    node = parse_string_annotation(annotation)
+    for _ in range(8):  # Annotated[Annotated[...]] ... is not followed further
+        if node is None:
+            return False
+        head = node.value if isinstance(node, ast.Subscript) else node
         name = (
-            node.id
-            if isinstance(node, ast.Name)
-            else node.attr
-            if isinstance(node, ast.Attribute)
-            else node.value
-            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            head.id
+            if isinstance(head, ast.Name)
+            else head.attr
+            if isinstance(head, ast.Attribute)
             else None
         )
-        if isinstance(name, str) and any(
-            word in name for word in ("ClassVar", "Final", "InitVar")
-        ):
+        if name in _NOT_INSTANCE_HEADS:
             return True
+        if name != "Annotated" or not isinstance(node, ast.Subscript):
+            return False
+        first = node.slice.elts[0] if isinstance(node.slice, ast.Tuple) else node.slice
+        node = parse_string_annotation(first)
     return False
 
 
