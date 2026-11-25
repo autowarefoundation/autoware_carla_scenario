@@ -44,6 +44,10 @@ class _Stream:
         self.times: dict[str, Any] = {}
         self.logged: list[tuple[str, dict[str, Any], Any]] = []
         self.closed = False
+        self.log_time = True
+
+    def set_log_time_enabled(self, enabled: bool) -> None:
+        self.log_time = enabled
 
     def save(self, path: str) -> None:
         self.saved = path
@@ -528,3 +532,119 @@ def test_a_converter_records_cameras_without_the_lidar(tmp_path: Path) -> None:
     assert recorder.records_cameras and not recorder.records_lidar
     converter.close()
     assert active_recorder() is None
+
+
+# ---------------------------------------------------------------------------
+# The SDK's threads, its timelines and the ego's tilt, read back (#2485)
+# ---------------------------------------------------------------------------
+
+
+def _threads() -> int:
+    import os
+    import threading
+
+    task = Path(f"/proc/{os.getpid()}/task")
+    return len(list(task.iterdir())) if task.is_dir() else threading.active_count()
+
+
+def test_the_fake_stream_records_no_wall_clock(tmp_path: Path) -> None:
+    sdk = _Sdk()
+    LidarRecorder(tmp_path / "r.sensors.rrd", "r", 0, sdk=sdk).close()
+    assert sdk.streams[0].log_time is False
+
+
+def test_sensor_recordings_leave_no_threads_behind(tmp_path: Path) -> None:
+    """Rerun 0.38 never joins a closed stream's two threads unless told to
+    clean up: a batch would grow by two a case."""
+    pytest.importorskip("rerun")
+    from rerun_bindings import rerun_bindings as bindings
+
+    def one_run(i: int) -> Path:
+        converter = RerunConverter(converter=_Converter(), lidar_max_points=0)
+        converter.start_sensors(tmp_path / f"Run-{i}.trajectory.jsonl", f"Run-{i}", 0)
+        recorder = active_recorder()
+        assert recorder is not None
+        recorder.log_sweep("top", 1, np.ones((4, 3), np.float32), _IDENTITY, _ORIGIN)
+        converter.stop_sensors()
+        converter.close()
+        return tmp_path / f"Run-{i}.sensors.rrd"
+
+    # One first: the SDK starts threads of its own once.
+    assert bindings.check_for_rrd_footer(str(one_run(0)))
+    before = _threads()
+    for i in range(1, 6):
+        # Still a whole recording: its footer is written.
+        assert bindings.check_for_rrd_footer(str(one_run(i)))
+    assert _threads() <= before
+
+
+def _read(recording: Path) -> list[Any]:
+    """The chunks of *recording*'s one recording."""
+    chunk = pytest.importorskip("rerun.chunk")
+    reader = chunk.RrdReader(str(recording))
+    (store,) = reader.recordings()
+    return list(reader.stream(store=store).to_chunks())
+
+
+def test_the_sensors_are_on_the_converters_timelines_alone(tmp_path: Path) -> None:
+    """No wall-clock `log_time`: the converter's chunks have none, and the
+    viewer would show the sensors alone on it."""
+    pytest.importorskip("rerun")
+    from autoware_carla_scenario.rerun_lidar import CameraMount
+
+    recorder = LidarRecorder(tmp_path / "r.sensors.rrd", "r", 0, cameras=True)
+    recorder.log_sweep("top", 3, np.ones((4, 3), np.float32), _IDENTITY, _ORIGIN)
+    recorder.log_camera_frame("front", 3, b"\xff\xd8\xff\xd9", CameraMount(4, 4, 90.0))
+    recorder.log_ego_tilt(3, 0.0, 5.0)
+    recorder.close()
+    timed = [c for c in _read(tmp_path / "r.sensors.rrd") if not c.is_static]
+    assert timed
+    for chunk in timed:
+        assert set(chunk.timeline_names) == {"frame", "sim_time"}, chunk.entity_path
+
+
+def test_the_cameras_are_drawn_with_the_egos_pitch_and_roll(tmp_path: Path) -> None:
+    """The converter's ``world/ego/pose`` has the ego's yaw alone; the
+    cameras' parent carries the rest of its rotation on every tick."""
+    pytest.importorskip("rerun")
+    from autoware_carla_scenario.rerun_lidar import CameraMount, ego_tilt
+
+    recorder = LidarRecorder(
+        tmp_path / "r.sensors.rrd", "r", 100, lidar=False, cameras=True
+    )
+    assert not recorder.log_ego_tilt(99, 0.0, 0.0)  # a warm-up tick
+    # CARLA's pitch up and roll right, in degrees.
+    assert recorder.log_ego_tilt(100, 2.0, 10.0)
+    assert recorder.log_ego_tilt(101, 0.0, 0.0)
+    recorder.log_camera_frame(
+        "front", 100, b"\xff\xd8\xff\xd9", CameraMount(4, 4, 90.0)
+    )
+    recorder.close()
+
+    rows: list[tuple[int, Any]] = []
+    for chunk in _read(tmp_path / "r.sensors.rrd"):
+        if chunk.entity_path != "/world/ego/pose/cameras" or chunk.is_static:
+            continue
+        batch = chunk.to_record_batch().to_pydict()
+        [frames] = [v for k, v in batch.items() if k == "frame"]
+        [matrices] = [v for k, v in batch.items() if k.endswith("mat3x3")]
+        rows.extend(zip(frames, matrices))
+    assert [frame for frame, _ in rows] == [100, 101]
+    tilt = np.asarray(rows[0][1], dtype=np.float64).reshape(3, 3)
+    # Rerun keeps a 3x3 column-major.
+    np.testing.assert_allclose(tilt.T, ego_tilt(2.0, 10.0), atol=1e-6)
+    # CARLA's pitch up lifts the ego's nose (+z) in the right-handed frame.
+    nose = ego_tilt(0.0, 10.0) @ np.array([1.0, 0.0, 0.0])
+    up = np.radians(10.0)
+    np.testing.assert_allclose(nose, np.array([np.cos(up), 0.0, np.sin(up)]))
+    np.testing.assert_allclose(
+        np.asarray(rows[1][1]).reshape(3, 3), np.eye(3), atol=1e-9
+    )
+
+
+def test_no_tilt_is_written_without_the_cameras(tmp_path: Path) -> None:
+    sdk = _Sdk()
+    recorder = LidarRecorder(tmp_path / "r.sensors.rrd", "r", 0, sdk=sdk)
+    assert not recorder.log_ego_tilt(5, 1.0, 1.0)
+    assert sdk.streams[0].logged == []
+    recorder.close()

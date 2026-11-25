@@ -81,3 +81,7 @@ class RerunConverter:
     # scenario_queue drops them.
     def wait(self) -> list[RerunConversion]:
         raise NotImplementedError()
+
+    # Drops the conversions into a recording removed since (a retried run's).
+    def forget(self, recording: Path) -> None:
+        raise NotImplementedError()

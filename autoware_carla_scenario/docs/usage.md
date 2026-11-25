@@ -1195,10 +1195,7 @@ them itself when it converts the log, on the recording's `frame` and
   its metric was NG.
 
 Nothing is merged into the recording afterwards: the metrics are in the log,
-so converting it again draws them again. (A converter that did not know
-`metric` records had them written with the Rerun SDK and merged in, into
-`metrics/<key>`; the pinned one draws them, and the framework then writes
-nothing -- `rerun_metrics.merge_metrics`.)
+so converting it again draws them again.
 
 ### Sensors in the recording
 
@@ -1207,7 +1204,8 @@ The trajectory log holds no sensor data. With `rerun.enabled=true` and:
 - `rerun.lidar=true`, the sweeps each driver LiDAR sends the ego's policy
   (`driver.lidars`) are recorded as `world/lidar/<logical id>`: points in the
   recording's world frame, coloured by height above the ego, drawn where the
-  ego's pose put them when the policy got them;
+  ego's pose -- its pitch and roll included -- put them on the tick they were
+  taken;
 - `rerun.cameras=true`, the frames each driver camera sends it
   (`driver.cameras`) are recorded as `world/ego/pose/cameras/<logical id>`:
   the camera's mount on the ego and a pinhole of its field of view, so the 3D
@@ -1215,6 +1213,9 @@ The trajectory log holds no sensor data. With `rerun.enabled=true` and:
   got (a 2D view of the entity shows them). A camera with an F-theta `lens`
   gets its mount and frames but no pinhole: Rerun's camera model is a pinhole
   alone, and one of its `fov` would draw the frustum and the frame wrong.
+  The converter's `world/ego/pose` has the ego's location and yaw alone, so
+  `world/ego/pose/cameras` carries its pitch and roll, on every tick: the
+  frustums tilt with the ego's box on a grade or under braking.
 
 They are written during the run into `{ScenarioName}.sensors.rrd`; once the log
 is converted they are merged into `{ScenarioName}.rrd` (`rerun rrd merge`) and
@@ -1616,7 +1617,7 @@ started in the same second as another run or a batch gets `HH-MM-SS-1`, then
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)), or a Waymo Open Sim Agents Challenge rollout with `scenario-wosac` ([WOSAC Rollouts](wosac.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
 | `{ScenarioName}.sensors.rrd` | The driver's sensors recorded during the run (`rerun.lidar`, `rerun.cameras`); merged into `{ScenarioName}.rrd` and removed, so only left behind by a run or merge that did not finish ([Sensors in the recording](#sensors-in-the-recording)) |
-| `{ScenarioName}.metrics.rrd` | Not written with the converter the `rerun` extra pins, which draws the metrics itself. A converter that does not draw them gets the run's metrics written here as scalars, then merged into `{ScenarioName}.rrd` and removed, so the file is only left behind by a run killed during that merge ([Metrics in the recording](#metrics-in-the-recording)) |
+| `{ScenarioName}.metrics.rrd` | No longer written: the converter draws the metrics itself ([Metrics in the recording](#metrics-in-the-recording)). Older versions wrote the run's metrics here before merging them into `{ScenarioName}.rrd`, so one is only left behind by such a version's run killed during that merge; it still counts as the run's output |
 | `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.t4/` | The run as a T4 dataset (a directory, its version `0` inside), with `t4.enabled=true` ([T4 Dataset](t4_dataset.md)) |
 | `{ScenarioName}.sumo/` | The SUMO backend's log, generated demand and, with `fcd_output`, its floating car data (`fcd.xml`) and clock (`clock.csv`), with `traffic=sumo` ([Traffic Backends](traffic_backends.md)) |

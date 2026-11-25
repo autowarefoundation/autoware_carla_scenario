@@ -56,7 +56,7 @@
   for (const pane of document.querySelectorAll('.rerun-pane')) {
     await mountRerun(pane, {
       viewerUrl: {{ viewer.base_url | tojson }},
-      makeUrls: [pane.dataset.makeUrl],
+      makeUrl: pane.dataset.makeUrl,
       status: pane.nextElementSibling,
     });
   }

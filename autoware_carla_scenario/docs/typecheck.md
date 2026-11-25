@@ -2590,7 +2590,7 @@ and coverage file are its too, which `scenario_runner`, `ui.case_paths`,
 `ui.scanner` and `examples/run.py` name them with, #1704; so are those of a
 run's environment and lock and of its T4Scene and map, which `environment` and
 `t4_scene.convert` re-export, #1713; so are those of the metrics' scratch
-recording, which `rerun_metrics` re-exports, and of the ODD archive, which
+recording older versions wrote, and of the ODD archive, which
 `ui.case_paths` names, #1748), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of `rerun rrd print` and the scan of a

@@ -492,7 +492,7 @@ def _judge_metrics(
 
     The metrics, and each condition's NG frames, go into the run's
     *trajectory* log (its :class:`TrajectoryRecorder`), for its Rerun
-    recording (:mod:`~autoware_carla_scenario.rerun_metrics`).
+    recording, which the converter draws them in.
 
     Raises:
         ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A CommonRoad

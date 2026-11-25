@@ -1445,6 +1445,8 @@ def test_a_retry_waits_for_the_failed_attempts_recording_first(
     assert result.passed
     # Once, between the attempts, with the failed attempt's log still there.
     assert seen == [True]
+    # And the recording removed with its outputs is forgotten (#2485).
+    rerun.forget.assert_called_once_with(tmp_path / "_NullScenario.rrd")
 
 
 # ---------------------------------------------------------------------------
