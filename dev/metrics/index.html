@@ -2760,7 +2760,7 @@ of the collisions.</p>
 <tr>
 <td><code>crime_ttb_s</code></td>
 <td>s</td>
-<td>Left before the ego must brake at full to avoid a collision (CriMe TTB)</td>
+<td>Left before the ego must brake at full to avoid a collision (CriMe TTB); <code>inf</code> when it hits no one, <code>0</code> when braking at full no longer avoids it even now</td>
 <td>min</td>
 </tr>
 <tr>
@@ -2825,9 +2825,19 @@ of the collisions.</p>
 </tr>
 </tbody>
 </table>
-<p>A measure with no one to measure from (no road user ahead for TTC) reads
-nothing, and so does every one while the ego is on no lanelet. A run failed on
-one is a <code>safety_margin</code> failure. They are watched like any other metric:</p>
+<p>A measure of the road user ahead in the ego's lane -- TTC, THW, HW,
+ALongReq, BTN, and ALatReq and STN, which take TTC -- reads nothing when no
+other road user is within <code>radius_m</code> of the ego. With road users within it
+but none ahead in the ego's lane (beside it, behind it, in another lane),
+CriMe reads that none is: TTC, THW and HW <code>inf</code>, ALongReq, ALatReq, BTN and
+STN <code>0</code>. The same frame with no one ahead thus reads nothing alone on the
+road and <code>inf</code> or <code>0</code> with a car in the next lane. TTCE and DCE read the
+closest road user within <code>radius_m</code>, in the ego's lane or not. TTB, TTR, WTTR
+and the drivable area read the ego's own way on: TTB and TTR <code>inf</code> when its
+predicted path hits nothing (CriMe's TTC*, which counts the road's boundary
+as an obstacle too), whoever is around. Every measure reads nothing while the
+ego is on no lanelet. A run failed on a CommonRoad metric is a <code>safety_margin</code>
+failure. They are watched like any other metric:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComparisonRule</span><span class="p">,</span> <span class="n">MetricCondition</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">CRIME_TTC_S</span><span class="p">,</span> <span class="n">REACH_DRIVABLE_AREA_M2</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
@@ -3231,7 +3241,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 11:17:44 UTC"><span class="timeago" datetime="2026-11-24T11:17:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 11:17:44 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 13:49:13 UTC"><span class="timeago" datetime="2026-11-25T13:49:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 13:49:13 UTC">2026-11-25</span>
   </span>
 
     
