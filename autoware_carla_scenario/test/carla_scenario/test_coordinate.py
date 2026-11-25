@@ -808,6 +808,32 @@ class TestLanelet2ToCarla:
         dist = math.sqrt((r0.x - r1.x) ** 2 + (r0.y - r1.y) ** 2)
         assert dist == pytest.approx(1.0, abs=0.01)
 
+    @pytest.mark.parametrize("past", [1e-3, 50.0])
+    def test_an_s_past_the_lanelet_s_end_is_refused(self, map_manager, past):
+        # #2469: it used to be clamped, so a point placed 50 m past the end of
+        # a 15.66 m lanelet landed on the end without a word.
+        length = lanelet_length(1)
+        with pytest.raises(ValueError, match=r"not on lanelet 1, which is 15\.66"):
+            _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length + past))
+
+    @pytest.mark.parametrize("s", [-1e-3, -20.0, math.nan])
+    def test_an_s_before_the_lanelet_s_start_is_refused(self, map_manager, s):
+        with pytest.raises(ValueError, match="not on lanelet 1"):
+            to_carla_world(Lanelet2Pose(lanelet_id=1, s=s))
+
+    def test_both_ends_are_on_the_lanelet_within_float_error(self, map_manager):
+        # An s of exactly the length lanelet2 measures, or summed some other
+        # way, is the end -- not a point past it.
+        length = lanelet_length(1)
+        end = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length))
+        assert _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length + 5e-7)) == (
+            pytest.approx(end)
+        )
+        start = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=0.0))
+        assert _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=-5e-7)) == (
+            pytest.approx(start)
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestOpenDriveToCarla

@@ -27,6 +27,13 @@ drives the road the scenario meant rather than the shortest one to the goal.
 Every pose is moved to Autoware's `base_link`, the rear axle, as the initial
 pose is.
 
+The initial pose is where the ego actually stands: when a spawn retry has
+moved it off the scenario's snapped spawn (`entity.spawn_retry_t_step` across
+its lane per retry), Autoware is given the actor's own position and heading,
+at the snapped spawn's road height, and the shift is logged. An ego attached
+to an actor something else spawned keeps the scenario's pose, and a
+disagreement of more than a metre is warned about.
+
 A `RoutingAction` in the tick loop re-routes Autoware part-way through the run.
 The framework serves the new goal and waypoints as the next `mission_version`
 of the mission; `scenario_bridge`, which keeps polling `GetMission` every

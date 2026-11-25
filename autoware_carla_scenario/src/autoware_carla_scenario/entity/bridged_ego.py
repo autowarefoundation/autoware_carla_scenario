@@ -47,11 +47,11 @@ from typing import TYPE_CHECKING, Optional, Sequence
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-    from ..autoware_bridge.base import AutowareBridge, BridgePose
+    from ..autoware_bridge.base import AutowareBridge
     from ..autoware_stack.launcher import AutowareLauncher
     from ..coordinate import GroundProjectionConfig, Lanelet2Pose
 
-from ..autoware_bridge.base import AutowareBridgeConfig
+from ..autoware_bridge.base import AutowareBridgeConfig, BridgePose, Vector3
 from ..constants import EGO_ROLE_NAME
 from ..coordinate.poses import CarlaWorldPose
 from ..coordinate.transform import to_map_frame
@@ -68,6 +68,13 @@ __all__ = ["BridgeHandshake", "BridgedEgoEntity"]
 #: surface moves it by centimetres; a spawn_point that does not match moves it
 #: by metres.
 _INITIAL_POSE_TOLERANCE_M: float = 1.0
+
+#: How far, horizontally, an ego the framework spawned may be from the
+#: scenario's pose before localization takes the actor's own position instead,
+#: and says so.  A spawn retry shifts the ego across its lane by
+#: ``spawn_retry_t_step`` metres at a time (0.1 m by default); anything below
+#: this is float noise or the actor settling.
+_INITIAL_POSE_SHIFT_EPSILON_M: float = 0.01
 
 
 class BridgeHandshake:
@@ -218,7 +225,9 @@ class BridgeHandshake:
         ego actor appears after ``setup()``, so ``None`` here means "wherever
         the ego turns out to be", read off the actor when the scenario starts.
         Passing one anyway states where the ego is *expected* to be, and a
-        disagreement is reported rather than silently localized away.
+        disagreement is reported rather than silently localized away; an ego
+        the framework spawned is localized where it actually stands, at the
+        given pose's height (:meth:`_resolve_initial_pose`).
 
         The built-in scenarios reach this through
         :class:`~autoware_carla_scenario.actions.routing.RoutingAction`, which
@@ -337,7 +346,9 @@ class BridgeHandshake:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, actor: "carla.Actor", owner: str) -> None:
+    def start(
+        self, actor: "carla.Actor", owner: str, spawned_by_framework: bool = True
+    ) -> None:
         """Hand the stack the mission for the ego *actor*; readiness is polled.
 
         Where the ego actually is is checked against where the scenario said it
@@ -348,6 +359,12 @@ class BridgeHandshake:
         Args:
             actor: The ego, already spawned where the run starts.
             owner: The entity's class name, for its messages.
+            spawned_by_framework: Whether the framework spawned *actor* (the
+                default) rather than attaching to one something else spawned
+                (:attr:`~autoware_carla_scenario.entity.ego.EgoVehicle.attaches_to_existing_actor`).
+                An ego the framework spawned is localized at its own position
+                and heading, which a spawn retry may have moved off the
+                scenario's pose (:meth:`_resolve_initial_pose`).
 
         Raises:
             ValueError: If the goal pose is missing.
@@ -391,7 +408,9 @@ class BridgeHandshake:
         # left.  The goal moves with it, so the actor still stops at the goal.
         offset = self._base_link_offset(actor)
         self._base_link_offset_m = offset
-        initial_pose = self._resolve_initial_pose(actor).moved_forward(offset)
+        initial_pose = self._resolve_initial_pose(
+            actor, spawned_by_framework
+        ).moved_forward(offset)
         goal_pose = self._goal_pose.moved_forward(offset)
         waypoint_poses = [pose.moved_forward(offset) for pose in self._waypoint_poses]
         logger.info(
@@ -477,25 +496,38 @@ class BridgeHandshake:
 
         return rear_axle_offset(actor, self._config.base_link_offset_m)
 
-    def _resolve_initial_pose(self, actor: "carla.Actor") -> "BridgePose":
+    def _resolve_initial_pose(
+        self, actor: "carla.Actor", spawned_by_framework: bool = True
+    ) -> "BridgePose":
         """Return the pose to initialize localization at, checked against the ego.
 
-        The scenario's pose wins when it has one: it is a spawn snapped onto the
-        road surface, the height ``base_link`` is at, while the actor's
+        The scenario's height wins when it has a pose: it is a spawn snapped
+        onto the road surface, the height ``base_link`` is at, while the actor's
         transform is the actor's own origin -- a metre and a half above the road
         on some vehicles.  Both are the vehicle's centre along its length; the
-        caller moves the result back to the rear axle.  What the actor is good
-        for is saying whether the ego is *where the scenario thinks*, which is a
-        different question and the one that goes wrong silently.
+        caller moves the result back to the rear axle.  The comparison is
+        horizontal for the same reason: the heights are measured from different
+        places and would disagree on every run.
 
-        The comparison is horizontal for the same reason: the heights are
-        measured from different places and would disagree on every run.
+        Where the ego stands horizontally depends on who spawned it.  An ego the
+        framework spawned (*spawned_by_framework*) stands where the spawn put
+        it, which a spawn retry moves across its lane by up to
+        ``spawn_retry_t_step * spawn_retry_max_count`` metres
+        (:func:`~autoware_carla_scenario.entity._spawn.spawn_vehicle_actor`):
+        once that is more than :data:`_INITIAL_POSE_SHIFT_EPSILON_M`, the stack
+        is given the actor's position and heading at the scenario's height, and
+        the shift is logged -- localization started off the real actor is a
+        localization error nobody can place.  An ego something else spawned
+        (an interface node's ``spawn_point``) keeps the scenario's pose, which
+        is the one its goal and conditions were written against, and a
+        disagreement of more than :data:`_INITIAL_POSE_TOLERANCE_M` is warned
+        about.
         """
         actual = to_map_frame(
             CarlaWorldPose.from_carla_transform(actor.get_transform())
         )
-        expected = self._initial_pose
-        if expected is None:
+        # An annotated local unwraps the Optional for Codon, which narrows none.
+        if self._initial_pose is None:
             logger.info(
                 "No initial pose was set; localizing at the ego's own pose "
                 "(%.2f, %.2f). The %s stack fits the height to the map.",
@@ -504,12 +536,47 @@ class BridgeHandshake:
                 self._stack_name,
             )
             return actual
+        expected: BridgePose = self._initial_pose
         # math.hypot of the differences, which is math.dist's own computation:
         # Codon's math has no dist().
         offset = math.hypot(
             expected.position.x - actual.position.x,
             expected.position.y - actual.position.y,
         )
+        if spawned_by_framework:
+            if offset <= _INITIAL_POSE_SHIFT_EPSILON_M:
+                return expected
+            if offset > _INITIAL_POSE_TOLERANCE_M:
+                logger.warning(
+                    "The ego is %.2f m from where the scenario expected it "
+                    "(%.2f, %.2f) -- it was spawned at (%.2f, %.2f). The %s "
+                    "stack is localized at the ego's own position and heading, "
+                    "at the scenario's height; the scenario's goal and "
+                    "conditions were written against the pose it expected.",
+                    offset,
+                    expected.position.x,
+                    expected.position.y,
+                    actual.position.x,
+                    actual.position.y,
+                    self._stack_name,
+                )
+            else:
+                logger.info(
+                    "The ego was spawned %.2f m from where the scenario "
+                    "expected it (%.2f, %.2f), at (%.2f, %.2f) -- a spawn retry "
+                    "moved it; the %s stack is localized at the ego's own "
+                    "position and heading, at the scenario's height.",
+                    offset,
+                    expected.position.x,
+                    expected.position.y,
+                    actual.position.x,
+                    actual.position.y,
+                    self._stack_name,
+                )
+            return BridgePose(
+                Vector3(actual.position.x, actual.position.y, expected.position.z),
+                actual.rotation,
+            )
         if offset > _INITIAL_POSE_TOLERANCE_M:
             logger.warning(
                 "The ego is %.2f m from where the scenario expected it "
@@ -813,7 +880,9 @@ class BridgedEgoEntity(ExternallyDrivenEgo):
             )
         actor: "carla.Actor" = self.actor
         self._reset_termination()
-        self._handshake.start(actor, type(self).__name__)
+        self._handshake.start(
+            actor, type(self).__name__, not self.attaches_to_existing_actor
+        )
         # The stack localizes and plans for its base_link there: the run's
         # records put the ego's base_link there too.
         set_ego_base_link(self._handshake.base_link_offset_m)

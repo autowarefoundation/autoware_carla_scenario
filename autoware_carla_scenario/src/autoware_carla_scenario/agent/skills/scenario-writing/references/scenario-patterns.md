@@ -66,7 +66,6 @@ def setup(self) -> None:
             spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
             spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
             spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
-            od_pose=to_opendrive(npc_pose),
             ground_projection=self._ground_projection,
         )
     )

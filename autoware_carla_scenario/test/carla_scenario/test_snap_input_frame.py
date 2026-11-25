@@ -277,3 +277,91 @@ class TestTheSpawnRetry:
         retry = tried[1].location
         # Half a metre across the placed transform's heading, nowhere else.
         assert (retry.x, retry.y) == pytest.approx((100.0, 200.5))
+
+
+class TestTheSpawnRetryNeedsNoOpenDrivePose:
+    """``spawn_retry_max_count`` governs every failed spawn at a transform (#2469).
+
+    The retries used to run only when an ``od_pose`` was given, so a
+    ``SpawnTransform`` without one got a single attempt and a ``RuntimeError``
+    whatever the count said.
+    """
+
+    @staticmethod
+    def _world(free_after: int) -> tuple[Any, List[Any], Any]:
+        """A fake world whose first *free_after* spawn attempts are blocked."""
+        tried: List[Any] = []
+        actor = MagicMock()
+
+        def _try_spawn(_bp, transform):
+            tried.append(transform)
+            return actor if len(tried) > free_after else None
+
+        world = MagicMock()
+        blueprint = MagicMock(id="vehicle.mini.cooper")
+        world.get_blueprint_library.return_value.filter.return_value = [blueprint]
+        world.try_spawn_actor.side_effect = _try_spawn
+        spawn_point = carla.Transform(
+            carla.Location(x=10.0, y=20.0, z=1.0), carla.Rotation(yaw=90.0)
+        )
+        world.get_map.return_value.get_spawn_points.return_value = [spawn_point]
+        return world, tried, actor
+
+    def test_a_transform_without_an_od_pose_is_retried(self) -> None:
+        from autoware_carla_scenario.entity._spawn import spawn_vehicle_actor
+
+        world, tried, actor = self._world(free_after=1)
+        placed = carla.Transform(
+            carla.Location(x=100.0, y=200.0, z=1.0), carla.Rotation(yaw=0.0)
+        )
+
+        spawned = spawn_vehicle_actor(
+            world,
+            "vehicle.mini.cooper",
+            "npc",
+            SpawnTransform(placed),
+            spawn_retry_max_count=1,
+            spawn_retry_t_step=0.5,
+            spawn_retry_z_step=0.0,
+        )
+
+        assert spawned is actor
+        assert len(tried) == 2
+        retry = tried[1].location
+        assert (retry.x, retry.y) == pytest.approx((100.0, 200.5))
+
+    def test_no_retries_still_means_one_attempt(self) -> None:
+        from autoware_carla_scenario.entity._spawn import spawn_vehicle_actor
+
+        world, tried, _actor = self._world(free_after=1)
+        placed = carla.Transform(carla.Location(x=100.0, y=200.0, z=1.0))
+
+        with pytest.raises(RuntimeError, match="Failed to spawn vehicle 'npc'"):
+            spawn_vehicle_actor(
+                world,
+                "vehicle.mini.cooper",
+                "npc",
+                SpawnTransform(placed),
+                spawn_retry_max_count=0,
+            )
+        assert len(tried) == 1
+
+    def test_a_map_spawn_point_is_tried_once(self, monkeypatch) -> None:
+        from autoware_carla_scenario.entity import _spawn
+        from autoware_carla_scenario.entity._spawn import (
+            SpawnPointIndex,
+            spawn_vehicle_actor,
+        )
+
+        world, tried, _actor = self._world(free_after=1)
+        monkeypatch.setattr(_spawn, "run_carla_map", lambda w: w.get_map())
+
+        with pytest.raises(RuntimeError, match="Failed to spawn vehicle 'npc'"):
+            spawn_vehicle_actor(
+                world,
+                "vehicle.mini.cooper",
+                "npc",
+                SpawnPointIndex(0),
+                spawn_retry_max_count=3,
+            )
+        assert len(tried) == 1

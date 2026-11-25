@@ -65,6 +65,12 @@ _SEAM_TOLERANCE = 1e-3
 #: elevation, to tell stacked lanelets apart.
 _STACKED_CANDIDATES = 8
 
+#: How far (m) a :class:`Lanelet2Pose`'s ``s`` may be before its lanelet's
+#: start or past its end and still be read as on it: float error only, such as
+#: an ``s`` of exactly the lanelet's length summed another way.  Beyond it the
+#: pose is refused, not clamped onto the end (#2469).
+_S_TOLERANCE_M: float = 1e-6
+
 #: How much farther (m) from a point's elevation than the nearest lanelet
 #: surface over or under it a lanelet's surface may be and still hold the
 #: point (:func:`on_lanelet`, :func:`.stacked.choose_lanelet`).
@@ -628,11 +634,27 @@ def to_map_frame(
 
 
 def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
-    """Convert a Lanelet2 Frenet pose to CARLA world coordinates."""
+    """Convert a Lanelet2 Frenet pose to CARLA world coordinates.
+
+    Raises:
+        ValueError: If ``s`` is not on the lanelet: before 0 or past the
+            lanelet's length by more than :data:`_S_TOLERANCE_M` (or NaN).
+            Such an ``s`` used to be clamped, so a point an author placed past
+            the lanelet's end collapsed onto the end without a word (#2469);
+            a point further on belongs on the lanelet that follows.
+    """
     mm = MapManager.get_instance()
     lanelet = mm.lanelet_map.laneletLayer[pose.lanelet_id]
     points = [(p.x, p.y, p.z) for p in lanelet.centerline]
 
+    length = _polyline_length_2d(points)
+    if not -_S_TOLERANCE_M <= pose.s <= length + _S_TOLERANCE_M:
+        raise ValueError(
+            f"s={pose.s:.3f} m is not on lanelet {pose.lanelet_id}, which is "
+            f"{length:.3f} m long: a Lanelet2Pose's s runs from 0 to its "
+            "lanelet's length, and a point further on belongs on the lanelet "
+            "that follows"
+        )
     x_cl, y_cl, z_cl, heading_cl = _interpolate_at_s(points, pose.s)
     total_heading = heading_cl + pose.heading
 
@@ -1030,6 +1052,17 @@ def _compute_arc_lengths_2d(
     arc_lengths = np.zeros(len(points))
     arc_lengths[1:] = np.cumsum(seg_lengths)
     return arc_lengths
+
+
+def _polyline_length_2d(points: list[tuple[float, float, float]]) -> float:
+    """The plan-view length of a 3D polyline: the arc length
+    :func:`_interpolate_at_s` measures ``s`` along."""
+    length = 0.0
+    for i in range(1, len(points)):
+        length += math.hypot(
+            points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]
+        )
+    return length
 
 
 def _interpolate_at_s(
