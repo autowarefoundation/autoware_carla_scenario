@@ -40,12 +40,22 @@ empty_parameter_set_mark = "fail_at_collect"
 # installed scenario that left them behind would have no scenario in it.
 module-name = ["{{ package_name }}"]
 
-{% if uv_required_version %}
 [tool.uv]
+{% if uv_required_version %}
 # The uv that produced uv.lock. Resolving with a different uv can produce a
 # different lock, so the version that generated this package is required.
 required-version = "=={{ uv_required_version }}"
 {% endif %}
+# Where uv.lock must install: Linux on the machines the framework's CARLA
+# client ships for, under each interpreter requires-python admits -- the ones
+# the wheelhouse is built for. uv then only locks a version that has a wheel or
+# a source distribution for every one of them, so a release published for some
+# interpreters only is passed over rather than locked.
+required-environments = [
+{% for marker in required_environments %}
+    {{ marker | toml_string }},
+{% endfor %}
+]
 {% if sources %}
 
 [tool.uv.sources]

@@ -91,6 +91,7 @@ __all__ = [
     "Wheelhouse",
     "WheelhouseError",
     "build_wheelhouse",
+    "pythons_admitted_by",
     "supported_pythons",
     "venv_python",
 ]
@@ -192,8 +193,22 @@ def supported_pythons(package_root: Path) -> list[str]:
     declared = _declared_requires_python(package_root)
     if declared is None:
         return []
+    return pythons_admitted_by(declared)
+
+
+def pythons_admitted_by(requires_python: str) -> list[str]:
+    """Return the interpreters of :data:`TESTED_PYTHONS` *requires_python* admits.
+
+    What :func:`supported_pythons` answers for a package on disk, for a
+    ``requires-python`` that is not written yet: the export reads it to say
+    which interpreters ``uv.lock`` must install on.
+
+    Returns:
+        The versions in ascending order, or an empty list for a specifier that
+        does not parse or admits none of them.
+    """
     try:
-        specifier = SpecifierSet(declared)
+        specifier = SpecifierSet(requires_python)
     except InvalidSpecifier:
         return []
     return [version for version in TESTED_PYTHONS if specifier.contains(version)]

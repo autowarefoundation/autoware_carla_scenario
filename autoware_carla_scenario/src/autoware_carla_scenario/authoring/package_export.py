@@ -58,7 +58,12 @@ from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
 from .uv_tool import uv_version as _uv_version
 from .validator import validate_document
-from .wheelhouse import Wheelhouse, WheelhouseError, build_wheelhouse
+from .wheelhouse import (
+    Wheelhouse,
+    WheelhouseError,
+    build_wheelhouse,
+    pythons_admitted_by,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,12 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 #: ``requirements.txt``, so the two are the same literal or that file names a
 #: wheel the directory does not hold.
 PACKAGE_VERSION = "0.1.0"
+
+#: The machines a generated package installs on, all of them Linux: the ones
+#: the framework's CARLA client (``typesafe-carla``) ships wheels for, and so
+#: the only ones the framework runs on.  ``uv.lock`` is required to install on
+#: each of them -- see :func:`_required_environments`.
+_REQUIRED_MACHINES: tuple[str, ...] = ("x86_64", "aarch64")
 
 _LOCK_TIMEOUT_SECONDS = 900
 _TEST_TIMEOUT_SECONDS = 900
@@ -183,6 +194,31 @@ def _python_version() -> str:
     return platform.python_version()
 
 
+def _required_environments() -> list[str]:
+    """Return the ``[tool.uv] required-environments`` of a generated package.
+
+    One marker per machine of :data:`_REQUIRED_MACHINES` and interpreter the
+    package's ``requires-python`` admits -- the interpreters its wheelhouse is
+    resolved for (:func:`.wheelhouse.supported_pythons`).  A universal lock
+    only promises that *some* environment can install each version it picks;
+    listed here, every one of these must have a wheel or a source distribution
+    for it, so a release published with wheels for one interpreter and no
+    sdist is passed over instead of locked, and ``uv sync --locked`` and the
+    wheelhouse build cannot fail on it.  Falls back to the exporting
+    interpreter alone, as the wheelhouse does, when ``requires-python`` admits
+    none of the tested ones.
+    """
+    pythons = pythons_admitted_by(_requires_python())
+    if not pythons:
+        pythons = [".".join(_python_version().split(".")[:2])]
+    return [
+        f"sys_platform == 'linux' and platform_machine == '{machine}'"
+        f" and python_version == '{python}'"
+        for machine in _REQUIRED_MACHINES
+        for python in pythons
+    ]
+
+
 def _editor_version() -> Optional[str]:
     """Return the framework version that generated the package."""
     from importlib import metadata  # noqa: PLC0415
@@ -240,6 +276,7 @@ def _write_package_tree(
         "pin_summaries": [(p.distribution, _pin_summary(p)) for p in pins],
         "pin_note": _pin_note(pin),
         "uv_required_version": uv_version,
+        "required_environments": _required_environments(),
         "uv_pin_summary": (
             f"`{uv_version}` (`tool.uv.required-version`)"
             if uv_version
