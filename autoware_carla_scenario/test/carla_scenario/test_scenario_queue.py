@@ -1337,6 +1337,37 @@ def test_a_retry_over_a_given_stem_starts_from_a_clean_slate(
     assert neighbour[0].read_text() == "other case\n"
 
 
+def test_a_retry_after_a_failed_restart_still_keeps_its_stem(
+    tmp_path: Path,
+) -> None:
+    """#2481: the first attempt's server restart raises, before the stem is
+    settled.  The next attempt settles it, so the attempt after that writes
+    over its partial outputs under the same stem rather than taking the next
+    one and leaving them behind."""
+    queue = ScenarioQueue(
+        server=MagicMock(), output_dir=tmp_path, cooldown_max_retries=2
+    )
+    runner = _FirstAttemptFailsMidRun(tmp_path)
+    queue._runner = runner  # type: ignore[assignment]
+    downs = iter([True])
+    queue._server_down = lambda: next(downs, False)  # type: ignore[method-assign]
+
+    def restart(index: int, total: int) -> None:
+        raise RuntimeError("restart failed")
+
+    queue._restart_server = restart  # type: ignore[method-assign,assignment]
+    queue.add(_NullScenario(_make_ego_config()))
+
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert result.passed
+    stem = "_NullScenario"
+    assert runner.attempts == [(stem, False), (stem, False)]
+    assert (tmp_path / f"{stem}.trajectory.jsonl").read_text() == "2\n"
+    assert not (tmp_path / f"{stem}-1.trajectory.jsonl").exists()
+    assert not (tmp_path / f"{stem}-1.t4").exists()
+
+
 class _StemLauncher:
     """An Autoware launcher recording the stems use_log_stem() is given."""
 
