@@ -14,6 +14,7 @@ import sys
 import tarfile
 import threading
 import time
+import zlib
 from collections.abc import Iterator
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -530,12 +531,13 @@ class _Origin:
     """A local server for one archive that answers range requests like CARLA's.
 
     ``cut`` lists, per request, after how many bytes of the body the connection
-    drops (``None``: it does not); ``etag`` can change mid-download.
+    drops (``None``: it does not); ``etag`` can change mid-download, and
+    ``None`` sends none, which makes the download not resumable.
     """
 
     def __init__(self, body: bytes) -> None:
         self.body = body
-        self.etag = '"nightly-1"'
+        self.etag: Optional[str] = '"nightly-1"'
         self.cut: list[Optional[int]] = []
         self.ranges: list[Optional[str]] = []
         self.agents: list[Optional[str]] = []
@@ -571,7 +573,8 @@ class _Origin:
                         "Content-Range", f"bytes {start}-{last}/{len(origin.body)}"
                     )
                 self.send_header("Accept-Ranges", "bytes")
-                self.send_header("ETag", origin.etag)
+                if origin.etag is not None:
+                    self.send_header("ETag", origin.etag)
                 self.send_header("Content-Length", str(len(part)))
                 self.end_headers()
                 cut = origin.cut.pop(0) if origin.cut else None
@@ -743,6 +746,50 @@ def test_a_failed_swap_puts_the_previous_install_back(
         install(archive.as_uri())
     assert (install_dir() / "VERSION").read_bytes() == b"nightly"
     assert (install_dir() / ".download.json").is_file()
+    assert not install_dir().with_name("carla.partial").exists()  # #2474
+
+
+def test_an_old_install_that_cannot_be_deleted_is_reported_before_downloading(
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A ``carla.replaced`` the clean-up cannot delete (root-owned files, NFS
+    ``.nfsXXXX`` files held open) stops the run before the download, not
+    after unpacking 14 GB only to fail at the swap (#2474)."""
+    archive = tmp_path / "carla.tar.gz"
+    install(_carla(archive))
+    stuck = install_dir().with_name("carla.replaced")
+    (stuck / "Saved").mkdir(parents=True)
+    (stuck / "Saved" / "x").write_text("root-owned")
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path: Path, ignore_errors: bool = False, **kwargs: Any) -> None:
+        if Path(path) == stuck:
+            if ignore_errors:
+                return
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        real_rmtree(path, ignore_errors=ignore_errors, **kwargs)
+
+    def no_download(*args: object, **kwargs: object) -> None:
+        raise AssertionError("downloaded despite the stuck leftover")
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+    monkeypatch.setattr(carla_install, "_unpack", no_download)
+    _carla(archive, b"a later night")
+    capsys.readouterr()
+    assert carla_install.main(["--url", archive.as_uri(), "--force"]) == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        f"scenario-setup: {stuck}, a previous install moved aside, cannot be "
+        "deleted (files held open by a CARLA server, perhaps on another node, or "
+        "owned by another user such as root); delete it and run scenario-setup "
+        "again\n"
+    )
+    assert "Downloading" not in captured.out
+    assert (install_dir() / "VERSION").read_bytes() == b"nightly"
+    assert not install_dir().with_name("carla.partial").exists()
 
 
 def test_concurrent_installs_wait_for_each_other(
@@ -1034,8 +1081,13 @@ def test_a_read_only_run_does_not_install(
     argv = ["--url", url] + (["--force"] if state == "forced" else [])
     assert carla_install.main(argv) == 1
     err = capsys.readouterr().err
-    expected = "not installed" if state == "not installed" else "out of date"
-    assert f"is {expected}, and this run cannot write there" in err
+    if state == "forced":  # whatever the install's state (#2474)
+        expected = "--force reinstalls CARLA at"
+        assert "out of date" not in err
+    else:
+        expected = f"CARLA at {install_dir()} is {state}"
+    assert expected in err
+    assert "and this run cannot write there" in err
     if state != "not installed":
         assert (install_dir() / "VERSION").read_bytes() == b"nightly"
 
@@ -1045,3 +1097,158 @@ def test_a_content_range_of_non_ascii_digits_is_unknown() -> None:
     assert carla_install._content_range("bytes 5-9/10") == (5, 10)
     assert carla_install._content_range("bytes ²-9/10") == (None, None)
     assert carla_install._content_range("bytes 5-9/²") == (None, None)
+
+
+def _tar(members: int) -> bytes:
+    """An uncompressed CARLA-shaped tar: the launcher, then *members* files."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for name, data in [
+            ("Carla-1.0-Linux-Shipping/CarlaUnreal.sh", b"#!/bin/sh\n"),
+            *(
+                (f"Carla-1.0-Linux-Shipping/f{i}", os.urandom(700))
+                for i in range(members)
+            ),
+        ]:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o755
+            archive.addfile(info, io.BytesIO(data))
+    return raw.getvalue()
+
+
+def _flushed_gzip(data: bytes, cut_at: int) -> tuple[bytes, int]:
+    """*data* gzipped with a full flush every 512 bytes, and the compressed
+    length whose prefix unpacks to exactly *data*[:*cut_at*].
+
+    A body cut there ends at a tar member boundary, which ``tarfile`` alone
+    takes for the end of the archive.
+    """
+    compressor = zlib.compressobj(9, zlib.DEFLATED, 31)
+    body = b""
+    cuts = {}
+    for offset in range(0, len(data), 512):
+        body += compressor.compress(data[offset : offset + 512])
+        body += compressor.flush(zlib.Z_FULL_FLUSH)
+        cuts[offset + 512] = len(body)
+    return body + compressor.flush(), cuts[cut_at]
+
+
+# The tar offset just after the launcher (1024 bytes) and ten 700-byte files
+# (1536 each): a member boundary.
+_AFTER_TEN_MEMBERS = 1024 + 1536 * 10
+
+
+def _corrupt(kind: str) -> bytes:
+    data = _tar(30)
+    whole, cut = _flushed_gzip(data, _AFTER_TEN_MEMBERS)
+    if kind == "cut at a member boundary":
+        return whole[:cut]
+    if kind == "cut in the trailer":
+        return whole[:-4]
+    bad = bytearray(whole)
+    bad[-8] ^= 0xFF  # the CRC
+    return bytes(bad)
+
+
+@pytest.mark.parametrize(
+    ("kind", "error"),
+    [
+        ("cut at a member boundary", EOFError),
+        ("cut in the trailer", EOFError),
+        ("a wrong CRC", carla_install.gzip.BadGzipFile),
+    ],
+)
+def test_a_truncated_or_corrupt_archive_is_refused(
+    kind: str, error: type[Exception], tmp_path: Path
+) -> None:
+    """``tarfile``'s ``r|gz`` accepted all three, with 11 of 31 files (#2474)."""
+    with pytest.raises(error):
+        carla_install._unpack(io.BytesIO(_corrupt(kind)), tmp_path / "out")
+
+
+def test_a_whole_flushed_archive_unpacks(tmp_path: Path) -> None:
+    whole, _ = _flushed_gzip(_tar(30), _AFTER_TEN_MEMBERS)
+    carla_install._unpack(io.BytesIO(whole), tmp_path / "out")
+    assert len(list((tmp_path / "out").iterdir())) == 31
+
+
+@pytest.mark.parametrize(
+    "kind", ["cut at a member boundary", "cut in the trailer", "a wrong CRC"]
+)
+def test_the_cli_reports_a_corrupt_archive_and_installs_nothing(
+    kind: str, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    archive = tmp_path / "carla.tar.gz"
+    archive.write_bytes(_corrupt(kind))
+    assert carla_install.main(["--url", archive.as_uri()]) == 1
+    err = capsys.readouterr().err
+    assert err.splitlines()[-1].startswith("scenario-setup: ")
+    assert "Traceback" not in err
+    assert installed_executable() is None
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_a_download_cut_short_that_cannot_resume_is_refused(
+    home: Path, origin: _Origin, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No ETag nor Last-Modified: not resumable. The body ends at a member
+    boundary, short of its Content-Length (#2474)."""
+    origin.body, cut = _flushed_gzip(_tar(200), _AFTER_TEN_MEMBERS)
+    origin.etag = None
+    origin.cut = [cut]
+    assert carla_install.main(["--url", origin.url]) == 1
+    err = capsys.readouterr().err
+    assert err.endswith(
+        f"scenario-setup: the download of {origin.url} ended at {cut} of "
+        f"{len(origin.body)} bytes and cannot be resumed; run scenario-setup "
+        "again\n"
+    )
+    assert origin.ranges == [None]  # not retried
+    assert installed_executable() is None
+    assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_a_flushed_download_cut_at_a_member_boundary_resumes(
+    home: Path, origin: _Origin
+) -> None:
+    origin.body, cut = _flushed_gzip(_tar(200), _AFTER_TEN_MEMBERS)
+    origin.cut = [cut]
+    install(origin.url)
+    assert len(list(install_dir().iterdir())) == 202  # 201 files and the stamp
+    assert origin.ranges == [None, f"bytes={cut}-"]
+
+
+@pytest.mark.parametrize(
+    ("version", "warned"),
+    [
+        ((3, 10, 17), True),
+        ((3, 10, 18), False),
+        ((3, 11, 12), True),
+        ((3, 11, 13), False),
+        ((3, 12, 3), True),  # Ubuntu 24.04's: warned, not refused
+        ((3, 12, 11), False),
+        ((3, 13, 3), True),
+        ((3, 13, 4), False),
+        ((3, 14, 0), False),
+    ],
+)
+def test_pythons_with_filter_bypasses_are_warned_of(
+    version: tuple[int, int, int],
+    warned: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    carla_install._warn_of_filter_bypasses.cache_clear()
+    monkeypatch.setattr(sys, "version_info", (*version, "final", 0))
+    with caplog.at_level("WARNING", logger=carla_install.__name__):
+        carla_install._require_extraction_filters()  # never raises for these
+        carla_install._require_extraction_filters()
+    carla_install._warn_of_filter_bypasses.cache_clear()
+    messages = [record.getMessage() for record in caplog.records]
+    if not warned:
+        assert messages == []
+        return
+    assert len(messages) == 1  # once per run
+    assert "CVE-2025-4517" in messages[0]
+    assert "only a --url you trust" in messages[0]

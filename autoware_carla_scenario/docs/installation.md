@@ -29,7 +29,13 @@ This guide will help you install the `autoware-carla-scenario` package.
   lack (Ubuntu 22.04 released with 3.10.4; its updates bring 3.10.12, so an
   updated 22.04 is fine); there it stops with a message rather than unpacking
   without them. Upgrade Python, or install CARLA another way and set
-  `CARLA_EXECUTABLE`.
+  `CARLA_EXECUTABLE`. The filters only keep a crafted archive from writing
+  outside the install from 3.10.18, 3.11.13, 3.12.11 and 3.13.4 on (3.14 is
+  fine): earlier releases have known bypasses (CVE-2024-12718,
+  CVE-2025-4138, CVE-2025-4330, CVE-2025-4517). There `scenario-setup` still
+  installs, so that Pythons still shipped (Ubuntu 24.04's 3.12.3) are not
+  locked out, but logs a warning: pass it only a `--url` you trust (CARLA's
+  own packages are), or upgrade Python.
 - **Hydra on Python 3.14** — Hydra 1.3 gives `--shell-completion` a help
   object that Python 3.14's argparse refuses ("badly formed help string"),
   so a `@hydra.main` command would fail before it parses anything (#692).

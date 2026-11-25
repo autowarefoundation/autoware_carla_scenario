@@ -2025,6 +2025,35 @@ def test_the_dependency_image_is_made_once_per_set_of_package_xmls(
     assert len(tags) == 2 and tags[1] != tag
 
 
+def test_package_xmls_reached_through_symlinks_feed_the_digest(
+    tmp_path: Path, fake_docker
+) -> None:
+    """rosdep (catkin_pkg) follows directory symlinks, so a repository linked
+    into ``src/`` changes the dependency image's tag too (#2474); a symlink
+    loop is walked once."""
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    repo = tmp_path / "elsewhere" / "repo"
+    (repo / "pkg").mkdir(parents=True)
+    xml = repo / "pkg" / "package.xml"
+    xml.write_text("<exec_depend>a</exec_depend>")
+    (ws / "src" / "repo").symlink_to(repo, target_is_directory=True)
+    (repo / "pkg" / "loop").symlink_to(repo, target_is_directory=True)
+    (ws / "src" / "own").mkdir()
+    (ws / "src" / "own" / "package.xml").write_text("<exec_depend>c</exec_depend>")
+
+    assert docker_module._package_manifests(ws / "src") == [  # noqa: SLF001
+        "own/package.xml",
+        "repo/pkg/package.xml",
+    ]
+    launcher = _docker_launcher(ws, docker, rosdep=True)
+    launcher.prepare()
+    before = launcher._dependency_digest("base")  # noqa: SLF001
+    assert launcher._dependency_digest("base") == before  # noqa: SLF001
+    xml.write_text("<exec_depend>a</exec_depend><exec_depend>b</exec_depend>")
+    assert launcher._dependency_digest("base") != before  # noqa: SLF001
+
+
 def test_a_failed_rosdep_install_is_refused(
     tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
