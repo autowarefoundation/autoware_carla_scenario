@@ -1,12 +1,10 @@
-// Shows cases' Rerun recordings in Rerun's web viewer (@rerun-io/web-viewer).
+// Shows a case's Rerun recording in Rerun's web viewer (@rerun-io/web-viewer).
 //
-// mountRerun(element, {viewerUrl, makeUrls, status}) asks the viewer app for
-// each case's recording (POST makeUrls[i]: it converts the trajectory log if
-// there is no recording yet), then starts one web viewer on `element` with
-// all of them: one recording, or several to compare (the viewer's recording
-// panel switches between them). `viewerUrl` is the package's directory
-// (index.js in it), served by the app or a CDN, of the Rerun version the
-// recordings are written with.
+// mountRerun(element, {viewerUrl, makeUrl, status}) asks the viewer app for
+// the case's recording (POST makeUrl: it converts the trajectory log if there
+// is no recording yet), then starts a web viewer on `element` with it.
+// `viewerUrl` is the package's directory (index.js in it), served by the app
+// or a CDN, of the Rerun version the recordings are written with.
 
 function say(status, text, kind) {
   if (!status) return;
@@ -28,12 +26,11 @@ async function makeRecording(url) {
   return body;
 }
 
-export async function mountRerun(element, { viewerUrl, makeUrls, status, onError }) {
-  say(status, makeUrls.length > 1
-    ? `Preparing ${makeUrls.length} recordings...` : 'Preparing the recording...');
+export async function mountRerun(element, { viewerUrl, makeUrl, status, onError }) {
+  say(status, 'Preparing the recording...');
   let made;
   try {
-    made = await Promise.all(makeUrls.map(makeRecording));
+    made = await makeRecording(makeUrl);
   } catch (error) {
     say(status, error.message, 'error');
     if (onError) onError(error);
@@ -47,13 +44,13 @@ export async function mountRerun(element, { viewerUrl, makeUrls, status, onError
   try {
     const { WebViewer } = await import(`${viewerUrl}/index.js`);
     const viewer = new WebViewer();
-    const urls = made.map(m => new URL(m.url, window.location.href).href);
-    await viewer.start(urls.length === 1 ? urls[0] : urls, element, {
+    const url = new URL(made.url, window.location.href).href;
+    await viewer.start(url, element, {
       hide_welcome_screen: true,
       width: '100%',
       height: '100%',
     });
-    element.dataset.rerunStarted = String(urls.length);
+    element.dataset.rerunStarted = '1';
     say(status, '');
     return viewer;
   } catch (error) {

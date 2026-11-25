@@ -11,7 +11,6 @@ from autoware_carla_scenario import (
     environment,
     rerun,
     rerun_lidar,
-    rerun_metrics,
     run_outputs,
     t4_settings,
 )
@@ -53,7 +52,7 @@ def test_the_suffixes_are_the_writers_own() -> None:
         rerun.TRAJECTORY_SUFFIX,
         rerun.RECORDING_SUFFIX,
         rerun_lidar.SENSORS_SUFFIX,
-        rerun_metrics.METRICS_SUFFIX,
+        run_outputs.METRICS_SUFFIX,
         collector.ODD_ARCHIVE_SUFFIX,
         convert.SCENE_SUFFIX,
         convert.MAP_SUFFIX,
@@ -78,18 +77,19 @@ def test_environment_and_t4scene_suffixes_are_run_outputs_s() -> None:
 
 
 def test_the_metrics_and_odd_archive_suffixes_are_run_outputs_s() -> None:
-    # Defined in the checked run_outputs (#1748): rerun_metrics re-exports
-    # its scratch recording's under the name it had; openodd's ODD archive
-    # suffix, which run_outputs cannot import, is the one named here, which
-    # the checked ui.case_paths reads.
-    assert rerun_metrics.METRICS_SUFFIX is run_outputs.METRICS_SUFFIX
+    # Defined in the checked run_outputs (#1748): the metrics' scratch
+    # recording older versions wrote is a run's output still; openodd's ODD
+    # archive suffix, which run_outputs cannot import, is the one named here,
+    # which the checked ui.case_paths reads.
+    assert run_outputs.METRICS_SUFFIX in RUN_FILE_SUFFIXES
     assert run_outputs.ODD_ARCHIVE_SUFFIX == collector.ODD_ARCHIVE_SUFFIX
     assert case_paths.ODD_ARCHIVE_SUFFIX is run_outputs.ODD_ARCHIVE_SUFFIX
 
 
 def test_a_left_metrics_recording_is_the_runs_own(tmp_path: Path) -> None:
-    # A run killed while its metrics were merged leaves X.metrics.rrd: it
-    # reads as stem X, not X.metrics, and a case run again removes it.
+    # An older version's run killed while its metrics were merged leaves
+    # X.metrics.rrd: it reads as stem X, not X.metrics, and a case run again
+    # removes it.
     left = tmp_path / f"{STEM}{run_outputs.METRICS_SUFFIX}"
     left.write_bytes(b"RRF2")
     assert left.name == f"{STEM}.metrics.rrd"

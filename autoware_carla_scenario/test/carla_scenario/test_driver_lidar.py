@@ -971,6 +971,79 @@ def test_a_sweep_of_the_policy_step_is_recorded_on_its_pose(
     assert fed == [(101, 101)]
 
 
+def test_a_sweep_is_recorded_with_the_egos_pitch_and_roll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The policy's pose has the ego's yaw alone; the recording places a
+    sweep with its pitch and roll too, turned about the actor's origin
+    (#2485)."""
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+
+    logged: list[np.ndarray] = []
+    recorder = SimpleNamespace(
+        records_lidar=True,
+        log_sweep=lambda _id, frame, points, rotation, position: logged.append(
+            (points[:, :3] @ np.asarray(rotation).T + position)[0]
+        ),
+    )
+    monkeypatch.setattr(cde, "active_recorder", lambda: recorder)
+    monkeypatch.setattr(cde, "active_recording", lambda: None)
+    entity = cde.CarlaDriverEntity(DriverClientConfig(), client=SimpleNamespace())  # type: ignore[arg-type]
+    entity._rear_axle_offset_m = -1.5
+    mount = sensor_pose_in_rig(0, 0, 0, 0, 0, 0, rear_axle_offset_m=0.0)
+    entity._lidars = [("lidar_top", _AgedLidar(100), mount)]  # type: ignore[list-item]
+    world = SimpleNamespace(get_snapshot=lambda: SimpleNamespace(frame=100))
+    entity._world = world  # type: ignore[assignment]
+    # The actor's origin at x = 10 m, its nose pitched 30 degrees up (CARLA's
+    # positive pitch); the policy's pose is the rear axle's, 1.5 m behind,
+    # level.
+    actor = SimpleNamespace(
+        get_transform=lambda: SimpleNamespace(
+            rotation=SimpleNamespace(roll=0.0, pitch=30.0, yaw=0.0)
+        )
+    )
+    level = Pose.from_xyz_yaw(8.5, 0.0, 0.0, 0.0)
+    entity._remember_pose(world, level, actor)  # type: ignore[arg-type]
+    entity._sim_time_us = 100 * _TICK_US
+    entity._lidar_sweeps(level)
+
+    # The point 10 m ahead of the rear axle, which sits 1.5 m behind the
+    # origin along the pitched body: 8.5 m ahead of the origin, up the slope.
+    c, s = np.cos(np.radians(30.0)), np.sin(np.radians(30.0))
+    (point,) = logged
+    np.testing.assert_allclose(point, [10.0 + 8.5 * c, 0.0, 8.5 * s], atol=1e-6)
+
+
+def test_the_egos_pitch_and_roll_are_recorded_for_its_cameras(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each tick, when the cameras are recorded: their parent in the
+    recording carries the ego's pitch and roll (#2485)."""
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+
+    tilts: list[tuple[int, float, float]] = []
+    recorder = SimpleNamespace(
+        records_cameras=True,
+        log_ego_tilt=lambda frame, roll, pitch: tilts.append((frame, roll, pitch)),
+    )
+    monkeypatch.setattr(cde, "active_recorder", lambda: recorder)
+    entity = cde.CarlaDriverEntity(DriverClientConfig(), client=SimpleNamespace())  # type: ignore[arg-type]
+    world = SimpleNamespace(get_snapshot=lambda: SimpleNamespace(frame=7))
+    actor = SimpleNamespace(
+        get_transform=lambda: SimpleNamespace(
+            rotation=SimpleNamespace(roll=1.0, pitch=-4.0, yaw=90.0)
+        )
+    )
+    entity._record_tilt(world, actor)  # type: ignore[arg-type]
+    assert tilts == []  # no cameras
+    entity._cameras = [("front", SimpleNamespace())]  # type: ignore[list-item]
+    entity._record_tilt(world, actor)  # type: ignore[arg-type]
+    assert tilts == [(7, 1.0, -4.0)]
+    recorder.records_cameras = False
+    entity._record_tilt(world, actor)  # type: ignore[arg-type]
+    assert tilts == [(7, 1.0, -4.0)]
+
+
 def test_the_pose_history_reaches_back_one_sweep_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -25,8 +25,8 @@ The modules that write each output keep their own name for its suffix
 environment and lock, of its T4Scene and map and of its WOSAC rollout are
 defined here, and
 ``environment`` and ``t4_scene.convert`` re-export them under the names they
-had (#1713); so is the metrics' scratch recording, which ``rerun_metrics``
-re-exports, and the ODD archive, openodd's ``ODD_ARCHIVE_SUFFIX``, which
+had (#1713); so is the metrics' scratch recording older versions wrote, and
+the ODD archive, openodd's ``ODD_ARCHIVE_SUFFIX``, which
 ``ui.case_paths`` reads from here (#1748).  The path rule of
 a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
 :func:`recording_path`, :func:`sensors_recording_path`), so that the checked
@@ -84,8 +84,10 @@ TRAJECTORY_SUFFIX = ".trajectory.jsonl"
 RECORDING_SUFFIX = ".rrd"
 #: The sensors recorded during the run: ``{stem}.sensors.rrd``.
 SENSORS_SUFFIX = ".sensors.rrd"
-#: The scratch recording a run's metrics are written to before they are merged
-#: into its recording: ``{stem}.metrics.rrd``.
+#: The scratch recording older versions wrote a run's metrics to before they
+#: merged them into its recording, ``{stem}.metrics.rrd``: no longer written
+#: (the converter draws the metrics itself), but one a killed run of such a
+#: version left is still the run's own.
 METRICS_SUFFIX = ".metrics.rrd"
 #: The run's ODD as the files it was read from: ``{stem}_odd.tar.gz``
 #: (openodd's ``ODD_ARCHIVE_SUFFIX``, which this module cannot import).

@@ -233,7 +233,7 @@
   import { mountRerun } from '/static/rerun.js';
   mountRerun(document.getElementById('rerun-viewer'), {
     viewerUrl: {{ recording.viewer.base_url | tojson }},
-    makeUrls: [{{ recording.make_url | tojson }}],
+    makeUrl: {{ recording.make_url | tojson }},
     status: document.getElementById('rerun-status'),
   });
 </script>

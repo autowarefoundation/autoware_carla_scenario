@@ -1,5 +1,20 @@
 # Migrating
 
+## `rerun_metrics` is gone
+
+The module wrote a run's metrics into its Rerun recording for a converter that
+did not draw `metric` records, but every converter the `rerun` extra installs
+draws them itself, so it wrote nothing (#2485). Code importing it changes as
+follows:
+
+- `merge_metrics(...)`: drop the call; `rerun.convert_outputs()` (or the
+  converter a run hands its log to) already puts the metrics in the recording,
+  as `/metrics/<key>` ([Metrics in the recording](usage.md#metrics-in-the-recording)).
+- `METRICS_SUFFIX`: import it from `autoware_carla_scenario.run_outputs`.
+- `metric_records(trajectory)`: read the log's lines whose `type` is
+  `metric` ([Trajectory Log](trajectory_log.md)).
+- `METRICS_ENTITY` and `converter_draws_metrics()`: no replacement.
+
 ## `launcher.time` is text, never a number
 
 `launcher.time` written as a number is now refused, as the config is read

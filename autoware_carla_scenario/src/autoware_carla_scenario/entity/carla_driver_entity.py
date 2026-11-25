@@ -198,8 +198,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         self._lidars: List[Tuple[str, "CarlaLidarSensor", Pose]] = []
         #: The frame of the sweep last written into the LiDAR recording, by LiDAR.
         self._recorded_lidar: Dict[str, int] = {}
-        #: The ego's pose (the rig's, in the local frame) on the last ticks, by
-        #: simulator frame, kept while there are LiDARs and only as far back as
+        #: The ego's pose (the rig's, in the local frame, with its pitch and
+        #: roll) on the last ticks, by simulator frame, kept while there are LiDARs and only as far back as
         #: their longest sweep interval: a sweep is recorded on the pose of the
         #: tick it was taken on, which can be before the policy step (#950).
         self._pose_history: Dict[int, Pose] = {}
@@ -469,7 +469,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # policy step and the controller.
         observation = self._ego_observation(actor)
         self._pending_egomotion.append(observation)
-        self._remember_pose(world, observation.pose)
+        self._remember_pose(world, observation.pose, actor)
+        self._record_tilt(world, actor)
         if self._t4 is not None:
             self._record_t4(world, elapsed, actor, observation)
 
@@ -663,16 +664,51 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             ),
         )
 
-    def _remember_pose(self, world: "carla.World", pose: Pose) -> None:
-        """Keep the ego's *pose* on this tick, for the sweeps taken on it."""
+    def _remember_pose(
+        self, world: "carla.World", pose: Pose, actor: Optional["carla.Actor"] = None
+    ) -> None:
+        """Keep the ego's *pose* on this tick, for the sweeps taken on it: with
+        *actor*, tilted by its pitch and roll (the policy's pose has its yaw
+        alone), so that a recorded sweep is placed as the ego was (#2485)."""
         if not self._lidars:
             return
         frame = int(world.get_snapshot().frame)
-        self._pose_history[frame] = pose
+        self._pose_history[frame] = pose if actor is None else self._tilted(pose, actor)
         # A sweep is at most an interval old when it is read (latest_sweep).
         oldest = frame - max(lidar.sweep_interval_ticks for _, lidar, _ in self._lidars)
         for old in [f for f in self._pose_history if f < oldest]:
             del self._pose_history[old]
+
+    def _tilted(self, pose: Pose, actor: "carla.Actor") -> Pose:
+        """*pose*, the rig's with the ego's yaw alone, with *actor*'s pitch and
+        roll too: CARLA's rotation rebuilt right-handed is ``Rz(-yaw)
+        Ry(-pitch) Rx(roll)``, turned about the actor's origin, from which the
+        rig (the rear axle) is ``rear_axle_offset_m`` along the ego's x."""
+        rotation = actor.get_transform().rotation
+        tilt = Pose.from_axis_angle(1, -math.radians(rotation.pitch)) @ (
+            Pose.from_axis_angle(0, math.radians(rotation.roll))
+        )
+        shift = Pose.from_xyz_yaw(self._rear_axle_offset_m, 0.0, 0.0, 0.0)
+        return pose @ shift.inverse() @ tilt @ shift
+
+    def _record_tilt(self, world: "carla.World", actor: "carla.Actor") -> None:
+        """Write the ego's pitch and roll on this tick into the run's
+        recording, the cameras' parent there, when it records its cameras
+        (``rerun.cameras``): the converter's ego pose has its yaw alone."""
+        if not self._cameras:
+            return
+        recorder = active_recorder()
+        if recorder is None or not recorder.records_cameras:
+            return
+        try:
+            rotation = actor.get_transform().rotation
+            recorder.log_ego_tilt(
+                int(world.get_snapshot().frame),
+                float(rotation.roll),
+                float(rotation.pitch),
+            )
+        except Exception:  # noqa: BLE001 - a lost tilt must not stop the run
+            logger.exception("recording the ego's pitch and roll failed")
 
     def _lidar_sweeps(self, pose: Optional[Pose] = None) -> List[LidarSweep]:
         """Every LiDAR's newest sweep, in the rig frame, stamped with when it was taken.
@@ -681,7 +717,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         sweep from an earlier tick carries that tick's time.  With *pose*, the
         ego's in the local frame, a run recording its LiDARs
         (``rerun.lidar``) is handed each new sweep too, on the ego's pose of the
-        tick it was taken on, and a T4 dataset of the run is fed it as taken
+        tick it was taken on (the one kept, with its pitch and roll; else
+        *pose* for this tick's), and a T4 dataset of the run is fed it as taken
         on that tick (#950).  A sweep older than the poses kept is not
         recorded (logged at debug level); the policy still gets it.  A sweep
         taken before the policy's clock started (while a bridged stack was
@@ -719,9 +756,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 )
             )
             if recorder is not None and pose is not None:
-                taken_pose = (
-                    pose if sweep[0] == frame else self._pose_history.get(sweep[0])
-                )
+                taken_pose = self._pose_history.get(sweep[0])
+                if taken_pose is None and sweep[0] == frame:
+                    taken_pose = pose
                 if taken_pose is None:
                     logger.debug(
                         "no ego pose of frame %d for LiDAR %s's sweep; not recorded",
