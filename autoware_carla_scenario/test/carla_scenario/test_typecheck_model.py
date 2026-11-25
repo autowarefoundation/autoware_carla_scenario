@@ -52,6 +52,7 @@ from autoware_carla_scenario import (
     number_settings,
     odd,
     ros2,
+    seed,
     trajectory_recorder,
     weather_rules,
 )
@@ -1066,6 +1067,10 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # checked number_settings, the one check of a number setting (#2398):
     # every name of its __all__.
     "number_settings": (number_settings, tuple(number_settings.__all__)),
+    # What the example scenarios' configs (examples.configs) import of the
+    # checked seed, the check of a component's own seed (#2465): every name
+    # of its __all__, the constants by value.
+    "seed": (seed, tuple(seed.__all__)),
     # What a scenario or a Python ODD imports of the checked measures: every
     # name of its __all__, the values compared below.
     "measures": (measures, tuple(measures.__all__)),

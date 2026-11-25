@@ -810,6 +810,32 @@ def test_the_bound_messages_say_what_the_runtime_says() -> None:
     assert messages["seed"] == "Seed must be in [0, 2147483647]."
 
 
+@pytest.mark.parametrize("type_id", ["jaywalk", "stop_crossing"])
+def test_a_random_adversity_s_seed_reaches_its_action(type_id: str) -> None:
+    # The two adversities that draw at random take the Seed field (#2465):
+    # the card's seed seeds the trigger, as the constructor's does.
+    from autoware_carla_scenario.adversity import AdversityLocation  # noqa: PLC0415
+    from autoware_carla_scenario.conditions.adversity_feasible import (  # noqa: PLC0415
+        AdversityFeasibleCondition,
+    )
+
+    spec = registry.get_action_spec(type_id)
+    assert spec is not None
+    assert "seed" in {f.name for f in spec.fields}
+    action: Any = _build(_card(type_id, "ped", location="any", seed=7))
+    feasible = action._feasible
+    expected = AdversityFeasibleCondition(
+        action._entity_name,
+        action.kind,
+        AdversityLocation.ANY,
+        label=feasible.label,
+        seed=7,
+    )
+    assert feasible._seed == expected._seed
+    other: Any = _build(_card(type_id, "ped", location="any", seed=8))
+    assert other._feasible._seed != feasible._seed
+
+
 def document_errors(document: ScenarioDocument) -> list[Any]:
     return list(validate_document(document).errors)
 
@@ -1026,6 +1052,11 @@ def test_validator_refuses_a_bound_the_condition_refuses(
         ("smart_pedestrian", "ped", {"seed": 2**31}, "seed"),
         ("traffic_source", None, {"seed": 2**31}, "seed"),
         ("traffic_source", None, {"seed": -1}, "seed"),
+        # The random adversities' seeds (#2465).
+        ("jaywalk", "ped", {"location": "any", "seed": -1}, "seed"),
+        ("jaywalk", "ped", {"location": "any", "seed": 2**31}, "seed"),
+        ("stop_crossing", "ped", {"location": "any", "seed": -1}, "seed"),
+        ("stop_crossing", "ped", {"location": "any", "seed": 2**31}, "seed"),
         (
             "routing",
             "car",

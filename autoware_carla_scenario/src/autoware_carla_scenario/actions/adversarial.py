@@ -52,7 +52,8 @@ from ..adversity.location import AdversityLocation
 from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.adversity_feasible import AdversityFeasibleCondition
 from ..conditions.base import BaseCondition, ScenarioResult
-from ..entity_role import EntityRole
+from ..constants import EGO_ROLE_NAME
+from ..entity_role import EntityRole, canonical_role_name
 from ..trajectory.model import TrajectoryFollowingMode
 from ._adversarial_execution import AdversarialExecution, start_execution
 from ..control_domain import ControlDomain, movement_of
@@ -101,6 +102,11 @@ class AdversarialAction(BaseAction):
         following_mode: How the path is driven: ``FOLLOW`` (the vehicle's own
             motion, default) or ``POSITION`` (placed on it, as TeraSim's
             ``moveToXY``).
+
+    Raises:
+        ValueError: *entity_name* is the ego (``ego``, or an alias of it, in
+            any case): an adversity is carried out by another road user,
+            and an ego its own driver drives would never hand it its path.
     """
 
     REISSUES_BY_DEFAULT = True
@@ -128,6 +134,15 @@ class AdversarialAction(BaseAction):
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
         following_mode: TrajectoryFollowingMode = TrajectoryFollowingMode.FOLLOW,
     ) -> None:
+        # By the canonical name, as the actor lookup reads it: ``ego`` and
+        # ``hero``, in any case, are the ego too (EGO_ROLE_ALIASES), as
+        # PerceptionFaultInjectionAction refuses it (#2465).
+        if canonical_role_name(str(entity_name)) == str(EGO_ROLE_NAME):
+            raise ValueError(
+                f"{type(self).__name__}: {str(entity_name)!r} is the ego, "
+                "which an adversity is not carried out by; name another road "
+                "user"
+            )
         feasible = AdversityFeasibleCondition(
             entity_name,
             kind,

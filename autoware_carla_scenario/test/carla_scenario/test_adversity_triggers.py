@@ -150,6 +150,27 @@ def test_no_cut_in(features: MapFeatures, others: list[AgentSnapshot]) -> None:
     assert cut_in(_scene(features, _car("ego", -40.0), *others).vehicle("ego")) is None
 
 
+@pytest.mark.parametrize("speed", [0.0, 0.49])
+def test_no_cut_in_from_standstill(features: MapFeatures, speed: float) -> None:
+    # A follower at 10 m/s within the secure gap of a stopped agent (a red-light
+    # queue): changing lanes with no forward speed would slide it straight
+    # sideways, its yaw snapped across the lane (#2465).
+    stopped = _car("ego", -40.0, speed=speed)
+    seen = _scene(features, stopped, _car("side", -46.0, OUTER)).vehicle("ego")
+    assert cut_in(seen) is None
+    scene = _scene(features, stopped, _car("side", -46.0, OUTER))
+    command = adversity_command(
+        AdversityKind.CUT_IN, scene, "ego", AdversityLocation.ANY, random.Random(0)
+    )
+    assert command is None
+
+
+def test_a_cut_in_at_the_standstill_speed(features: MapFeatures) -> None:
+    moving = _car("ego", -40.0, speed=DEFAULT_THRESHOLDS.standstill_speed)
+    seen = _scene(features, moving, _car("side", -46.0, OUTER)).vehicle("ego")
+    assert cut_in(seen) == AdversarialCommand.change_lane("right", 1.0)
+
+
 # -- LANE_CHANGE_ABORT ------------------------------------------------------------
 
 

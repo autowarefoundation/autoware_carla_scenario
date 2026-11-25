@@ -13,9 +13,10 @@ adversarial thing now, else None:
   at least 2 m/s off its leader's speed, and held back by its leader by
   more than 1.5 m/s² (free flow against car following) -- drive as if the
   road were empty, for 2 s;
-* :attr:`AdversityKind.CUT_IN` (LaneChange): a lane beside, left first,
-  blocked only by the vehicle behind there (closer than SUMO's secure gap),
-  while the one ahead there is far enough -- change in anyway, in 1 s;
+* :attr:`AdversityKind.CUT_IN` (LaneChange): moving (at least 0.5 m/s), a
+  lane beside, left first, blocked only by the vehicle behind there (closer
+  than SUMO's secure gap), while the one ahead there is far enough -- change
+  in anyway, in 1 s;
 * :attr:`AdversityKind.TRAFFIC_RULE` (TrafficRule): a red or yellow light
   within 40 m ahead; when it has a leader, car following beats its own
   acceleration by more than 1.5 m/s² (the light holds it back, not the
@@ -33,8 +34,8 @@ adversarial thing now, else None:
   (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
   speed up as if the vehicle merging ahead were not there, when that beats
   giving way by more than 1.5 m/s² and it and its leader are not both
-  stopped, for 2 s; two lanes over, change into the lane between in 1 s
-  when nobody there is within 2 s of headway;
+  stopped, for 2 s; two lanes over, moving (at least 0.5 m/s), change into
+  the lane between in 1 s when nobody there is within 2 s of headway;
 * :attr:`AdversityKind.JAYWALKING` (Jaywalking): a pedestrian off any
   crosswalk, a road within 10 m -- walk straight across it at its speed
   (1.4 m/s if under 1 m/s) times U(0.5, 2.0), for 5 s;
@@ -332,7 +333,12 @@ def cut_in(
     seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
 ) -> Optional[AdversarialCommand]:
     """CUT_IN: change into the lane beside in front of the vehicle there."""
-    side = _blocked_side(seen, seen.agent.speed, limits)
+    speed = seen.agent.speed
+    # Stopped, it has no forward speed to change lanes with: the crossing
+    # (``lane_change_longitudinal_speed``) would slide it straight sideways.
+    if speed < limits.standstill_speed:
+        return None
+    side = _blocked_side(seen, speed, limits)
     if side is None:
         return None
     if side is seen.left:
@@ -476,6 +482,9 @@ def merge(
     if not _merging(features, beyond, toward):
         return None
     # MergeLaneChange: into the lane the merging vehicle is to merge into.
+    # Stopped, it does not: as for CUT_IN, it would slide straight sideways.
+    if agent.speed < limits.standstill_speed:
+        return None
     if _within_headway(beside.leader, agent.speed, True, limits):
         return None
     if _within_headway(beside.follower, agent.speed, False, limits):

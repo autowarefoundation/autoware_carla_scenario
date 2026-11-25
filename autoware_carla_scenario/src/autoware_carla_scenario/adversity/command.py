@@ -177,12 +177,8 @@ def drift_path(
     states: list[PredictedState] = []
     for t in _times(duration, resolution):
         x, y, yaw = walk.at(speed * t)
-        offset = lane.t + drift * (1.0 - abs(t - half) / half)
-        states.append(
-            PredictedState(
-                x - offset * math.sin(yaw), y + offset * math.cos(yaw), yaw, speed, t
-            )
-        )
+        px, py = _offset(x, y, yaw, lane.t + drift * (1.0 - abs(t - half) / half))
+        states.append(PredictedState(px, py, yaw, speed, t))
     return states
 
 
@@ -268,6 +264,22 @@ def _change_lane(
     return states
 
 
+def _side_lane(observation: VehicleObservation, side: str) -> SideLane:
+    """The lane on *side* of the observed vehicle, to change into.
+
+    Raises:
+        ValueError: There is no lane on that side.
+    """
+    beside: Optional[SideLane] = observation.right
+    if side == "left":
+        beside = observation.left
+    if beside is None:
+        raise ValueError(f"there is no lane on the {side} to change into")
+    # A typed local: Codon unwraps the Optional here, not at the caller.
+    lane: SideLane = beside
+    return lane
+
+
 def plan_command(
     features: MapFeatures,
     observation: VehicleObservation,
@@ -297,13 +309,14 @@ def plan_command(
             command,
             resolution,
         )
-    side: Optional[SideLane] = observation.right
-    if command.side == "left":
-        side = observation.left
-    if side is None:
-        raise ValueError(f"there is no lane on the {command.side} to change into")
     return _change_lane(
-        features, lane, side, observation.agent, command, resolution, command.duration
+        features,
+        lane,
+        _side_lane(observation, command.side),
+        observation.agent,
+        command,
+        resolution,
+        command.duration,
     )
 
 
@@ -334,11 +347,12 @@ def predict_command(
     lane = observation.lane
     if lane is None:
         raise ValueError(f"{observation.agent.name} is off the lanes")
-    side: Optional[SideLane] = observation.right
-    if command.side == "left":
-        side = observation.left
-    if side is None:
-        raise ValueError(f"there is no lane on the {command.side} to change into")
     return _change_lane(
-        features, lane, side, observation.agent, command, resolution, horizon
+        features,
+        lane,
+        _side_lane(observation, command.side),
+        observation.agent,
+        command,
+        resolution,
+        horizon,
     )

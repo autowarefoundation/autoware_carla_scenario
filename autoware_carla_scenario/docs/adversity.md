@@ -51,11 +51,11 @@ accelerate), and a negative or non-finite `minimum_gap` or `time_headway`.
 |---|---|---|---|---|
 | `BRAKE_CHECK` | `AdversarialBrakeAction` | Follower | A vehicle follows it in its lane within 40 m, and they are not both stopped (under 0.5 m/s). The agent is not speeding up, and the follower is not slowing. | Brakes at the emergency deceleration (9 m/s²) for 2 s. |
 | `IGNORE_LEADER` | `IgnoreLeaderAction` | Leader | It is moving (at least 0.5 m/s), its leader holds it back by more than 1.5 m/s² (free flow against car following), and the speed difference is at least 2 m/s. | Accelerates at the free-flow rate for 2 s. |
-| `CUT_IN` | `AdversarialCutInAction` | LaneChange | A lane beside is blocked only by the vehicle behind there (closer than SUMO's secure gap). | Changes into that lane in 1 s. |
+| `CUT_IN` | `AdversarialCutInAction` | LaneChange | The agent is moving (at least 0.5 m/s), and a lane beside is blocked only by the vehicle behind there (closer than SUMO's secure gap). | Changes into that lane in 1 s. |
 | `LANE_CHANGE_ABORT` | `LaneChangeAbortAction` | LanechangeAbort | Blocked as for `CUT_IN`. The agent is moving, and its lanelet lasts more than 1 s more at its speed. | Drifts half a lane toward that side and back in 1 s. |
 | `HEAD_ON` | `HeadOnAction` | Headon | As for `IGNORE_LEADER`, but the agent's lanelet and its leader's start more than 120° apart. | Uses `IGNORE_LEADER`'s command. |
 | `TRAFFIC_RULE` | `RunTrafficRuleAction` | TrafficRule | A red or yellow light is within 40 m ahead. When it has a leader, it must be held back by the light rather than by that leader (car following beats its acceleration by more than 1.5 m/s²); without a leader this test is skipped. Free flow beats its acceleration by more than 1 m/s², or it is braking while free flow is above 0.2 m/s². | Drives on through at the free-flow rate for 2 s. |
-| `MERGE` | `AdversarialMergeAction` | Merge | It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane). | One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s² and it and its leader are not both stopped, for 2 s. Two lanes over: changes into the lane between in 1 s, when nobody there is within 2 s of headway. |
+| `MERGE` | `AdversarialMergeAction` | Merge | It is beside a merging lane with traffic on it, and not already changing lanes (turned 5° or more off its lane). | One lane over: speeds up as if the merging vehicle ahead were not there, when that beats giving way by more than 1.5 m/s² and it and its leader are not both stopped, for 2 s. Two lanes over: changes into the lane between in 1 s, when it is moving (at least 0.5 m/s) and nobody there is within 2 s of headway. |
 | `JAYWALKING` | `JaywalkAction` | Jaywalking | A pedestrian is off any crosswalk, with a road within 10 m. | Walks straight across at its speed (1.4 m/s if under 1 m/s) × U(0.5, 2.0), for 5 s. |
 | `RUNNING_RED_LIGHT` | `PedestrianRunRedLightAction` | RunningRedLight | A pedestrian is waiting (at most 0.2 m/s) within 3 m of a crosswalk whose light is red. | Crosses it end to end at 2.8 m/s. |
 | `STOP_CROSSING` | `StopCrossingAction` | StopCrossing | A pedestrian is on a crosswalk. | Stands still for N(2 s, 0.5 s), then walks a crosswalk's length on along its heading at 2.8 m/s. |
@@ -72,6 +72,17 @@ fires, the command the condition found is planned on the map and driven
 (`following_mode`: `FOLLOW` by default, or `POSITION`, as TeraSim's
 `moveToXY` does). At the end of the path the vehicle is handed back to its
 traffic backend.
+
+The entity is another road user, never the ego: an action built for `ego`
+(or an alias of it, such as `hero`, in any case) raises `ValueError`, as
+`PerceptionFaultInjectionAction` does. An ego its own driver drives
+(Autoware, ROS 2, HILS, `carla_driver`) would never take the planned path,
+so the action would never finish and would hold the ego's movement for the
+whole run.
+
+`JaywalkAction` and `StopCrossingAction` draw at random (a jaywalker's
+speed, a stopped crosser's wait); their `seed` (`Seed` in the editor)
+seeds the draws, and `None` follows the run's seed.
 
 A `condition` given instead decides when the action fires. On that tick
 the adversity's own trigger is still asked; when it does not hold, nothing is

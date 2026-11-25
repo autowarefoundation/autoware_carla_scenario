@@ -78,7 +78,8 @@ happened by `timeout_seconds`.
 | `scenario.nade_seed` | null | NADE: the sampler's seed; null follows the run's `seed` |
 
 A run refuses a `scenario.nade_*` value outside its bounds before anything
-starts, naming the key (#1458), and so an unknown `scenario.kind` (`Error:
+starts, naming the key (#1458; `scenario.nade_seed` unless null or a whole
+number from 0 to 2**31 - 1, #2465), and so an unknown `scenario.kind` (`Error:
 scenario.kind must be one of brake_check, ignore_leader, cut_in, traffic_rule,
 jaywalking, nade, not 'brake_chek'`), a negative or non-finite speed and a
 timeout that is not positive (#1816): a sweep is refused before it is

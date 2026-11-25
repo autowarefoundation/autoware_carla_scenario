@@ -178,6 +178,14 @@ def test_two_lanes_over_it_changes_into_the_lane_between(
     assert _command(features, _car("ego", 50.0, L1), _car("merging", 60.0, M), far)
 
 
+def test_two_lanes_over_a_stopped_vehicle_does_not_change_in(
+    features: MapFeatures,
+) -> None:
+    # With no forward speed the change would slide it straight sideways (#2465).
+    stopped = _car("ego", 50.0, L1, 0.0)
+    assert _command(features, stopped, _car("merging", 60.0, M)) is None
+
+
 @pytest.mark.parametrize(
     "other",
     [

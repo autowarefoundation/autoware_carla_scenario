@@ -184,6 +184,19 @@ NUMBER_FIELDS: list[tuple[type, str]] = [
     (AdversityConfig, "nade_is_probability"),
 ]
 
+
+@pytest.mark.parametrize("seed", [-1, 2**31, 1.5, True, "7"], ids=repr)
+def test_a_nade_seed_out_of_bounds_is_refused_naming_its_key(seed: Any) -> None:
+    # Before anything starts, not once CARLA is up naming `seed` (#2465).
+    with pytest.raises(ValueError, match=r"^scenario\.nade_seed must "):
+        AdversityConfig(nade_seed=seed)
+
+
+@pytest.mark.parametrize("seed", [None, 0, 7, 2**31 - 1])
+def test_a_nade_seed_in_bounds_is_taken(seed: Any) -> None:
+    assert AdversityConfig(nade_seed=seed).nade_seed == seed
+
+
 #: Not a number (#1818): a bool would pass as 1 or 0, and a string or a list
 #: make ``math.isfinite()`` raise a ``TypeError`` naming no key.
 NOT_A_NUMBER = [True, False, "10", "nan", [1.0]]
