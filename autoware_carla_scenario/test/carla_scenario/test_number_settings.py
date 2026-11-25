@@ -13,6 +13,7 @@ import math
 import random
 from typing import Any, Callable
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario.number_settings import (
@@ -38,6 +39,26 @@ def test_a_boolean_is_no_number(value: bool, text: bool) -> None:
     for check in (number_setting, finite_number_setting):
         with pytest.raises(ValueError, match=rf"^k must be a number, got {value}$"):
             check("k", value, text=text)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [np.True_, np.False_, np.array(True), np.array(False)],
+    ids=["True_", "False_", "0d-true", "0d-false"],
+)
+@pytest.mark.parametrize("text", [False, True])
+def test_a_numpy_boolean_is_no_number(value: Any, text: bool) -> None:
+    """``float(np.True_)`` is 1.0, as ``seed.check_whole_number`` refuses
+    it (#1900, #2507)."""
+    for check in (number_setting, finite_number_setting):
+        with pytest.raises(ValueError, match=r"^k must be a number, got "):
+            check("k", value, text=text)
+
+
+def test_numpy_numbers_are_still_numbers() -> None:
+    assert number_setting("k", np.float64(1.5)) == 1.5
+    assert number_setting("k", np.int32(2)) == 2.0  # type: ignore[arg-type]
+    assert number_setting("k", np.array(2.5)) == 2.5  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

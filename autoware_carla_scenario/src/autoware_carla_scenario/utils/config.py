@@ -50,7 +50,9 @@ def checked_options(
     """
     known = {field.name for field in fields(config_cls)}
     skip = ignore or set()
-    unknown = sorted(set(mapping) - known - skip)
+    # By str: YAML keys may mix ints and strings ({a: 2, 1: x}), which
+    # sorted() alone cannot compare (#2507).
+    unknown = sorted(set(mapping) - known - skip, key=str)
     if unknown:
         raise ValueError(
             f"Unknown {config_cls.__name__} key(s): {unknown}. "

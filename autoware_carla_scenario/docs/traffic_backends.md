@@ -1242,7 +1242,8 @@ OpenDRIVE the world runs (the file the run installed, or
 `world.get_map().to_opendrive()`), converts it with
 [roadgen](https://github.com/hakuturu583/hdmap_generator) into netconvert's
 plain-XML input and builds it with netconvert. The result is cached under
-`~/.cache/autoware_carla_scenario/sumo/`, keyed by the OpenDRIVE and the tool
+`$XDG_CACHE_HOME/autoware_carla_scenario/sumo/` (`~/.cache/autoware_carla_scenario/sumo/`
+when `XDG_CACHE_HOME` is unset), keyed by the OpenDRIVE and the tool
 versions, so a map is converted once. roadgen writes the network without offset
 normalisation, so SUMO's x/y are OpenDRIVE's and CARLA's are the same with y
 mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
