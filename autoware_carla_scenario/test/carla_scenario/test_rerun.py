@@ -360,6 +360,26 @@ def test_a_retried_recording_is_reported_by_its_last_conversion(
     assert "[FAILED] B: ValueError: cannot read B.trajectory.jsonl" in text
 
 
+def test_a_removed_recording_is_forgotten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The queue removes a failed attempt's recording before its retry; a
+    # retry that fails before it writes a log submits none, so the removed
+    # recording must not still count as written (#2485).
+    log = tmp_path / "A.trajectory.jsonl"
+    with RerunConverter(converter=_FakeConverter()) as converter:
+        converter.submit(log, "A")
+        converter.submit(tmp_path / "B.trajectory.jsonl", "B")
+        assert [c.ok for c in converter.wait()] == [True, True]
+        recording_path(log).unlink()
+        # Named as the queue names it, from another working directory.
+        monkeypatch.chdir(tmp_path)
+        converter.forget(Path("A.rrd"))
+        conversions = converter.wait()
+    assert [c.label for c in conversions] == ["B"]
+    assert report(conversions).startswith("Rerun recordings: 1/1 written")
+
+
 # ---------------------------------------------------------------------------
 # Strict mode
 # ---------------------------------------------------------------------------
@@ -648,6 +668,28 @@ def _in_run(directory: Path, stem: str) -> Path:
     assert not log.with_name(f"{stem}.sensors.rrd").exists()
     assert _sensor_chunks(recording_path(log)) == _SENSOR_CHUNKS
     return log
+
+
+def test_the_converter_draws_a_runs_metrics_itself(tmp_path: Path) -> None:
+    # The pinned converter draws `metric` records, so nothing is merged in
+    # afterwards: as a run ends, and converting the log again.
+    _real_sdk()
+    log = _log(tmp_path, "s")
+    with log.open("a") as lines:
+        lines.write(
+            json.dumps(
+                {"type": "metric", "frame": 0, "t": 0.0, "values": {"crime_ttc_s": 3.0}}
+            )
+            + "\n"
+        )
+    with RerunConverter() as converter:
+        recording = converter.submit(log, "s")
+    assert "/metrics/crime_ttc_s" in _entities(recording)
+    recording.unlink()
+    [conversion] = convert_outputs(log)
+    assert conversion.ok, conversion.error
+    assert "/metrics/crime_ttc_s" in _entities(recording)
+    assert not (tmp_path / "s.metrics.rrd").exists()
 
 
 def test_converting_a_run_again_keeps_its_sensors(tmp_path: Path) -> None:

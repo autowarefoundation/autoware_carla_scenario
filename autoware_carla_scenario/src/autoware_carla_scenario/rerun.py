@@ -14,8 +14,8 @@ failure with the case it belongs to.
     convert_outputs("outputs/2026-10-18/15-58-45")
 
 or, from a shell, ``python -m autoware_carla_scenario.rerun <output dir>``.
-The metrics a run computed once it was over, which its log holds, are put in
-the recording too (:mod:`.rerun_metrics`).  It keeps the sensors a run
+The metrics a run computed once it was over, which its log holds, the
+converter draws in the recording itself.  It keeps the sensors a run
 recorded (:mod:`.rerun_lidar`): a
 ``{stem}.sensors.rrd`` beside a log is merged into its new recording, and the
 sensors in a recording it replaces are carried over into the new one.
@@ -329,9 +329,6 @@ class RerunConverter:
                 logger.exception(
                     "merging the sensors %s into %s failed", lidar, recording
                 )
-        from .rerun_metrics import merge_metrics  # noqa: PLC0415
-
-        merge_metrics(trajectory, recording, _label(trajectory), converter=self._module)
         return stats
 
     def wait(self) -> list[RerunConversion]:
@@ -369,6 +366,15 @@ class RerunConverter:
                 )
             self._done.append(conversion)
         return list(self._done)
+
+    def forget(self, recording: Path) -> None:
+        """Drop the conversions into *recording* that :meth:`wait` returned,
+        as if it had never been converted: it was removed (a retried run's
+        outputs, which make way for the retry's), so :func:`report` and
+        :func:`latest` must not count it.  Call :meth:`wait` first: a
+        conversion still pending is not dropped."""
+        gone = Path(recording).resolve()
+        self._done = [c for c in self._done if Path(c.recording).resolve() != gone]
 
     def close(self) -> list[RerunConversion]:
         """:meth:`wait`, then end the background thread."""
@@ -451,9 +457,6 @@ def _install(
             logger.exception(
                 "merging the sensors %s into %s failed", sensors, recording
             )
-    from .rerun_metrics import merge_metrics  # noqa: PLC0415
-
-    merge_metrics(trajectory, recording, label, converter=require_converter())
     logger.info("[%s] Rerun recording written to %s", label, recording)
     return RerunConversion(label, trajectory, recording, stats=stats)
 

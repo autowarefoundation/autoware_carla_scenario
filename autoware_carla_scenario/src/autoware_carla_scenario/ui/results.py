@@ -221,7 +221,7 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
 
     Empty when the log has no ego or cannot be read. A line that is not
     JSON (a killed run's last tick, cut off mid-line) or a record that cannot
-    be used is skipped, as ``rerun_metrics.metric_records`` skips it: the
+    be used is skipped: the
     metrics of every good tick are kept. Kept until the log changes.
     """
     try:

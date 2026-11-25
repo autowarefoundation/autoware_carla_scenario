@@ -16,7 +16,7 @@ from .maps import capture_opendrive
 from .maps.pack import MapPack
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
-from .run_outputs import remove_run_outputs
+from .run_outputs import RECORDING_SUFFIX, remove_run_outputs
 from .run_timeout import check_run_timeout
 from .t4 import T4Recorder
 from .t4_scene import T4SceneExporter
@@ -525,6 +525,13 @@ class ScenarioQueue:
                         # recording (or takes the sensors) over this one's.
                         if self._rerun is not None:
                             self._rerun.wait()
+                            # Its recording goes with the outputs: the
+                            # converter no longer reports it (#2485), so a
+                            # retry that records none is not counted as
+                            # written.
+                            self._rerun.forget(
+                                self._output_dir / (run_stem + RECORDING_SUFFIX)
+                            )
                         # What the failed attempt wrote under the stem (its
                         # trajectory log, a partial T4 dataset the writer
                         # would refuse to write over ...) makes way for this
