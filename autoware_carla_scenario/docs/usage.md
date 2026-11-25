@@ -110,8 +110,12 @@ them. A trailing `**` means everything below it and is read as `**/*`, so
 `scenario/`. A `**` inside a component (`lane_change/**left`) is refused with
 an error naming the pattern, and so is a pattern that could reach outside
 `scenario/`: one starting with `/` (`/lane_change/*`) or with a `..` component
-(`../*`). The pattern means the same on every supported
-Python version, and the viewer's Run form reads it the same way.
+(`../*`). Only files are selected, and nothing hidden: a dangling symlink, or a
+path with a component below `scenario/` that starts with `.` (an editor's
+`.#default.yaml` lock link, a macOS `._default.yaml`, a `.git/` directory), is
+no scenario, even when the pattern names it (#2481). The pattern means the
+same on every supported Python version, and the viewer's Run form reads it the
+same way, as its scenario list does.
 
 **Batch constraints:**
 
