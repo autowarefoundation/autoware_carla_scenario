@@ -24,6 +24,7 @@ def _kill_the_rename(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(atomic_file.os, "replace", replace)
 
 
+@pytest.mark.usefixtures("umask_022")
 def test_bytes_replace_the_file_whole_with_write_texts_mode(tmp_path: Path) -> None:
     path = tmp_path / "x.pb"
     path.write_bytes(b"old")

@@ -602,6 +602,7 @@ def test_an_interrupted_write_leaves_no_scratch_file(
     assert list(cache_dir.iterdir()) == []
 
 
+@pytest.mark.usefixtures("umask_022")
 def test_a_stored_entry_is_the_json_of_the_verdict(cache_dir: Path) -> None:
     _store("k", _failed(), _sources("/run1"))
     entry = cache_dir / "k.json"

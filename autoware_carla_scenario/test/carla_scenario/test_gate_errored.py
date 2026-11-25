@@ -52,6 +52,7 @@ def _expected(
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
+@pytest.mark.usefixtures("umask_022")
 def test_the_marker_of_a_job_given_up_byte_for_byte(tmp_path: Path) -> None:
     path = write_case_errored(
         tmp_path / "job" / "3",
