@@ -42,6 +42,7 @@ import hashlib
 import logging
 import os
 import shlex
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace
@@ -49,6 +50,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from ..constants import MAX_ROS_DOMAIN_ID
+from ..utils.cache_dir import user_cache_dir
 
 # The ``<host>:<pid>`` value of OWNER_LABEL, and whether the process it names
 # runs, are the checked utils.owner_label's, which the preparer's backend
@@ -68,6 +70,7 @@ from .launcher import (
     AutowareStackError,
     ProcessGroup,
     _check_argument_list,
+    _safe_name,
     _check_stop_timeout_s,
     episode_log_path,
     fill_placeholders,
@@ -113,6 +116,12 @@ BuildPolicy = Literal["auto", "always", "never"]
 #: ``<this>:<digest of the base image and the workspace's package.xml files>``.
 DEPENDENCY_IMAGE_REPOSITORY: str = "autoware-carla-scenario-deps"
 
+#: How the dependency image is made, folded into its digest.  2: its install
+#: container no longer gets ``autoware.launcher.env``, the dev container's
+#: environment or ``--user``, which ``docker commit`` stored in the image
+#: (#2501); an image made before is made again, under another tag.
+_DEPENDENCY_IMAGE_VERSION = 2
+
 #: The package whose launch file takes ``scenario_mode``.
 _INTERFACE_PACKAGE = "autoware_carla_interface"
 
@@ -131,14 +140,20 @@ _DOCKER_TIMEOUT_S = 60.0
 #: and the dependencies' install stream their output and are not bounded.
 _DOCKER_COMMIT_TIMEOUT_S = 1800.0
 
-#: The lock file, in the workspace, that the dependency image's install and
-#: the workspace's build are run under: one run on the host (or on any host
-#: the workspace is shared with, where the file system locks across hosts)
-#: at a time, so SLURM tasks sharing a workspace do not ``colcon build`` it
-#: together (#1862).  In the workspace, not in a per-user cache directory:
-#: the runs to keep apart are those on one workspace, on whichever node.
-#: Taken only when there is something to make or build.
+#: The lock file, in the workspace, that the workspace's build is run under:
+#: one run on the host (or on any host the workspace is shared with, where
+#: the file system locks across hosts) at a time, so SLURM tasks sharing a
+#: workspace do not ``colcon build`` it together (#1862).  In the workspace,
+#: not in a per-user cache directory: the runs to keep apart are those on one
+#: workspace, on whichever node.  Taken only when there is something to build.
 _BUILD_LOCK_NAME = ".autoware_carla_scenario-build.lock"
+
+#: Where the locks the dependency images are made under go, below the user's
+#: cache directory: one per host and tag, since each host's daemon holds its
+#: own images, and the host is in the name, so a cache directory on a home
+#: shared by the nodes of a cluster does not make them wait for each other
+#: (#2501).
+_IMAGE_LOCK_DIR = "autoware_carla_scenario/locks"
 
 #: How long a run waits for another's build of the workspace before failing.
 _BUILD_LOCK_TIMEOUT_S = 4 * 3600.0
@@ -167,6 +182,72 @@ def _open_lock_file(path: Path) -> int:
         if exc.errno not in (errno.EACCES, errno.EROFS):
             raise
     return os.open(path, os.O_RDONLY)
+
+
+def _take_lock(path: Path, subject: str) -> int:
+    """Wait for, and take, the lock *path* on building *subject*; its
+    descriptor, or -1 when it cannot be locked (which is logged).
+
+    Raises:
+        AutowareStackError: Another run held it for longer than
+            :data:`_BUILD_LOCK_TIMEOUT_S`.
+    """
+    import fcntl  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    try:
+        fd = _open_lock_file(path)
+    except OSError as exc:
+        logger.warning(
+            "Building %s without a lock (%s): another run may build it "
+            "at the same time",
+            subject,
+            exc,
+        )
+        return -1
+    # Read here, not as a default: a default is bound once.
+    timeout = _BUILD_LOCK_TIMEOUT_S
+    deadline = time.monotonic() + timeout
+    waiting = False
+    # Closed on anything raised while it waits (the timeout, a
+    # KeyboardInterrupt, SIGTERM's exception): the caller's try/finally
+    # only starts once this returns.  Closed in one place only, so an
+    # interrupt cannot close it twice (the second time, perhaps, a
+    # descriptor another thread has opened since).
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except BlockingIOError:
+                pass
+            except OSError as exc:
+                logger.warning(
+                    "Building %s without a lock (%s): another run may build "
+                    "it at the same time",
+                    subject,
+                    exc,
+                )
+                break
+            if time.monotonic() >= deadline:
+                raise AutowareStackError(
+                    f"Another run has been building {subject} for "
+                    f"more than {timeout:.0f} s (it holds {path}); not "
+                    "building it beside it"
+                )
+            if not waiting:
+                logger.info(
+                    "Waiting for another run to finish building %s (%s)",
+                    subject,
+                    path,
+                )
+                waiting = True
+            time.sleep(_BUILD_LOCK_POLL_S)
+    except BaseException:
+        os.close(fd)
+        raise
+    os.close(fd)
+    return -1
 
 
 def _end_process(process: subprocess.Popen[str]) -> None:
@@ -232,6 +313,17 @@ def _protobuf_upgrade_script() -> str:
         + " && sudo python3 -m pip install "
         + requirement
         + "; fi; fi"
+    )
+
+
+def _image_missing(stderr: str) -> bool:
+    """Whether a failed ``docker image inspect`` said the image is not there
+    (Docker's ``Error: No such image: ...`` or ``No such object``, Podman's
+    ``Error: <image>: image not known``), rather than failing otherwise (a
+    daemon that cannot be reached, a permission denied)."""
+    text = stderr.lower()
+    return (
+        "no such image" in text or "no such object" in text or "image not known" in text
     )
 
 
@@ -482,19 +574,26 @@ class DockerAutowareLauncher:
         if build or self._is_built():
             base = self._container.image
             tag = self._dependency_tag(base)
-            if not build and self._has_image(tag):
+            image = tag
+            if self._has_image(tag):
                 # Nothing to make: no lock to wait for.
                 logger.info("Workspace dependencies: %s", tag)
-                self._container = replace(self._container, image=tag)
             else:
-                lock = self._lock_workspace()
+                # The image is this host's daemon's: made under a lock of this
+                # host's, not the shared workspace's (#2501).
+                lock = self._lock_dependency_image(tag)
                 try:
                     # Asked again: another run may have made it meanwhile.
-                    self._container = replace(
-                        self._container, image=self._dependency_image(base, tag)
-                    )
-                    # Or built the workspace, while this one waited.
-                    if build and self._config.build == "auto" and self._is_built():
+                    image = self._dependency_image(base, tag)
+                finally:
+                    self._unlock_workspace(lock)
+            self._container = replace(self._container, image=image)
+            if build:
+                lock = self._lock_workspace()
+                try:
+                    # Another run may have built the workspace while this one
+                    # waited.
+                    if self._config.build == "auto" and self._is_built():
                         build = False
                     if build:
                         self._build()
@@ -748,63 +847,36 @@ class DockerAutowareLauncher:
             AutowareStackError: Another run held it for longer than
                 :data:`_BUILD_LOCK_TIMEOUT_S`.
         """
-        import fcntl  # noqa: PLC0415
-        import time  # noqa: PLC0415
+        return _take_lock(self._workspace / _BUILD_LOCK_NAME, str(self._workspace))
 
-        path = self._workspace / _BUILD_LOCK_NAME
+    def _lock_dependency_image(self, tag: str) -> int:
+        """Wait for, and take, this host's lock on making the image *tag*;
+        its descriptor (-1 for none).  Let go with :meth:`_unlock_workspace`.
+
+        Raises:
+            AutowareStackError: Another run held it for longer than
+                :data:`_BUILD_LOCK_TIMEOUT_S`.
+        """
+        failed = False
+        problem = ""
+        directory = Path()
         try:
-            fd = _open_lock_file(path)
+            directory = user_cache_dir() / _IMAGE_LOCK_DIR
+            directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
+            failed, problem = True, str(exc)
+        except RuntimeError as exc:  # no home directory to put it in
+            failed, problem = True, str(exc)
+        if failed:
             logger.warning(
                 "Building %s without a lock (%s): another run may build it "
                 "at the same time",
-                self._workspace,
-                exc,
+                tag,
+                problem,
             )
             return -1
-        # Read here, not as a default: a default is bound once.
-        timeout = _BUILD_LOCK_TIMEOUT_S
-        deadline = time.monotonic() + timeout
-        waiting = False
-        # Closed on anything raised while it waits (the timeout, a
-        # KeyboardInterrupt, SIGTERM's exception): the caller's try/finally
-        # only starts once this returns.  Closed in one place only, so an
-        # interrupt cannot close it twice (the second time, perhaps, a
-        # descriptor another thread has opened since).
-        try:
-            while True:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    return fd
-                except BlockingIOError:
-                    pass
-                except OSError as exc:
-                    logger.warning(
-                        "Building %s without a lock (%s): another run may build "
-                        "it at the same time",
-                        self._workspace,
-                        exc,
-                    )
-                    break
-                if time.monotonic() >= deadline:
-                    raise AutowareStackError(
-                        f"Another run has been building {self._workspace} for "
-                        f"more than {timeout:.0f} s (it holds {path}); not "
-                        "building it beside it"
-                    )
-                if not waiting:
-                    logger.info(
-                        "Waiting for another run to finish building %s (%s)",
-                        self._workspace,
-                        path,
-                    )
-                    waiting = True
-                time.sleep(_BUILD_LOCK_POLL_S)
-        except BaseException:
-            os.close(fd)
-            raise
-        os.close(fd)
-        return -1
+        name = _safe_name(f"{socket.gethostname()}-{tag}") + ".lock"
+        return _take_lock(directory / name, tag)
 
     def _unlock_workspace(self, fd: int) -> None:
         """Let the build lock *fd* (from :meth:`_lock_workspace`) go."""
@@ -823,11 +895,31 @@ class DockerAutowareLauncher:
 
     def _dependency_digest(self, base_image: str) -> str:
         """What the dependency image is made from: the base image, the bridge's
-        packages and, with ``rosdep``, every package.xml."""
+        packages and, with ``rosdep``, every package.xml.
+
+        A base image this host's daemon does not have is pulled first (#2501).
+        """
         listed = self._docker(
-            "image", "inspect", "--format", "{{.Id}}", base_image, check=True
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            base_image,
+            check=False,
+            timeout_is_error=True,
         )
+        if listed.returncode != 0:
+            if not _image_missing(listed.stderr):
+                raise AutowareStackError(
+                    f"{self._config.docker} image inspect {base_image} failed: "
+                    f"{listed.stderr.strip()}"
+                )
+            self._pull(base_image)
+            listed = self._docker(
+                "image", "inspect", "--format", "{{.Id}}", base_image, check=True
+            )
         digest = hashlib.sha256(listed.stdout.strip().encode())
+        digest.update(f"\0version {_DEPENDENCY_IMAGE_VERSION}".encode())
         digest.update(" ".join(BRIDGE_APT_PACKAGES).encode())
         # What the image's protobuf is brought up to (#2217): an image made
         # before it, with Ubuntu 22.04's protobuf alone, is made again.
@@ -842,6 +934,52 @@ class DockerAutowareLauncher:
             digest.update((source / relative).read_bytes())
             digest.update(b"\0")
         return digest.hexdigest()[:16]
+
+    def _pull(self, image: str) -> None:
+        """``docker pull`` *image*, its output streamed to the dependency log."""
+        log_name = self._log_name("deps")
+        logger.info("Pulling %s", image)
+        code = self._stream([self._config.docker, "pull", image], log_name)
+        if code != 0:
+            raise AutowareStackError(
+                f"Pulling {image} failed (exit code {code}); "
+                f"see {self._log_shown(log_name)}"
+            )
+
+    def _base_user_and_workdir(self, image: str) -> tuple[str, str]:
+        """*image*'s ``USER`` and ``WORKDIR``: ``root`` and ``/`` where it
+        sets none, as Docker reads an unset one."""
+        listed = self._docker(
+            "image",
+            "inspect",
+            "--format",
+            "{{.Config.User}}\t{{.Config.WorkingDir}}",
+            image,
+            check=True,
+        )
+        fields = listed.stdout.rstrip("\r\n").split("\t")
+        user = fields[0].strip()
+        workdir = ""
+        if len(fields) > 1:
+            workdir = fields[1].strip()
+        if not user:
+            user = "root"
+        if not workdir:
+            workdir = "/"
+        return user, workdir
+
+    def _log_name(self, kind: str) -> str:
+        """The name of this run's *kind* (``deps``, ``build``) log in the log
+        dir: ``autoware-<kind>-<host>_<pid>.log``, of this process alone, so
+        runs sharing the directory (a SLURM batch's tasks) do not write over
+        each other's (#2501), as the stacks' logs do not (#2247)."""
+        return f"autoware-{kind}-{_safe_name(_owner_value())}.log"
+
+    def _log_shown(self, log_name: str) -> str:
+        """Where the log *log_name* is, for an error message."""
+        if self._log_dir is None:
+            return "the output above"
+        return str(self._log_dir / log_name)
 
     def _dependency_tag(self, base_image: str) -> str:
         """The tag of the dependency image made from *base_image*."""
@@ -890,39 +1028,39 @@ class DockerAutowareLauncher:
         # Last, so it checks the protobuf the image ends up with: one of
         # rosdep's keys may have installed another (#2217).
         script += _protobuf_upgrade_script()
-        argv = [
-            *self._run_argv(
-                name=name,
-                extra_env={"DEBIAN_FRONTEND": "noninteractive"},
-                remove=False,
-                image=base_image,
-            ),
-            "bash",
-            "-c",
-            script,
-        ]
+        # Set in the script, not with --env: `docker commit` keeps a
+        # container's environment in the image.
+        script = "export DEBIAN_FRONTEND=noninteractive && " + script
+        user, workdir = self._base_user_and_workdir(base_image)
+        argv = self._install_argv(name, base_image) + ["bash", "-c", script]
+        log_name = self._log_name("deps")
         logger.info(
             "Installing what the stack of %s needs into %s, once",
             self._workspace,
             tag,
         )
         try:
-            code = self._stream(
-                argv,
-                "autoware-deps.log",
-                self._run_env({"DEBIAN_FRONTEND": "noninteractive"}),
-            )
+            code = self._stream(argv, log_name)
             if code != 0:
                 raise AutowareStackError(
                     f"Installing the dependencies of {self._workspace} failed "
-                    f"(exit code {code}); see autoware-deps.log"
+                    f"(exit code {code}); see {self._log_shown(log_name)}"
                 )
+            # The base image's user and working directory, whatever the
+            # install container ran with: nothing of the run that made the
+            # image stays in it (#2501).
             self._docker(
                 "commit",
                 "--change",
                 'CMD ["/bin/bash"]',
                 "--change",
                 f"LABEL {STACK_LABEL}=",
+                "--change",
+                f"LABEL {OWNER_LABEL}=",
+                "--change",
+                f"USER {user}",
+                "--change",
+                f"WORKDIR {workdir}",
                 name,
                 tag,
                 check=True,
@@ -931,6 +1069,38 @@ class DockerAutowareLauncher:
         finally:
             self._docker("rm", "--force", name, check=False)
         return tag
+
+    def _install_argv(self, name: str, image: str) -> list[str]:
+        """``docker run`` up to the image, for the dependency image's install
+        container *name*: the workspace mounted (rosdep reads its
+        ``package.xml`` files) and the host's network, nothing more.
+
+        Not :meth:`_run_argv`'s: ``docker commit`` keeps a container's
+        environment, user and working directory in the image, which every
+        user of the host's daemon shares, so it gets none of
+        ``autoware.launcher.env`` (a token), the dev container's
+        environment, ``HOST_UID``/``HOST_GID``, ``user``, ``gpus``, ``mounts``
+        or ``docker_args`` (#2501).
+        """
+        mount = self._container_mount()
+        return [
+            self._config.docker,
+            "run",
+            "--name",
+            name,
+            "--label",
+            f"{STACK_LABEL}={_label_value()}",
+            "--label",
+            f"{OWNER_LABEL}={_owner_value()}",
+            "--init",
+            "--network",
+            "host",
+            "--workdir",
+            mount,
+            "--volume",
+            f"{self._workspace}:{mount}",
+            image,
+        ]
 
     def _container_mount(self) -> str:
         assert self._container is not None  # noqa: S101 - set by _resolve_container()
@@ -954,7 +1124,8 @@ class DockerAutowareLauncher:
         log: Optional[IO[str]] = None
         if log_path is not None:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            log = log_path.open("w", encoding="utf-8")
+            # Appended to: a pull and the install it comes before share one.
+            log = log_path.open("a", encoding="utf-8")
         try:
             try:
                 process: subprocess.Popen[str] = subprocess.Popen(  # noqa: S603 - argv comes from the user's own config
@@ -1012,13 +1183,15 @@ class DockerAutowareLauncher:
             self._container.image,
             shlex.join(self._config.colcon_args),
         )
+        log_name = self._log_name("build")
         try:
-            code = self._stream(argv, "autoware-build.log", self._run_env({}))
+            code = self._stream(argv, log_name, self._run_env({}))
         finally:
             self._docker("rm", "--force", name, check=False)
         if code != 0:
             raise AutowareStackError(
-                f"colcon build failed in {self._workspace} (exit code {code})"
+                f"colcon build failed in {self._workspace} (exit code {code}); "
+                f"see {self._log_shown(log_name)}"
             )
 
     # ------------------------------------------------------------------

@@ -102,20 +102,52 @@ What happens:
       was built by someone running `rosdep install` in it; a fresh container
       per scenario does not, so the launcher does it once, and again only
       when a `package.xml` or the dev container's image changes
-      (`autoware.launcher.rosdep=false` leaves the workspace's out). The
-      output goes to `autoware-deps.log`.
+      (`autoware.launcher.rosdep=false` leaves the workspace's out). A dev
+      container image the host's Docker does not have (a SLURM node where
+      the dev container was never opened) is pulled first. The output, the
+      pull's included, goes to `autoware-deps-<host>_<pid>.log`, named after
+      the run, so the tasks of a SLURM batch sharing a directory each keep
+      their own; an error names the file.
+    - The dependency image is shared by every user of the host's Docker, so
+      it carries nothing of the run that made it: the install container gets
+      none of `autoware.launcher.env`, the dev container's `containerEnv`,
+      `HOST_UID`/`HOST_GID`, `user`, `gpus`, `mounts` or `docker_args`, and
+      the image is committed with the dev container image's own `USER` and
+      `WORKDIR`. Its environment is the dev container image's; the stack's
+      containers get `env` and the rest when they start. The install reaches
+      the network as the host's Docker does: a host behind a proxy sets it in
+      Docker's client configuration (`proxies` in `~/.docker/config.json`),
+      which Docker passes to every container, this one included (and so
+      into the image), not in `autoware.launcher.env`.
+      A dependency image made by a version before this one (#2501) may hold
+      the `env` of the run that made it, a token among them. Its tag is not
+      used any more -- the image is made again once, under a new digest --
+      but it stays on disk until removed:
+      `docker image ls autoware-carla-scenario-deps` lists them, and
+      `docker image rm autoware-carla-scenario-deps:<old digest>` removes
+      one.
     - The workspace is built (`colcon build` in that image) when
       `autoware.launcher.build` says so: `auto` builds it only when
       `install/setup.bash` is missing, `always` before every batch, `never`
-      leaves building to you. The output goes to `autoware-build.log`.
-      When there is a dependency image to make or a build to run, it is done
-      under a lock, `.autoware_carla_scenario-build.lock` at the root of the
-      workspace (kept there, not in a cache directory of yours, so runs on
-      every node that shares the workspace see it): a second run waits for
-      the first's (up to 4 hours, then fails saying so), and with `auto`
-      uses its build rather than build again. A run with nothing to make
-      takes no lock. The file stays; git shows it as untracked unless you
-      add it to the workspace's `.git/info/exclude`.
+      leaves building to you. The output goes to
+      `autoware-build-<host>_<pid>.log`, named after the run as the
+      dependencies' log is.
+      A build is run under a lock, `.autoware_carla_scenario-build.lock` at
+      the root of the workspace (kept there, not in a cache directory of
+      yours, so runs on every node that shares the workspace see it): a
+      second run waits for the first's (up to 4 hours, then fails saying so),
+      and with `auto` uses its build rather than build again. The file stays;
+      git shows it as untracked unless you add it to the workspace's
+      `.git/info/exclude`. The dependency image lives in each host's Docker,
+      so it is made under a lock of that host's instead,
+      `<host>-autoware-carla-scenario-deps_<digest>.lock` in
+      `${XDG_CACHE_HOME:-~/.cache}/autoware_carla_scenario/locks/` (the host
+      in its name, so a cache directory on a home the nodes share does not
+      make them wait for each other): a second run of yours on the host
+      waits for the first's, up to 4 hours too, and uses its image. Runs of
+      another user on the host have a cache directory of their own and may
+      make the same image beside yours, which only costs the time. A run
+      with nothing to make or build takes no lock.
     - A workspace whose `autoware_carla_interface` launch takes no
       `scenario_mode` -- one built from a branch without scenario support --
       is refused here, not after the first scenario has timed out waiting for
@@ -143,8 +175,9 @@ What happens:
       the batch here (a call it needs) or is logged and gone on without (the
       leftover containers' removal), rather than hang it. A dependency image
       whose `docker image inspect` does not answer fails the batch too: it is
-      not taken for a missing one, installed and committed again. The dependencies'
-      install and the build stream their output and are not bounded.
+      not taken for a missing one, installed and committed again. The base
+      image's pull, the dependencies' install and the build stream their
+      output and are not bounded.
 2. **For each scenario**, once the ego is spawned and the mission served:
     `docker run --rm --network host` of the dev container image, the workspace
     mounted where it was built, `source install/setup.bash`, then the
@@ -353,7 +386,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
-| `env` | `{}` | Variables set in the container, over the dev container's own. Passed to `docker run` by name (`--env KEY`), so a value (a token) does not show in `ps`; one the Docker CLI reads itself (`PATH`, `HOME`, `DOCKER_*`, `LD_*`, `PYTHON*`, `*_PROXY`, `SSL_*`, ...) stays `KEY=VALUE` on the command line |
+| `env` | `{}` | Variables set in the container, over the dev container's own. Passed to `docker run` by name (`--env KEY`), so a value (a token) does not show in `ps`; one the Docker CLI reads itself (`PATH`, `HOME`, `DOCKER_*`, `LD_*`, `PYTHON*`, `*_PROXY`, `SSL_*`, ...) stays `KEY=VALUE` on the command line. Not passed to the dependency image's install ([above](#a-local-workspace-in-its-dev-container)) |
 | `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling, each 0 to 232; empty keeps the dev container's |
 | `gpus` | `all` | Docker's `--gpus` (`device=0`, or a count: `2`); `null` for none |
 | `user` | `null` | Docker's `--user`; by default the image maps `aw` to your `HOST_UID`/`HOST_GID` |

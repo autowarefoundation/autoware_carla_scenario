@@ -678,10 +678,34 @@ if args[0] == "ps":
     print(os.environ.get("FAKE_DOCKER_PS", ""))
 elif args[:2] == ["image", "inspect"]:
     if "--format" in args:
-        print("sha256:" + args[-1].replace("/", "_"))
+        # A base image the daemon lacks until it is pulled (#2501), or a
+        # daemon that fails otherwise.
+        error = os.environ.get("FAKE_DOCKER_INSPECT_ERROR")
+        if error:
+            sys.stderr.write(error + "\\n")
+            sys.exit(1)
+        pulled_log = os.environ.get("FAKE_DOCKER_PULLED", "")
+        pulled = []
+        if pulled_log and os.path.exists(pulled_log):
+            pulled = open(pulled_log).read().split()
+        missing = os.environ.get("FAKE_DOCKER_MISSING", "").split()
+        if args[-1] in missing and args[-1] not in pulled:
+            sys.stderr.write("Error: No such image: " + args[-1] + "\\n")
+            sys.exit(1)
+        if ".Config.User" in args[args.index("--format") + 1]:
+            print(os.environ.get("FAKE_DOCKER_BASE_CONFIG", "\\t"))
+        else:
+            print("sha256:" + args[-1].replace("/", "_"))
     else:
         tags = os.environ.get("FAKE_DOCKER_IMAGES", "").split()
         sys.exit(0 if args[-1] in tags else 1)
+elif args[0] == "pull":
+    print("Pulling from " + args[-1])
+    code = int(os.environ.get("FAKE_DOCKER_PULL_EXIT", "0"))
+    if code == 0 and os.environ.get("FAKE_DOCKER_PULLED"):
+        with open(os.environ["FAKE_DOCKER_PULLED"], "a") as pulled:
+            pulled.write(args[-1] + "\\n")
+    sys.exit(code)
 elif args[0] == "run":
     script = args[-1]
     if "apt-get install" in script:
@@ -723,6 +747,8 @@ def fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     docker.chmod(0o755)
     log = tmp_path / "docker.log"
     monkeypatch.setenv("FAKE_DOCKER_LOG", str(log))
+    # The dependency images' locks go below it (#2501), not into ~/.cache.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
     def calls() -> list[list[str]]:
         if not log.exists():
@@ -767,7 +793,8 @@ def test_docker_launcher_builds_an_unbuilt_workspace(
     (tag,) = _dependency_tags(calls())
     assert tag in build
     assert "colcon build --symlink-install" in build[-1]
-    assert (tmp_path / "out" / "autoware-build.log").read_text().startswith("Summary")
+    (build_log,) = (tmp_path / "out").glob("autoware-build-*.log")
+    assert build_log.read_text().startswith("Summary")
     # A build container is removed whatever happened to it.
     assert any(c[0] == "rm" and c[-1].endswith("-build") for c in calls())
 
@@ -1173,7 +1200,9 @@ def test_docker_launcher_gives_up_on_a_build_lock_held_too_long(
     finally:
         holder.kill()
         holder.wait()
-    assert not any(c[0] == "run" for c in calls())
+    # The dependency image is the host's, made without the workspace's lock
+    # (#2501); the build is not run.
+    assert not any(c[0] == "run" and "colcon build" in c[-1] for c in calls())
 
 
 def test_docker_launcher_builds_serially_across_processes(
@@ -1559,7 +1588,15 @@ def test_launcher_env_values_reach_the_container_but_not_the_command_line(
     named = [json.loads(line) for line in env_log.read_text().splitlines()]
     # The dependency image, the build and the stack.
     assert len(runs) == len(named) == 3
-    for run, (script, by_name) in zip(runs, named):
+    # The dependency image's install gets none of it: `docker commit` would
+    # keep it in the image (#2501).
+    deps, (deps_script, deps_by_name) = runs[0], named[0]
+    assert deps_script == deps[-1]
+    assert "apt-get install" in deps[-1]
+    assert "--env" not in deps
+    assert deps_by_name == {}
+    assert "export DEBIAN_FRONTEND=noninteractive && " in deps[-1]
+    for run, (script, by_name) in zip(runs[1:], named[1:]):
         assert script == run[-1]
         assert "s3cret-token" not in " ".join(run)
         assert run[run.index("API_TOKEN") - 1] == "--env"
@@ -1567,9 +1604,6 @@ def test_launcher_env_values_reach_the_container_but_not_the_command_line(
         # One the CLI would heed itself stays on the command line.
         assert "HTTPS_PROXY=http://proxy:3128" in run
         assert "HTTPS_PROXY" not in by_name
-    # A variable the launcher sets over the config's keeps its own value.
-    deps = next(c for c in runs if "apt-get install" in c[-1])
-    assert "DEBIAN_FRONTEND=noninteractive" in deps
     assert "s3cret-token" not in caplog.text
 
 
@@ -1968,7 +2002,8 @@ def test_the_workspaces_dependencies_go_into_an_image_the_stack_runs_in(
     assert tag in _stack_runs(calls())[0]
     assert "python3-grpcio python3-protobuf" in rosdep[-1]
     assert any(c[0] == "rm" and c[-1].endswith("-deps") for c in calls())
-    assert "rosdeps installed" in (tmp_path / "out" / "autoware-deps.log").read_text()
+    (deps_log,) = (tmp_path / "out").glob("autoware-deps-*.log")
+    assert "rosdeps installed" in deps_log.read_text()
 
 
 @pytest.mark.parametrize(
@@ -2065,6 +2100,285 @@ def test_a_failed_rosdep_install_is_refused(
         _docker_launcher(ws, docker, rosdep=True).prepare()
     assert _dependency_tags(calls()) == []
     assert any(c[0] == "rm" and c[-1].endswith("-deps") for c in calls())
+
+
+def test_the_dependency_image_keeps_nothing_of_the_run_that_made_it(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``docker commit`` stores the install container's environment, user and
+    working directory in an image every user of the host shares (#2501)."""
+    docker, calls = fake_docker
+    monkeypatch.setenv("FAKE_DOCKER_BASE_CONFIG", "aw\t/home/aw")
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    _docker_launcher(
+        ws,
+        docker,
+        rosdep=True,
+        env={"API_TOKEN": "s3cret-token", "HTTPS_PROXY": "http://proxy:3128"},
+        user="1234:1234",
+        mounts={str(extra): "/extra"},
+        docker_args=("--env-file", "/secrets.env"),
+    ).prepare(log_dir=tmp_path / "out")
+
+    deps = next(c for c in calls() if c[0] == "run" and "apt-get install" in c[-1])
+    image = deps.index("ghcr.io/autowarefoundation/autoware:universe-devel-cuda-jazzy")
+    options = deps[:image]
+    for absent in ("--env", "--user", "--gpus", "--env-file", "--rm"):
+        assert absent not in options
+    assert "API_TOKEN" not in " ".join(deps)
+    assert "HOST_UID" not in " ".join(deps)
+    # The dev container's containerEnv.
+    assert "CMAKE_CUDA_ARCHITECTURES" not in " ".join(deps)
+    assert f"{extra}:/extra" not in options
+    assert options[options.index("--volume") + 1] == f"{ws}:/home/aw/autoware"
+    commit = next(c for c in calls() if c[0] == "commit")
+    changes = [commit[i + 1] for i, a in enumerate(commit) if a == "--change"]
+    # The base image's own, read from it.
+    assert "USER aw" in changes
+    assert "WORKDIR /home/aw" in changes
+    assert f"LABEL {OWNER_LABEL}=" in changes
+    assert [
+        "image",
+        "inspect",
+        "--format",
+        "{{.Config.User}}\t{{.Config.WorkingDir}}",
+        "ghcr.io/autowarefoundation/autoware:universe-devel-cuda-jazzy",
+    ] in calls()
+
+
+def test_a_base_image_without_user_or_workdir_commits_dockers_defaults(
+    tmp_path: Path, fake_docker
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    _docker_launcher(ws, docker, user="1234:1234").prepare()
+    commit = next(c for c in calls() if c[0] == "commit")
+    assert "USER root" in commit
+    assert "WORKDIR /" in commit
+
+
+def test_the_dependency_image_version_feeds_its_digest(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An image made before its install stopped getting the run's settings
+    may hold a token: it is made again, under another tag (#2501)."""
+    docker, _calls = fake_docker
+    launcher = _docker_launcher(_workspace(tmp_path), docker)
+    launcher._container = launcher._resolve_container()  # noqa: SLF001
+    before = launcher._dependency_digest("base")  # noqa: SLF001
+    monkeypatch.setattr(docker_module, "_DEPENDENCY_IMAGE_VERSION", 1)
+    assert launcher._dependency_digest("base") != before  # noqa: SLF001
+
+
+def test_a_missing_base_image_is_pulled(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A SLURM node where the dev container was never opened (#2501)."""
+    docker, calls = fake_docker
+    base = "ghcr.io/autowarefoundation/autoware:universe-devel-cuda-jazzy"
+    monkeypatch.setenv("FAKE_DOCKER_MISSING", base)
+    monkeypatch.setenv("FAKE_DOCKER_PULLED", str(tmp_path / "pulled"))
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    launcher.prepare(log_dir=tmp_path / "out")
+
+    recorded = calls()
+    pull = recorded.index(["pull", base])
+    inspects = [
+        i
+        for i, c in enumerate(recorded)
+        if c == ["image", "inspect", "--format", "{{.Id}}", base]
+    ]
+    assert inspects[0] < pull < inspects[1]
+    assert launcher._container is not None  # noqa: SLF001
+    assert launcher._container.image.startswith(DEPENDENCY_IMAGE_REPOSITORY)  # noqa: SLF001
+    # The pull's output and the install's, in the run's dependency log.
+    (log,) = (tmp_path / "out").glob("autoware-deps-*.log")
+    text = log.read_text()
+    assert text.index(f"Pulling from {base}") < text.index("python3-grpcio")
+
+
+def test_a_base_image_that_cannot_be_pulled_names_the_log(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, calls = fake_docker
+    base = "ghcr.io/autowarefoundation/autoware:universe-devel-cuda-jazzy"
+    monkeypatch.setenv("FAKE_DOCKER_MISSING", base)
+    monkeypatch.setenv("FAKE_DOCKER_PULL_EXIT", "1")
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    with pytest.raises(AutowareStackError, match="Pulling .* failed") as raised:
+        launcher.prepare(log_dir=tmp_path / "out")
+    (log,) = (tmp_path / "out").glob("autoware-deps-*.log")
+    assert str(log) in str(raised.value)
+    assert not any(c[0] in ("run", "commit") for c in calls())
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error: No such image: ghcr.io/x/y:z",
+        "Error response from daemon: No such image: ghcr.io/x/y:z",
+        "Error: No such object: ghcr.io/x/y:z",
+        # Podman's (`autoware.launcher.docker=podman`).
+        "Error: ghcr.io/x/y:z: image not known",
+    ],
+)
+def test_a_missing_image_is_told_from_docker_and_podman(stderr: str) -> None:
+    assert docker_module._image_missing(stderr)  # noqa: SLF001
+
+
+def test_an_inspect_failing_otherwise_is_not_a_missing_image() -> None:
+    assert not docker_module._image_missing(  # noqa: SLF001
+        "permission denied while trying to connect to the Docker daemon socket"
+    )
+
+
+def test_a_base_image_inspect_failing_otherwise_is_not_pulled(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, calls = fake_docker
+    monkeypatch.setenv(
+        "FAKE_DOCKER_INSPECT_ERROR",
+        "permission denied while trying to connect to the Docker daemon socket",
+    )
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    with pytest.raises(AutowareStackError, match="permission denied"):
+        _docker_launcher(ws, docker).prepare()
+    assert not any(c[0] in ("pull", "run", "commit") for c in calls())
+
+
+def _image_lock(launcher: DockerAutowareLauncher, cache: Path) -> Path:
+    launcher._container = launcher._resolve_container()  # noqa: SLF001
+    tag = launcher._dependency_tag(launcher._container.image)  # noqa: SLF001
+    launcher._container = None  # noqa: SLF001
+    name = docker_module._safe_name(f"{socket.gethostname()}-{tag}") + ".lock"
+    return cache / "autoware_carla_scenario" / "locks" / name
+
+
+def test_the_dependency_image_is_made_under_a_host_lock_not_the_workspaces(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The image is the host's daemon's: making it does not wait for the
+    shared workspace's lock (another node's build), only for another run
+    making it on this host (#2501)."""
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.05)
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    workspace_lock = ws / ".autoware_carla_scenario-build.lock"
+    workspace_lock.touch()
+    holder = _hold_lock(workspace_lock)
+    try:
+        began = time.monotonic()
+        _docker_launcher(ws, docker).prepare()
+        assert time.monotonic() - began < 0.9
+    finally:
+        holder.kill()
+        holder.wait()
+    assert len(_dependency_tags(calls())) == 1
+
+    other = tmp_path / "other"
+    other.mkdir()
+    ws2 = _workspace(other, built=True, scenario=True)
+    launcher = _docker_launcher(ws2, docker, rosdep=True)
+    image_lock = _image_lock(launcher, tmp_path / "cache")
+    image_lock.parent.mkdir(parents=True, exist_ok=True)
+    image_lock.touch()
+    holder = _hold_lock(image_lock)
+    try:
+        began = time.monotonic()
+        launcher.prepare()
+        waited = time.monotonic() - began
+    finally:
+        holder.kill()
+        holder.wait()
+    assert waited >= 0.5
+    assert len(_dependency_tags(calls())) == 2
+
+
+def test_dependency_images_are_made_one_at_a_time_on_a_host(
+    tmp_path: Path, fake_docker
+) -> None:
+    """Two runs on one host making the same image: one makes it, the other
+    waits and uses it."""
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    spans = tmp_path / "spans"
+    images = tmp_path / "images"
+    images.write_text("")
+    wrapper = tmp_path / "bin" / "image-docker"
+    # A docker whose committed images stay: `image inspect <tag>` finds them.
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        'for last in "$@"; do :; done\n'
+        f'case "$1" in commit) echo "$last" >> {images};; esac\n'
+        f'case "$*" in *"apt-get install"*) '
+        f'echo "start $(date +%s.%N)" >> {spans}; sleep 0.5; '
+        f'echo "end $(date +%s.%N)" >> {spans};; esac\n'
+        f'FAKE_DOCKER_IMAGES="$(cat {images})" exec {docker} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    script = textwrap.dedent(
+        f"""
+        from pathlib import Path
+        from autoware_carla_scenario.autoware_stack import (
+            DockerAutowareConfig, DockerAutowareLauncher,
+        )
+        from autoware_carla_scenario.autoware_stack import docker
+        docker._BUILD_LOCK_POLL_S = 0.05
+        DockerAutowareLauncher(DockerAutowareConfig(
+            workspace=Path({str(ws)!r}), launch=("p", "f.launch.xml"),
+            docker={str(wrapper)!r}, mounts={{}}, rosdep=False,
+        )).prepare()
+        """
+    )
+    runs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(2)
+    ]
+    for run in runs:
+        _out, err = run.communicate(timeout=120)
+        assert run.returncode == 0, err
+    events = [line.split()[0] for line in spans.read_text().splitlines()]
+    assert events == ["start", "end"]
+    assert len(images.read_text().split()) == 1
+
+
+def test_the_deps_and_build_logs_are_the_runs_own(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tasks of a SLURM batch share its directory: each writes logs of its
+    own, and an error names the one it wrote (#2501)."""
+    docker, _calls = fake_docker
+    out = tmp_path / "out"
+    (out / "autoware-deps.log").parent.mkdir(parents=True)
+    (out / "autoware-deps.log").write_text("another task's\n")
+    ws = _workspace(tmp_path)
+    monkeypatch.setenv("FAKE_DOCKER_WS", str(ws))
+    monkeypatch.setenv("FAKE_DOCKER_BUILD_EXIT", "2")
+    launcher = _docker_launcher(ws, docker)
+    with pytest.raises(AutowareStackError, match="colcon build failed") as raised:
+        launcher.prepare(log_dir=out)
+    owner = docker_module._safe_name(f"{socket.gethostname()}:{os.getpid()}")
+    build_log = out / f"autoware-build-{owner}.log"
+    assert build_log.read_text().startswith("Summary")
+    assert str(build_log) in str(raised.value)
+    assert (out / f"autoware-deps-{owner}.log").exists()
+    assert (out / "autoware-deps.log").read_text() == "another task's\n"
+
+    monkeypatch.setenv("FAKE_DOCKER_ROSDEP_EXIT", "1")
+    with pytest.raises(
+        AutowareStackError, match="Installing the dependencies"
+    ) as raised:
+        _docker_launcher(ws, docker, rosdep=True).prepare(log_dir=out)
+    assert str(out / f"autoware-deps-{owner}.log") in str(raised.value)
 
 
 def test_without_rosdep_the_image_still_gets_the_bridges_packages(
