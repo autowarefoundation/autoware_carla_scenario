@@ -38,8 +38,10 @@ uv run scenario-check scenario='lane_change/*' scenario.timeout_seconds=20
 overrides apply. `scenario='*'` is every config, like no `scenario=`; a
 package author checks only theirs (`scenario='my_package/*'`, about 15 s per
 config), as every built-in config takes minutes. It exits with 0 when every
-scenario passed, 1 when one failed, and 2 when it could not run: there is no
-Codon compiler, no config matches `scenario=` (the message lists the
+scenario passed, 1 when one failed (or its `controls:` are invalid: they are
+validated before Codon is looked for, so that is reported, exit 1, with Codon
+or without), and 2 when it could not run: there is no Codon compiler, no
+config matches `scenario=` (the message lists the
 configs), or an override names a key the config does not have
 (`scenario.timout_seconds=3` is reported with the closest key,
 `scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
