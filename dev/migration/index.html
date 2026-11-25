@@ -2237,6 +2237,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#launchertime-is-text-never-a-number" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        launcher.time is text, never a number
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scenario-hashes-change-once" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2448,6 +2459,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#launchertime-is-text-never-a-number" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        launcher.time is text, never a number
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#scenario-hashes-change-once" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2645,6 +2667,24 @@
 
 
 <h1 id="migrating">Migrating<a class="headerlink" href="#migrating" title="Permanent link">&para;</a></h1>
+<h2 id="launchertime-is-text-never-a-number"><code>launcher.time</code> is text, never a number<a class="headerlink" href="#launchertime-is-text-never-a-number" title="Permanent link">&para;</a></h2>
+<p><code>launcher.time</code> written as a number is now refused, as the config is read
+(<a href="../slurm/">SLURM</a>). YAML reads an unquoted <code>12:00:00</code> as the base-60 number
+43200 (and <code>120:00</code> as 7200), which <code>sbatch --time</code> took as minutes: a job
+meant for 12 hours asked for 30 days. Such a number cannot be told from one
+meant as minutes, so <code>time: 90</code> (and <code>time: 1.5</code>) is refused with it (#2483).
+Quote the value in a config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="s">"12:00:00"</span><span class="w">   </span><span class="c1"># was: time: 12:00:00</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">time</span><span class="p">:</span><span class="w"> </span><span class="s">"90"</span><span class="w">         </span><span class="c1"># was: time: 90 (minutes)</span>
+</code></pre></div>
+<p>On the command line <code>launcher.time=12:00:00</code> is text already; minutes are
+quoted for Hydra: <code>launcher.time="'90'"</code>, not <code>launcher.time=90</code>. The viewer's
+run panel quotes the field itself. Batches already submitted resubmit as
+before: their manifest holds the time as text.</p>
+<p>The same release caps <code>launcher.signal_grace_seconds</code> at 65535, what
+<code>sbatch --signal</code> takes, and runs <code>launcher.setup</code> in the directory the batch
+was submitted from and with <code>set +u</code> in every job, not only with
+<code>launcher.remote_cwd</code>.</p>
 <h2 id="scenario-hashes-change-once">Scenario hashes change once<a class="headerlink" href="#scenario-hashes-change-once" title="Permanent link">&para;</a></h2>
 <p><code>scenario_hash</code> (<a href="../wosac/#are-they-rollouts">WOSAC Rollouts</a>) now digests a number by
 its value -- a whole float as the integer it equals, so <code>15</code> and <code>15.0</code> are
@@ -2671,14 +2711,14 @@ driver-backed entities draw their plan with <code>ego_plan.ego_plan_markers()</c
 which also leaves out a point that is not a finite number (#2477). Code
 importing <code>plan_markers</code> builds the same markers from the two helpers that
 remain:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.debug_markers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">DebugMarkers</span><span class="p">,</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">plan_polyline</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">world_point</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">markers</span> <span class="o">=</span> <span class="n">DebugMarkers</span><span class="p">()</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">markers</span><span class="o">.</span><span class="n">add_polyline</span><span class="p">(</span><span class="n">plan_polyline</span><span class="p">([</span><span class="n">world_point</span><span class="p">(</span><span class="n">pose</span><span class="p">)</span> <span class="k">for</span> <span class="n">pose</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">poses</span><span class="p">]))</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.debug_markers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">DebugMarkers</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">plan_polyline</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">world_point</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">markers</span> <span class="o">=</span> <span class="n">DebugMarkers</span><span class="p">()</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">markers</span><span class="o">.</span><span class="n">add_polyline</span><span class="p">(</span><span class="n">plan_polyline</span><span class="p">([</span><span class="n">world_point</span><span class="p">(</span><span class="n">pose</span><span class="p">)</span> <span class="k">for</span> <span class="n">pose</span> <span class="ow">in</span> <span class="n">plan</span><span class="o">.</span><span class="n">poses</span><span class="p">]))</span>
 </code></pre></div>
 <h2 id="visibilityat_quantile-is-gone"><code>visibility.at_quantile</code> is gone<a class="headerlink" href="#visibilityat_quantile-is-gone" title="Permanent link">&para;</a></h2>
 <p>The helper was exported but nothing read it: the weather rules' quantities
@@ -2884,7 +2924,7 @@ are written into the trajectory log.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 07:49:07 UTC"><span class="timeago" datetime="2026-11-25T07:49:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 07:49:07 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 09:02:20 UTC"><span class="timeago" datetime="2026-11-25T09:02:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 09:02:20 UTC">2026-11-25</span>
   </span>
 
     
