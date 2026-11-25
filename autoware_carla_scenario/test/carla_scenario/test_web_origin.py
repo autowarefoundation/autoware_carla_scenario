@@ -289,7 +289,28 @@ def test_every_spelling_of_the_unspecified_address_is_a_wildcard(bound: str) -> 
 
 
 @pytest.mark.parametrize(
-    "bound", ["127.0.0.1", "::1", "10.0.0.1", "0.0.0.1", "localhost"]
+    "bound",
+    [
+        "127.0.0.1",
+        "::1",
+        "10.0.0.1",
+        "0.0.0.1",
+        "localhost",
+        # No IP literal: looked up as a host name, which may resolve to one
+        # interface (a search domain, /etc/hosts).
+        "0.0.0.0.0",
+        ".",
+        "..",
+        ".0",
+        "0..0",
+        ":",
+        ":::",
+        "0:0",
+        "00000::",
+        "::%eth0",
+        "0.",
+        "0.0.0.0.",
+    ],
 )
 def test_an_address_with_anything_but_zeros_is_no_wildcard(bound: str) -> None:
     assert not web_origin.is_wildcard(bound)
