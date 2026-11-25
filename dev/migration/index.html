@@ -2237,6 +2237,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#scenario-hashes-change-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scenario hashes change once
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#debug_markersplan_markers-is-gone" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2437,6 +2448,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#scenario-hashes-change-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scenario hashes change once
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#debug_markersplan_markers-is-gone" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2623,6 +2645,26 @@
 
 
 <h1 id="migrating">Migrating<a class="headerlink" href="#migrating" title="Permanent link">&para;</a></h1>
+<h2 id="scenario-hashes-change-once">Scenario hashes change once<a class="headerlink" href="#scenario-hashes-change-once" title="Permanent link">&para;</a></h2>
+<p><code>scenario_hash</code> (<a href="../wosac/#are-they-rollouts">WOSAC Rollouts</a>) now digests a number by
+its value -- a whole float as the integer it equals, so <code>15</code> and <code>15.0</code> are
+one -- and leaves the <code>map</code> section's paths (<code>xodr_path</code>, <code>lanelet2_path</code>,
+<code>directory</code>, any <code>*_path</code> or <code>*_dir</code>) out, as it leaves out endpoints
+(#2481). Runs of one scenario no longer differ by a CLI override's spelling
+(<code>scenario.timeout_seconds=15</code> against the YAML's <code>15.0</code>) or by where the map
+sits on each machine. Nearly every scenario's hash changes once, as its config
+has whole floats (<code>spawn_s: 25.0</code>): the trajectory logs and <code>.wosac.json</code>
+files written before keep the old hash, so <code>scenario-wosac pack</code> refuses to
+pack a rollout exported from an earlier log with one from a new log as one
+scenario. Re-run, or export and pack the old runs and the new runs apart.
+Two runs that differed only in a map path or a number's spelling, refused as
+different scenarios before, are now packed together.</p>
+<p>Scenario globs (<code>scenario='reach_goal/*'</code>, the viewer's Run list) no longer
+select hidden files or dangling symlinks (#2481): an editor's
+<code>.#default.yaml</code> lock link or a macOS <code>._default.yaml</code> used to be selected,
+and the batch failed to compose it. A scenario config whose own name, or a
+directory on its path below <code>scenario/</code>, starts with <code>.</code> is no longer found
+by a glob; rename it.</p>
 <h2 id="debug_markersplan_markers-is-gone"><code>debug_markers.plan_markers</code> is gone<a class="headerlink" href="#debug_markersplan_markers-is-gone" title="Permanent link">&para;</a></h2>
 <p>The helper was exported but nothing in the framework called it: the
 driver-backed entities draw their plan with <code>ego_plan.ego_plan_markers()</code>,
@@ -2842,7 +2884,7 @@ are written into the trajectory log.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 06:49:11 UTC"><span class="timeago" datetime="2026-11-25T06:49:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 06:49:11 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 07:49:07 UTC"><span class="timeago" datetime="2026-11-25T07:49:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 07:49:07 UTC">2026-11-25</span>
   </span>
 
     
