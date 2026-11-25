@@ -38,7 +38,7 @@ The main CLI entry points (every command the package installs is in [CLI Command
 | Command | Framework | Purpose |
 |---------|-----------|---------|
 | `scenario` | Hydra | Run autonomous-driving scenario tests in CARLA |
-| `scenario-setup` | argparse | Download CARLA (1.0; `--nightly` for the nightly build) for `scenario` to launch |
+| `scenario-setup` | argparse | Download CARLA (1.0; `--nightly [DATE\|COMMIT]` for a nightly build) for `scenario` to launch |
 | `detect-no-3d-model` | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | `viewer` | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario results |
 

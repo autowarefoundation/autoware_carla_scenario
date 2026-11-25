@@ -48,7 +48,7 @@ This downloads CARLA 1.0 for Linux (about 14 GB, with a progress bar) and
 unpacks it, while it downloads, into `~/.autoware_carla_scenario/bin/carla`. That is
 where the scenario runner looks for CARLA when `CARLA_EXECUTABLE` is not set. Run
 it again at any time: an install that is still current is kept, another one
-replaces it (`--nightly` installs CARLA's nightly build instead; run the
+replaces it (`--nightly` installs CARLA's nightly build instead, `--nightly 20261124` the one built that day -- see [Installation](installation.md#carla-simulator); run the
 scenarios with `TYPESAFE_CARLA_CARLA_REF=ue58-dev` then). If the connection drops partway, the download picks up
 where it stopped (with an HTTP range request) instead of starting over; it gives
 up after several reconnections in a row that deliver nothing, and stops (the next

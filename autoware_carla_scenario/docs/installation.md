@@ -50,7 +50,25 @@ scenario-setup` downloads the 1.0 release
 `~/.autoware_carla_scenario/bin/carla`, and the runner launches it from there
 (see the [Quick Start](quickstart.md)); `scenario-setup --nightly` installs
 CARLA's nightly build (the `ue58-dev` branch) instead. A CARLA installed any
-other way is used through `CARLA_EXECUTABLE`. Both package layouts are
+other way is used through `CARLA_EXECUTABLE`.
+
+`--nightly` alone takes the latest nightly (`Linux/Dev/CARLA_UE5_Latest.tar.gz`),
+which moves with every build. CARLA's CI also keeps each nightly it built under
+its own name, `Linux/Dev/<YYYYMMDD>_<commit>.tar.gz` (the committer date and
+the abbreviated hash of the `ue58-dev` commit), and `--nightly BUILD` picks one:
+
+```bash
+uv run scenario-setup --nightly 20261124           # the last nightly built that day
+uv run scenario-setup --nightly 23d487e3           # the nightly built from that commit
+uv run scenario-setup --nightly 20261124_23d487e3  # a nightly by its own name
+```
+
+A date (`YYYYMMDD` or `YYYY-MM-DD`) or a commit is looked up in `ue58-dev`'s
+history through the GitHub API (anonymous requests are rate-limited; set
+`GITHUB_TOKEN` to lift the limit), and the nightlies it could name are asked
+for on the download server, which lists none. CI builds only some commits and
+old nightlies may be deleted, so a date or commit with no nightly is reported
+as such; a nightly's own name needs no lookup. Both package layouts are
 accepted: CARLA 1.0's, with `CarlaUnreal.sh` at the package's top, and
 0.10's, with it in `Linux/`. An install made before CARLA 1.0 became the
 default (the old nightly) is replaced by the next `scenario-setup`, since it
