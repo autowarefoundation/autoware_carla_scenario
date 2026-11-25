@@ -177,12 +177,8 @@ def drift_path(
     states: list[PredictedState] = []
     for t in _times(duration, resolution):
         x, y, yaw = walk.at(speed * t)
-        offset = lane.t + drift * (1.0 - abs(t - half) / half)
-        states.append(
-            PredictedState(
-                x - offset * math.sin(yaw), y + offset * math.cos(yaw), yaw, speed, t
-            )
-        )
+        px, py = _offset(x, y, yaw, lane.t + drift * (1.0 - abs(t - half) / half))
+        states.append(PredictedState(px, py, yaw, speed, t))
     return states
 
 
@@ -223,6 +219,26 @@ def _accelerate(
     return states
 
 
+def _crossing_speed(
+    features: MapFeatures,
+    lane: LanePosition,
+    side: SideLane,
+    speed: float,
+    duration: float,
+) -> float:
+    """The forward speed left to an agent at *speed* crossing from where it
+    is on *lane* onto *side*'s centreline in *duration* (TeraSim's lane-change
+    longitudinal speed), the one :func:`_change_lane` drives at.
+
+    The crossing's sideways speed is taken out of *speed*: an agent slower
+    than it has none left, and its crossing slides it straight sideways.
+    """
+    cx, cy, yaw = _LaneWalk(features, lane.lanelet, lane.s).at(0.0)
+    ox, oy = _offset(cx, cy, yaw, lane.t)
+    nx, ny, _n = _LaneWalk(features, side.lanelet, side.s).at(0.0)
+    return lane_change_longitudinal_speed(speed, math.hypot(nx - ox, ny - oy), duration)
+
+
 def _change_lane(
     features: MapFeatures,
     lane: LanePosition,
@@ -244,17 +260,13 @@ def _change_lane(
     times = _times(max(span, command.duration), resolution)
     xs: list[float] = []
     ys: list[float] = []
-    speed = agent.speed
-    for i, t in enumerate(times):
+    # The lanes' separation, sideways out of the speed: the triggers that
+    # change lanes ask the same (CUT_IN, MERGE), so none plans a slide.
+    speed = _crossing_speed(features, lane, side, agent.speed, command.duration)
+    for t in times:
         cx, cy, own_yaw = own.at(speed * t)
         ox, oy = _offset(cx, cy, own_yaw, lane.t)
         nx, ny, _n = beside.at(speed * t)
-        if i == 0:
-            # The lanes' separation, sideways out of the speed (TeraSim's
-            # lane-change longitudinal speed); from here on, at that speed.
-            speed = lane_change_longitudinal_speed(
-                agent.speed, math.hypot(nx - ox, ny - oy), command.duration
-            )
         f = min(t / command.duration, 1.0)
         xs.append(ox + (nx - ox) * f)
         ys.append(oy + (ny - oy) * f)
@@ -266,6 +278,22 @@ def _change_lane(
         yaw = math.atan2(ys[b] - ys[a], xs[b] - xs[a])
         states.append(PredictedState(xs[i], ys[i], yaw, agent.speed, t))
     return states
+
+
+def _side_lane(observation: VehicleObservation, side: str) -> SideLane:
+    """The lane on *side* of the observed vehicle, to change into.
+
+    Raises:
+        ValueError: There is no lane on that side.
+    """
+    beside: Optional[SideLane] = observation.right
+    if side == "left":
+        beside = observation.left
+    if beside is None:
+        raise ValueError(f"there is no lane on the {side} to change into")
+    # A typed local: Codon unwraps the Optional here, not at the caller.
+    lane: SideLane = beside
+    return lane
 
 
 def plan_command(
@@ -297,13 +325,14 @@ def plan_command(
             command,
             resolution,
         )
-    side: Optional[SideLane] = observation.right
-    if command.side == "left":
-        side = observation.left
-    if side is None:
-        raise ValueError(f"there is no lane on the {command.side} to change into")
     return _change_lane(
-        features, lane, side, observation.agent, command, resolution, command.duration
+        features,
+        lane,
+        _side_lane(observation, command.side),
+        observation.agent,
+        command,
+        resolution,
+        command.duration,
     )
 
 
@@ -334,11 +363,12 @@ def predict_command(
     lane = observation.lane
     if lane is None:
         raise ValueError(f"{observation.agent.name} is off the lanes")
-    side: Optional[SideLane] = observation.right
-    if command.side == "left":
-        side = observation.left
-    if side is None:
-        raise ValueError(f"there is no lane on the {command.side} to change into")
     return _change_lane(
-        features, lane, side, observation.agent, command, resolution, horizon
+        features,
+        lane,
+        _side_lane(observation, command.side),
+        observation.agent,
+        command,
+        resolution,
+        horizon,
     )

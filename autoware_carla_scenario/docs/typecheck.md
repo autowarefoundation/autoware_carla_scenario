@@ -871,7 +871,8 @@ What `test_typecheck_model.py` compares, model by model:
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
   `ui/models`, `_ros2`, `metrics`, `measures`, `number_settings` (what
-  the example scenarios' configs check their numbers with, #2398),
+  the example scenarios' configs check their numbers with, #2398), `seed`
+  (what they check a seed with, #2465),
   `scaffold/generator`,
   `commonroad/session`, `commonroad/worker`, `hils/config` and
   `utils/traffic_light`, each declaring exactly the names compared;

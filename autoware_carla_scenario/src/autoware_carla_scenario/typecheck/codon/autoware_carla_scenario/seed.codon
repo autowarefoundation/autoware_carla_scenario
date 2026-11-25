@@ -1,0 +1,30 @@
+# Model of autoware_carla_scenario.seed (docs/typecheck.md): the run's seed
+# and the check of a component's own seed, which the example scenarios'
+# configs (examples.configs, `scenario.nade_seed`, #2465) call from their
+# validators. The Python module is checked; this declares its __all__ with
+# Python's signatures and values, for a scenario and its configs to import.
+# Nothing here runs.
+
+DEFAULT_SEED: int = 0
+
+MAX_SEED: int = 2147483647
+
+
+def run_seed() -> int:
+    raise NotImplementedError()
+
+
+def set_run_seed(seed: int) -> int:
+    raise NotImplementedError()
+
+
+def check_whole_number(key: str, value: int) -> int:
+    raise NotImplementedError()
+
+
+def check_seed(key: str, seed: int) -> int:
+    raise NotImplementedError()
+
+
+def resolve_seed(seed: Optional[int]) -> int:
+    raise NotImplementedError()

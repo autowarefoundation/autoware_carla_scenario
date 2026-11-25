@@ -33,6 +33,7 @@ from ..scenario_config import (
     ServerConfig,
     SweepConfig,
 )
+from ..seed import check_seed
 
 # ---------------------------------------------------------------------------
 # Bounds shared by the scenario configs
@@ -737,6 +738,11 @@ class AdversityConfig:
                 raise ValueError(f"scenario.{key} must be in [0, 1], not {value}")
         _require_not_negative("nade_cooldown", self.nade_cooldown)
         _require_positive("nade_seconds", self.nade_seconds)
+        # As the sampler's own seed (NadeSettings) refuses it once the
+        # scenario is set up, but naming the config key (#2465).
+        nade_seed = self.nade_seed
+        if nade_seed is not None:
+            check_seed("scenario.nade_seed", nade_seed)
         # The sign is ignored; at 0 the pedestrian stands on the lane's centre.
         _require_not_zero("npc_offset_m", self.npc_offset_m)
 

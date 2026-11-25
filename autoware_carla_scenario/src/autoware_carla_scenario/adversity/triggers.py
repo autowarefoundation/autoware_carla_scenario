@@ -15,7 +15,10 @@ adversarial thing now, else None:
   road were empty, for 2 s;
 * :attr:`AdversityKind.CUT_IN` (LaneChange): a lane beside, left first,
   blocked only by the vehicle behind there (closer than SUMO's secure gap),
-  while the one ahead there is far enough -- change in anyway, in 1 s;
+  while the one ahead there is far enough, and fast enough to cross it in
+  1 s still moving forward (at least 0.5 m/s once the crossing's sideways
+  speed is taken out, about 3.5 m/s across a 3.5 m lane) -- change in
+  anyway, in 1 s;
 * :attr:`AdversityKind.TRAFFIC_RULE` (TrafficRule): a red or yellow light
   within 40 m ahead; when it has a leader, car following beats its own
   acceleration by more than 1.5 m/s² (the light holds it back, not the
@@ -33,8 +36,9 @@ adversarial thing now, else None:
   (:meth:`~..route.geometry.MapFeatures.merges`) -- one lane over,
   speed up as if the vehicle merging ahead were not there, when that beats
   giving way by more than 1.5 m/s² and it and its leader are not both
-  stopped, for 2 s; two lanes over, change into the lane between in 1 s
-  when nobody there is within 2 s of headway;
+  stopped, for 2 s; two lanes over, fast enough to cross as for CUT_IN,
+  change into the lane between in 1 s when nobody there is within 2 s of
+  headway;
 * :attr:`AdversityKind.JAYWALKING` (Jaywalking): a pedestrian off any
   crosswalk, a road within 10 m -- walk straight across it at its speed
   (1.4 m/s if under 1 m/s) times U(0.5, 2.0), for 5 s;
@@ -66,7 +70,7 @@ from typing import Optional
 from ..route.geometry import MapFeatures
 from ..trajectory.relative_lane import _centreline, _point_at, _start_heading, _turn
 from .checks import check_non_negative, check_positive
-from .command import AdversarialCommand, _times, drift_path
+from .command import AdversarialCommand, _crossing_speed, _times, drift_path
 from .geometry import PredictedState
 from .idm import (
     DEFAULT_IDM,
@@ -328,12 +332,41 @@ def _blocked_side(
     return None
 
 
+def _crosses_moving(
+    features: MapFeatures,
+    lane: LanePosition,
+    side: SideLane,
+    speed: float,
+    limits: TriggerThresholds,
+) -> bool:
+    """Whether a lane change onto *side* in ``limits.lane_change_duration``
+    leaves the agent moving forward (at least ``limits.standstill_speed``).
+
+    The crossing's sideways speed comes out of the agent's
+    (:func:`~.command._crossing_speed`, the speed the planned path and NADE's
+    prediction drive at): slower, the change would slide it straight
+    sideways, its yaw across the lane -- about 3.5 m/s across a 3.5 m lane
+    in 1 s.
+    """
+    forward = _crossing_speed(features, lane, side, speed, limits.lane_change_duration)
+    return forward >= limits.standstill_speed
+
+
 def cut_in(
-    seen: VehicleObservation, limits: TriggerThresholds = DEFAULT_THRESHOLDS
+    seen: VehicleObservation,
+    features: MapFeatures,
+    limits: TriggerThresholds = DEFAULT_THRESHOLDS,
 ) -> Optional[AdversarialCommand]:
     """CUT_IN: change into the lane beside in front of the vehicle there."""
+    lane = seen.lane
+    if lane is None:
+        return None
+    on: LanePosition = lane
     side = _blocked_side(seen, seen.agent.speed, limits)
     if side is None:
+        return None
+    blocked: SideLane = side
+    if not _crosses_moving(features, on, blocked, seen.agent.speed, limits):
         return None
     if side is seen.left:
         return AdversarialCommand.change_lane("left", limits.lane_change_duration)
@@ -476,6 +509,10 @@ def merge(
     if not _merging(features, beyond, toward):
         return None
     # MergeLaneChange: into the lane the merging vehicle is to merge into.
+    # Too slow to keep moving forward while crossing, it does not: as for
+    # CUT_IN, it would slide straight sideways.
+    if not _crosses_moving(features, on, beside, agent.speed, limits):
+        return None
     if _within_headway(beside.leader, agent.speed, True, limits):
         return None
     if _within_headway(beside.follower, agent.speed, False, limits):
@@ -660,7 +697,7 @@ def adversity_command(
     if kind is AdversityKind.IGNORE_LEADER:
         return ignore_leader(seen, limits)
     if kind is AdversityKind.CUT_IN:
-        return cut_in(seen, limits)
+        return cut_in(seen, scene.features, limits)
     if kind is AdversityKind.LANE_CHANGE_ABORT:
         return lane_change_abort(seen, scene.features, limits)
     if kind is AdversityKind.MERGE:

@@ -123,6 +123,29 @@ def test_the_adversity_s_trigger_is_the_default_condition() -> None:
     )
 
 
+_ALL_ACTIONS = [
+    AdversarialBrakeAction,
+    AdversarialCutInAction,
+    AdversarialMergeAction,
+    HeadOnAction,
+    IgnoreLeaderAction,
+    JaywalkAction,
+    LaneChangeAbortAction,
+    PedestrianRunRedLightAction,
+    RunTrafficRuleAction,
+    StopCrossingAction,
+]
+
+
+@pytest.mark.parametrize("cls", _ALL_ACTIONS, ids=lambda c: c.__name__)
+@pytest.mark.parametrize("name", ["ego", "Ego", "HERO", acs.EntityRole.ego()])
+def test_the_ego_is_refused(cls: Any, name: Any) -> None:
+    # An ego its own driver drives never takes the path: the action would
+    # never finish and hold the ego's movement for the whole run (#2465).
+    with pytest.raises(ValueError, match=rf"{cls.__name__}: .* is the ego"):
+        cls(name, ANY)
+
+
 def test_a_triggered_adversity_is_driven_to_its_end() -> None:
     action = AdversarialBrakeAction("npc1", ANY)
     states = _run(action, [_brake_world(frame) for frame in range(1, 5)])

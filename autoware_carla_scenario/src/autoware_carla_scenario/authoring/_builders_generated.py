@@ -1260,6 +1260,7 @@ def build_jaywalk_action(
         label=compiled.label,
         once=compiled.node.once,
         overrides=compiled.node.overrides,
+        seed=params["seed"],
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 
@@ -1390,6 +1391,7 @@ def build_stop_crossing_action(
         label=compiled.label,
         once=compiled.node.once,
         overrides=compiled.node.overrides,
+        seed=params["seed"],
         following_mode=TrajectoryFollowingMode[str(params["following_mode"]).upper()],
     )
 

@@ -2066,6 +2066,22 @@ _ADVERSITY_FIELDS: tuple[FieldSpec, ...] = (
     ),
 )
 
+#: The adversities that draw at random (a jaywalker's speed, a stopped
+#: crosser's wait) take a seed, as the NADE card does (#2465).
+_RANDOM_ADVERSITY_FIELDS: tuple[FieldSpec, ...] = (
+    *_ADVERSITY_FIELDS,
+    FieldSpec(
+        name="seed",
+        label="Seed",
+        kind="int",
+        minimum=0,
+        maximum=MAX_SEED,
+        default=None,
+        required=False,
+        help="The trigger's random draws. Leave empty to follow the run's seed.",
+    ),
+)
+
 
 _ADVERSITY_NOTE = (
     "  Fires when its trigger holds at the chosen location (TeraSim's "
@@ -2185,7 +2201,7 @@ register_action_spec(
         target="..actions.adversarial:JaywalkAction",
         actor_kinds=("pedestrian",),
         visual_kind="continuous",
-        fields=_ADVERSITY_FIELDS,
+        fields=_RANDOM_ADVERSITY_FIELDS,
         description="Walk straight across the nearest road, off any crosswalk."
         + _ADVERSITY_NOTE,
     )
@@ -2215,7 +2231,7 @@ register_action_spec(
         target="..actions.adversarial:StopCrossingAction",
         actor_kinds=("pedestrian",),
         visual_kind="continuous",
-        fields=_ADVERSITY_FIELDS,
+        fields=_RANDOM_ADVERSITY_FIELDS,
         description="Stop on the crosswalk a moment, then hurry across."
         + _ADVERSITY_NOTE,
     )
