@@ -76,10 +76,10 @@ def test_stop_on_red_is_vacuous_when_no_light_governs_us(rules):
     slack.
 
     This is the property that keeps an inapplicable rule from either dominating
-    the objective or dragging the reported robustness around. With no light at
-    all, the rollout's stop station is ``+inf`` and the stop slack sits at its
-    cap, `saturation_m`, so that is what the rule reads then -- 100, not the
-    gate's 20 (#2491).
+    the objective or dragging the reported robustness around. Whenever no
+    light governs us, perception sets the stop station to ``+inf`` and the
+    stop slack sits at its cap, `saturation_m`, so that is what the rule reads
+    then -- 100, not the gate's 20 (#2491).
     """
     signal = signal_from_columns(
         light_gate=constant(-LIMITS.gate_magnitude_m),

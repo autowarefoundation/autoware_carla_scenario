@@ -121,9 +121,10 @@ than a metre and starve the optimizer of the gradient it needs to fix it.
 Twenty metres brackets both concerns, and the objective's `margin` is what
 keeps a vacuous reading from dominating.
 
-With no light at all the rule in fact reads more than `+gate`: the stop
-station is then `+inf`, so `stop_slack` sits at its cap, `saturation_m`
-(100 m), and the `max` takes that.  The objective is unaffected -- the margin
+In practice an inactive light reads more than `+gate`: whenever no light
+governs us -- none seen, a green one, or a line already crossed -- perception
+sets the stop station to `+inf`, so `stop_slack` sits at its cap,
+`saturation_m` (100 m), and the `max` takes that.  The objective is unaffected -- the margin
 saturates both readings to the same 0.5 -- but the reported per-rule
 robustness is 100, not 20.
 
