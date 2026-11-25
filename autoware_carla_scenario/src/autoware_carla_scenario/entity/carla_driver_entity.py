@@ -212,6 +212,10 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         #: The plan as debug markers, built once per plan.
         self._plan_markers: DebugMarkers = DebugMarkers()
         self._sim_time_us: int = 0
+        #: The simulator frame the policy's clock starts on (its time 0), once
+        #: it does: a camera frame or sweep rendered before it -- while a
+        #: bridged stack was awaited -- is no observation of the session.
+        self._session_start_frame: Optional[int] = None
         self._last_policy_time_us: Optional[int] = None
         #: Every tick's ego state since the last policy step, sent as one egomotion
         #: history -- as the upstream runtime does -- rather than only the newest.
@@ -343,6 +347,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         # at simulation time 0 and asks the policy on its first tick, as the
         # first attempt did.
         self._sim_time_us = 0
+        self._session_start_frame = None
         self._last_policy_time_us = None
         self._drive_count = 0
         self._pending_egomotion = []
@@ -425,6 +430,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
     def _begin_driving(self, world: "carla.World", actor: "carla.Actor") -> None:
         """Start the run-up, or send the first route: the policy's first tick."""
         assert self._map is not None  # noqa: S101 - fetched when the session opened
+        # The policy's clock reads 0 on this frame and counts from here.
+        self._session_start_frame = int(world.get_snapshot().frame)
         if self._config.warmup_s > 0.0:
             # The ego leaves for its run-up before the first tick: its spawn
             # pose is where it arrives, not where its history begins.  Built on a
@@ -676,7 +683,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         (``rerun.lidar``) is handed each new sweep too, on the ego's pose of the
         tick it was taken on, and a T4 dataset of the run is fed it as taken
         on that tick (#950).  A sweep older than the poses kept is not
-        recorded (logged at debug level); the policy still gets it.
+        recorded (logged at debug level); the policy still gets it.  A sweep
+        taken before the policy's clock started (while a bridged stack was
+        awaited) is left out, as if the LiDAR had none yet (#2477).
         """
         if not self._lidars or self._world is None:
             return []
@@ -690,6 +699,14 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         for logical_id, lidar, mount in self._lidars:
             sweep = lidar.latest_sweep(frame)
             if sweep is None:
+                continue
+            if self._before_session(sweep[0]):
+                # Taken before the policy's clock started: none to send.
+                logger.debug(
+                    "LiDAR %s's sweep of frame %d is from before the session",
+                    logical_id,
+                    sweep[0],
+                )
                 continue
             age_ticks = max(frame - sweep[0], 0)
             points = lidar_points_to_rig(sweep[1], mount)
@@ -983,7 +1000,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         ticks, renders before the policy step: such a frame carries its own
         tick's time, goes into the recording under its own frame, and is fed
         to the dataset as rendered on it.  A frame already sent on an earlier
-        step is not sent again.
+        step is not sent again, and one rendered before the policy's clock
+        started (while a bridged stack was awaited) not at all: the camera
+        then has no frame for the step (#2477).
         """
         if not self._cameras or self._world is None:
             return
@@ -995,6 +1014,14 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
                 logger.debug("No frame available from camera %s", logical_id)
                 continue
             rendered, image = latest
+            if self._before_session(rendered):
+                # Rendered before the policy's clock started: as if the camera
+                # had no frame yet.
+                logger.debug(
+                    "No frame available from camera %s since the session started",
+                    logical_id,
+                )
+                continue
             if self._submitted_camera.get(logical_id) == rendered:
                 continue
             self._submitted_camera[logical_id] = rendered
@@ -1012,6 +1039,13 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             dataset = active_recording()
             if dataset is not None:
                 dataset.feed_camera_jpeg(frame, logical_id, encoded, taken_on=rendered)
+
+    def _before_session(self, frame: int) -> bool:
+        """Whether *frame* was rendered before the policy's clock started, on
+        which it would carry a negative time (#2477)."""
+        return self._session_start_frame is not None and (
+            frame < self._session_start_frame
+        )
 
     def _record_camera(self, logical_id: str, frame: int, encoded: bytes) -> None:
         """Write a frame the policy got, rendered on *frame*, into the run's

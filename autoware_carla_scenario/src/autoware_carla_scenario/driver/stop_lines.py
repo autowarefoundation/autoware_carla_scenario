@@ -42,6 +42,10 @@ _STOP_LINE_SEARCH_M: float = 8.0
 #: Step size for that walk, in metres.
 _STOP_LINE_STEP_M: float = 0.5
 
+#: Most steps one lane walk takes, so that a road which never reaches a
+#: junction still ends it (with steps of at least a metre, 10 km or more).
+_MAX_LANE_WALK_STEPS: int = 10_000
+
 #: Distance reported when no stop line applies to the ego.  The proto documents
 #: the field as negative in that case.
 NO_STOP_LINE_M: float = -1.0
@@ -94,6 +98,8 @@ class StopLines:
     _config: DriverClientConfig
     _stop_lines: Optional[Dict[Tuple[int, int], List["carla.TrafficLight"]]]
     _stop_line_points: Dict[int, List[np.ndarray[tuple[int], np.dtype[np.float64]]]]
+    _stop_line_lanes: Dict[int, List[Tuple[int, int]]]
+    _lanes: List[Tuple[int, int]]
 
     def __init__(
         self,
@@ -108,6 +114,8 @@ class StopLines:
         self._config = config
         self._stop_lines = None
         self._stop_line_points = {}
+        self._stop_line_lanes = {}
+        self._lanes = []
 
     def governing_light(
         self, ego_pose: Pose
@@ -138,12 +146,17 @@ class StopLines:
             is false when the sight distance is zero, or when the walk outside
             a junction found nothing; the caller then asks
             ``is_at_traffic_light()``.
+
+        The lanes walked are kept for :meth:`light_distance`, which measures to
+        the stop line on the ego's own lane.
         """
+        self._lanes = []
         if self._config.traffic_light_sight_distance_m > 0.0:
             waypoint = self.ego_waypoint()
             if waypoint is not None and waypoint.is_junction:
                 return True, None
             lanes = self.lanes_ahead(self._config.traffic_light_sight_distance_m)
+            self._lanes = lanes
             light = self.nearest_light_ahead(lanes, ego_pose)
             if light is not None:
                 return True, light
@@ -161,6 +174,12 @@ class StopLines:
         it needs to know.  The walk stops at the junction it reaches -- the
         lane at the mouth may still carry the line, but nothing past it is ours
         to obey yet -- and reports nothing once the ego is already inside one.
+
+        A road that never reaches a junction ends the walk too, even with an
+        unlimited *distance_m*: on a closed loop, where the walk comes back to a
+        stretch of lane it has walked (the same road, lane section and lane, the
+        same step of ``s``), and after :data:`_MAX_LANE_WALK_STEPS` steps
+        whatever the road.
         """
         waypoint = self.ego_waypoint()
         if waypoint is None or waypoint.is_junction:
@@ -168,13 +187,34 @@ class StopLines:
 
         step = max(1.0, self._config.route_resolution_m)
         lanes = [(waypoint.road_id, waypoint.lane_id)]
+        # Each step moves s along a lane by *step*, so a lap comes back to a
+        # stretch of s already walked; the step just taken may share one.
+        last = (
+            waypoint.road_id,
+            waypoint.section_id,
+            waypoint.lane_id,
+            int(waypoint.s // step),
+        )
+        walked = {last}
         travelled = 0.0
-        while travelled < distance_m:
+        steps = 0
+        while travelled < distance_m and steps < _MAX_LANE_WALK_STEPS:
             options = waypoint.next(step)
             if not options:
                 break
             waypoint = options[0]
             travelled += step
+            steps += 1
+            stretch = (
+                waypoint.road_id,
+                waypoint.section_id,
+                waypoint.lane_id,
+                int(waypoint.s // step),
+            )
+            if stretch != last and stretch in walked:
+                break
+            walked.add(stretch)
+            last = stretch
             lane = (waypoint.road_id, waypoint.lane_id)
             if lane != lanes[-1]:
                 lanes.append(lane)
@@ -199,7 +239,7 @@ class StopLines:
         nearest: Optional["carla.TrafficLight"] = None
         nearest_distance = float("inf")
         for light in self.lights_on_lanes(lanes):
-            distance = self.light_distance(light, ego_pose)
+            distance = self.light_distance(light, ego_pose, lanes)
             if distance < 0.0 or distance > sight:
                 continue
             if distance < nearest_distance:
@@ -242,7 +282,10 @@ class StopLines:
         return self._stop_lines
 
     def light_distance(
-        self, light: Optional["carla.TrafficLight"], ego_pose: Pose
+        self,
+        light: Optional["carla.TrafficLight"],
+        ego_pose: Pose,
+        lanes: Optional[List[Tuple[int, int]]] = None,
     ) -> float:
         """Distance the ego still has to travel before the stop line.
 
@@ -252,6 +295,14 @@ class StopLines:
         policy reading it cannot tell "1 m to go" from "1 m past", and a policy
         that correctly stops just inside the trigger volume is told forever
         that there is a line ahead which it has in fact already crossed.
+
+        Measured to the stop lines on the ego's own lane: those whose
+        ``(road_id, lane_id)`` is among *lanes* -- by default the lanes the
+        last :meth:`governing_light` walked.  A light governs every lane of
+        its approach, and at a skewed junction a neighbouring lane's mouth can
+        be metres nearer than the ego's.  Only when none of the light's stop
+        lines lies on those lanes, or no walk ran (a zero sight distance, the
+        ego inside a junction), are all of them taken.
         """
         if light is None:
             return NO_STOP_LINE_M
@@ -259,6 +310,12 @@ class StopLines:
         points = self.stop_line_points(light)
         if not points:
             return NO_STOP_LINE_M
+        on_lanes = lanes if lanes is not None else self._lanes
+        if on_lanes:
+            stop_lanes = self._stop_line_lanes.get(int(light.id), [])
+            own = [point for point, lane in zip(points, stop_lanes) if lane in on_lanes]
+            if own:
+                points = own
 
         # +x in the rig frame is straight ahead.
         longitudinal = ego_pose.inverse().transform_points(np.stack(points))[:, 0]
@@ -282,18 +339,23 @@ class StopLines:
         is the point reported.
 
         Cached by the light's actor id: lights and junctions do not move, and
-        this walks the lane graph half a metre at a time.
+        this walks the lane graph half a metre at a time.  The
+        ``(road_id, lane_id)`` of each point's stop waypoint is cached beside
+        it, for :meth:`light_distance`.
         """
         key = int(light.id)
         cached = self._stop_line_points.get(key)
         if cached is None:
+            waypoints = stop_waypoints(light)
             cached = [
                 to_local_pose(junction_mouth(waypoint).transform).position
-                for waypoint in stop_waypoints(light)
+                for waypoint in waypoints
             ]
+            lanes = [(waypoint.road_id, waypoint.lane_id) for waypoint in waypoints]
             if not cached:
                 # No stop waypoints: the light's own position is the best
-                # available answer.
+                # available answer, on no lane in particular.
                 cached = [to_local_pose(light.get_transform()).position]
             self._stop_line_points[key] = cached
+            self._stop_line_lanes[key] = lanes
         return cached

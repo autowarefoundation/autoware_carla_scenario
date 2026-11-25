@@ -443,7 +443,7 @@ The ego entity can show what the world does not: `EgoVehicle.debug_markers()` re
 | `CarlaDriverEntity` | The driver policy's current plan |
 | `Ros2EgoEntity` | The trajectory it is tracking, while a `trajectory` command source drives |
 
-After every tick of the scenario the runner asks the ego for its markers and writes them into the trajectory log when they change (a `markers` record). An entity hands out the same `DebugMarkers` object until its plan changes (`plan_markers()` builds one per plan), so the log holds one per plan rather than one per tick. A viewer of the run draws them beside the path the ego drove, which the log's ticks give.
+After every tick of the scenario the runner asks the ego for its markers and writes them into the trajectory log when they change (a `markers` record). An entity hands out the same `DebugMarkers` object until its plan changes (`ego_plan.ego_plan_markers()` builds one per plan), so the log holds one per plan rather than one per tick. A viewer of the run draws them beside the path the ego drove, which the log's ticks give.
 
 An entity of your own shows more by overriding `debug_markers()`:
 

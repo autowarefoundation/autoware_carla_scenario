@@ -510,7 +510,11 @@ derives), handed over when the scenario starts. Until the stack reports ready th
 policy is not queried and the scenario's clock does not start; the policy then
 starts -- its warm-up first, when `warmup_s` is set -- on the tick the stack turns
 ready. A stack that is not ready within `ready_timeout_ticks`, or exits, ends the
-run. `null` (the default) runs the policy alone, from the first tick.
+run. The cameras and LiDARs keep rendering while the stack is awaited, but what
+they rendered before that tick is never sent: it would carry a time before the
+policy's clock started, so a camera or LiDAR with nothing newer sends nothing on
+the first step, as one that has rendered nothing yet does (#2477). `null` (the
+default) runs the policy alone, from the first tick.
 
 From Python the same is `CarlaDriverEntity(config, bridge=..., bridge_config=...,
 launcher=...)`; a `launcher` starts and stops the stack per scenario, as it does for
@@ -547,7 +551,7 @@ point, as a serialized `carla_driver.v0.CarlaRendererData`:
 | Field | Contents |
 | --- | --- |
 | `ego_traffic_light` | State of the light governing the ego lane |
-| `ego_traffic_light_distance_m` | Distance to its stop line **along the ego's heading**; negative once crossed or when no line applies |
+| `ego_traffic_light_distance_m` | Distance to its stop line on the ego's own lane, **along the ego's heading**; negative once crossed or when no line applies |
 | `speed_limit_mps` | Posted limit for the ego lane, 0 when unknown |
 | `actors[]` | Other vehicles, pedestrians and props (`vehicle.*`, `walker.*`, `static.prop.*`, told apart by `type_id`): pose, bounding box, and velocity, all in the local frame |
 | `weather`, `map_name`, `frame_id` | Scene context |
@@ -578,6 +582,18 @@ The point reported is not the stop waypoint itself but the **mouth of the juncti
 governs**, reached by walking forward from the waypoint. Upstream measured stop
 waypoints a median of 5.5 m short of their junction on `Town10HD_Opt`; a policy told to
 stop there hesitates most of a car-and-a-half before the line a driver aims at.
+
+A light governs every lane of its approach, each with a stop waypoint of its own, and
+at a skewed junction a neighbouring lane's mouth can be metres nearer than the ego's.
+So the distance is measured to the stop lines on the lanes the walk went down -- the
+ego's own -- and to all of the light's only when none of them is on those lanes, or
+no walk ran (a zero sight distance) (#2477).
+
+The walk ends at a junction, or at `traffic_light_sight_distance_m`. A road that
+never reaches a junction ends it too: a closed loop when the walk comes back to
+where it has been, and any road after 10 000 steps of `route_resolution_m` (at
+least a metre each). So `traffic_light_sight_distance_m: .inf` -- every lane up
+to the next junction -- cannot freeze the run on a ring road.
 
 This logic is ported from `carla_driver_interface`'s reference runtime
 (`runtime/carla_world.py` at `af1dcd3`) so that a policy tuned against that runtime sees

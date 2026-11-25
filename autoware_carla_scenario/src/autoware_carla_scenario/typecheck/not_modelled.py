@@ -181,7 +181,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         _STACK_LAUNCHER,
     ),
     f"{_PACKAGE}.debug_markers": _each(
-        "plan_markers plan_polyline world_point",
+        "plan_polyline world_point",
         "draws a driver's plan (carla_driver_interface's Trajectory and Pose), "
         "which only the driver-backed entities hold (checked from their "
         "source); the model of carla_driver_interface declares them for the "
