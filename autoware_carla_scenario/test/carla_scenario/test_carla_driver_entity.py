@@ -1232,11 +1232,15 @@ def _map_frame_without_a_map(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _bridged_entity(
-    bridge: FakeAutowareBridge, *, goal: Optional[BridgePose] = _GOAL, **bridge_config
+    bridge: FakeAutowareBridge,
+    *,
+    goal: Optional[BridgePose] = _GOAL,
+    cameras: Tuple[DriverCameraConfig, ...] = (),
+    **bridge_config,
 ) -> Tuple[CarlaDriverEntity, _FakeDriverClient]:
     """An entity wired to a fake client and *bridge*, its mission set."""
     config = DriverClientConfig(
-        cameras=(),
+        cameras=cameras,
         rear_axle_offset_m=-1.4,
         send_renderer_data=False,
         policy_timestep_s=0.05,
@@ -1311,6 +1315,46 @@ def test_the_policy_waits_for_the_bridged_stack() -> None:
 
     entity.on_tick(world, 4 * _TICK_S)
     assert len(client.drives) == 1
+
+
+@pytest.mark.usefixtures("_map_frame_without_a_map")
+def test_a_frame_rendered_while_the_stack_was_awaited_is_not_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2477: the policy's clock stands at 0 while the bridged stack comes up,
+    and a slow camera's frame from then would be stamped before it (a
+    negative time, which the fixed64 field refuses).  The first step sends no
+    image, as for a camera with no frame yet; the next frame is stamped with
+    its own tick's time."""
+    from autoware_carla_scenario.entity import carla_driver_entity
+    from autoware_carla_scenario.sensor import carla_camera
+
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 0.0)
+    monkeypatch.setattr(carla_driver_entity, "active_recording", lambda: None)
+    monkeypatch.setattr(carla_driver_entity, "active_recorder", lambda: None)
+    entity, client = _bridged_entity(
+        FakeAutowareBridge(ready_after=3),
+        cameras=(DriverCameraConfig(logical_id="front", fps=5.0),),
+    )
+    world = _world_with_route()
+    world.get_snapshot.return_value.frame = 100
+    entity.on_scenario_start(world)
+    ((_, camera),) = entity._cameras
+    sim_time_us = {}
+    for tick in range(1, 8):
+        frame = 100 + tick
+        world.get_snapshot.return_value.frame = frame
+        if frame in (102, 106):
+            camera._on_sensor_data(
+                SimpleNamespace(frame=frame, width=4, height=2, raw_data=bytes(32))
+            )
+        entity.on_tick(world, tick * _TICK_S)
+        sim_time_us[frame] = entity._sim_time_us
+    # Ready on frame 104 (time 0); the step on 105 has only frame 102's image.
+    assert entity._session_start_frame == 104
+    assert sim_time_us[104] == 0 and sim_time_us[105] == 50_000
+    assert len(client.drives) == 3
+    assert client.image_stamps == [("front", sim_time_us[106], sim_time_us[106])]
 
 
 @pytest.mark.usefixtures("_map_frame_without_a_map")
