@@ -37,7 +37,6 @@ from google.protobuf import json_format
 from google.protobuf.message import DecodeError
 
 from ..atomic_file import write_chunks_atomically
-from ..kinematics.angle import normalize_angle_rad
 from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
 from ..seed import check_whole_number
 from ..t4_scene.grid import files_under
@@ -252,7 +251,9 @@ def _check_scenario_runs(
             if start is None:
                 continue
             distance = math.dist(pose[:3], start[:3])
-            turn = abs(normalize_angle_rad(pose[3] - start[3]))
+            # Wrapped here, not with kinematics.normalize_angle_rad: the
+            # kinematics package imports the CARLA client, which pack must not.
+            turn = abs(math.remainder(pose[3] - start[3], math.tau))
             if distance > position_tolerance_m or turn > heading_tolerance_rad:
                 raise ValueError(
                     f"scenario {scenario_id!r}: object {object_id} starts its "

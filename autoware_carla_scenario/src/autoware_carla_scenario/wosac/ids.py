@@ -41,8 +41,9 @@ def scenario_id_of(stem: str) -> str:
 
 
 def object_id_of(role: str) -> int:
-    """The ``object_id`` of an agent of *role*: the first 31 bits of the
-    SHA-256 of its canonical role name (``ego`` and ``hero`` are ``Ego``).
+    """The ``object_id`` of an agent of *role*: the first 4 bytes of the
+    SHA-256 of its canonical role name (``ego`` and ``hero`` are ``Ego``),
+    read big-endian, with the top bit cleared.
 
     A run's actor ids are CARLA's, which differ from run to run; a role name
     is the scenario's, so the same entity has the same id in every rollout.

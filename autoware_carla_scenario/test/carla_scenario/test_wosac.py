@@ -7,6 +7,8 @@ import json
 import logging
 import math
 import re
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 from typing import Any, Optional
@@ -384,6 +386,27 @@ def test_the_id_helpers_are_importable_where_they_were() -> None:
     assert pack.checked_count is ids.checked_count
     assert wosac.object_id_of is ids.object_id_of
     assert wosac.scenario_id_of is ids.scenario_id_of
+
+
+def test_the_object_id_rule_is_the_documented_one() -> None:
+    """The first 4 bytes of the digest, big-endian, top bit cleared (#2467)."""
+    import hashlib
+
+    for role in ("Ego", "npc_1", "pedestrian"):
+        digest = hashlib.sha256(role.encode()).digest()
+        assert object_id_of(role) == int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+def test_the_package_does_not_import_carla() -> None:
+    """``scenario-wosac`` needs no CARLA client (docs/wosac.md, #2467)."""
+    code = (
+        "import sys\n"
+        "import autoware_carla_scenario.wosac\n"
+        "import autoware_carla_scenario.wosac.__main__\n"
+        "assert 'typesafe_carla.carla' not in sys.modules, sorted(\n"
+        "    m for m in sys.modules if m.startswith('autoware_carla_scenario'))\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_object_ids_can_be_given(tmp_path: Path) -> None:
