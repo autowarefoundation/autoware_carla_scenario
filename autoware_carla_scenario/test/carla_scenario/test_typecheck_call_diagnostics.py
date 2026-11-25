@@ -527,6 +527,10 @@ def test_model_frames_are_internal(frame: str) -> None:
 
 def test_the_authors_frames_are_kept() -> None:
     assert not is_internal_frame("during the realization of val(self: Scn) [m.py:29]")
+    # A helper of the author's named like the model's (#2515).
+    for name in ("_required_speed", "_acs_helper", "_keyword_only"):
+        frame = f"during the realization of {name}(cfg: Cfg) [scenario.py:30]"
+        assert not is_internal_frame(frame), frame
 
 
 def test_codon_types_read_as_python_types() -> None:
@@ -604,6 +608,85 @@ def test_a_return_of_a_nested_function_is_not_the_outer_functions(
     assert "outer() returns str" in (
         return_message(message, str(path), 4, 5, files) or ""
     )
+
+
+def test_a_nested_generator_is_not_the_outer_functions(tmp_path: Path) -> None:
+    # #2515: the `yield` of a nested function does not make the outer one a
+    # generator; the outer function's own `yield` still does.
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        _Files,
+        return_message,
+    )
+
+    path = tmp_path / "m.py"
+    path.write_text(
+        "def outer() -> float:\n"
+        "    def inner():\n"
+        "        yield 1\n"
+        "    return 's'\n"
+        "def gen() -> float:\n"
+        "    yield 1\n"
+        "    return 's'\n"
+    )
+    message = "'float' does not match expected type 'str'"
+    files = _Files()
+    assert return_message(message, str(path), 4, 5, files) == (
+        "outer() returns str, but the function is declared -> float"
+    )
+    assert return_message(message, str(path), 7, 5, files) is None
+
+
+def test_a_form_feed_does_not_shift_the_lines(tmp_path: Path) -> None:
+    # #2515: str.splitlines splits at a form feed, ast does not.
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        _Files,
+        return_message,
+    )
+
+    path = tmp_path / "m.py"
+    path.write_text("def outer() -> float:\n    x = 1  # \x0c\n    if x:  return 's'\n")
+    assert return_message(
+        "'float' does not match expected type 'str'", str(path), 3, 12, _Files()
+    ) == ("outer() returns str, but the function is declared -> float")
+
+
+@pytest.mark.parametrize(
+    ("annotation", "codon"),
+    [
+        ("dict[str, int | None]", "Dict[str,Optional[int]]"),
+        ("dict[str, Optional[int]]", "Dict[str,Optional[int]]"),
+        ("typing.Dict[str, Union[int, None]]", "Dict[str,Optional[int]]"),
+        ("list[None | int] | None", "Optional[List[Optional[int]]]"),
+        ("tuple[int, list[str | None]]", "Tuple[int,List[Optional[str]]]"),
+    ],
+)
+def test_unions_are_canonical_inside_a_generic(annotation: str, codon: str) -> None:
+    # #2515: not only at the top level.
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        canonical_annotation,
+    )
+
+    assert canonical_annotation(annotation) == canonical_annotation(codon)
+    assert "Optional" not in canonical_annotation(annotation)
+    assert canonical_annotation("Literal['a', 'b']") == "Literal['a','b']"
+    assert canonical_annotation("Optional[Optional[int]]") == "int | None"
+
+
+def test_a_json_value_in_a_generic_with_an_optional_is_told(tmp_path: Path) -> None:
+    from autoware_carla_scenario.typecheck.call_diagnostics import (
+        _Files,
+        annotated_message,
+    )
+
+    path = tmp_path / "m.py"
+    path.write_text(
+        "d: dict[str, int | None] = doc['x']\ne: dict[str, Optional[int]] = doc['x']\n"
+    )
+    message = "'Dict[str,Optional[int]]' does not match expected type 'JSONValue'"
+    for line, target in ((1, "d"), (2, "e")):
+        assert annotated_message(message, str(path), line, 1, _Files()) == (
+            f"{target} is assigned a JSONValue, but is declared dict[str,int | None]"
+        )
 
 
 def test_an_annotated_assignment_is_reported_declared_type_last(
@@ -879,6 +962,39 @@ def test_an_unknown_keyword_names_the_class_and_the_signature(tmp_path: Path) ->
         "D(): 'c' is an invalid keyword argument; D takes (a: int, b: float = 0.0)"
     )
     assert (at_line, at_column) == (line, column)
+
+
+def test_a_positional_only_parameter_passed_by_name_is_told(tmp_path: Path) -> None:
+    # #2515: `/` is shown, and a positional-only parameter passed by name is
+    # not an unknown keyword.
+    source = "def po(a: int, /, b: int) -> None: ...\ndef run():\n    po(b=1, a=2)\n"
+    message, at_line, at_column = _refine(
+        tmp_path, source, "'a' is an invalid keyword argument for po()", "a=2"
+    )
+    assert message == (
+        "po(): 'a' is positional-only: pass it by position, not as `a=...`; "
+        "po takes (a: int, /, b: int)"
+    )
+    assert (at_line, at_column) == _at(source.splitlines(), "a=2")
+
+
+def test_a_signature_shows_where_positional_only_parameters_end() -> None:
+    import inspect
+
+    from autoware_carla_scenario.typecheck.call_diagnostics import signature_text
+
+    def f(a: int, b: int = 1, /, *, c: int) -> None: ...
+
+    def g(a: int, /) -> None: ...
+
+    def h(a: int, /, *args: int) -> None: ...
+
+    hints = {"a": int, "b": int, "c": int, "args": int}
+    assert signature_text(inspect.signature(f), hints) == (
+        "a: int, b: int = 1, /, *, c: int"
+    )
+    assert signature_text(inspect.signature(g), hints) == "a: int, /"
+    assert signature_text(inspect.signature(h), hints) == "a: int, /, *args: int"
 
 
 def test_an_unknown_keyword_close_to_a_parameter_gets_a_suggestion(

@@ -1890,7 +1890,8 @@ in step:
   `MutableSet`, `Awaitable`) is refused at its import line with that list.
   `import collections.abc` and `from collections import abc` (annotations
   spelled `collections.abc.Sequence`, `abc.Sequence`) are refused too, with
-  the hint to import the names.
+  the hint to import the names, as is `collections.abc.Sequence` used through
+  a plain `import collections`.
 - `typing_extensions` has the same names as far as `typing` has them, so a
   scenario for Python 3.10 imports `Self`, `override`, `Never`,
   `assert_never` and `TypeIs` (which `typing` gained later) from there; any other

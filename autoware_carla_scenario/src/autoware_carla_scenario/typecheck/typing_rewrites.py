@@ -23,7 +23,8 @@ only the checked copy of a module changes: what runs is the code as written.
   import (Sequence, Callable)`` (#586): Codon has no ``collections.abc``, and
   the typing shim has the abstract collections (``Set`` is its
   ``AbstractSet``).  A name the shim does not have, ``import
-  collections.abc`` and ``from collections import abc`` are refused with a
+  collections.abc``, ``from collections import abc`` and
+  ``collections.abc.X`` of an ``import collections`` are refused with a
   hint.
 * A caught exception put in a variable, attribute, list or parameter
   annotated ``Exception`` is rebuilt as an ``Exception`` of its type name and
@@ -62,6 +63,7 @@ import io
 import re
 import tokenize
 
+from .library_driver import _names_class_var
 from .scopes import ShadowScopes
 from .transform import _dotted, _Edits, _union_members
 
@@ -92,8 +94,10 @@ TYPING_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r"'Optional\[\w*(?:Condition|Action|Scenario)\]' "
-            r"does not match expected type 'Optional\[\w*(?:Condition|Action|Scenario)\]'"
+            # One family on both sides: an Optional[BaseCondition] where an
+            # Optional[BaseAction] is expected is a plain type error.
+            r"'Optional\[\w*(Condition|Action|Scenario)\]' "
+            r"does not match expected type 'Optional\[\w*\1\]'"
         ),
         "Codon 0.19 does not convert an Optional of a subclass to an Optional of "
         "its base (nor the reverse), so an `Optional[BaseCondition]` or "
@@ -180,6 +184,8 @@ class _Names:
         self.operator: dict[str, str] = {}
         self.typing_modules: set[str] = set()
         self.operator_modules: set[str] = set()
+        #: What ``import collections`` is called (``collections.abc.X``).
+        self.collections_modules: set[str] = set()
         self.copy_imported = False
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.level == 0:
@@ -198,6 +204,8 @@ class _Names:
                         self.typing_modules.add(local)
                     elif alias.name == "operator":
                         self.operator_modules.add(local)
+                    elif alias.name == "collections":
+                        self.collections_modules.add(local)
                     elif alias.name == "copy":
                         self.copy_imported = True
 
@@ -321,7 +329,49 @@ class _Pass(ShadowScopes):
 
     def visit_Module(self, node: ast.Module) -> None:
         self.enter_module(node)
+        self._collections_abc_uses(node)
         self.generic_visit(node)
+
+    def _collections_abc_uses(self, tree: ast.Module) -> None:
+        """``collections.abc.Sequence`` of an ``import collections`` (an
+        annotation or any other use), refused as ``import collections.abc``
+        is: Codon has no ``collections.abc``."""
+        if not self.names.collections_modules:
+            return
+        # Every node, and what a string annotation holds (by its line).
+        uses: list[tuple[int, ast.AST]] = []
+        for node in ast.walk(tree):
+            uses.append((getattr(node, "lineno", 1), node))
+            annotation = None
+            if isinstance(node, (ast.AnnAssign, ast.arg)):
+                annotation = node.annotation
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                annotation = node.returns
+            for text in ast.walk(annotation) if annotation is not None else ():
+                if isinstance(text, ast.Constant) and isinstance(text.value, str):
+                    try:
+                        parsed = ast.parse(text.value, mode="eval")
+                    except SyntaxError:
+                        continue
+                    uses += [(text.lineno, sub) for sub in ast.walk(parsed)]
+        for line, sub in uses:
+            if not (
+                isinstance(sub, ast.Attribute)
+                and isinstance(sub.value, ast.Attribute)
+                and sub.value.attr == "abc"
+                and isinstance(sub.value.value, ast.Name)
+                and sub.value.value.id in self.names.collections_modules
+            ):
+                continue
+            self.refused.append(
+                (
+                    line,
+                    f"`{ast.unparse(sub)}` is not supported by the check (Codon "
+                    "has no collections.abc): write `from collections.abc import "
+                    f"{sub.attr}` (or `from typing import {sub.attr}`) and "
+                    "annotate with the bare name; " + _ABC_HINT,
+                )
+            )
 
     def _local(self, node: ast.AST) -> bool:
         """Whether *node* is a name a function, lambda or class around it binds
@@ -1073,18 +1123,26 @@ def typing_rewrite_refusals(source: str) -> list[tuple[int, str]]:
 _PLAIN = {"object", "ABC", "abc.ABC"}
 
 
-def _class_var(annotation: ast.expr) -> bool:
+def _class_var(annotation: ast.expr, names: _Names) -> bool:
+    """Whether *annotation* is a ``ClassVar``: ``ClassVar[int]``,
+    ``t.ClassVar[int]``, ``typing_extensions.ClassVar``, an alias of it
+    (``from typing import ClassVar as CV``), inside a string too."""
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return False
     node = annotation.value if isinstance(annotation, ast.Subscript) else annotation
-    return (_dotted(node) or "").removeprefix("typing.") == "ClassVar"
+    return names.typing_name(node) == "ClassVar" or _names_class_var(node)
 
 
-def _declared_fields(node: ast.ClassDef) -> list[str]:
+def _declared_fields(node: ast.ClassDef, names: _Names) -> list[str]:
     return [
         stmt.target.id
         for stmt in node.body
         if isinstance(stmt, ast.AnnAssign)
         and isinstance(stmt.target, ast.Name)
-        and not _class_var(stmt.annotation)
+        and not _class_var(stmt.annotation, names)
     ]
 
 
@@ -1100,7 +1158,8 @@ def copy_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]
     exception, an Enum, a NamedTuple or a class defining either method itself
     is left as it is.
     """
-    if not _Names(tree).copy_imported:
+    module_names = _Names(tree)
+    if not module_names.copy_imported:
         return []
     fields: dict[str, list[str]] = {}
     out: list[tuple[str, str]] = []
@@ -1119,7 +1178,10 @@ def copy_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]
                 break
         if inherited is None:
             continue
-        names = [*inherited, *(f for f in _declared_fields(node) if f not in inherited)]
+        names = [
+            *inherited,
+            *(f for f in _declared_fields(node, module_names) if f not in inherited),
+        ]
         fields[node.name] = names
         own = {
             m.name
