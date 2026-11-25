@@ -712,3 +712,35 @@ def test_the_framework_modules_pass_both_rules() -> None:
         sources.modules[name] = _read_module(path)
     assert len(sources.modules) > 100
     assert _class_problems(sources, library=True) == []
+
+
+@pytest.mark.parametrize(
+    ("annotation", "expected"),
+    [
+        ("ClassVar[int]", True),
+        ("typing.ClassVar[int]", True),
+        ("ClassVar", True),
+        ("Final", True),
+        ("Final[float]", True),
+        ("typing.Final[float]", True),
+        ("InitVar[int]", True),
+        ("dataclasses.InitVar[int]", True),
+        ("'ClassVar[int]'", True),
+        ("Annotated[ClassVar[int], 'doc']", True),
+        # #2513: a class whose name merely contains one of those words
+        ("FinalPose", False),
+        ("FinalApproachPose", False),
+        ("InitVarianceModel", False),
+        ("MyClassVarHolder", False),
+        ("'FinalState'", False),
+        ("Optional[FinalPose]", False),
+        ("list[ClassVarLike]", False),
+        ("Annotated[FinalPose, 'doc']", False),
+    ],
+)
+def test_only_classvar_final_and_initvar_heads_are_not_instance_attributes(
+    annotation: str, expected: bool
+) -> None:
+    assert (
+        class_rules._is_class_var(ast.parse(annotation, mode="eval").body) is expected
+    )

@@ -84,6 +84,49 @@ def test_a_subscripted_generic_given_to_isinstance_is_refused(
     assert found.message.startswith(f"{function}() cannot take")
 
 
+@pytest.mark.parametrize(
+    ("generic", "typing_alias"),
+    [
+        ("collections.abc.Coroutine[int, int, int]", False),
+        ("collections.abc.AsyncGenerator[int, None]", False),
+        ("typing.AsyncGenerator[int, None]", True),
+        ("typing.Coroutine[int, int, int]", True),
+        ("re.Pattern[str]", False),
+        ("re.Match[str]", False),
+        ("typing.Pattern[str]", True),
+        ("typing.Match[str]", True),
+        ("typing.ContextManager[int]", True),
+        ("typing.AsyncContextManager[int]", True),
+        ("contextlib.AbstractContextManager[int]", False),
+    ],
+)
+def test_the_other_generics_python_refuses_are_refused(
+    generic: str, typing_alias: bool
+) -> None:
+    """#2513: each raises TypeError in CPython 3.10-3.14."""
+    tree = ast.parse(
+        "import collections.abc, contextlib, re, typing\n"
+        f"def f(v):\n    return isinstance(v, {generic})\n"
+    )
+    (found,) = subscripted_isinstances(tree)
+    assert f"`{generic}`" in found.message
+    assert (
+        "Subscripted generics cannot be used with class and instance checks"
+        if typing_alias
+        else "isinstance() argument 2 cannot be a parameterized generic"
+    ) in found.message
+
+
+def test_a_mapping_capture_rebinding_a_builtin_is_not_taken_for_it() -> None:
+    tree = ast.parse(
+        "def f(v, d):\n"
+        "    match d:\n"
+        "        case {**list}:\n"
+        "            return isinstance(v, list[0])\n"
+    )
+    assert subscripted_isinstances(tree) == []
+
+
 def test_the_refusal_names_the_bare_class_to_test() -> None:
     (found,) = subscripted_isinstances(_tree("isinstance(v, list[int])\n"))
     assert "test against the bare class (`list`)" in found.message

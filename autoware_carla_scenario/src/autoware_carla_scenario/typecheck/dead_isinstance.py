@@ -11,8 +11,14 @@ Only a subject whose static type is certain from the syntax is considered:
 * a parameter or a local with a concrete annotation (``int``, ``float``,
   ``str``, ``bool``, ``bytes``, ``list[..]``, ``dict[..]``, ``set[..]``,
   ``tuple[..]``, a class of the module);
-* a local bound exactly once, to a literal, an f-string or a display;
+* a local bound exactly once, to a literal, an f-string or a display, and
+  by no other binder (:func:`.scopes.node_bindings`: ``except ... as``, a
+  match capture, an import, a ``def`` / ``class``, a walrus);
 * ``self.<attr>`` with a class-level annotation of the enclosing class.
+
+A class of the module is known by its name only where no other class of the
+module has it (a function's own ``class Holder`` beside the module's names
+neither), and none derived from such a name is known at all.
 
 The classes may be a name or a tuple of names, every one of them a builtin
 or a class of the module.  A subject bound more than once, a ``Union`` /
@@ -25,6 +31,8 @@ from __future__ import annotations
 
 import ast
 from typing import NamedTuple
+
+from .scopes import node_bindings, parse_string_annotation
 
 __all__ = ["DeadIsinstance", "dead_isinstances"]
 
@@ -55,11 +63,7 @@ def _annotation_type(
     node: ast.expr | None, classes: dict[str, list[str]]
 ) -> str | None:
     """The concrete type an annotation names, or ``None`` (unknown, a union)."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        try:
-            node = ast.parse(node.value, mode="eval").body
-        except SyntaxError:
-            return None
+    node = parse_string_annotation(node)
     if isinstance(node, ast.Subscript):
         base = node.value
         if isinstance(base, ast.Name) and base.id in _CONTAINERS:
@@ -115,56 +119,28 @@ def _can_be(subject: str, wanted: str, classes: dict[str, list[str]]) -> bool:
 
 
 def _names_bound(function: _Function) -> dict[str, int]:
-    """How many times each name is bound in *function* (its parameters included);
-    a binding that is not a plain assignment counts twice, so it is never
-    taken for the only one."""
+    """How many times each name is bound in *function* (its parameters
+    included), nested functions, lambdas and comprehensions too; a binding
+    that is not a plain assignment (:func:`.scopes.node_bindings`) counts
+    twice, so it is never taken for the only one."""
     counts: dict[str, int] = {}
 
     def add(name: str, n: int) -> None:
         counts[name] = counts.get(name, 0) + n
 
-    def add_targets(target: ast.AST, n: int = 2) -> None:
-        for sub in ast.walk(target):
-            if isinstance(sub, ast.Name):
-                add(sub.id, n)
-
+    args = function.args
+    own = {id(a) for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+    for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+        add(a.arg, 1)
+    for extra in (args.vararg, args.kwarg):
+        if extra is not None:
+            own.add(id(extra))
+            add(extra.arg, 2)
     for node in ast.walk(function):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            args = node.args
-            for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
-                add(a.arg, 1 if node is function else 2)
-            for extra in (args.vararg, args.kwarg):
-                if extra is not None:
-                    add(extra.arg, 2)
-            if node is not function and not isinstance(node, ast.Lambda):
-                add(node.name, 2)
-        elif isinstance(node, ast.Assign):
-            for t in node.targets:
-                add_targets(t, 1 if isinstance(t, ast.Name) else 2)
-        elif isinstance(node, ast.AnnAssign):
-            add_targets(node.target, 1)
-        elif isinstance(
-            node, (ast.AugAssign, ast.For, ast.AsyncFor, ast.comprehension)
-        ):
-            add_targets(node.target)
-        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
-            add_targets(node.optional_vars)
-        elif isinstance(node, ast.NamedExpr):
-            add_targets(node.target)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            add(node.name, 2)
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            add(node.name, 2)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            add(node.rest, 2)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                add((alias.asname or alias.name).split(".")[0], 2)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            for name in node.names:
-                add(name, 2)
-        elif isinstance(node, ast.ClassDef):
-            add(node.name, 2)
+        if node is function or id(node) in own:
+            continue
+        for bound in node_bindings(node):
+            add(bound.name, 1 if bound.kind in ("assign", "annotated") else 2)
     return counts
 
 
@@ -195,21 +171,38 @@ def _wanted(node: ast.expr) -> list[str] | None:
 def dead_isinstances(tree: ast.Module) -> list[DeadIsinstance]:
     """Each ``isinstance(x, T)`` of *tree* whose subject's static type cannot be
     a ``T``, in source order."""
-    classes: dict[str, list[str]] = {}
-    attributes: dict[str, dict[str, str | None]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            classes[node.name] = [b.id for b in node.bases if isinstance(b, ast.Name)]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            attributes[node.name] = {
-                s.target.id: _annotation_type(s.annotation, classes)
-                for s in node.body
-                if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
-            }
+    # By name, as annotations name them: a name two classes of the module
+    # share (a function's own `class Holder` beside the module's) names
+    # neither for certain, so it is left out (#2513).
+    defs = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    names = [node.name for node in defs]
+    classes: dict[str, list[str]] = {
+        node.name: [b.id for b in node.bases if isinstance(b, ast.Name)]
+        for node in defs
+        if names.count(node.name) == 1
+    }
+    # Nor is a class derived from such a name: its ancestry is not known
+    # (`class A(Holder)` may be an `int` through either `Holder`).
+    shared = {name for name in names if names.count(name) > 1}
+    while unknown := [
+        name
+        for name, bases in classes.items()
+        if any(b in shared or (b in names and b not in classes) for b in bases)
+    ]:
+        for name in unknown:
+            del classes[name]
+    # By the class itself: `self.x` reads the enclosing class's own.
+    attributes: dict[int, dict[str, str | None]] = {
+        id(node): {
+            s.target.id: _annotation_type(s.annotation, classes)
+            for s in node.body
+            if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+        }
+        for node in defs
+    }
     found: list[DeadIsinstance] = []
 
-    def visit(function: _Function, owner: str | None) -> None:
+    def visit(function: _Function, owner: ast.ClassDef | None) -> None:
         bound = _names_bound(function)
         types = _local_types(function, classes)
         for node in ast.walk(function):
@@ -232,7 +225,7 @@ def dead_isinstances(tree: ast.Module) -> list[DeadIsinstance]:
                 and subject.value.id == "self"
                 and owner is not None
             ):
-                static = attributes.get(owner, {}).get(subject.attr)
+                static = attributes.get(id(owner), {}).get(subject.attr)
             wanted = _wanted(target)
             if static is None or wanted is None:
                 continue
@@ -249,11 +242,10 @@ def dead_isinstances(tree: ast.Module) -> list[DeadIsinstance]:
                 )
             )
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            for stmt in node.body:
-                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    visit(stmt, node.name)
+    for node in defs:
+        for stmt in node.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(stmt, node)
     for stmt in tree.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             visit(stmt, None)

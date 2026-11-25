@@ -9,6 +9,8 @@ import ast
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from autoware_carla_scenario.typecheck.check import (
     Diagnostic,
     _Module,
@@ -313,3 +315,52 @@ def test_a_none_first_local_tested_by_a_conditional_is_named(tmp_path: Path) -> 
     # Any other refusal is not Codon's made-up int.
     assert _narrowed_none_first_hints([Diagnostic(_OPT_INT)], sources) == []
     assert _narrowed_none_first_hints([Diagnostic(_INT)], sources) == []
+
+
+_REBINDERS = {
+    "except": "    try:\n        pass\n    except ValueError as v:\n        pass\n",
+    "match": "    match w:\n        case int() as v:\n            pass\n",
+    "star": "    match w:\n        case [*v]:\n            pass\n",
+    "mapping": "    match w:\n        case {**v}:\n            pass\n",
+    "walrus in a comprehension": "    _ = [v := x for x in w]\n",
+    "import": "    import os as v\n",
+    "def": "    def v() -> None: ...\n",
+    "class": "    class v: ...\n",
+}
+
+
+def _rebound(how: str) -> str:
+    return (
+        "def f(w: list[int]) -> None:\n    v = None\n"
+        + _REBINDERS[how]
+        + ("    y = 1 if v is None else 2\n")
+    )
+
+
+@pytest.mark.parametrize("how", sorted(_REBINDERS))
+def test_a_local_rebound_by_any_binder_is_not_only_none(how: str) -> None:
+    """#2513: `except ... as`, a match capture, an import, a def or class and
+    a walrus in a comprehension rebind the local too."""
+    tree = ast.parse(_rebound(how))
+    assert none_only_tests(tree) == []
+    (binding,) = none_first_bindings(tree)
+    assert binding.name == "v"
+    assert binding.line == 2
+
+
+def test_an_except_rebinding_names_the_exception_class() -> None:
+    (binding,) = none_first_bindings(ast.parse(_rebound("except")))
+    assert binding.rebound_type == "ValueError"
+    assert binding.annotation() == "v: ValueError | None = None"
+
+
+def test_a_comprehensions_own_target_is_not_the_functions_local() -> None:
+    source = (
+        "def f(w: list[int]) -> None:\n"
+        "    v = None\n"
+        "    _ = [v for v in w]\n"
+        "    y = 1 if v is None else 2\n"
+    )
+    tree = ast.parse(source)
+    assert none_first_bindings(tree) == []
+    assert [t.name for t in none_only_tests(tree)] == ["v"]
