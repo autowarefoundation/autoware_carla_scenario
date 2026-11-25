@@ -6,8 +6,10 @@ vehicle's :class:`carla.VehiclePhysicsControl` alone, read off that source:
 
 * **Engine.**  Torque is ``throttle**2`` times the torque curve at the engine's rpm
   (``FSimpleEngineSim``, fed the squared throttle by
-  ``UChaosWheeledVehicleSimulation::ApplyInput``).  The curve is sampled at 21 even
-  steps over ``[0, max_rpm]``, normalised by its largest key and scaled to
+  ``UChaosWheeledVehicleSimulation::ApplyInput``).  The curve is sampled in steps of
+  ``max_rpm / 20`` from 0 up to ``max_rpm`` -- 21 samples, or 20 where UE's float32
+  loop overshoots the last one (about a third of integer ``max_rpm`` values, 1003
+  among them) -- normalised by its largest key and scaled to
   ``max_torque`` (``FillEngineSetup``).  In gear, the rpm is the wheels' times the gear
   ratio, held within ``[idle_rpm, max_rpm]``.
 * **Gearbox.**  Torque reaches the driven wheels times the gear's ratio, the final
@@ -69,7 +71,8 @@ DEFAULT_ROAD_FRICTION: float = 0.41
 #: of exactly zero, and only a throttle above 1e-4 engages first from neutral.
 CREEP_THROTTLE: float = 0.01
 
-#: Chaos samples the torque curve at this many even steps over ``[0, max_rpm]``.
+#: Chaos samples the torque curve in float32 steps of ``max_rpm`` divided by this:
+#: 21 samples, or 20 where the float32 sum overshoots ``max_rpm``.
 _TORQUE_SAMPLES: int = 20
 
 #: Standard gravity, m/s².
