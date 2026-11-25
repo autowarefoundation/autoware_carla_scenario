@@ -996,3 +996,33 @@ def test_a_sweep_older_than_the_poses_kept_is_not_recorded(
     assert logged == []
     assert fed == [(101, 90)]
     assert "no ego pose of frame 90" in caplog.text
+
+
+def test_a_sweep_from_before_the_session_is_not_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2477: a sweep taken while a bridged stack was awaited -- before the
+    policy's clock started -- would carry a negative time; it is left out, as
+    when the LiDAR has none yet, and recorded nowhere."""
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+
+    recorder = SimpleNamespace(records_lidar=True, log_sweep=pytest.fail)
+    dataset = SimpleNamespace(feed_lidar=pytest.fail)
+    monkeypatch.setattr(cde, "active_recorder", lambda: recorder)
+    monkeypatch.setattr(cde, "active_recording", lambda: dataset)
+    entity = cde.CarlaDriverEntity(DriverClientConfig(), client=SimpleNamespace())  # type: ignore[arg-type]
+    mount = sensor_pose_in_rig(0, 0, 0, 0, 0, 0, rear_axle_offset_m=0.0)
+    lidar = _AgedLidar(97)
+    entity._lidars = [("lidar_top", lidar, mount)]  # type: ignore[list-item]
+    entity._world = SimpleNamespace(get_snapshot=lambda: SimpleNamespace(frame=100))  # type: ignore[assignment]
+    # The policy's clock read 0 on frame 99; frame 100 is its first step.
+    entity._session_start_frame = 99
+    entity._sim_time_us = _TICK_US
+    assert entity._lidar_sweeps(_pose_at(100)) == []
+
+    # One taken on the session's first frame is stamped 0.
+    lidar.taken_on = 99
+    monkeypatch.setattr(cde, "active_recorder", lambda: None)
+    monkeypatch.setattr(cde, "active_recording", lambda: None)
+    (sweep,) = entity._lidar_sweeps(_pose_at(100))
+    assert sweep.timestamp_us == 0

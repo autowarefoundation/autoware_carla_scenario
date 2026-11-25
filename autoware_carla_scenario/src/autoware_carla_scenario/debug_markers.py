@@ -15,13 +15,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple
 
 if TYPE_CHECKING:
-    from .driver.geometry import Pose, Trajectory
+    from .driver.geometry import Pose
 
 __all__ = [
     "TRAJECTORY_COLOR",
     "DebugMarkers",
     "DebugPolyline",
-    "plan_markers",
     "plan_polyline",
     "world_point",
 ]
@@ -91,16 +90,3 @@ def plan_polyline(points: List[WorldPoint]) -> DebugPolyline:
         0.1,
         0.1,
     )
-
-
-def plan_markers(plan: "Trajectory") -> DebugMarkers:
-    """A driver's *plan*, given in the right-handed local frame, as markers
-    (:func:`plan_polyline` through its :func:`world_point` positions).
-
-    An entity builds these once per plan and hands out the same object until
-    the plan changes: the trajectory log then writes it once per plan rather
-    than once per tick.
-    """
-    markers = DebugMarkers()
-    markers.add_polyline(plan_polyline([world_point(pose) for pose in plan.poses]))
-    return markers

@@ -210,6 +210,8 @@ class _Waypoint:
     def __init__(self, road: _Road, s: float) -> None:
         self._road = road
         self._s = s
+        self.s = s
+        self.section_id = 0
         lane = [seg for seg in road.segments if seg[0] <= s + 1e-9][-1]
         self.road_id = lane[1]
         self.lane_id = lane[2]
@@ -602,15 +604,27 @@ def _run(case: _Case, split: bool) -> List[Tuple[Optional[int], float, List[str]
     return out
 
 
+#: Distances that differ from the renderer's before the split on purpose, by
+#: case and step: the distance is to the stop line on the ego's own lane, not
+#: the nearest of the light's (#2477).  Here the neighbouring lane's line, at
+#: 36 m on open road, was reported in place of the ego's junction mouth at 40.
+_OWN_LANE_DISTANCE: Dict[str, Dict[int, float]] = {
+    "a light with several stop lines, one on our lane": {0: 40.0},
+}
+
+
 @pytest.mark.parametrize("name", sorted(_CASES))
 def test_the_split_renderer_finds_the_same_light_as_before(name: str) -> None:
     case = _CASES[name]
     before = _run(case, split=False)
     after = _run(case, split=True)
+    changed = _OWN_LANE_DISTANCE.get(name, {})
     for step, (old, new) in enumerate(zip(before, after)):
         assert new[0] == old[0], f"step {step}: governing light"
         # Bit for bit: the same arithmetic on the same points.
-        assert new[1] == old[1], f"step {step}: distance"
+        if step in changed:
+            assert old[1] != changed[step], f"step {step}: not a change"
+        assert new[1] == changed.get(step, old[1]), f"step {step}: distance"
         assert new[2] == old[2], f"step {step}: calls made on CARLA"
     assert len(after) == len(before)
 
@@ -654,3 +668,135 @@ def test_a_light_s_stop_points_are_cached_by_its_actor_id() -> None:
     again = _Light(log, 4, [road.at(10.0)])
     assert lines.stop_line_points(first) is lines.stop_line_points(again)
     assert lines.light_distance(again, Pose.identity()) == pytest.approx(40.0)
+
+
+# ---------------------------------------------------------------------------
+# The ego's own lane, and walks that never reach a junction (#2477)
+# ---------------------------------------------------------------------------
+
+
+class _LaneWaypoint:
+    """A waypoint on a straight lane along CARLA +x at *y*, ``s`` its x; a
+    junction from *junction_at* on.  With *loop*, the lane is a ring of that
+    length: ``s`` (and x) wrap round to 0."""
+
+    def __init__(
+        self,
+        x: float,
+        *,
+        y: float = 0.0,
+        lane_id: int = -1,
+        road_id: int = 1,
+        junction_at: Optional[float] = None,
+        loop: Optional[float] = None,
+    ) -> None:
+        self._kwargs: Dict[str, Any] = dict(
+            y=y, lane_id=lane_id, road_id=road_id, junction_at=junction_at, loop=loop
+        )
+        self.x = x % loop if loop is not None else x
+        self.s = self.x
+        self.road_id = road_id
+        self.section_id = 0
+        self.lane_id = lane_id
+        self.is_junction = junction_at is not None and self.x >= junction_at
+        self.transform = _transform(self.x, y)
+
+    def next(self, distance: float) -> List["_LaneWaypoint"]:
+        return [_LaneWaypoint(self.x + distance, **self._kwargs)]
+
+
+def _lines(ego_at: _LaneWaypoint, sight: float) -> stop_lines.StopLines:
+    ego = SimpleNamespace(get_location=lambda: ego_at.transform.location)
+    carla_map = SimpleNamespace(get_waypoint=lambda location, project_to_road: ego_at)
+    return stop_lines.StopLines(
+        SimpleNamespace(),
+        ego,  # type: ignore[arg-type]
+        carla_map,  # type: ignore[arg-type]
+        DriverClientConfig(traffic_light_sight_distance_m=sight),
+    )
+
+
+def _skewed_light() -> SimpleNamespace:
+    """One light over two lanes of a skewed junction: the ego's (-1, y 0)
+    enters it at x 30, the neighbour's (-2, CARLA y 3.5) at x 25."""
+    return SimpleNamespace(
+        id=7,
+        get_stop_waypoints=lambda: [
+            _LaneWaypoint(24.5, junction_at=30.0),
+            _LaneWaypoint(19.5, y=3.5, lane_id=-2, junction_at=25.0),
+        ],
+    )
+
+
+def test_the_distance_is_to_the_stop_line_on_the_ego_s_own_lane() -> None:
+    light = _skewed_light()
+    lines = _lines(_LaneWaypoint(0.0, junction_at=30.0), 60.0)
+    lines._stop_lines = {(1, -1): [light], (1, -2): [light]}  # type: ignore[dict-item]
+    ego_pose = Pose.identity()
+
+    decided, found = lines.governing_light(ego_pose)
+
+    assert decided and found is light
+    assert lines.light_distance(light, ego_pose) == pytest.approx(30.0)
+    assert lines.light_distance(light, ego_pose, [(1, -1)]) == pytest.approx(30.0)
+
+
+def test_with_no_stop_line_on_the_ego_s_lanes_every_one_counts() -> None:
+    """No walk (a zero sight distance, before any lookup), or a light that
+    governs none of the lanes walked: the nearest of its lines, as before."""
+    light = _skewed_light()
+    lines = _lines(_LaneWaypoint(0.0, junction_at=30.0), 0.0)
+    ego_pose = Pose.identity()
+    assert lines.light_distance(light, ego_pose) == pytest.approx(25.0)
+    assert lines.governing_light(ego_pose) == (False, None)
+    assert lines.light_distance(light, ego_pose) == pytest.approx(25.0)
+    assert lines.light_distance(light, ego_pose, [(9, -1)]) == pytest.approx(25.0)
+
+
+def test_a_light_from_the_trigger_volume_is_measured_on_the_lanes_walked() -> None:
+    """The walk found no light, so the caller asks CARLA's trigger volume; the
+    lanes it walked are still the ego's."""
+    light = _skewed_light()
+    lines = _lines(_LaneWaypoint(0.0, junction_at=30.0), 60.0)
+    lines._stop_lines = {}
+    ego_pose = Pose.identity()
+    assert lines.governing_light(ego_pose) == (False, None)
+    assert lines.light_distance(light, ego_pose) == pytest.approx(30.0)
+
+
+def test_an_unlimited_walk_on_a_ring_road_ends_after_one_lap() -> None:
+    lines = _lines(_LaneWaypoint(3.3, loop=250.0), math.inf)
+    walked: List[float] = []
+    original = _LaneWaypoint.next
+
+    def counted(self: _LaneWaypoint, distance: float) -> List[_LaneWaypoint]:
+        walked.append(distance)
+        return original(self, distance)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_LaneWaypoint, "next", counted)
+        assert lines.lanes_ahead(math.inf) == [(1, -1)]
+    # Once round the 250 m ring, 2 m (route_resolution_m) a step, and no further.
+    assert set(walked) == {2.0}
+    assert 124 <= len(walked) <= 126
+
+
+def test_a_walk_on_a_road_that_never_ends_is_capped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(stop_lines, "_MAX_LANE_WALK_STEPS", 40)
+    walked: List[float] = []
+    original = _LaneWaypoint.next
+
+    def counted(self: _LaneWaypoint, distance: float) -> List[_LaneWaypoint]:
+        walked.append(distance)
+        return original(self, distance)
+
+    monkeypatch.setattr(_LaneWaypoint, "next", counted)
+    lines = _lines(_LaneWaypoint(0.0), math.inf)
+    assert lines.lanes_ahead(math.inf) == [(1, -1)]
+    assert len(walked) == 40
+    # A finite sight distance still ends the walk where it did.
+    walked.clear()
+    assert lines.lanes_ahead(10.0) == [(1, -1)]
+    assert len(walked) == 5

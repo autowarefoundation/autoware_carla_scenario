@@ -1115,12 +1115,33 @@ def test_builds_removing_another_user_s_lock_together_stay_exclusive(
     # Each trial plants another user's gate.lock in the gate's own directory
     # and lets 8 builds find it at once: one removes it, none removes the
     # fresh lock another holds.
+    #
+    # No wait here ends because time runs out, only because a lock is taken;
+    # but the gate's windows are wall-clock ones, and on a loaded runner a
+    # stall of the process (#2257) while a build is inside the directory's
+    # lock -- removing the planted one -- outlasts _REPLACE_WAIT_S, so another
+    # build gives the directory up and falls back.  So the gate's clock runs
+    # 100 times slower: no stall a runner makes outlasts its windows.
+    real_monotonic = time.monotonic
+    began = real_monotonic()
+    monkeypatch.setattr(
+        memory_gate,
+        "time",
+        types.SimpleNamespace(
+            monotonic=lambda: began + (real_monotonic() - began) / 100,
+            sleep=time.sleep,
+        ),
+    )
     default_gate.mkdir(mode=0o700)
-    foreign: set[tuple[int, int]] = set()
+    # The planted lock is known by its inode alone, kept open until the trial
+    # ends so that no build's fresh gate.lock can reuse that inode once the
+    # planted one is removed (a timestamp does not tell them apart: with a
+    # coarse clock, a fresh lock may share the planted one's ctime).
+    foreign: set[int] = set()
     real_fstat, real_stat = os.fstat, os.stat
 
     def disguise(result: os.stat_result) -> os.stat_result:
-        if (result.st_ino, result.st_ctime_ns) not in foreign:
+        if result.st_ino not in foreign:
             return result
         fields = list(result)
         fields[4] = os.getuid() + 1
@@ -1143,10 +1164,14 @@ def test_builds_removing_another_user_s_lock_together_stay_exclusive(
         lock = default_gate / "gate.lock"
         with suppress(FileNotFoundError):
             lock.unlink()
-        lock.write_text("")
-        info = lock.lstat()
-        foreign.add((info.st_ino, info.st_ctime_ns))
-        crowd.run(8, crowd.build)
+        planted = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        inode = real_fstat(planted).st_ino
+        foreign.add(inode)
+        try:
+            crowd.run(8, crowd.build)
+        finally:
+            foreign.discard(inode)
+            os.close(planted)
     assert crowd.gated == [True] * (20 * 8)
     assert crowd.most == 1
     assert not fallbacks.exists()

@@ -1,8 +1,7 @@
 """A driver's plan as the run records it: the trajectory, timed.
 
-:func:`~autoware_carla_scenario.debug_markers.plan_markers` draws a plan as a
-line, which is all a viewer needs to show it and all the ``markers`` record
-keeps.  Reading how the plan behaves -- whether the next plan agrees with
+:func:`ego_plan_markers` draws a plan as a line, which is all a viewer
+needs to show it and all the ``markers`` record keeps.  Reading how the plan behaves -- whether the next plan agrees with
 this one about the same moment ahead, how fast the steering it implies moves,
 when the policy changed its mind -- needs more: when each point is planned
 for, the heading there, and what the policy said with it.  :class:`EgoPlan`
@@ -91,9 +90,10 @@ def ego_plan_markers(
     it plans in), its *step*-th plan, made at *planned_at_us* on its clock,
     with what the driver said with it.
 
-    The markers draw it as
-    :func:`~autoware_carla_scenario.debug_markers.plan_markers` does; the plan
-    keeps each point's time and heading in CARLA's world (the yaw flipped
+    The markers draw it as a
+    :func:`~autoware_carla_scenario.debug_markers.plan_polyline` through its
+    :func:`~autoware_carla_scenario.debug_markers.world_point` positions; the
+    plan keeps each point's time and heading in CARLA's world (the yaw flipped
     back with ``y``).  A point with a coordinate that is not a finite number
     is left out of both: neither can be followed nor written as JSON.
     """
