@@ -47,8 +47,11 @@ import argparse
 import contextlib
 import datetime
 import errno
+import functools
+import gzip
 import http.client
 import json
+import logging
 import os
 import platform
 import re
@@ -56,6 +59,7 @@ import shutil
 import sys
 import tarfile
 import time
+import zlib
 from email.message import Message
 from pathlib import Path, PurePosixPath
 from typing import IO, Callable, Iterator, Optional, cast
@@ -88,6 +92,8 @@ from .carla_install_paths import package_url as package_url
 # Lustre mounts) are the checked slurm.start_lock's, whose start lock tells
 # such a file system by them too.
 from .slurm.start_lock import _NO_FLOCK_ERRNOS
+
+logger = logging.getLogger(__name__)
 
 RELEASE_URL = "https://downloads.carlasim.com/Linux/CARLA_1.0.tar.gz"
 """The CARLA release the framework targets (1.0), as linked from its release page."""
@@ -202,7 +208,7 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
     from tqdm import tqdm  # noqa: PLC0415
 
     if not writable and force:
-        raise _cannot_install(target)
+        raise _cannot_install(target, force=True)
     if writable:
         # What an interrupted run left: an unfinished download and an old install
         # moved aside but not yet deleted. Neither is ever trusted as an install.
@@ -234,6 +240,17 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
             return _launcher_of(target)
         if not writable:
             raise _cannot_install(target)
+        # Checked before the download, not before finding the install current
+        # (a leftover that cannot be deleted does not stop a run that keeps the
+        # install): the swap needs the name free, and would otherwise fail only
+        # once the whole package is unpacked.
+        if _replaced(target).exists():
+            raise RuntimeError(
+                f"{_replaced(target)}, a previous install moved aside, cannot be "
+                "deleted (files held open by a CARLA server, perhaps on another "
+                "node, or owned by another user such as root); delete it and run "
+                "scenario-setup again"
+            )
         size = int(source["size"]) if source["size"] else None
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = _staging(target)
@@ -257,13 +274,14 @@ def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path
                     f"{url} has no {LAUNCHER.name} (at its top, as CARLA 1.0 "
                     f"has it, or in {LAUNCHER.parent}/): not a CARLA Linux package"
                 )
-        except BaseException:  # Ctrl-C and a dead connection too: no 30 GB left over
+            (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
+            _swap_into_place(staging, target)
+        # Ctrl-C, a dead connection, a failed swap: no 30 GB left over.
+        except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
         finally:
             stream.close()
-    (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
-    _swap_into_place(staging, target)
     return _launcher_of(target)
 
 
@@ -323,11 +341,12 @@ def _locked(target: Path) -> Iterator[bool]:
 class _ResumingStream:
     """The body of *response*, reconnecting with a range request when it drops.
 
-    ``tarfile`` in ``r|gz`` mode only reads forward, so when a read fails or the
-    body ends short of its Content-Length, the rest is asked for with
+    The unpacking only reads forward, so when a read fails or the body ends
+    short of its Content-Length, the rest is asked for with
     ``Range: bytes=<read so far>-`` and the stream carries on as if nothing
     happened. ``If-Range`` makes a download replaced in the meantime come back
     whole (200) instead of spliced onto the old one, which ends the install.
+    A body that ends short and cannot be resumed raises ``RuntimeError``.
     """
 
     def __init__(
@@ -373,7 +392,13 @@ class _ResumingStream:
                     self._offset += len(data)
                     return data
                 if not self._resumable:
-                    return data  # tarfile reports the archive as truncated
+                    # Content-Length says there is more; urllib's read() just
+                    # returns nothing when the connection closes early.
+                    raise RuntimeError(
+                        f"the download of {self._url} ended at {self._offset} of "
+                        f"{self._size} bytes and cannot be resumed; run "
+                        "scenario-setup again"
+                    )
                 error = None
             failures += 1
             self._reconnect(failures, error)
@@ -508,12 +533,43 @@ def _require_extraction_filters() -> None:
 
     Raises:
         RuntimeError: The running Python is one of those older patch releases.
+
+    The filters themselves have known bypasses before 3.10.18, 3.11.13,
+    3.12.11 and 3.13.4 (:data:`_FILTER_FIXES`): there, a warning is logged
+    rather than the install refused, which would lock out Pythons still
+    shipped (Ubuntu 24.04's 3.12.3).
     """
     if not hasattr(tarfile, "data_filter"):
         raise RuntimeError(
             f"scenario-setup needs tarfile's extraction filters, which Python "
             f"{platform.python_version()} lacks: upgrade Python to 3.10.12, "
             f"3.11.4, 3.12 or later"
+        )
+    major, minor, micro = sys.version_info[:3]
+    _warn_of_filter_bypasses(major, minor, micro)
+
+
+_FILTER_FIXES = {(3, 10): 18, (3, 11): 13, (3, 12): 11, (3, 13): 4}
+"""The patch release of each minor version that fixed the extraction filters'
+bypasses (CVE-2024-12718, CVE-2025-4138, CVE-2025-4330, CVE-2025-4517)."""
+
+
+@functools.lru_cache(maxsize=None)
+def _warn_of_filter_bypasses(major: int, minor: int, micro: int) -> None:
+    """Warn, once per run, of a Python whose extraction filters can be bypassed."""
+    fixed = _FILTER_FIXES.get((major, minor))
+    if fixed is not None and micro < fixed:
+        logger.warning(
+            "Python %d.%d.%d's tarfile extraction filters can be bypassed by a "
+            "crafted archive (CVE-2024-12718, CVE-2025-4138, CVE-2025-4330, "
+            "CVE-2025-4517; fixed in %d.%d.%d): pass only a --url you trust, or "
+            "upgrade Python",
+            major,
+            minor,
+            micro,
+            major,
+            minor,
+            fixed,
         )
 
 
@@ -593,19 +649,30 @@ class _StripTop:
 
 
 def _unpack(stream: IO[bytes], destination: Path) -> None:
-    """Unpack a gzipped tar *stream* into *destination*, dropping its top directory."""
+    """Unpack a gzipped tar *stream* into *destination*, dropping its top directory.
+
+    ``tarfile``'s own ``r|gz`` takes a stream cut at a member boundary for the
+    end of the archive and never checks the gzip trailer, so the gzip stream
+    is read here, to its end once the archive is unpacked: one cut short
+    raises ``EOFError``, a wrong CRC or length ``gzip.BadGzipFile``.
+    """
     _require_extraction_filters()
     destination.mkdir(parents=True)
-    # 1 MiB reads: the default 10 KiB makes 1.6 M calls through the progress bar.
-    with tarfile.open(fileobj=stream, mode="r|gz", bufsize=1 << 20) as archive:
-        try:
-            archive.extractall(destination, filter=_StripTop())
-        except KeyError as exc:
-            # tarfile's own report of a hard link whose target is not (yet) on
-            # disk nor in the archive; a TarError, so main() reports it cleanly.
-            raise tarfile.ExtractError(
-                f"a hard link's target is not in the archive: {exc}"
-            ) from exc
+    # 1 MiB reads of the unpacked tar, not tarfile's default 10 KiB. The progress
+    # bar counts gzip's reads of the download (8 KiB before 3.12, 128 KiB on).
+    with gzip.GzipFile(fileobj=stream, mode="rb") as unzipped:
+        with tarfile.open(fileobj=unzipped, mode="r|", bufsize=1 << 20) as archive:
+            try:
+                archive.extractall(destination, filter=_StripTop())
+            except KeyError as exc:
+                # tarfile's own report of a hard link whose target is not (yet)
+                # on disk nor in the archive; a TarError, so main() reports it
+                # cleanly.
+                raise tarfile.ExtractError(
+                    f"a hard link's target is not in the archive: {exc}"
+                ) from exc
+        while unzipped.read(1 << 20):  # the rest, up to the trailer's checks
+            pass
 
 
 _HASH_LENGTHS = (8, 7, 9, 10, 11, 12)
@@ -845,6 +912,8 @@ def _main(argv: Optional[list[str]]) -> int:
         OSError,
         RuntimeError,
         ValueError,
+        EOFError,  # a gzip stream cut short (gzip.BadGzipFile is an OSError)
+        zlib.error,
         tarfile.TarError,
         http.client.HTTPException,
     ) as exc:

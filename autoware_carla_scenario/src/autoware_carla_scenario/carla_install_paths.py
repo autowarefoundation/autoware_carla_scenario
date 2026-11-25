@@ -103,11 +103,20 @@ def _lock_path(target: Path) -> Path:
     return target.with_name(target.name + ".lock")
 
 
-def _cannot_install(target: Path) -> RuntimeError:
-    """The error of a run that can only check *target* but would have to install."""
-    state = "out of date" if launcher_in(target) is not None else "not installed"
+def _cannot_install(target: Path, force: bool = False) -> RuntimeError:
+    """The error of a run that can only check *target* but would have to install.
+
+    With *force*, the install is reinstalled whatever its state, so the error
+    says that ``--force`` needs write access rather than guessing a state.
+    """
+    if force:
+        reason = f"--force reinstalls CARLA at {target}, which needs write access"
+    elif launcher_in(target) is not None:
+        reason = f"CARLA at {target} is out of date"
+    else:
+        reason = f"CARLA at {target} is not installed"
     return RuntimeError(
-        f"CARLA at {target} is {state}, and this run cannot write there "
+        f"{reason}, and this run cannot write there "
         f"({_lock_path(target)} cannot be opened for writing); run scenario-setup "
         "as a user who can write to it, or pass --dir to install elsewhere"
     )

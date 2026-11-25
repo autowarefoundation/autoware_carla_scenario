@@ -240,6 +240,28 @@ def _label_value() -> str:
     return f"uid-{os.getuid()}"
 
 
+def _package_manifests(source: Path) -> list[str]:
+    """Every ``package.xml`` under *source*, as paths relative to it, sorted.
+
+    Directory symlinks are followed, as rosdep (catkin_pkg) follows them, so a
+    repository linked into ``src/`` counts too; a directory reached again (a
+    symlink loop, or a second link to it) is walked once, under the name it is
+    first reached by in sorted order.
+    """
+    seen: set[str] = set()
+    found: list[str] = []
+    for directory, dirnames, filenames in os.walk(source, followlinks=True):
+        real = os.path.realpath(directory)
+        if real in seen:
+            dirnames.clear()
+            continue
+        seen.add(real)
+        dirnames.sort()  # a walk in the same order everywhere: the same names
+        if "package.xml" in filenames:
+            found.append(str((Path(directory) / "package.xml").relative_to(source)))
+    return sorted(found)
+
+
 @dataclass(frozen=True)
 class DockerAutowareConfig:
     """How to build and start an Autoware workspace in its dev container.
@@ -814,10 +836,10 @@ class DockerAutowareLauncher:
             return digest.hexdigest()[:16]
         digest.update(b"rosdep\0")
         source = self._workspace / "src"
-        for path in sorted(source.rglob("package.xml")):
-            digest.update(str(path.relative_to(source)).encode())
+        for relative in _package_manifests(source):
+            digest.update(relative.encode())
             digest.update(b"\0")
-            digest.update(path.read_bytes())
+            digest.update((source / relative).read_bytes())
             digest.update(b"\0")
         return digest.hexdigest()[:16]
 
