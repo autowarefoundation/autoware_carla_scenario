@@ -121,6 +121,25 @@ The trajectory log records the map's source as the pack the run read,
 Lanelet2 map and `map.source` gives it, the log names `map.source` instead.
 `map.pack_sha256` without `map.pack` is refused: there is nothing to pin.
 
+## Cache and offline runs
+
+A pack is downloaded once: later runs take it from carla-pack's cache
+(`~/.cache/carla-pack`, `CARLA_PACK_CACHE_DIR`) and install it from there.
+Each run still asks GitHub which artifact the reference names, unless the
+pack is pinned:
+
+| Setting | GitHub | Storage (S3, Google Drive, ...) |
+| --- | --- | --- |
+| -- | read once per run, for the pack list | only the first time |
+| `map.pack_sha256` set, the pack cached | not contacted | not contacted |
+| `CARLA_PACK_OFFLINE=1` | never contacted | never contacted |
+
+With `CARLA_PACK_OFFLINE=1`, `map.pack` resolves among the cached packs only
+(the newest that matches, as online), and a pack that is not cached stops the
+run before CARLA starts with carla-pack's `offline` error. To run on a
+machine without network access, fetch the pack once where there is
+(`carla-pack install` or a run), and mount or copy the cache directory.
+
 ## Where packs are installed
 
 The server reads a pack at the path it is installed at:
