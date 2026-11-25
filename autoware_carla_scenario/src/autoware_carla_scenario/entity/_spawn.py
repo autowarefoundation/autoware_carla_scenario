@@ -81,10 +81,11 @@ def spawn_vehicle_actor(
     This is the shared implementation used by both :class:`EgoVehicle` and
     :class:`VehicleEntity`.
 
-    When the initial spawn fails and *spawn_retry_max_count* > 0 and
-    *od_pose* is provided, the function retries by shifting the spawn
+    When the initial spawn at a :class:`SpawnTransform` fails and
+    *spawn_retry_max_count* > 0, the function retries by shifting the spawn
     transform across its own heading in increments of *spawn_retry_t_step*
-    metres (and up by *spawn_retry_z_step*).
+    metres (and up and down by *spawn_retry_z_step*).  A map spawn point
+    (:class:`SpawnPointIndex`) is tried once: it is the map's own placement.
 
     Args:
         world: The CARLA world instance.
@@ -92,11 +93,13 @@ def spawn_vehicle_actor(
         role_name: Value for the ``role_name`` actor attribute.
         spawn_location: Where to place the vehicle \u2014 either an explicit
             :class:`SpawnTransform` or a :class:`SpawnPointIndex`.
-        od_pose: Optional :class:`OpenDrivePose` of the spawn; giving it
-            marks the spawn as a road placement and enables the retries,
-            which are offset from the spawn transform itself.
+        od_pose: Accepted for compatibility; unused.  It used to be what
+            enabled the retries, which now run for every
+            :class:`SpawnTransform` (#2469) and offset the spawn transform
+            itself, never this pose.
         spawn_retry_max_count: Maximum number of lateral-shift retries
-            when the initial spawn fails.  0 disables retries.
+            when the initial spawn at a :class:`SpawnTransform` fails.  0
+            disables retries.
         spawn_retry_t_step: Lateral shift (metres) per retry attempt, across
             the resolved spawn transform's heading in the ground plane (each
             attempt tries both sides), not along the road's OpenDRIVE *t*.
@@ -194,7 +197,14 @@ def spawn_vehicle_actor(
     # placement; re-snapping ``od_pose`` instead would, on a map where the
     # Lanelet2 and OpenDRIVE geometries disagree, move the retries back to the
     # OpenDRIVE lane -- possibly the opposing one -- before offsetting them.
-    if actor is None and spawn_retry_max_count > 0 and od_pose is not None:
+    # Whether an ``od_pose`` was given does not matter: it used to be what
+    # turned the retries on, so a transform without one failed on its first
+    # attempt whatever spawn_retry_max_count said (#2469).
+    if (
+        actor is None
+        and spawn_retry_max_count > 0
+        and isinstance(spawn_location, SpawnTransform)
+    ):
         base_transform = resolved_transform
         yaw_rad = math.radians(base_transform.rotation.yaw)
         sin_yaw = math.sin(yaw_rad)

@@ -78,6 +78,9 @@ class VehicleEntityConfig:
     #: sides; :func:`~._spawn.spawn_vehicle_actor`).
     spawn_retry_t_step: float = 0.1
     spawn_retry_z_step: float = 0.5
+    #: Accepted for compatibility and unused: it used to be what turned the
+    #: spawn retries on, which now run for every :class:`SpawnTransform`
+    #: (#2469).
     od_pose: Optional["OpenDrivePose"] = None
     #: Accepted for compatibility and unused: the spawn retries shift the
     #: resolved spawn transform rather than re-snapping it to the ground.

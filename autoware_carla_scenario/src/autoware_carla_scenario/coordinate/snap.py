@@ -1,11 +1,13 @@
 """Snap a pose onto the actual CARLA road surface.
 
-The coordinate transform pipeline (Lanelet2 → OpenDRIVE → CARLA) can produce
-positions that are slightly off the drivable surface due to geometry mismatches
-between the Lanelet2 map and the XODR road network.  :func:`snap_to_carla_road`
-corrects the position via OpenDRIVE projection (for :class:`Lanelet2Pose` input)
-or the CARLA waypoint API (for :class:`CarlaWorldPose` input), and z via a ray
-cast down onto the ground from the pose's own level of road (#1874).
+A pose converted to CARLA world coordinates (:func:`.transform.to_carla_world`)
+carries its map's idea of the height, which need not be where the rendered
+road surface is.  :func:`snap_to_carla_road` keeps the horizontal position the
+pose names -- a :class:`Lanelet2Pose`'s from its own lanelet, an
+:class:`OpenDrivePose`'s from its road's reference line, neither projected onto
+the other map -- or, for a :class:`CarlaWorldPose`, moves it onto the nearest
+road with the CARLA waypoint API; z comes from a ray cast down onto the ground
+from the pose's own level of road (#1874).
 """
 
 from __future__ import annotations

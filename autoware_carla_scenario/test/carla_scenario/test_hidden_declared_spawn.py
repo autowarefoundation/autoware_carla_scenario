@@ -289,6 +289,25 @@ class TestSameSpawn:
         assert (a.x, a.y) == (b.x, b.y)  # under their one spawn
         assert a.z != b.z
 
+    def test_only_a_hidden_npc_is_spawned_without_retries(self, maps: None) -> None:
+        # Under the map nothing is in the way. A visible one is retried as
+        # the ego's settings say, though it carries no OpenDRIVE pose (#2469).
+        scenario = _scenario(
+            _document(
+                _hidden("a"),
+                _hidden("parked"),
+                Entity(id="b", spawn=SpawnSpec(lanelet_id=2, s=SValue(value=5.0))),
+            ),
+            unplaced=("parked",),
+        )
+        scenario.ego_config.spawn_retry_max_count = 10
+        built = _built(scenario)
+        assert built["a"]._config.spawn_retry_max_count == 0
+        # Parked under the ego's spawn, in its own waiting spot.
+        assert built["parked"]._config.spawn_retry_max_count == 0
+        assert built["b"]._config.spawn_retry_max_count == 10
+        assert built["b"]._config.od_pose is None
+
 
 # ---------------------------------------------------------------------------
 # Brought in with no place: where it was declared

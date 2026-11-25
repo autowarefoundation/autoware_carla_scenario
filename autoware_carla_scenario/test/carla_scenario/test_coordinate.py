@@ -39,6 +39,7 @@ from autoware_carla_scenario.coordinate.projection import (
 from autoware_carla_scenario.coordinate.projection import (
     read_projector_type as _read_projector_type,
 )
+from autoware_carla_scenario.coordinate import transform
 from autoware_carla_scenario.coordinate.transform import (
     _carla_to_lanelet2,
     _carla_to_opendrive,
@@ -807,6 +808,79 @@ class TestLanelet2ToCarla:
         r1 = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=lanelet_id, s=0.0, t=1.0))
         dist = math.sqrt((r0.x - r1.x) ** 2 + (r0.y - r1.y) ** 2)
         assert dist == pytest.approx(1.0, abs=0.01)
+
+    @pytest.fixture
+    def fresh_warnings(self):
+        """No off-lanelet s warned about yet, as at the start of a run."""
+        transform._clear_clamped_s_warnings()
+        yield
+        transform._clear_clamped_s_warnings()
+
+    @pytest.mark.parametrize("past", [1e-3, 50.0])
+    def test_an_s_past_the_lanelet_s_end_is_clamped_with_a_warning(
+        self, map_manager, fresh_warnings, caplog, past
+    ):
+        # #2469: it used to be clamped without a word, so a point placed 50 m
+        # past the end of a 15.66 m lanelet landed on the end unnoticed.
+        length = lanelet_length(1)
+        end = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length))
+        with caplog.at_level("WARNING"):
+            past_end = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length + past))
+        assert past_end == pytest.approx(end)
+        assert "is not on lanelet 1, which is 15.66" in caplog.text
+        assert "clamped onto its end" in caplog.text
+
+    @pytest.mark.parametrize("s", [-1e-3, -20.0])
+    def test_an_s_before_the_lanelet_s_start_is_clamped_with_a_warning(
+        self, map_manager, fresh_warnings, caplog, s
+    ):
+        start = to_carla_world(Lanelet2Pose(lanelet_id=1, s=0.0))
+        with caplog.at_level("WARNING"):
+            before = to_carla_world(Lanelet2Pose(lanelet_id=1, s=s))
+        assert before == pytest.approx(start)
+        assert "clamped onto its start (s=0)" in caplog.text
+
+    def test_an_off_lanelet_s_is_warned_about_once_a_run(
+        self, map_manager, fresh_warnings, caplog
+    ):
+        # A pose converted on every tick says so once, not on every frame;
+        # the next run (the runner clears what was said) says so again.
+        pose = Lanelet2Pose(lanelet_id=1, s=lanelet_length(1) + 10.0)
+
+        def warned() -> int:
+            return sum("is not on lanelet 1" in r.getMessage() for r in caplog.records)
+
+        with caplog.at_level("WARNING"):
+            for _ in range(5):
+                _lanelet2_to_carla(pose)
+            assert warned() == 1
+            _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=lanelet_length(1) + 11.0))
+            assert warned() == 2
+            transform._clear_clamped_s_warnings()
+            _lanelet2_to_carla(pose)
+            assert warned() == 3
+
+    def test_what_is_remembered_is_bounded(self, map_manager, fresh_warnings):
+        for k in range(transform._CLAMPED_S_WARNINGS_MAX + 10):
+            _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=100.0 + k))
+        assert len(transform._clamped_s_warned) <= transform._CLAMPED_S_WARNINGS_MAX
+
+    def test_a_nan_s_is_refused(self, map_manager):
+        with pytest.raises(ValueError, match="s is NaN on lanelet 1"):
+            to_carla_world(Lanelet2Pose(lanelet_id=1, s=math.nan))
+
+    def test_both_ends_are_on_the_lanelet_within_float_error(self, map_manager):
+        # An s of exactly the length lanelet2 measures, or summed some other
+        # way, is the end -- not a point past it.
+        length = lanelet_length(1)
+        end = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length))
+        assert _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=length + 5e-7)) == (
+            pytest.approx(end)
+        )
+        start = _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=0.0))
+        assert _lanelet2_to_carla(Lanelet2Pose(lanelet_id=1, s=-5e-7)) == (
+            pytest.approx(start)
+        )
 
 
 # ---------------------------------------------------------------------------

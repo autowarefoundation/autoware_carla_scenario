@@ -354,7 +354,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         if self._handshake is not None:
             # Before anything moves the ego: the mission is checked against
             # where it stands.
-            self._handshake.start(actor, type(self).__name__)
+            self._handshake.start(
+                actor, type(self).__name__, not self.attaches_to_existing_actor
+            )
 
         self._rear_axle_offset_m = rear_axle_offset(
             actor, self._config.rear_axle_offset_m

@@ -257,7 +257,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 
 | Symbol | Description |
 |--------|-------------|
-| `Lanelet2Pose`, `OpenDrivePose`, `CarlaWorldPose`, `AnyPose` | Frame-tagged pose dataclasses. |
+| `Lanelet2Pose`, `OpenDrivePose`, `CarlaWorldPose`, `AnyPose` | Frame-tagged pose dataclasses. A `Lanelet2Pose`'s `s` runs from 0 to its lanelet's length: one outside that range (by more than 1e-6 m of float error) is clamped onto the lanelet's nearer end with a warning naming the lanelet, `s` and the length (once per lanelet and `s` a run); a NaN `s` raises `ValueError`. |
 | `CoordinateFrame`, `FrameMismatchError`, `frame_of` | Coordinate-frame tagging and validation. |
 | `MapManager` | Singleton owning the loaded `LaneletMap`, `pyxodr` road network, MGRS offset, and z offset. |
 | `to_carla_world`, `to_carla_location`, `to_lanelet2`, `to_opendrive` | Pose conversion entry points (overload by input frame). |

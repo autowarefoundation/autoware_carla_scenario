@@ -75,7 +75,6 @@ from autoware_carla_scenario import (
     place_at_vehicle_ahead_gap,
     snap_to_carla_road,
     to_carla_world,
-    to_opendrive,
     vehicle_bumpers,
 )
 from autoware_carla_scenario.coordinate import (
@@ -336,7 +335,6 @@ class CutInScenario(BaseScenario):
                 spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
                 spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
                 spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
-                od_pose=to_opendrive(npc_pose),
                 ground_projection=self._ground_projection,
             )
         )

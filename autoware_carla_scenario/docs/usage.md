@@ -1012,7 +1012,15 @@ entity (`autopilot`, `autoware`, `carla_driver`, `ros2`, `hils`), and a
 
 #### Entity Configuration
 
-Controls ground projection (ray casting) and spawn retry behavior:
+Controls ground projection (ray casting) and spawn retry behavior. A
+vehicle placed at an explicit transform (every road placement, the ego's
+included) that cannot spawn there is retried around it, shifted across its
+heading by `spawn_retry_t_step` and up and down by `spawn_retry_z_step`, a
+step further on each of up to `spawn_retry_max_count` attempts; a map spawn
+point (`SpawnPointIndex`) is tried once, and a declarative NPC waiting hidden
+under the map (`spawn.hidden`) is never retried. An Autoware or driver ego
+moved by a retry is localized where it actually stands; a shift of more than
+0.01 m is logged (a warning above 1 m):
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

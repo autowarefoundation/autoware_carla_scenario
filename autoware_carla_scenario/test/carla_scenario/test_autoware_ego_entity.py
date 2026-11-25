@@ -426,7 +426,9 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
         # The interface node's spawn_point and the scenario's spawn are set on
         # opposite sides of the run; when they disagree, that is said out loud
         # instead of becoming a localization error nobody can place.
-        entity = _make_entity()
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        entity.attaches_to_existing_actor = True
         elsewhere = carla.Transform(carla.Location(x=50.0, y=-2.0, z=0.5))
         world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), elsewhere)])
         _place(entity, world)
@@ -435,6 +437,76 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
             entity.on_scenario_start(world)
 
         assert "49.00 m from where the scenario expected it" in caplog.text
+        # The actor is not the framework's: the scenario's pose is kept.
+        assert bridge.configured_initial_pose is _INITIAL
+
+    @staticmethod
+    def _shifted(dy: float, z: float = 2.0) -> "carla.Transform":
+        """The fake ego's spawn moved *dy* across its lane (CARLA y), as a
+        spawn retry moves it, and standing at another height."""
+        return carla.Transform(
+            carla.Location(x=1.0, y=-2.0 - dy, z=z), carla.Rotation(yaw=-28.6479)
+        )
+
+    @pytest.mark.parametrize("dy", [0.1, 0.5, 1.0])
+    def test_a_spawn_retry_s_shift_is_localized_where_the_ego_stands(
+        self, caplog, dy
+    ) -> None:
+        # #2469: a retry shifts the ego across its lane by up to
+        # t_step * max_count (1.0 m with the defaults); Autoware was handed the
+        # planned pose regardless, and NDT started off the real actor.  1.0 m
+        # itself, which the warning's ``>`` let through, is reported too.
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), self._shifted(dy))])
+        _place(entity, world)
+
+        with caplog.at_level("INFO"):
+            entity.on_scenario_start(world)
+
+        # The actor's position and heading, at the scenario's (road) height.
+        _assert_pose_close(
+            bridge.configured_initial_pose,
+            BridgePose.from_yaw(x=1.0, y=2.0 + dy, z=0.5, yaw=0.5),
+        )
+        assert f"spawned {dy:.2f} m from where the scenario expected it" in (
+            caplog.text
+        )
+        assert not [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "scenario expected it" in r.getMessage()
+        ]
+
+    def test_a_spawn_far_from_the_plan_is_localized_there_and_warned_about(
+        self, caplog
+    ) -> None:
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), self._shifted(3.0))])
+        _place(entity, world)
+
+        with caplog.at_level("WARNING"):
+            entity.on_scenario_start(world)
+
+        assert "3.00 m from where the scenario expected it" in caplog.text
+        _assert_pose_close(
+            bridge.configured_initial_pose,
+            BridgePose.from_yaw(x=1.0, y=5.0, z=0.5, yaw=0.5),
+        )
+
+    def test_an_attached_ego_keeps_the_scenario_pose(self, caplog) -> None:
+        bridge = FakeAutowareBridge()
+        entity = _make_entity(bridge=bridge)
+        entity.attaches_to_existing_actor = True
+        world = _FakeWorld([_FakeActor(1, str(EGO_ROLE_NAME), self._shifted(0.5))])
+        _place(entity, world)
+
+        with caplog.at_level("INFO"):
+            entity.on_scenario_start(world)
+
+        assert bridge.configured_initial_pose is _INITIAL
+        assert "where the scenario expected it" not in caplog.text
 
     def test_a_height_difference_alone_is_not_a_disagreement(self, caplog) -> None:
         # The two heights are measured from different places: the scenario's

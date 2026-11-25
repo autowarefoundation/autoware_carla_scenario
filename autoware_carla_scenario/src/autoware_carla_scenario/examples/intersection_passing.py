@@ -70,7 +70,6 @@ from autoware_carla_scenario import (
     VehicleEntity,
     VehicleEntityConfig,
     snap_to_carla_road,
-    to_opendrive,
 )
 from autoware_carla_scenario.failure import FailureCategory
 
@@ -163,10 +162,7 @@ class IntersectionPassingScenario(BaseScenario):
             npc_pose = Lanelet2Pose(
                 lanelet_id=npc_cfg.spawn_lanelet_id, s=npc_cfg.spawn_s
             )
-            # Snapped as the Lanelet2 pose it was authored as; the OpenDRIVE
-            # pose is carried on to the entity only to enable the spawn retries
-            # (which offset the snapped transform, not this pose).
-            npc_od_pose = to_opendrive(npc_pose)
+            # Snapped as the Lanelet2 pose it was authored as.
             npc_snapped = snap_to_carla_road(
                 npc_pose, world, ground_projection=self._ground_projection
             )
@@ -179,7 +175,6 @@ class IntersectionPassingScenario(BaseScenario):
                     spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
                     spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
                     spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
-                    od_pose=npc_od_pose,
                     ground_projection=self._ground_projection,
                 )
             )

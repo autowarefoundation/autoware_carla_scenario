@@ -65,6 +65,30 @@ _SEAM_TOLERANCE = 1e-3
 #: elevation, to tell stacked lanelets apart.
 _STACKED_CANDIDATES = 8
 
+#: How far (m) a :class:`Lanelet2Pose`'s ``s`` may be before its lanelet's
+#: start or past its end and still be read as on it: float error only, such as
+#: an ``s`` of exactly the lanelet's length summed another way.  Beyond it the
+#: pose is clamped onto the nearer end with a warning (#2469).
+_S_TOLERANCE_M: float = 1e-6
+
+#: The ``(lanelet id, s in millimetres)`` of every off-lanelet ``s`` already
+#: warned about (:func:`_lanelet2_to_carla`), so a pose converted on every
+#: tick says so once rather than on every frame.  Cleared at the start of
+#: each run (:func:`_clear_clamped_s_warnings`), and when it holds
+#: :data:`_CLAMPED_S_WARNINGS_MAX` of them, so it never grows without bound.
+_clamped_s_warned: set[tuple[int, int]] = set()
+
+#: How many off-lanelet ``s`` :data:`_clamped_s_warned` remembers before it
+#: forgets them all and warns afresh.
+_CLAMPED_S_WARNINGS_MAX: int = 1024
+
+
+def _clear_clamped_s_warnings() -> None:
+    """Forget which off-lanelet ``s`` were warned about, for the runner at the
+    start of a run: each run's log says so again."""
+    _clamped_s_warned.clear()
+
+
 #: How much farther (m) from a point's elevation than the nearest lanelet
 #: surface over or under it a lanelet's surface may be and still hold the
 #: point (:func:`on_lanelet`, :func:`.stacked.choose_lanelet`).
@@ -628,11 +652,30 @@ def to_map_frame(
 
 
 def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
-    """Convert a Lanelet2 Frenet pose to CARLA world coordinates."""
+    """Convert a Lanelet2 Frenet pose to CARLA world coordinates.
+
+    An ``s`` before 0 or past the lanelet's length by more than
+    :data:`_S_TOLERANCE_M` is clamped onto the nearer end, as it always was,
+    but no longer without a word (#2469): a WARNING names the lanelet, ``s``
+    and the length -- once per lanelet and ``s`` (to the millimetre) a run,
+    so a pose converted on every tick does not flood the log.  A point
+    further on belongs on the lanelet that follows.
+
+    Raises:
+        ValueError: If ``s`` is NaN, which names no point on any lanelet.
+    """
     mm = MapManager.get_instance()
     lanelet = mm.lanelet_map.laneletLayer[pose.lanelet_id]
     points = [(p.x, p.y, p.z) for p in lanelet.centerline]
 
+    if math.isnan(pose.s):
+        raise ValueError(
+            f"s is NaN on lanelet {pose.lanelet_id}: a Lanelet2Pose's s runs "
+            "from 0 to its lanelet's length"
+        )
+    length = _polyline_length_2d(points)
+    if not -_S_TOLERANCE_M <= pose.s <= length + _S_TOLERANCE_M:
+        _warn_clamped_s(int(pose.lanelet_id), float(pose.s), length)
     x_cl, y_cl, z_cl, heading_cl = _interpolate_at_s(points, pose.s)
     total_heading = heading_cl + pose.heading
 
@@ -1030,6 +1073,39 @@ def _compute_arc_lengths_2d(
     arc_lengths = np.zeros(len(points))
     arc_lengths[1:] = np.cumsum(seg_lengths)
     return arc_lengths
+
+
+def _warn_clamped_s(lanelet_id: int, s: float, length: float) -> None:
+    """Warn that *s* is off lanelet *lanelet_id*, *length* m long, and is
+    clamped onto its nearer end -- unless already said this run."""
+    # Millimetres, and held to what an int takes: s = 1e300 is still one key.
+    key = (lanelet_id, int(round(min(max(s, -1e15), 1e15) * 1000.0)))
+    if key in _clamped_s_warned:
+        return
+    if len(_clamped_s_warned) >= _CLAMPED_S_WARNINGS_MAX:
+        _clamped_s_warned.clear()
+    _clamped_s_warned.add(key)
+    end = "start (s=0)" if s < 0.0 else f"end (s={length:.3f})"
+    logger.warning(
+        "s=%.3f m is not on lanelet %d, which is %.3f m long: clamped onto "
+        "its %s. A Lanelet2Pose's s runs from 0 to its lanelet's length; a "
+        "point further on belongs on the lanelet that follows.",
+        s,
+        lanelet_id,
+        length,
+        end,
+    )
+
+
+def _polyline_length_2d(points: list[tuple[float, float, float]]) -> float:
+    """The plan-view length of a 3D polyline: the arc length
+    :func:`_interpolate_at_s` measures ``s`` along."""
+    length = 0.0
+    for i in range(1, len(points)):
+        length += math.hypot(
+            points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]
+        )
+    return length
 
 
 def _interpolate_at_s(

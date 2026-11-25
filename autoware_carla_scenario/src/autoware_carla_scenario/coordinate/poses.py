@@ -24,6 +24,13 @@ class Lanelet2Pose:
 
     The origin of (s, t) is the start of the lanelet centerline.
     Positive t is to the left of the driving direction.
+
+    ``s`` runs from 0 to the lanelet's length, measured in plan view along its
+    centerline.  A pose whose ``s`` is outside that range by more than float
+    error (1e-6 m) is converted clamped onto the lanelet's nearer end, with a
+    WARNING naming the lanelet, ``s`` and the length (once per lanelet and
+    ``s`` a run, #2469): a point further on belongs on the lanelet that
+    follows.  A NaN ``s`` raises ``ValueError``.
     """
 
     FRAME: ClassVar[CoordinateFrame] = CoordinateFrame.LANELET2

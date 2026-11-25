@@ -1283,6 +1283,7 @@ graph LR
     L2 -->|"to_carla_world()"| CW
     OD -->|"to_carla_world()"| CW
     CW -->|"to_lanelet2()"| L2
+    L2 -->|"snap_to_carla_road()"| CW
     OD -->|"snap_to_carla_road()"| CW
     CW -->|"to_opendrive()"| OD
 ```
@@ -1291,7 +1292,9 @@ graph LR
 
 `to_carla_world()` returns a `CarlaWorldPose`; `to_carla_location()` takes any of the three (or a `carla.Location`) and returns the `carla.Location` of its `CarlaWorldPose`.
 
-**`snap_to_carla_road()`** uses CARLA's ray-cast API to project an OpenDRIVE position onto the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world.
+**`snap_to_carla_road()`** puts a pose on the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world. A `Lanelet2Pose` keeps the x, y and yaw its own lanelet gives it, and an `OpenDrivePose` those of its road's reference line; neither is projected onto the other map. A `CarlaWorldPose` is moved onto the nearest road with CARLA's waypoint API. In every case only z comes from CARLA, from a ray cast down onto the ground from the pose's own level of road.
+
+A `Lanelet2Pose`'s `s` must lie on its lanelet, from 0 to the lanelet's length (1e-6 m of float error either side is accepted): one past either end is clamped onto the nearer end with a warning naming the lanelet, `s` and the length, logged once per lanelet and `s` in a run so a pose converted on every tick does not flood the log. A point further on belongs on the next lanelet. A NaN `s` raises `ValueError`.
 
 ---
 
@@ -1305,6 +1308,8 @@ classDiagram
         +vehicle_type: str
         +initial_speed_kmh: float
         +spawn_retry_max_count: int
+        +spawn_retry_t_step: float
+        +spawn_retry_z_step: float
     }
 
     class EgoConfig {
@@ -1317,11 +1322,11 @@ classDiagram
     }
 
     class SpawnTransform {
-        +transform: carla.Transform
+        +value: carla.Transform
     }
 
     class SpawnPointIndex {
-        +index: int
+        +value: int
     }
 
     class VehicleEntity {
@@ -1447,7 +1452,7 @@ simply not registered. The goal reaches the ego config from `ego.goal_lanelet_id
 the scenario itself — `IntersectionPassingScenario` derives it from the route it asserts,
 through `BaseScenario.derive_goal_from_route()`.
 
-**Spawn retry logic**: When a vehicle fails to spawn (e.g., collision with existing geometry), the spawn system retries with lateral (`t_step`) and vertical (`z_step`) offsets, up to `spawn_retry_max_count` attempts.
+**Spawn retry logic**: When a vehicle fails to spawn at a `SpawnTransform` (e.g., collision with existing geometry), the spawn system retries with lateral (`t_step`, across the transform's heading, both sides) and vertical (`z_step`, up and down) offsets from that transform, up to `spawn_retry_max_count` attempts; `0` turns the retries off. A `SpawnPointIndex` is the map's own placement and is tried once. A declarative NPC that waits hidden under the map (`spawn.hidden`, parked or not) is never retried: nothing is in the way there. `od_pose` is accepted for compatibility and plays no part. An ego the framework spawned is localized where it actually stands, so the stack starts at the shifted position, not the planned one; a shift of more than 0.01 m is logged (a warning above 1 m).
 
 ---
 
