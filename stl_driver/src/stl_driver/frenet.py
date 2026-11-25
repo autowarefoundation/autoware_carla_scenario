@@ -28,7 +28,7 @@ __all__ = ["RouteTable", "build_route_table", "distance_behind_start", "project_
 
 
 #: How far behind the route's start (metres) a point may lie before the table
-#: is extended to cover it: closer, clamping it onto the start costs nothing.
+#: is extended to cover it: closer, extending it gains nothing.
 _LEVEL_M = 1e-6
 
 
@@ -73,11 +73,7 @@ class RouteTable:
 
     def position_at(self, station_m: float) -> np.ndarray:
         """Centreline point at one station, as ``(x, y)``. For tests and debug."""
-        index = np.clip(station_m / self.ds, 0.0, len(self.xy) - 1.0)
-        low = int(np.floor(index))
-        high = min(low + 1, len(self.xy) - 1)
-        weight = index - low
-        return self.xy[low] * (1.0 - weight) + self.xy[high] * weight
+        return self.frenet_to_xy(station_m, 0.0)
 
     def frenet_to_xy_many(
         self, stations: np.ndarray, offsets: np.ndarray
@@ -87,31 +83,33 @@ class RouteTable:
         Returns the positions and the unit route tangent at each station, the
         latter because anything predicted along the road also needs to know
         which way the road is pointing there.
+
+        A station beyond either end of the table is extrapolated along the
+        first or last segment, as the rollout's ``_lookup_centreline`` does,
+        rather than clamped onto the end: a clamp would park a vehicle
+        predicted past the end there, and one predicted behind the start
+        beside the ego. Past an end, the tangent is held at that end's.
         """
         stations = np.asarray(stations, dtype=np.float64).ravel()
         offsets = np.asarray(offsets, dtype=np.float64).ravel()
 
-        index = np.clip(stations / self.ds, 0.0, len(self.xy) - 1.0)
+        index = stations / self.ds
         low = np.clip(np.floor(index).astype(np.int64), 0, len(self.xy) - 2)
+        # Unclamped: below 0 or above 1 on the end segments, which is the
+        # extrapolation.
         weight = (index - low)[:, None]
 
         point = self.xy[low] * (1.0 - weight) + self.xy[low + 1] * weight
-        tangent = self.tangent[low] * (1.0 - weight) + self.tangent[low + 1] * weight
+        held = np.clip(weight, 0.0, 1.0)
+        tangent = self.tangent[low] * (1.0 - held) + self.tangent[low + 1] * held
         tangent = tangent / np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
         normal = np.stack([-tangent[:, 1], tangent[:, 0]], axis=1)
         return point + offsets[:, None] * normal, tangent
 
     def frenet_to_xy(self, station_m: float, offset_m: float) -> np.ndarray:
         """Inverse of :func:`project_to_frenet`, for round-trip tests."""
-        index = np.clip(station_m / self.ds, 0.0, len(self.xy) - 1.0)
-        low = int(np.floor(index))
-        high = min(low + 1, len(self.xy) - 1)
-        weight = index - low
-        point = self.xy[low] * (1.0 - weight) + self.xy[high] * weight
-        tangent = self.tangent[low] * (1.0 - weight) + self.tangent[high] * weight
-        tangent = tangent / max(float(np.linalg.norm(tangent)), 1e-9)
-        normal = np.array([-tangent[1], tangent[0]])
-        return point + offset_m * normal
+        positions, _ = self.frenet_to_xy_many(np.array([station_m]), np.array([offset_m]))
+        return positions[0]
 
 
 def distance_behind_start(route_in_rig: np.ndarray, point_xy: np.ndarray) -> float:
@@ -164,7 +162,7 @@ def build_route_table(
             gradient.
         behind_m: How far behind the route's first point the table must
             reach too -- `distance_behind_start` of the ego, so the ego
-            projects onto the table rather than clamping onto its start. The
+            projects onto the table rather than off its start. The
             table then starts one spacing further back than that, rounded to
             the grid, continuing the first segment's heading; its stations
             count from there, so the route's first point is at
@@ -192,13 +190,11 @@ def build_route_table(
     sampled = polyline.sample(route, arc, stations, extrapolate=True)
 
     # Before the start `polyline` clamps, which would put every point behind
-    # the route's first one on top of it: an ego there would project onto
-    # station zero wherever it stood, and everything placed relative to it --
-    # the plan, the stop line -- would land that much further ahead. The
-    # first segment's heading continued backward, as the end is continued
-    # forward, gives it a station. Whole spacings, one more than needed, so
-    # the grid ahead is the one an unextended table has and the ego has a
-    # segment behind it.
+    # the route's first one on top of it. The first segment's heading
+    # continued backward, as the end is continued forward, puts an ego behind
+    # the route's start on the table itself, at a station of its own. Whole
+    # spacings, one more than needed, so the grid ahead is the one an
+    # unextended table has and the ego has a segment behind it.
     n_back = int(np.ceil(behind_m / ds)) + 1 if behind_m > _LEVEL_M else 0
     route_start = n_back * ds
     if n_back:
@@ -271,8 +267,7 @@ def project_to_frenet(table: RouteTable, points_xy: np.ndarray) -> tuple[np.ndar
     # half -- so both are tried and the closer foot kept. Trying only the one
     # ahead clamps every back-half point onto the vertex, an error of up to
     # ds/2 that jumps at each segment midpoint. At the first and last vertex
-    # the two candidates coincide, so the clamp there still projects a point
-    # beyond either end of the table onto that end.
+    # the two candidates coincide.
     deltas = points[:, None, :] - table.xy[None, :, :]
     nearest = np.argmin(np.einsum("nmk,nmk->nm", deltas, deltas), axis=1)
     last_segment = len(table.xy) - 2
@@ -285,14 +280,19 @@ def project_to_frenet(table: RouteTable, points_xy: np.ndarray) -> tuple[np.ndar
     segment_length_sq = np.einsum("nck,nck->nc", segment, segment)
 
     offset_vector = points[:, None, :] - base
-    # Fraction along each segment, clamped so a point beyond either end
-    # projects onto the endpoint rather than off the segment.
+    # Fraction along each segment, clamped so a point beyond a vertex projects
+    # onto it rather than off the segment -- except past the table's two ends,
+    # where the first and last segments are extended: a point beyond either
+    # end gets a station below zero or past `table_length_m`, as
+    # `RouteTable.frenet_to_xy_many` extrapolates, rather than the end's own.
     fraction = np.where(
         segment_length_sq > 1e-12,
         np.einsum("nck,nck->nc", offset_vector, segment) / np.maximum(segment_length_sq, 1e-12),
         0.0,
     )
-    fraction = np.clip(fraction, 0.0, 1.0)
+    lowest = np.where(candidates == 0, -np.inf, 0.0)
+    highest = np.where(candidates == last_segment, np.inf, 1.0)
+    fraction = np.clip(fraction, lowest, highest)
 
     foot = base + fraction[..., None] * segment
     residual = points[:, None, :] - foot
@@ -309,10 +309,10 @@ def project_to_frenet(table: RouteTable, points_xy: np.ndarray) -> tuple[np.ndar
 
     # The tangent interpolated at the foot, as `RouteTable.frenet_to_xy_many`
     # uses for the inverse; unlike a vertex tangent it does not jump when the
-    # foot crosses from one segment to the next.
-    tangent = (
-        table.tangent[index] * (1.0 - weight[:, None]) + table.tangent[index + 1] * weight[:, None]
-    )
+    # foot crosses from one segment to the next. Past an end of the table it
+    # is held at that end's, as there too.
+    held = np.clip(weight, 0.0, 1.0)[:, None]
+    tangent = table.tangent[index] * (1.0 - held) + table.tangent[index + 1] * held
     tangent = tangent / np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
     # 2-D cross product: positive when the point lies to the left of the
     # tangent, matching the rig frame's +y.

@@ -72,16 +72,26 @@ def test_no_reverse_catches_a_single_negative_speed(rules):
 
 
 def test_stop_on_red_is_vacuous_when_no_light_governs_us(rules):
-    """An inactive light contributes the gate magnitude, not the stop slack.
+    """An inactive light reads at least the gate magnitude, whatever the stop
+    slack.
 
     This is the property that keeps an inapplicable rule from either dominating
-    the objective or dragging the reported robustness around.
+    the objective or dragging the reported robustness around. Whenever no
+    light governs us, perception sets the stop station to ``+inf`` and the
+    stop slack sits at its cap, `saturation_m`, so that is what the rule reads
+    then -- 100, not the gate's 20 (#2491).
     """
     signal = signal_from_columns(
         light_gate=constant(-LIMITS.gate_magnitude_m),
         stop_slack=constant(-30.0),  # deep violation, but no light applies
     )
     assert robustness(rules, "stop_on_red", signal) == pytest.approx(LIMITS.gate_magnitude_m)
+
+    no_light = signal_from_columns(
+        light_gate=constant(-LIMITS.gate_magnitude_m),
+        stop_slack=constant(LIMITS.saturation_m),
+    )
+    assert robustness(rules, "stop_on_red", no_light) == pytest.approx(LIMITS.saturation_m)
 
 
 def test_stop_on_red_reports_the_stop_line_overshoot_when_active(rules):
@@ -240,14 +250,14 @@ def test_an_all_satisfying_signal_has_positive_robustness(rules):
 def test_hard_violations_are_detected_for_the_fallback(rules):
     signal = signal_from_columns(clearance=spike(20.0, -1.0, at=15))
     per_rule = rules.per_rule(signal)
-    assert rules.any_hard_violated(per_rule)
+    assert any(float(per_rule[name]) < 0.0 for name in rules.hard_rules)
     assert rules.worst_violated(per_rule) == "collision_free"
 
 
 def test_a_soft_violation_does_not_trigger_the_fallback(rules):
     signal = signal_from_columns(lateral_offset=spike(0.0, 1.4, at=15))
     per_rule = rules.per_rule(signal)
-    assert not rules.any_hard_violated(per_rule)
+    assert not any(float(per_rule[name]) < 0.0 for name in rules.hard_rules)
     assert rules.worst_violated(per_rule) == "lane_keeping"
 
 

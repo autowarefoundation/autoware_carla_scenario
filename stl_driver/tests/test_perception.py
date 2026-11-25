@@ -474,6 +474,21 @@ def test_a_vehicle_reaching_into_our_front_half_is_followed():
     assert np.isfinite(forecast.lead_station_m).all()
 
 
+def test_the_lead_is_chosen_from_where_vehicles_are_now():
+    """The identity test reads the box at t = 0, not the first forecast sample
+    (#2491).
+
+    This car's front is 1.25 m ahead of the rear axle now, short of the ego's
+    middle (1.4 m), so it is not ahead. Overtaking at 5 m/s, its front is past
+    the middle a tenth of a second later, and judged there it was adopted as
+    the lead -- with its rear 3.75 m behind our bumper.
+    """
+    forecast = forecast_actors(
+        renderer(actor(-1.0, 0.0, vx=5.0)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    assert not np.isfinite(forecast.lead_station_m).any()
+
+
 def test_a_vehicle_level_with_our_back_half_is_not_the_lead():
     """Beside our rear, it is the merger's turn to yield, not ours.
 
@@ -973,14 +988,55 @@ def test_a_vehicle_ahead_on_a_bend_stays_on_the_bend():
 def test_a_vehicle_behind_the_route_start_keeps_the_straight_line_model():
     """Frenet cannot express "behind" when the route begins at the ego.
 
-    Projection clamps, so a follower would come back at station zero -- on our
-    front bumper. Mixing the two models per actor is what avoids that.
+    Behind the table's start, projection only extends the first segment, which
+    is not the road a follower is on. Mixing the two models per actor is what
+    keeps the straight line for it.
     """
     forecast = forecast_actors(
         renderer(actor(-8.0, 0.0, vx=2.0)), Pose.identity(), table(), 0.0, CONFIG
     )
     # Still behind us, hence dropped from the collision check entirely.
     assert np.abs(forecast.centres[0]).min() > 1000.0
+
+
+@pytest.mark.parametrize("cruise_mps", [8.0, 20.0])
+def test_a_lead_forecast_past_the_route_table_keeps_moving(cruise_mps):
+    """The table reaches only `route_table_length_m`; a lead that drives past
+    its end within the horizon is extrapolated, not stopped there (#2491).
+
+    Clamped, a lead 40 m ahead at 22 m/s stood still at the table's end from
+    three seconds on, and `safe_headway` read -21 m against a true +7 m.
+    """
+    config = STLDriverConfig(cruise_speed_mps=cruise_mps)
+    route_table = build_route_table(
+        straight_route(), ds=config.route_table_ds_m, length_m=config.route_table_length_m()
+    )
+    speed = cruise_mps + 2.0
+    forecast = forecast_actors(
+        renderer(actor(40.0, 0.0, vx=speed)), Pose.identity(), route_table, 0.0, config
+    )
+    times = np.arange(1, config.horizon.n_steps + 1) * config.horizon.step_s
+    true_rear = 40.0 - 4.5 / 2.0 + speed * times
+    assert true_rear[-1] > route_table.table_length_m  # the case under test
+    assert forecast.lead_station_m == pytest.approx(true_rear, abs=1e-3)
+
+
+def test_an_oncoming_vehicle_passes_behind_rather_than_parking_beside_us():
+    """Predicted below station zero, an oncoming car in the next lane carries
+    on behind the ego and leaves the collision check, rather than stopping at
+    the table's start beside the rear axle (#2491)."""
+    forecast = forecast_actors(
+        renderer(actor(20.0, 3.5, yaw=math.pi, vx=-10.0)), Pose.identity(), table(), 0.0, CONFIG
+    )
+    step_s = CONFIG.horizon.step_s
+    real = forecast.centres[:, forecast.radii > 0.0]
+    assert real.shape[1] > 0
+    # A second out it is still ahead, where the road puts it ...
+    one_second = round(1.0 / step_s) - 1
+    assert real[one_second, :, 0].mean() == pytest.approx(10.0, abs=1e-6)
+    # ... and from three seconds on, when it is ten metres behind us, it has
+    # gone from the check altogether.
+    assert (np.abs(real[round(3.0 / step_s) - 1 :]) > 1000.0).all()
 
 
 def test_the_lateral_rate_decays_rather_than_integrating_forever():

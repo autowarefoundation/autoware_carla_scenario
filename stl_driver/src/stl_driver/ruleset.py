@@ -229,17 +229,13 @@ class RuleSet:
             return None
         return min(violations, key=lambda name: violations[name])
 
-    def any_hard_violated(self, per_rule: Mapping[str, torch.Tensor | float]) -> bool:
-        """Whether a rule marked ``hard`` is violated anywhere in the horizon."""
-        return any(float(per_rule[name]) < 0.0 for name in self.hard_rules if name in per_rule)
-
     def imminent_hard_violation(self, signal: torch.Tensor, n_steps: int) -> str | None:
         """The first hard rule violated within the opening ``n_steps``, if any.
 
-        This, not :meth:`any_hard_violated`, is what should summon the
-        emergency plan.  A hard rule violated at the *end* of a four-second
-        horizon means the best plan found this step runs into trouble three
-        seconds out -- against a forecast of traffic that
+        This, not a hard rule violated anywhere in the horizon, is what
+        should summon the emergency plan.  A hard rule violated at the *end*
+        of a four-second horizon means the best plan found this step runs
+        into trouble three seconds out -- against a forecast of traffic that
         will itself brake, turn and yield in the meantime.  Treating that the
         same as a violation happening now means braking at seven metres per
         second squared for a car crossing an intersection thirty metres away,

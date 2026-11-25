@@ -895,7 +895,8 @@ def test_the_fallback_window_is_measured_in_the_opening_of_the_horizon(optimizer
     late[-5:] = -3.0  # a violation right at the end
     signal = signal_from_columns(clearance=late)
     assert optimizer.rules.imminent_hard_violation(signal, 12) is None
-    assert optimizer.rules.any_hard_violated(optimizer.rules.per_rule(signal))
+    per_rule = optimizer.rules.per_rule(signal)
+    assert float(per_rule["collision_free"]) < 0.0
 
     early = torch.full((CONFIG.horizon.n_steps,), 8.0)
     early[3] = -3.0

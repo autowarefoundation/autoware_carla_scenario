@@ -115,11 +115,18 @@ While a red or amber light governs us, never cross its stop line.
 `light_gate` is a signed constant of ±20 m rather than a boolean, and the
 magnitude is chosen, not arbitrary.  `Implies(a, b)` evaluates to
 `max(-ρ_a, ρ_b)`, so one number controls two things: an inactive light makes
-the rule vacuously true at exactly `+gate`, and an active one cannot read
+the rule vacuously true at no less than `+gate`, and an active one cannot read
 below `-gate`.  Too small a gate -- ±1, say -- would clip any overshoot worse
 than a metre and starve the optimizer of the gradient it needs to fix it.
 Twenty metres brackets both concerns, and the objective's `margin` is what
-keeps the vacuous `+gate` from dominating.
+keeps a vacuous reading from dominating.
+
+In practice an inactive light reads more than `+gate`: whenever no light
+governs us -- none seen, a green one, or a line already crossed -- perception
+sets the stop station to `+inf`, so `stop_slack` sits at its cap,
+`saturation_m` (100 m), and the `max` takes that.  The objective is unaffected -- the margin
+saturates both readings to the same 0.5 -- but the reported per-rule
+robustness is 100, not 20.
 
 The margin is small for the same reason `collision_free`'s is.  At 2.0 the
 rule paid the vehicle to stay away from the line: decomposed at a settled stop
@@ -182,10 +189,13 @@ their velocity is resolved into the route's own frame and advanced there, so a
 car we are following stays in its lane however the road bends.  A straight
 line leaves the lane tangentially within a second or two, which is exactly
 when it matters.  Frenet coordinates only describe the space the route
-parameterises, though, so a vehicle behind the route table's start -- which
-is at the ego, reaching back over it when the route is published from ahead of
-it -- would come back at station zero, on our front bumper.
-The two models are therefore chosen per vehicle.
+parameterises, though: behind the route table's start -- which is at the
+ego, reaching back over it when the route is published from ahead of it --
+projection only extends the first segment backward, which is not the road a
+follower is on.  The two models are therefore chosen per vehicle.  A
+*prediction* that leaves the table is extrapolated along its first or last
+segment, so a lead driving past the end keeps moving and an oncoming car
+passes behind the ego, rather than either stopping at the end it reached.
 
 The margin is half a metre, which saturates by about a metre and a half of
 clearance -- as much air as any plan needs to be judged safe.  At 2.0 the

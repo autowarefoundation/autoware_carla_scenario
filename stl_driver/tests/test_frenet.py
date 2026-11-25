@@ -118,11 +118,12 @@ def test_a_degenerate_route_is_rejected_rather_than_producing_nonsense():
 
 
 def test_projection_handles_points_behind_the_route_start():
-    """The ego can sit slightly behind the first waypoint after a step."""
+    """A point behind the table's start reads off the first segment extended,
+    not off the start itself (#2491)."""
     table = table_for(straight_route())
-    station, offset = project_to_frenet(table, np.array([[-2.0, 0.0]]))
-    assert station[0] == pytest.approx(0.0, abs=1e-6)
-    assert offset[0] == pytest.approx(0.0, abs=1e-6)
+    station, offset = project_to_frenet(table, np.array([[-2.0, 0.0], [-5.0, 1.5]]))
+    assert station == pytest.approx([-2.0, -5.0], abs=1e-6)
+    assert offset == pytest.approx([0.0, 1.5], abs=1e-6)
 
 
 def _rotated(route: np.ndarray, yaw: float, shift: np.ndarray) -> np.ndarray:
@@ -231,7 +232,44 @@ def test_projection_round_trips_off_grid_on_a_curve():
 
 
 def test_projection_handles_points_beyond_the_table_end():
+    """Past the end the last segment is extended, as the rollout's lookup does
+    (#2491): a vehicle there is not parked on the end."""
     table = table_for(straight_route(), ds=1.0, length_m=50.0)
     station, offset = project_to_frenet(table, np.array([[table.table_length_m + 3.0, 0.4]]))
-    assert station[0] == pytest.approx(table.table_length_m, abs=1e-6)
+    assert station[0] == pytest.approx(table.table_length_m + 3.0, abs=1e-6)
     assert offset[0] == pytest.approx(0.4, abs=1e-6)
+
+
+@pytest.mark.parametrize("past_m", [0.5, 3.0, 25.0])
+def test_stations_beyond_either_end_are_extrapolated_along_the_end_segments(past_m):
+    """`frenet_to_xy_many` continues the first and last segments rather than
+    clamping onto the ends, which forecast a lead stuck at the far end and an
+    oncoming car parked beside the ego (#2491)."""
+    table = table_for(_rotated(curved_route(), 0.4, np.array([3.0, -1.0])), ds=1.0, length_m=60.0)
+    end = table.table_length_m
+    # Per station spacing, as the rollout's index arithmetic steps: on a curve
+    # a segment's chord is a little shorter than the spacing.
+    first = (table.xy[1] - table.xy[0]) / table.ds
+    last = (table.xy[-1] - table.xy[-2]) / table.ds
+    points, tangents = table.frenet_to_xy_many(
+        np.array([-past_m, end + past_m]), np.array([0.0, 0.0])
+    )
+    assert points[0] == pytest.approx(table.xy[0] - past_m * first, abs=1e-9)
+    assert points[1] == pytest.approx(table.xy[-1] + past_m * last, abs=1e-9)
+    # The tangent is the end's own, held, so an offset is taken across it.
+    assert tangents[0] == pytest.approx(table.tangent[0], abs=1e-9)
+    assert tangents[1] == pytest.approx(table.tangent[-1], abs=1e-9)
+    assert table.frenet_to_xy(end + past_m, 0.0) == pytest.approx(points[1], abs=1e-9)
+    assert table.position_at(-past_m) == pytest.approx(points[0], abs=1e-9)
+
+
+@pytest.mark.parametrize("past_m", [0.5, 3.0, 25.0])
+def test_projection_round_trips_beyond_either_end(past_m):
+    """The two directions agree off the table as they do on it."""
+    table = table_for(_rotated(curved_route(), -0.9, np.array([0.0, 2.0])), ds=1.0, length_m=60.0)
+    stations = np.array([-past_m, -past_m, table.table_length_m + past_m] * 2)
+    offsets = np.array([0.0, 1.2, -0.8, 0.6, -1.5, 0.0])
+    points, _ = table.frenet_to_xy_many(stations, offsets)
+    recovered_s, recovered_d = project_to_frenet(table, points)
+    assert np.allclose(recovered_s, stations, atol=1e-6)
+    assert np.allclose(recovered_d, offsets, atol=1e-6)
