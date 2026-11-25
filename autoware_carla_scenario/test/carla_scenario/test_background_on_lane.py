@@ -254,6 +254,7 @@ def _sumo_spawn(lane_offset_m: float) -> Optional[str]:
         vehicle=SimpleNamespace(
             add=lambda *args, **kwargs: None,
             setMaxSpeed=lambda *args: None,
+            setLength=lambda *args: None,
         ),
     )
     backend = SumoTrafficBackend.__new__(SumoTrafficBackend)

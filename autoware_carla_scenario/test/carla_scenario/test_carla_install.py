@@ -1256,3 +1256,111 @@ def test_pythons_with_filter_bypasses_are_warned_of(
     assert len(messages) == 1  # once per run
     assert "CVE-2025-4517" in messages[0]
     assert "only a --url you trust" in messages[0]
+
+
+# -- scenario-setup --nightly BUILD ------------------------------------------------
+
+_DEV = carla_install.NIGHTLY_DIR_URL
+_NEW = "23d487e36e0a065b69f0afdc52987988925f0bbd"  # 2026-11-24, built
+_MID = "782c4b3a9046fddcf1d844483f67d66042698db1"  # 2026-11-24, not built
+_OLD = "c49571da2014f8c6ab6e187f3e432b5bdec83fff"  # 2026-11-20, built
+_BUILT = {f"{_DEV}20261124_{_NEW[:8]}.tar.gz", f"{_DEV}20261120_{_OLD[:8]}.tar.gz"}
+
+
+@pytest.fixture
+def nightlies(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A fake download server holding :data:`_BUILT` and a fake GitHub API."""
+    asked: list[str] = []
+    commits = {
+        _NEW: "2026-11-24T21:00:00Z",
+        _MID: "2026-11-24T08:00:00Z",
+        _OLD: "2026-11-20T10:00:00Z",
+    }
+
+    def github(url: str) -> object:
+        asked.append(url)
+        if "?" in url:
+            query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
+            since, until = query["since"][:10], query["until"][:10]
+            return [
+                {"sha": sha}
+                for sha, date in commits.items()
+                if since <= date[:10] < until
+            ]
+        ref = url.rsplit("/", 1)[1]
+        for sha, date in commits.items():
+            if sha.startswith(ref):
+                return {"sha": sha, "commit": {"committer": {"date": date}}}
+        raise ValueError(f"{url}: not found on GitHub")
+
+    monkeypatch.setattr(carla_install, "_github", github)
+    monkeypatch.setattr(carla_install, "_exists", lambda url: url in _BUILT)
+    return asked
+
+
+def test_nightly_latest_needs_no_lookup(nightlies: list[str]) -> None:
+    assert carla_install.nightly_url() == carla_install.NIGHTLY_URL
+    assert carla_install.nightly_url("latest") == carla_install.NIGHTLY_URL
+    assert nightlies == []
+
+
+def test_a_nightly_by_name_is_used_as_it_is(nightlies: list[str]) -> None:
+    assert carla_install.nightly_url("20261124_23D487E3.tar.gz") == (
+        f"{_DEV}20261124_23d487e3.tar.gz"
+    )
+    assert nightlies == []
+    with pytest.raises(ValueError, match="not a date"):
+        carla_install.nightly_url("20261399_23d487e3")
+
+
+@pytest.mark.parametrize("day", ["20261124", "2026-11-24"])
+def test_a_nightly_by_date_is_the_last_one_built_that_day(
+    nightlies: list[str], day: str
+) -> None:
+    assert carla_install.nightly_url(day) == f"{_DEV}20261124_{_NEW[:8]}.tar.gz"
+
+
+def test_a_nightly_by_commit(nightlies: list[str]) -> None:
+    assert carla_install.nightly_url(_OLD[:8]) == f"{_DEV}20261120_{_OLD[:8]}.tar.gz"
+
+
+def test_a_nightly_that_was_not_built_is_reported(nightlies: list[str]) -> None:
+    with pytest.raises(ValueError, match="no CARLA nightly built from commit"):
+        carla_install.nightly_url(_MID[:10])
+    with pytest.raises(ValueError, match="no CARLA nightly of 2026-11-22"):
+        carla_install.nightly_url("20261122")
+    with pytest.raises(ValueError, match="expected 'latest'"):
+        carla_install.nightly_url("yesterday")
+
+
+def test_setup_installs_the_nightly_asked_for(
+    nightlies: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    asked: list[str] = []
+
+    def recorded(url: str, target: Optional[Path] = None, force: bool = False) -> Path:
+        asked.append(url)
+        return Path("/carla/CarlaUnreal.sh")
+
+    monkeypatch.setattr(carla_install.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(carla_install.sys, "platform", "linux")
+    monkeypatch.setattr(carla_install, "install", recorded)
+    assert carla_install.main(["--nightly", "20261120"]) == 0
+    assert asked == [f"{_DEV}20261120_{_OLD[:8]}.tar.gz"]
+    assert "CARLA nightly:" in capsys.readouterr().out
+    assert carla_install.main(["--nightly", "20261122"]) == 1
+    assert "no CARLA nightly" in capsys.readouterr().err
+    assert asked == [f"{_DEV}20261120_{_OLD[:8]}.tar.gz"]
+
+
+def test_a_dated_nightly_is_refused_where_it_cannot_run(
+    nightlies: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(carla_install.platform, "machine", lambda: "aarch64")
+    assert carla_install.main(["--nightly", "20261120"]) == 1
+    assert "nightly build is for Linux x86_64" in capsys.readouterr().err
+    assert nightlies == []
