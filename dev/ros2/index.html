@@ -2755,19 +2755,40 @@ Once every source is stale, <code>on_stale</code> decides: <code>hold</code> kee
 command has arrived, the ego is held on its brakes.</p>
 <p>A command that is not all finite (a NaN or an infinity in a steering angle, a speed,
 an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
-refused before arbitration, with a warning once per source. A refused command does
-not keep its source fresh: the source's last good command drives on until it is
-<code>stale_s</code> old, and then the source ages out as one that fell silent does -- a
-lower-priority fresh source takes over, or with none, <code>on_stale</code> applies. A source
-that has sent no good command does not drive at all.</p>
+refused before arbitration, with a warning once per source. So is a <code>control</code> or
+<code>steer_accel</code> command with a number that would reach CARLA's Ackermann controller out
+of float32's range (magnitude above 3.4028234663852886e38):
+<code>carla.VehicleAckermannControl</code> holds each field as a float32, where such a value
+becomes an infinity, which typesafe_carla refuses with a <code>CarlaError</code> as the control
+is applied (it would end the run; the official client would hand CARLA an infinite
+target speed, which its controller chases at full throttle). For
+<code>steer_accel</code> that includes what the source makes of it -- <code>steering_sign * steering</code>
+and the target speed's step <code>acceleration * speed_horizon_s</code> -- so an acceleration of
+<code>1e39</code>, or of <code>2e38</code> over a 2 s horizon, is refused rather than selected or held.
+(Were the target speed still out of range once the ego's speed is added, the ego
+brakes for the ticks that command drives, logged once per source.) A refused command
+is never selected or held, and it does not keep its source fresh: the source's last
+good command drives on until it is <code>stale_s</code> old, and then the source ages out as one
+that fell silent does -- a lower-priority fresh source takes over, or with none,
+<code>on_stale</code> applies. A source that has sent no good command does not drive at all.</p>
 <p>With <code>on_stale: brake</code>, a source that comes back after it went stale starts its
 trajectory follower afresh (its integrators and state are reset), as the ego was
 braked rather than tracked meanwhile; with <code>hold</code>, the follower kept tracking the
 held trajectory and carries on.</p>
-<p>A <code>control</code> command's jerk is signed in Autoware (negative while the deceleration
-grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
-magnitude, logged once a session. A <code>control</code> command that leaves its jerk undefined,
-and every <code>steer_accel</code> command, takes the source's <code>jerk_mps3</code>.</p>
+<p>CARLA's Ackermann controller does not use the jerk:
+<code>FAckermannController::SetTargetPoint</code> stores its magnitude and nothing reads it
+again (checked against <code>AckermannController.cpp</code> and <code>.h</code> at CARLA 0.10.0 and
+<code>ue5-dev</code>). A <code>control</code>
+command's jerk (signed in Autoware) and a source's <code>jerk_mps3</code> are still handed over,
+the command's as given and <code>jerk_mps3</code> for a <code>control</code> command that leaves its jerk
+undefined and for every <code>steer_accel</code> command, but neither has any effect on the
+vehicle; <code>jerk_mps3</code> is kept for compatibility.</p>
+<p>The acceleration is not applied as given either. CARLA reads only its magnitude, as
+the bound of its speed controller: the controller drives toward the target speed with
+an acceleration clamped to <code>[-|acceleration|, |acceleration|]</code>, and an acceleration of
+<code>0</code> means CARLA's own maximum, 3 m/s² speeding up and 8 m/s² slowing down. Its sign
+does nothing: whether the ego speeds up or slows down follows from the target speed
+(for <code>steer_accel</code>, <code>speed + acceleration * speed_horizon_s</code>).</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">ros2</span><span class="p">:</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">domain_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">on_stale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hold</span>
@@ -2801,8 +2822,10 @@ and joined the domain:</p>
 <li>A source's <code>speed_horizon_s</code> is positive: zero would pin a <code>steer_accel</code> target
   speed to the current speed, and a negative horizon would turn a request to
   accelerate into braking.</li>
-<li>A source's <code>jerk_mps3</code> is not negative. <code>0</code> is allowed: it is the jerk
-  <code>carla.VehicleAckermannControl</code> takes by default.</li>
+<li>A source's <code>jerk_mps3</code> is not negative, and at most 3.4028234663852886e38 (it is
+  handed to CARLA as a float32). <code>0</code> is allowed: it is the jerk
+  <code>carla.VehicleAckermannControl</code> takes by default. CARLA does not use it (see
+  above).</li>
 <li>A source's <code>steering_sign</code> is not zero, which would pin the steering straight. Its
   magnitude scales the steering and a negative value flips it, so both are kept.</li>
 <li><code>sources</code> and <code>cameras</code> are lists of mappings (null is the default); <code>false</code> or a
@@ -2885,7 +2908,9 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
   the odometry's twist.</li>
 <li>A <code>trajectory</code> source is tracked forward only: the follower does not reverse.</li>
 <li><code>control</code> and <code>steer_accel</code> hand the acceleration to CARLA's Ackermann controller as
-  given, as VisionPilot's relay does; the controller's own settings
+  given, as VisionPilot's relay does, and CARLA takes its magnitude as the bound on
+  its speed controller (<code>0</code> is its own 3 m/s² up, 8 m/s² down), not as an
+  acceleration to follow; the controller's own settings
   (<code>AckermannControllerSettings</code>) are CARLA's defaults.</li>
 </ul>
 
@@ -2910,7 +2935,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 17:27:37 UTC"><span class="timeago" datetime="2026-11-25T17:27:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 17:27:37 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 18:57:57 UTC"><span class="timeago" datetime="2026-11-25T18:57:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 18:57:57 UTC">2026-11-25</span>
   </span>
 
     
