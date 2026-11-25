@@ -29,7 +29,8 @@ check cannot tell.
 A ``with contextlib.suppress(...)`` block falls through when its body
 raises, so it never ends a path.  A ``match`` falls through when a case body
 does, and when no case can catch every subject: every case has a guard
-(``case _ if y``), or the subject is a parameter annotated ``int``, ``float``,
+(``case _ if y``; one that always holds, ``True`` or a ``sys.version_info``,
+``sys.platform`` or ``TYPE_CHECKING`` test mypy decides, is none), or the subject is a parameter annotated ``int``, ``float``,
 ``str``, ``bytes`` or ``complex`` and the unguarded cases are all literals.
 Otherwise a match without a wildcard case is taken to be exhaustive (an enum,
 a union).  Anything not understood is taken to end the path, so the check
@@ -104,6 +105,8 @@ _EMPTY_BASES = frozenset(
     }
 )
 _SUPPRESS = "contextlib.suppress"
+#: The attributes of a test mypy decides from its own settings.
+_MYPY_DECIDED = frozenset({"version_info", "platform", "TYPE_CHECKING"})
 #: How deep an alias of an alias is followed.
 _ALIAS_DEPTH = 8
 
@@ -219,6 +222,19 @@ def _truthy(test: ast.expr) -> bool:
 
 def _falsy(test: ast.expr) -> bool:
     return isinstance(test, ast.Constant) and not test.value
+
+
+def _narrowing_guard(guard: ast.expr | None) -> bool:
+    """Whether a case's *guard* may fail.  ``True`` does not, and a test mypy
+    decides itself (``sys.version_info``, ``sys.platform``,
+    ``TYPE_CHECKING``) is taken not to, as mypy may hold it always true."""
+    if guard is None or _truthy(guard):
+        return False
+    return not any(
+        (isinstance(n, ast.Name) and n.id == "TYPE_CHECKING")
+        or (isinstance(n, ast.Attribute) and n.attr in _MYPY_DECIDED)
+        for n in ast.walk(guard)
+    )
 
 
 def _irrefutable(pattern: ast.pattern) -> bool:
@@ -594,16 +610,15 @@ class _Flow:
                 return False
             return body or handlers
         if isinstance(stmt, ast.Match):
-            cases = stmt.cases
-            if any(self.falls(c.body) for c in cases):
+            if any(self.falls(c.body) for c in stmt.cases):
                 return True
-            if any(c.guard is None and _irrefutable(c.pattern) for c in cases):
+            unguarded = [c for c in stmt.cases if not _narrowing_guard(c.guard)]
+            if any(_irrefutable(c.pattern) for c in unguarded):
                 return False
             # No case catches every subject.  Without a guard, the cases may
             # still be exhaustive (an enum, a union), which mypy accepts; a
             # guarded case narrows nothing, and literals cannot exhaust an
             # int, a float or a str.
-            unguarded = [c for c in cases if c.guard is None]
             if not unguarded:
                 return True
             return self._open_subject(stmt.subject) and all(

@@ -73,6 +73,28 @@ def test_an_unguarded_wildcard_after_a_guarded_one_is_exhaustive() -> None:
 
 
 @pytest.mark.parametrize(
+    "guard", ["True", "sys.version_info >= (3, 10)", "TYPE_CHECKING", '"s"']
+)
+def test_a_wildcard_guarded_by_a_test_that_always_holds_is_exhaustive(
+    guard: str,
+) -> None:
+    """mypy accepts these: it takes the guard to hold."""
+    assert (
+        _refused(
+            f"""
+            import sys
+            from typing import TYPE_CHECKING
+            def f(x: int) -> int:
+                match x:
+                    case _ if {guard}:
+                        return 1
+            """
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
     "source",
     [
         # a class pattern may exhaust the subject's type (mypy accepts)

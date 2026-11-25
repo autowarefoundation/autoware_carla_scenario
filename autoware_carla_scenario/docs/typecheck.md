@@ -404,13 +404,15 @@ function ends a path where the call is known to be it: a module-level
 function of the scenario's modules called by its name or through an import,
 or a method called on `self`, `cls`, `super()` or a parameter annotated with
 one of their classes, looked up in that class and its bases (#2513:
-`b.stop()` of a `b: B` whose `stop` returns `None` ends no path because some
-other class's `stop` is `NoReturn`). A body that is only `...`, `pass` or a
+`b.stop()` of a `b: B` whose `stop` returns `None` no longer ends a path just
+because some other class's `stop` is `NoReturn`). A body that is only `...`, `pass` or a
 docstring (an abstract method, an overload) is not checked. A
 `with contextlib.suppress(...)` block goes on after it when its body raises,
 so a `return` inside one ends no path. A `match` runs off its end when a
 case's body does, and when no case catches every subject: every case has a
-guard (`case _ if ready:`), or the subject is a parameter annotated `int`,
+guard (`case _ if ready:`; a guard that always holds, `True` or a
+`sys.version_info`, `sys.platform` or `TYPE_CHECKING` test mypy decides, is
+none), or the subject is a parameter annotated `int`,
 `float`, `str`, `bytes` or `complex` and the cases without a guard are all
 literals (`case 1:` then `case n if n > 0:`). A match whose cases may be
 exhaustive (class patterns, an enum's members, a `bool`) is taken to be, as
@@ -3620,7 +3622,7 @@ What Codon 0.19 needs that Python does not, beyond
   as`, match capture, import, `def`, `class` or walrus of the same name, an
   annotated `self` attribute of the enclosing class; a class name two
   classes of the module share, a function's own `class Holder` beside the
-  module's, names neither) and
+  module's, names neither, nor does a class derived from it) and
   cannot be the class: `isinstance(x, str): x is statically int here, so this
   branch is not checked by the static check; an error in it is not reported`,
   #565.) (A module that never imports `json` but gets a

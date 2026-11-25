@@ -115,6 +115,25 @@ def test_each_class_reads_its_own_attributes() -> None:
     assert found.line == 4
 
 
+def test_a_class_derived_from_a_shared_name_has_no_known_ancestry() -> None:
+    """`A` may be an `int` through either `Holder`."""
+    source = (
+        "class Holder(int):\n"
+        "    pass\n"
+        "def make() -> None:\n"
+        "    class Holder(int):\n"
+        "        pass\n"
+        "class A(Holder):\n"
+        "    pass\n"
+        "class B(A):\n"
+        "    pass\n"
+        "def f(a: A, b: B) -> None:\n"
+        "    isinstance(a, int)\n"
+        "    isinstance(b, int)\n"
+    )
+    assert dead_isinstances(ast.parse(source)) == []
+
+
 @pytest.mark.parametrize(
     "rebinding",
     [

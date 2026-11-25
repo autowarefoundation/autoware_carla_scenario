@@ -18,7 +18,7 @@ Only a subject whose static type is certain from the syntax is considered:
 
 A class of the module is known by its name only where no other class of the
 module has it (a function's own ``class Holder`` beside the module's names
-neither).
+neither), and none derived from such a name is known at all.
 
 The classes may be a name or a tuple of names, every one of them a builtin
 or a class of the module.  A subject bound more than once, a ``Union`` /
@@ -181,6 +181,16 @@ def dead_isinstances(tree: ast.Module) -> list[DeadIsinstance]:
         for node in defs
         if names.count(node.name) == 1
     }
+    # Nor is a class derived from such a name: its ancestry is not known
+    # (`class A(Holder)` may be an `int` through either `Holder`).
+    shared = {name for name in names if names.count(name) > 1}
+    while unknown := [
+        name
+        for name, bases in classes.items()
+        if any(b in shared or (b in names and b not in classes) for b in bases)
+    ]:
+        for name in unknown:
+            del classes[name]
     # By the class itself: `self.x` reads the enclosing class's own.
     attributes: dict[int, dict[str, str | None]] = {
         id(node): {
