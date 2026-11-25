@@ -318,10 +318,13 @@ def _protobuf_upgrade_script() -> str:
 
 def _image_missing(stderr: str) -> bool:
     """Whether a failed ``docker image inspect`` said the image is not there
-    (``Error: No such image: ...``), rather than failing otherwise (a daemon
-    that cannot be reached, a permission denied)."""
+    (Docker's ``Error: No such image: ...`` or ``No such object``, Podman's
+    ``Error: <image>: image not known``), rather than failing otherwise (a
+    daemon that cannot be reached, a permission denied)."""
     text = stderr.lower()
-    return "no such image" in text or "no such object" in text
+    return (
+        "no such image" in text or "no such object" in text or "image not known" in text
+    )
 
 
 def _label_value() -> str:

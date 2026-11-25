@@ -2216,6 +2216,26 @@ def test_a_base_image_that_cannot_be_pulled_names_the_log(
     assert not any(c[0] in ("run", "commit") for c in calls())
 
 
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Error: No such image: ghcr.io/x/y:z",
+        "Error response from daemon: No such image: ghcr.io/x/y:z",
+        "Error: No such object: ghcr.io/x/y:z",
+        # Podman's (`autoware.launcher.docker=podman`).
+        "Error: ghcr.io/x/y:z: image not known",
+    ],
+)
+def test_a_missing_image_is_told_from_docker_and_podman(stderr: str) -> None:
+    assert docker_module._image_missing(stderr)  # noqa: SLF001
+
+
+def test_an_inspect_failing_otherwise_is_not_a_missing_image() -> None:
+    assert not docker_module._image_missing(  # noqa: SLF001
+        "permission denied while trying to connect to the Docker daemon socket"
+    )
+
+
 def test_a_base_image_inspect_failing_otherwise_is_not_pulled(
     tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
 ) -> None:

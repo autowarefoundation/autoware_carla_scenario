@@ -1832,6 +1832,9 @@ def test_an_earlier_sweeps_service_logs_are_not_removed(tmp_path: Path) -> None:
         "autoware-000-ego.log",
         "autoware-build.log",
         "autoware-deps.log",
+        # Named after the run since #2501, the host's dots kept.
+        "autoware-build-node01.cluster_1234.log",
+        "autoware-deps-node01.cluster_1234.log",
         "raw_output.log",
         "run.log",
         "app.log",  # Hydra's job log
