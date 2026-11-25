@@ -12,8 +12,10 @@ type: slurm
 partition: null
 account: null
 qos: null
-# --time (e.g. "02:00:00"). The task is sent SIGTERM signal_grace_seconds
-# before it runs out, stops the case it is running and its CARLA.
+# --time, quoted (e.g. "02:00:00", or "90" for minutes): unquoted, YAML reads
+# 02:00:00 as the number 7200, which is refused. The task is sent SIGTERM
+# signal_grace_seconds before it runs out, stops the case it is running and
+# its CARLA.
 time: null
 # --mem (e.g. 12G) and --cpus-per-task: a task runs one CARLA and one scenario
 # process (with a driver policy, if the run serves one).
