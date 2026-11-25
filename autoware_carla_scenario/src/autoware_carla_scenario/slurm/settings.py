@@ -28,6 +28,7 @@ from .port_slots import PORT_SLOT_WIDTH, SlotPorts
 __all__ = [
     "DEFAULT_ENV_PASSTHROUGH",
     "LAUNCHER_TYPES",
+    "MAX_SIGNAL_GRACE_SECONDS",
     "SENSITIVE_NAME_PATTERNS",
     "SlurmSettings",
     "launcher_requested_in_argv",
@@ -35,6 +36,10 @@ __all__ = [
     "require_sbatch",
     "snapshot_environment",
 ]
+
+#: The most ``launcher.signal_grace_seconds`` may be: sbatch's ``--signal``
+#: takes a ``sig_time`` of 0 to 65535.
+MAX_SIGNAL_GRACE_SECONDS = 65535
 
 #: What ``launcher.type`` may be.
 LAUNCHER_TYPES = ("local", "slurm")
@@ -210,6 +215,25 @@ def _optional_str(value: Any, name: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         raise ValueError(f"launcher.{name} must be text, got {value!r}")
     return str(value)
+
+
+def _check_time_is_text(value: Any) -> None:
+    """Refuse a number as ``launcher.time``.
+
+    YAML 1.1, which the config is read as, takes an unquoted ``12:00:00`` as
+    the base-60 number 43200 (and ``120:00`` as 7200), which sbatch would
+    read as minutes: 30 days, not 12 hours.  Such a number cannot be told
+    from one written as minutes, so a number is refused (#2483).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return
+    raise ValueError(
+        f"launcher.time must be text, got the number {value!r}: YAML reads an "
+        "unquoted 12:00:00 as the number 43200 (seconds, in base 60), which "
+        'sbatch would take as minutes. Quote it: time: "12:00:00" (or '
+        'time: "90" for 90 minutes; on the command line '
+        "launcher.time=\"'90'\")"
+    )
 
 
 def _str_list(value: Any, name: str) -> tuple[str, ...]:
@@ -422,6 +446,8 @@ class SlurmSettings:
                 f"known: {sorted(known)}"
             )
         options: dict[str, Any] = {}
+        if "time" in data:
+            _check_time_is_text(data["time"])
         for key in ("partition", "account", "qos", "time", "mem", "gres"):
             if key in data:
                 options[key] = _optional_str(data[key], key)
@@ -505,11 +531,19 @@ class SlurmSettings:
             # A poll that never sleeps would spin: at least 0.1 s.
             options[key] = max(0.1, seconds) if key == "poll_seconds" else seconds
         # SIGTERM 0 s before the end is allowed (sbatch takes @0); a
-        # negative grace only sbatch refused, after the batch was written.
+        # negative grace, or one above the 65535 of --signal's sig_time, only
+        # sbatch refused, after the batch was written (#2483).
         if "signal_grace_seconds" in data:
-            options["signal_grace_seconds"] = _whole_number(
+            grace = _whole_number(
                 data["signal_grace_seconds"], "signal_grace_seconds", 0
             )
+            if grace > MAX_SIGNAL_GRACE_SECONDS:
+                raise ValueError(
+                    "launcher.signal_grace_seconds must be at most "
+                    f"{MAX_SIGNAL_GRACE_SECONDS}, what sbatch --signal takes "
+                    f"(got {data['signal_grace_seconds']!r})"
+                )
+            options["signal_grace_seconds"] = grace
         if "port_base" in data:
             options["port_base"] = _whole_number(data["port_base"], "port_base", 1024)
         if "port_slots" in data:

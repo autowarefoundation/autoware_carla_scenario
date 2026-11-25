@@ -256,7 +256,7 @@ command line (`launcher.mem=12G`), or in a config.
 | Key | Default | |
 |---|---|---|
 | `partition`, `account`, `qos` | `null` | `sbatch --partition/--account/--qos`; `partition` may list several (`gpu,cpu`) |
-| `time` | `null` | `sbatch --time` in any of its forms (`90`, `120:00`, `168:00:00`, `2-00`, `1-12:30`, `1-00:00:00`, `UNLIMITED`); the task is sent SIGTERM `signal_grace_seconds` before it runs out |
+| `time` | `null` | `sbatch --time` in any of its forms (`"90"`, `"120:00"`, `"168:00:00"`, `2-00`, `1-12:30`, `1-00:00:00`, `UNLIMITED`), as text: quote it in a config (`time: "12:00:00"`), as a number is refused (see below); the task is sent SIGTERM `signal_grace_seconds` before it runs out |
 | `mem`, `cpus_per_task`, `gres` | `null` | `sbatch --mem/--cpus-per-task/--gres` (`gpu:1`, or `shard:1` to share a GPU; a list: `gpu:1,shard:2`) |
 | `array_parallelism` | `null` | at most this many tasks at once (`--array=...%K`); `null`: no cap |
 | `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap), in no more tasks than the cluster's `MaxArraySize` ([Array size](#array-size)) |
@@ -275,7 +275,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `cancel_on_interrupt` | `true` | Ctrl-C while waiting cancels the batch's jobs |
 | `collect_job` | `true` | with `wait: false`, a job that collects once the array ends |
 | `collect_mem` | `2G` | its `--mem` |
-| `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; at least 0 |
+| `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; 0 to 65535, what `--signal` takes |
 | `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_base` at least 1024, `port_slots` at least 1, and every slot's ports within 65535 |
 | `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>` (per user, so slots are exclusive among your own tasks only), else `/tmp/acs-slurm-ports-<uid>`, each used only if private; users sharing nodes set one group directory ([Ports](#ports)) |
 
@@ -286,13 +286,19 @@ as something else:
 - The counts (`cpus_per_task`, `array_parallelism`, `cases_per_task`),
   `signal_grace_seconds`, `port_base` and `port_slots` are whole numbers: `2`,
   `2.0` or `"2"`, not `2.7`, `true`, NaN or infinity. The counts and
-  `port_slots` are at least 1.
+  `port_slots` are at least 1; `signal_grace_seconds` is at most 65535.
 - The seconds (`start_stagger_seconds`, `poll_seconds`) are finite numbers, at
   least 0, not `true`.
 - The flags (`wait`, `headless`, `collect_job`, `cancel_on_interrupt`) are
   `true` or `false`, or one of their spellings as text (`"false"`, `"no"`,
   `"off"`, `"0"`, and `"true"`, `"yes"`, `"on"`, `"1"`); `"false"` is false.
-- The text keys are text or a number, not a boolean, a list or a mapping;
+- `time` is text, never a number. YAML reads an unquoted `12:00:00` as the
+  base-60 number 43200 (and `120:00` as 7200), which `sbatch` would take as
+  minutes -- 30 days, not 12 hours -- and such a number cannot be told from
+  one meant as minutes. Quote it: `time: "12:00:00"`, `time: "90"`; on the
+  command line `launcher.time=12:00:00` is text already, and minutes are
+  quoted for Hydra: `launcher.time="'90'"`. The run panel quotes it itself.
+- The other text keys are text or a number, not a boolean, a list or a mapping;
   `extra_sbatch_args`, `env_passthrough` and `setup` are lists (or one
   string) of non-blank text, without a null or blank item; `env` is a mapping
   (or null, no variables) whose values are text or a number, not null or a
@@ -339,7 +345,13 @@ or `launcher.python`) and its environment:
    `ONEPLANNER_*`, `TYPESAFE_CARLA_*`, `GLIBC_TUNABLES`, `MALLOC_*`,
    `CUDA_HOME`, `CUDA_PATH`, `CUDAToolkit_ROOT` -- so `scenario-slurm resubmit`
    from another shell runs the cases as they were submitted;
-3. `launcher.setup` runs;
+3. `launcher.setup` runs, in the directory the batch was submitted from
+   (`launcher.remote_cwd` with it), whichever directory `sbatch` ran in -- a
+   resubmit from the batch's directory or the viewer included -- so a
+   relative `source .venv/bin/activate` finds the batch's venv; and with
+   `set +u`, so a script that reads an unset variable
+   (`source /opt/ros/humble/setup.bash`, colcon's, Lmod's) does not end the
+   job before the worker starts;
 4. `launcher.env` is set.
 
 The collect job (`launcher.collect_job`) runs its script,

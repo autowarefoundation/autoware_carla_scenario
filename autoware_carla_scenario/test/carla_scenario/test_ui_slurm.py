@@ -262,8 +262,11 @@ def test_the_job_script_runs_the_fields_as_written(tmp_path: Path) -> None:
         settings,
         0,
     ).splitlines()
-    start = script.index("# launcher.setup") + 1
+    # The setup lines run free to read unset variables (#2483).
+    start = script.index("# launcher.setup") + 2
+    assert script[start - 1] == "set +u"
     assert script[start : start + len(setup)] == setup
+    assert script[start + len(setup)] == "set -u"
     body = script[start : script.index("# launcher.env") + 1 + len(env)]
     names = [*env, "X", "Y", "Z"]
     dump = "".join(f'printf "%s\\0" "${{{n}-}}";' for n in names)

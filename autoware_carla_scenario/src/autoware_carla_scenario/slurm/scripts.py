@@ -241,10 +241,10 @@ def _remote_prologue(
 
 
 def _setup_lines(settings: SlurmSettings) -> list[str]:
-    """``launcher.setup``; with ``remote_cwd`` free to read unset variables
-    (an environment script on the node, run with little of an environment)."""
-    if settings.remote_cwd is None:
-        return list(settings.setup)
+    """``launcher.setup``, free to read unset variables: an environment
+    script (``source /opt/ros/humble/setup.bash``, colcon's, Lmod's) often
+    does, and under the job's ``set -u`` it would end the job before the
+    worker starts, with no task status written (#2483)."""
     return ["set +u", *settings.setup, "set -u"]
 
 
@@ -312,6 +312,16 @@ def job_script(
             *_remote_prologue(
                 manifest, settings, '"${SLURM_ARRAY_JOB_ID}_${TASK}.out"'
             ),
+        ]
+    else:
+        # sbatch starts the job where it was run, which for a resubmit (from
+        # the batch's directory, or the viewer) is not where the batch was
+        # submitted from: launcher.setup (source .venv/bin/activate) runs in
+        # the batch's working directory, as the worker does (#2483).
+        lines += [
+            "",
+            "# The directory the batch was submitted from.",
+            f"cd {shlex.quote(manifest.cwd)} || exit 1",
         ]
     lines += _passthrough_lines(manifest)
     if settings.headless:
