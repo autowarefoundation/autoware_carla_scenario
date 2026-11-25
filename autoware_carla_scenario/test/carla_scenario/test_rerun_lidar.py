@@ -546,7 +546,8 @@ def test_the_fake_stream_records_no_wall_clock(tmp_path: Path) -> None:
 
 
 #: Five recordings through the real SDK in a process of their own, printing
-#: the stream threads alive after the first and after the last.
+#: the stream threads alive after the first and after the last on a
+#: ``threads:`` line.
 _LEAK_PROBE = """
 import sys
 from pathlib import Path
@@ -591,7 +592,7 @@ one_run(out, 0)
 before = threads()
 for i in range(1, 6):
     one_run(out, i)
-print(before, threads())
+print("threads:", before, threads(), flush=True)
 """
 
 
@@ -607,13 +608,22 @@ def test_sensor_recordings_leave_no_threads_behind(tmp_path: Path) -> None:
         pytest.skip("needs /proc to name the process's threads")
     result = subprocess.run(
         [sys.executable, "-c", _LEAK_PROBE, str(tmp_path)],
+        # Not the repository root: its autoware_carla_scenario/ directory is
+        # on a ``-c`` script's path first.
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         timeout=120,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    before, after = (int(n) for n in result.stdout.split())
+    # The counts are on the probe's own line: the SDK or a logger may print
+    # to stdout too, before it or at exit.
+    counts = [
+        line for line in result.stdout.splitlines() if line.startswith("threads:")
+    ]
+    assert counts, result.stdout
+    before, after = (int(n) for n in counts[-1].split()[1:])
     # Still a whole recording each time (the probe asserts its footer), and no
     # stream left running: two threads a case would make it 10 more.
     assert after <= before, result.stdout
