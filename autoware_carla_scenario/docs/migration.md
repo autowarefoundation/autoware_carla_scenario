@@ -24,6 +24,29 @@ The same release caps `launcher.signal_grace_seconds` at 65535, what
 was submitted from and with `set +u` in every job, not only with
 `launcher.remote_cwd`.
 
+## Scenario hashes change once
+
+`scenario_hash` ([WOSAC Rollouts](wosac.md#are-they-rollouts)) now digests a number by
+its value -- a whole float as the integer it equals, so `15` and `15.0` are
+one -- and leaves the `map` section's paths (`xodr_path`, `lanelet2_path`,
+`directory`, any `*_path` or `*_dir`) out, as it leaves out endpoints
+(#2481). Runs of one scenario no longer differ by a CLI override's spelling
+(`scenario.timeout_seconds=15` against the YAML's `15.0`) or by where the map
+sits on each machine. Nearly every scenario's hash changes once, as its config
+has whole floats (`spawn_s: 25.0`): the trajectory logs and `.wosac.json`
+files written before keep the old hash, so `scenario-wosac pack` refuses to
+pack a rollout exported from an earlier log with one from a new log as one
+scenario. Re-run, or export and pack the old runs and the new runs apart.
+Two runs that differed only in a map path or a number's spelling, refused as
+different scenarios before, are now packed together.
+
+Scenario globs (`scenario='reach_goal/*'`, the viewer's Run list) no longer
+select hidden files or dangling symlinks (#2481): an editor's
+`.#default.yaml` lock link or a macOS `._default.yaml` used to be selected,
+and the batch failed to compose it. A scenario config whose own name, or a
+directory on its path below `scenario/`, starts with `.` is no longer found
+by a glob; rename it.
+
 ## `debug_markers.plan_markers` is gone
 
 The helper was exported but nothing in the framework called it: the

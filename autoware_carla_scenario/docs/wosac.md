@@ -153,7 +153,17 @@ and of `server.fog_density_scale` when it is set (it scales how thick
 `environment.fog_density` renders, to the cameras and the LiDARs' fog alike;
 left `null`, the server's own scale, it is not digested), without `seed`, and
 without the settings that say where a run connects (hosts, addresses, ports,
-ROS domains: what a SLURM task moves to its own slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
+ROS domains: what a SLURM task moves to its own slot), and without where the
+map's files sit on this machine: the `map` section's paths (`xodr_path`,
+`lanelet2_path`, `directory`, any `*_path` or `*_dir`) are left out, so the
+same scenario run with the map at an absolute path, in another checkout or
+through `NISHISHINJUKU_XODR_PATH` has the same hash. The map is told by
+`map.name`, and by `map.source` and `map.pack`, which name a revision; what
+the files held is in each run's trajectory log, whose
+[`map`](trajectory_log.md#records) record has each map file's SHA-256. A
+number is digested by its value: a whole float as the integer it equals, so
+`scenario.timeout_seconds=15` and a YAML's `15.0` are one scenario (#2481).
+What drives the ego (`driver`, `autoware`, `ros2`) is the system
 under test, not the scenario, and how a run is recorded does not change what
 is simulated: neither is in it. Every top-level section of the `scenario`
 command's config is listed as hashed or not (`SCENARIO_SECTIONS`,

@@ -479,13 +479,15 @@ class ScenarioQueue:
                 # scenario's, so nothing is left keyed by it.
                 self._forget(key)
             # The stem every attempt writes under: the one given, or the one
-            # the runner names the first attempt by (the first free in the
-            # output directory), settled right before that attempt runs, after
-            # its cooldown.  Before a retry its outputs are removed, so the
-            # retry writes over the attempt it replaces -- a runner naming its
-            # own then takes the same stem again -- rather than taking the
-            # next stem and leaving that attempt's partial outputs under this
-            # one.  Only a queue that retries needs it.
+            # the runner names the first attempt to run by (the first free in
+            # the output directory), settled right before that attempt runs,
+            # after its cooldown and any server restart.  An attempt that
+            # failed before it got there (its restart raised) wrote nothing,
+            # so the next one settles it (#2481).  Before a retry its outputs
+            # are removed, so the retry writes over the attempt it replaces --
+            # a runner naming its own then takes the same stem again -- rather
+            # than taking the next stem and leaving that attempt's partial
+            # outputs under this one.  Only a queue that retries needs it.
             run_stem = ""
             if file_stem is not None:
                 run_stem = file_stem
@@ -511,7 +513,7 @@ class ScenarioQueue:
                     if self._server_down():
                         self._restart_server(i + 1, total)
                         self._world_dirty = False
-                    if attempt == 0 and not run_stem and max_attempts > 1:
+                    if not run_stem and max_attempts > 1:
                         run_stem = _run_file_stem(
                             self._output_dir, type(scenario).__name__
                         )

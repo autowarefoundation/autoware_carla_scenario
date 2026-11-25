@@ -140,9 +140,75 @@ def test_the_order_the_config_holds_its_keys_in_does_not_matter() -> None:
 
 
 def test_a_value_json_has_no_type_for_is_written_as_text() -> None:
-    config = _config(map={"lanelet2_path": Path("/maps/a.osm")})
+    config = _config(scenario={"name": "cut_in", "route": Path("/routes/a.yaml")})
     assert scenario_hash(config, CLASS) == scenario_hash(
-        _config(map={"lanelet2_path": "/maps/a.osm"}), CLASS
+        _config(scenario={"name": "cut_in", "route": "/routes/a.yaml"}), CLASS
+    )
+
+
+@pytest.mark.parametrize(
+    ("whole", "spelled"),
+    [
+        ({"timeout_seconds": 15}, {"timeout_seconds": 15.0}),
+        ({"speeds": [10, 20]}, {"speeds": [10.0, 20.0]}),
+        ({"nested": {"gap": {"m": 0}}}, {"nested": {"gap": {"m": -0.0}}}),
+    ],
+)
+def test_equal_numbers_digest_alike(
+    whole: dict[str, Any], spelled: dict[str, Any]
+) -> None:
+    """scenario.timeout_seconds=15 against the YAML's 15.0 is one scenario
+    (#2481): a whole float is digested as the integer it equals, at any
+    depth of a hashed section."""
+
+    def scenario(**values: Any) -> str:
+        return scenario_hash(_config(scenario={"name": "cut_in", **values}), CLASS)
+
+    assert scenario(**whole) == scenario(**spelled)
+    # A number that differs still differs, and a flag is not a number.
+    assert scenario(timeout_seconds=15) != scenario(timeout_seconds=15.5)
+    assert scenario(flag=True) != scenario(flag=1)
+    assert scenario(flag=False) != scenario(flag=0.0)
+
+
+def test_where_the_maps_files_sit_is_not_part_of_it() -> None:
+    """The same map read from another directory -- an absolute path, another
+    checkout, NISHISHINJUKU_XODR_PATH -- is one scenario (#2481); its name,
+    source and pack still tell maps apart."""
+    relative = _config(
+        map={
+            "name": "NishishinjukuMap",
+            "xodr_path": "data/nishishinjuku_carla.xodr",
+            "lanelet2_path": "data/nishishinjuku.osm",
+            "overwrite_xodr": True,
+        }
+    )
+    absolute = _config(
+        map={
+            "name": "NishishinjukuMap",
+            "xodr_path": "/home/a/data/nishishinjuku_carla.xodr",
+            "lanelet2_path": "/home/a/data/nishishinjuku.osm",
+            "directory": "/home/a/maps",
+            "overwrite_xodr": True,
+        }
+    )
+    assert scenario_hash(absolute, CLASS) == scenario_hash(relative, CLASS)
+    assert scenario_hash(absolute, CLASS) != scenario_hash(
+        _config(map={**absolute["map"], "name": "Town01"}), CLASS
+    )
+    for key, value in (
+        ("source", "git+https://example.com/maps@abc#Town10HD_Opt"),
+        ("pack", "owner/repo/pack@1.0"),
+        ("overwrite_xodr", False),
+    ):
+        assert scenario_hash(
+            _config(map={**absolute["map"], key: value}), CLASS
+        ) != scenario_hash(absolute, CLASS), key
+    # Only the map's own paths: a path elsewhere is the scenario's.
+    assert scenario_hash(
+        _config(scenario={"name": "cut_in", "route_path": "a.yaml"}), CLASS
+    ) != scenario_hash(
+        _config(scenario={"name": "cut_in", "route_path": "b.yaml"}), CLASS
     )
 
 

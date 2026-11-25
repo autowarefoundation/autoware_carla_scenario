@@ -21,6 +21,13 @@ Hydra config paths relative to ``scenario/`` without the ``.yaml`` suffix
 scenario list (``ui.scanner.list_scenario_configs``) is every name under
 the config directories (:func:`scenario_names`), ordered by path component.
 
+Both take only what Hydra can compose (:func:`_config_name`): a file, as
+the config registry's own scan does (``registry._config_paths``), so not a
+dangling symlink, and nothing hidden -- no path component below
+``scenario/`` that starts with ``.``.  An editor's lock link
+(``.#default.yaml``), a macOS ``._default.yaml`` or a ``.git/`` directory
+is no scenario, and composing it would fail the whole batch (#2481).
+
 Free of heavy imports (only :mod:`pathlib`), so the viewer can resolve a
 pattern without importing CARLA through ``examples.run``.
 """
@@ -83,11 +90,28 @@ def _glob_pattern(pattern: str) -> str:
     return "/".join(parts)
 
 
+def _config_name(match: Path, scenario_dir: Path) -> str | None:
+    """The config name of *match* under *scenario_dir*, or ``None`` for what
+    is no scenario config: not a file (a directory named ``*.yaml``, a
+    dangling symlink) or hidden (a component of its path below
+    *scenario_dir* starts with ``.``)."""
+    relative = match.relative_to(scenario_dir)
+    if any(part.startswith(".") for part in relative.parts):
+        return None
+    if not match.is_file():
+        return None
+    # Hydra config names always use forward slashes, so normalise away any
+    # OS-specific separator.
+    return relative.with_suffix("").as_posix()
+
+
 def resolve_scenario_glob(pattern: str, conf_dirs: list[Path]) -> list[str]:
     """The config names ``scenario/{pattern}.yaml`` matches under *conf_dirs*.
 
     Each name once, sorted as strings; empty when nothing matches.  A
     trailing ``**`` component matches everything below it (``**/*``).
+    Only files, and nothing hidden (:func:`_config_name`), even where the
+    pattern names it (``.*``).
 
     Raises:
         ValueError: *pattern* has a ``**`` that is not a whole path
@@ -98,9 +122,9 @@ def resolve_scenario_glob(pattern: str, conf_dirs: list[Path]) -> list[str]:
     names: set[str] = set()
     for scenario_dir in scenario_dirs(conf_dirs):
         for match in scenario_dir.glob(f"{glob}.yaml"):
-            # Hydra config names always use forward slashes, so normalise
-            # away any OS-specific separator.
-            names.add(match.relative_to(scenario_dir).with_suffix("").as_posix())
+            name = _config_name(match, scenario_dir)
+            if name is not None:
+                names.add(name)
     return sorted(names)
 
 
@@ -109,7 +133,7 @@ def scenario_names(conf_dirs: list[Path]) -> list[str]:
 
     The relative path of each YAML file without the ``.yaml`` suffix (e.g.
     ``"intersection_passing/left_turn"``), each name once, ordered by path
-    component.
+    component.  Only files, and nothing hidden (:func:`_config_name`).
     """
     names: set[str] = set()
     for conf_dir in conf_dirs:
@@ -117,7 +141,8 @@ def scenario_names(conf_dirs: list[Path]) -> list[str]:
         if not scenario_dir.is_dir():
             continue
         for p in scenario_dir.rglob("*.yaml"):
-            # Hydra config names always use forward slashes.
-            names.add(p.relative_to(scenario_dir).with_suffix("").as_posix())
+            name = _config_name(p, scenario_dir)
+            if name is not None:
+                names.add(name)
     # Ordered by path component, as the directory walk always listed them.
     return sorted(names, key=lambda name: name.split("/"))

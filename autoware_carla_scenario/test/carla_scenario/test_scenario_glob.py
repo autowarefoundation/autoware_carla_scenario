@@ -451,3 +451,56 @@ def test_the_viewer_answers_a_pattern_outside_scenario_with_an_error(
     body = response.json()
     assert body["status"] == "error"
     assert f"invalid scenario pattern {pattern!r}" in body["message"]
+
+
+@pytest.fixture
+def litter_conf(tmp_path: Path) -> Path:
+    """A config directory whose scenario/ holds, beside two real configs,
+    what an editor, macOS or git leave there: an emacs lock link
+    (``.#one.yaml``, dangling), an AppleDouble file (``._one.yaml``), a
+    hidden directory, a dangling symlink and a directory named ``*.yaml``."""
+    scenario = tmp_path / "conf" / "scenario"
+    (scenario / "a").mkdir(parents=True)
+    (scenario / "a" / "one.yaml").write_text("{}\n")
+    (scenario / "two.yaml").write_text("{}\n")
+    (scenario / "a" / "._one.yaml").write_text("\x00\x05\x16\x07")
+    (scenario / "a" / ".#one.yaml").symlink_to("user@host.1234:1")
+    (scenario / "a" / "gone.yaml").symlink_to(tmp_path / "missing.yaml")
+    (scenario / ".git" / "x").mkdir(parents=True)
+    (scenario / ".git" / "x" / "three.yaml").write_text("{}\n")
+    (scenario / "dir.yaml").mkdir()
+    return tmp_path / "conf"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("a/*", ["a/one"]),
+        ("*/*", ["a/one"]),
+        ("**", ["a/one", "two"]),
+        ("**/*", ["a/one", "two"]),
+        ("*", ["two"]),
+        # Named outright, a hidden config is still none.
+        ("a/.*", []),
+        (".git/**", []),
+        ("a/gone", []),
+    ],
+)
+def test_a_glob_takes_no_hidden_file_and_no_dangling_link(
+    litter_conf: Path, pattern: str, expected: list[str]
+) -> None:
+    """#2481: `scenario='reach_goal/*'` selected an editor's `.#default.yaml`
+    lock link, which Hydra cannot compose, and the whole batch exited 2."""
+    assert resolve_scenario_glob(pattern, [litter_conf]) == expected
+
+
+def test_the_scenario_list_takes_no_hidden_file_and_no_dangling_link(
+    litter_conf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The viewer's Run list is the same scan (#2481)."""
+    assert scenario_names([litter_conf]) == ["a/one", "two"]
+    monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [litter_conf])
+    assert scanner.list_scenario_configs() == scenario_names([litter_conf])
+    # The config registry finds every name the scan lists.
+    for name in scenario_names([litter_conf]):
+        assert f"scenario/{name}.yaml" in registry._config_paths(litter_conf)

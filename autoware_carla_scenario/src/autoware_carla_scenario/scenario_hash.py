@@ -23,6 +23,20 @@ and is left out too; how a run is recorded or reported (``rerun``,
 (``background_traffic.seed``) is part of it: one pinned, so that every
 rollout places the same vehicles, is what the scenario is.
 
+Where the map's files sit is not the scenario either: the ``map`` section's
+paths (:func:`_is_map_path`: ``xodr_path``, ``lanelet2_path``,
+``directory``, any ``*_path`` or ``*_dir``) are left out, so a run reading
+the map from an absolute path, another checkout or a
+``NISHISHINJUKU_XODR_PATH`` digests as one reading the default relative
+path (#2481).  The map is told by ``map.name``, and by ``map.source`` and
+``map.pack`` (which name a revision) where they are set.  The files' content
+is not read here; the run's trajectory log records each map file's SHA-256
+(its ``map`` record, docs/trajectory_log.md).
+
+A number is digested by its value, not its YAML spelling: a whole float is
+digested as the integer it equals, so ``15`` and ``15.0`` are one
+(``scenario.timeout_seconds=15`` against a YAML's ``15.0``, #2481).
+
 Of the other sections, the settings in :data:`SCENARIO_SETTINGS` are part of
 it too: ``server.fog_density_scale`` scales how thick ``environment.fog_density``
 renders, to the cameras and to the LiDARs' fog alike, so it is the world's
@@ -106,18 +120,25 @@ def _is_endpoint(key: str) -> bool:
     return name in _ENDPOINTS or name.endswith("_port") or "domain_id" in name
 
 
-def _without_endpoints(value: Any) -> Any:
-    """*value* with every mapping's endpoint settings (:func:`_is_endpoint`)
-    left out, at any depth."""
+def _is_map_path(key: str) -> bool:
+    """Whether a ``map`` setting named *key* says where the map's files sit
+    on this machine (``xodr_path``, ``lanelet2_path``, ``directory``, any
+    ``*_path`` or ``*_dir``) rather than which map it is."""
+    name = key.lower()
+    return name in ("path", "directory") or name.endswith(("_path", "_dir"))
+
+
+def _canonical(value: Any) -> Any:
+    """*value* as it is digested: every mapping's endpoint settings
+    (:func:`_is_endpoint`) left out, at any depth, and every whole float
+    (``15.0``) the integer it equals, so that equal numbers digest alike."""
     if isinstance(value, Mapping):
         named = ((str(key), item) for key, item in value.items())
-        return {
-            key: _without_endpoints(item)
-            for key, item in named
-            if not _is_endpoint(key)
-        }
+        return {key: _canonical(item) for key, item in named if not _is_endpoint(key)}
     if isinstance(value, (list, tuple)):
-        return [_without_endpoints(item) for item in value]
+        return [_canonical(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     return value
 
 
@@ -128,9 +149,10 @@ def scenario_hash(config: Mapping[str, Any], scenario_class: str) -> str:
         config: A run's config, resolved, as plain mappings and lists (what
             ``OmegaConf.to_container(cfg, resolve=True)`` returns).  Only its
             :data:`SCENARIO_SECTIONS` are read, without their endpoint
-            settings, and the :data:`SCENARIO_SETTINGS` set in it (a number
-            digested as a float: ``0.01`` and ``1e-2`` are one); ``seed`` is
-            not one of them.
+            settings and the ``map`` section's paths, and the
+            :data:`SCENARIO_SETTINGS` set in it; ``seed`` is not one of them.
+            A number is digested by its value: ``15`` and ``15.0`` are one,
+            as are ``0.01`` and ``1e-2``.
         scenario_class: The scenario's class, by its qualified name
             (``module.QualName``): the code a run of the config runs.
 
@@ -139,19 +161,20 @@ def scenario_hash(config: Mapping[str, Any], scenario_class: str) -> str:
     order the config holds its keys in.
     """
     sections = {
-        key: _without_endpoints(config[key])
-        for key in SCENARIO_SECTIONS
-        if key in config
+        key: _canonical(config[key]) for key in SCENARIO_SECTIONS if key in config
     }
+    map_section = sections.get("map")
+    if isinstance(map_section, dict):
+        sections["map"] = {
+            key: item for key, item in map_section.items() if not _is_map_path(key)
+        }
     for section, key in SCENARIO_SETTINGS:
         settings = config.get(section)
         value = settings.get(key) if isinstance(settings, Mapping) else None
         if value is None:
             continue
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            value = float(value)
         # Dotted, so it names no section of its own.
-        sections[f"{section}.{key}"] = value
+        sections[f"{section}.{key}"] = _canonical(value)
     text = json.dumps(
         {"class": scenario_class, "config": sections},
         sort_keys=True,
