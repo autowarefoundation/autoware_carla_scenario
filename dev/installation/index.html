@@ -2750,7 +2750,21 @@ scenario-setup</code> downloads the 1.0 release
 <code>~/.autoware_carla_scenario/bin/carla</code>, and the runner launches it from there
 (see the <a href="../quickstart/">Quick Start</a>); <code>scenario-setup --nightly</code> installs
 CARLA's nightly build (the <code>ue58-dev</code> branch) instead. A CARLA installed any
-other way is used through <code>CARLA_EXECUTABLE</code>. Both package layouts are
+other way is used through <code>CARLA_EXECUTABLE</code>.</p>
+<p><code>--nightly</code> alone takes the latest nightly (<code>Linux/Dev/CARLA_UE5_Latest.tar.gz</code>),
+which moves with every build. CARLA's CI also keeps each nightly it built under
+its own name, <code>Linux/Dev/&lt;YYYYMMDD&gt;_&lt;commit&gt;.tar.gz</code> (the committer date and
+the abbreviated hash of the <code>ue58-dev</code> commit), and <code>--nightly BUILD</code> picks one:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-setup<span class="w"> </span>--nightly<span class="w"> </span><span class="m">20261124</span><span class="w">           </span><span class="c1"># the last nightly built that day</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-setup<span class="w"> </span>--nightly<span class="w"> </span>23d487e3<span class="w">           </span><span class="c1"># the nightly built from that commit</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-setup<span class="w"> </span>--nightly<span class="w"> </span>20261124_23d487e3<span class="w">  </span><span class="c1"># a nightly by its own name</span>
+</code></pre></div>
+<p>A date (<code>YYYYMMDD</code> or <code>YYYY-MM-DD</code>) or a commit is looked up in <code>ue58-dev</code>'s
+history through the GitHub API (anonymous requests are rate-limited; set
+<code>GITHUB_TOKEN</code> to lift the limit), and the nightlies it could name are asked
+for on the download server, which lists none. CI builds only some commits and
+old nightlies may be deleted, so a date or commit with no nightly is reported
+as such; a nightly's own name needs no lookup. Both package layouts are
 accepted: CARLA 1.0's, with <code>CarlaUnreal.sh</code> at the package's top, and
 0.10's, with it in <code>Linux/</code>. An install made before CARLA 1.0 became the
 default (the old nightly) is replaced by the next <code>scenario-setup</code>, since it
@@ -2819,7 +2833,7 @@ from a source checkout or an sdist, edited Codon sources, or a
 with -- does the first <code>import typesafe_carla.carla</code> build it instead. That
 build takes 15 to 50 minutes and about 14 GB of RAM, needs a C compiler
 (<code>cc</code>), and lands in <code>~/.cache/typesafe_carla/pycarla</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>typesafe-codon<span class="w"> </span>pycarla
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>typesafe-codon<span class="w"> </span>pycarla
 </code></pre></div>
 <p>runs it ahead of time, and reports that there is nothing to build when the
 prebuilt package applies. Set <code>TYPESAFE_CARLA_PYCARLA_DIR</code> to put the build
@@ -2833,7 +2847,7 @@ package), and <code>TYPESAFE_CARLA_PYCARLA_BUILD=0</code> to make a missing buil
 </ul>
 <h2 id="installing-uv">Installing uv<a class="headerlink" href="#installing-uv" title="Permanent link">&para;</a></h2>
 <p>If you don't have <code>uv</code> installed yet:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
 </code></pre></div>
 <p>For more options, see the <a href="https://docs.astral.sh/uv/">official uv documentation</a>.</p>
 <h2 id="installing-the-package">Installing the Package<a class="headerlink" href="#installing-the-package" title="Permanent link">&para;</a></h2>
@@ -2846,13 +2860,13 @@ converter separately when you need to generate a map.</p>
 <ol>
 <li>
 <p>Clone the repository:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/autowarefoundation/autoware_carla_scenario.git
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">cd</span><span class="w"> </span>autoware_carla_scenario
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/autowarefoundation/autoware_carla_scenario.git
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nb">cd</span><span class="w"> </span>autoware_carla_scenario
 </code></pre></div>
 </li>
 <li>
 <p>Sync dependencies from the lock file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>sync
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>sync
 </code></pre></div>
 <p>The CARLA client arrives with its CPython package prebuilt; nothing more
 to build (see <a href="#carla-client">CARLA client</a>).</p>
@@ -2933,7 +2947,7 @@ trust. The most common variables:</p>
 <p>See the <a href="../usage/">Usage Guide</a> and <a href="../architecture/">Architecture</a> for
 the full list.</p>
 <h2 id="verifying-installation">Verifying Installation<a class="headerlink" href="#verifying-installation" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import autoware_carla_scenario; print('Installation successful!')"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import autoware_carla_scenario; print('Installation successful!')"</span>
 </code></pre></div>
 <p>This works without CARLA — running an actual scenario additionally
 requires a CARLA server: a live one, or one to launch (<code>scenario-setup</code>, or
@@ -3012,7 +3026,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 09:04:05 UTC"><span class="timeago" datetime="2026-11-24T09:04:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 09:04:05 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 05:18:06 UTC"><span class="timeago" datetime="2026-11-25T05:18:06+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 05:18:06 UTC">2026-11-25</span>
   </span>
 
     
