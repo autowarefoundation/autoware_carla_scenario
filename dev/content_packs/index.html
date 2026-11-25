@@ -1581,6 +1581,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cache-and-offline-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache and offline runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#where-packs-are-installed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2394,6 +2405,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cache-and-offline-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache and offline runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#where-packs-are-installed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2579,6 +2601,42 @@ every other map setting.</p>
 <code>map.pack=OWNER/REPO</code> or a pack named without one. When the pack carries no
 Lanelet2 map and <code>map.source</code> gives it, the log names <code>map.source</code> instead.
 <code>map.pack_sha256</code> without <code>map.pack</code> is refused: there is nothing to pin.</p>
+<h2 id="cache-and-offline-runs">Cache and offline runs<a class="headerlink" href="#cache-and-offline-runs" title="Permanent link">&para;</a></h2>
+<p>A pack is downloaded once: later runs take it from carla-pack's cache
+(<code>~/.cache/carla-pack</code>, <code>CARLA_PACK_CACHE_DIR</code>) and install it from there.
+Each run still asks GitHub which artifact the reference names, unless the
+pack is pinned:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>GitHub</th>
+<th>Storage (S3, Google Drive, ...)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>--</td>
+<td>read once per run, for the pack list</td>
+<td>only the first time</td>
+</tr>
+<tr>
+<td><code>map.pack_sha256</code> set, the pack cached</td>
+<td>not contacted</td>
+<td>not contacted</td>
+</tr>
+<tr>
+<td><code>CARLA_PACK_OFFLINE=1</code></td>
+<td>never contacted</td>
+<td>never contacted</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>CARLA_PACK_OFFLINE=1</code>, <code>map.pack</code> resolves among the cached packs only
+(the newest that matches, as online), and a pack that is not cached stops the
+run before CARLA starts with carla-pack's <code>offline</code> error. To run on a
+machine without network access, fetch the pack once where there is
+(<code>carla-pack install</code> or a run), and mount or copy the cache directory.</p>
 <h2 id="where-packs-are-installed">Where packs are installed<a class="headerlink" href="#where-packs-are-installed" title="Permanent link">&para;</a></h2>
 <p>The server reads a pack at the path it is installed at:</p>
 <table>
@@ -2749,7 +2807,7 @@ token was taken from, and what to do. Its <code>code</code> is carla-pack's:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 23:30:14 UTC"><span class="timeago" datetime="2026-11-24T23:30:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 23:30:14 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 04:23:41 UTC"><span class="timeago" datetime="2026-11-25T04:23:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 04:23:41 UTC">2026-11-25</span>
   </span>
 
     
