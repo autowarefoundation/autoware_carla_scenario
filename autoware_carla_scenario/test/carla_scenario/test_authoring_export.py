@@ -678,6 +678,26 @@ class TestGeneratedPackage:
         else:
             assert "required-version" not in data.get("tool", {}).get("uv", {})
 
+    def test_the_lock_must_install_on_every_supported_environment(
+        self, package: Path
+    ) -> None:
+        """uv.lock is required to install on each machine and interpreter.
+
+        Without `required-environments` a universal lock may pick a release
+        that ships wheels for one interpreter and no sdist (fonttools 4.69.0,
+        cp311 only), and `uv sync --locked` and the wheelhouse then fail on
+        every other interpreter the package promises.
+        """
+        data = tomllib.loads((package / "pyproject.toml").read_text())
+        pythons = supported_pythons(package)
+        assert pythons
+        assert data["tool"]["uv"]["required-environments"] == [
+            f"sys_platform == 'linux' and platform_machine == '{machine}'"
+            f" and python_version == '{python}'"
+            for machine in ("x86_64", "aarch64")
+            for python in pythons
+        ]
+
     def test_the_document_round_trips_into_the_package(self, package: Path) -> None:
         from autoware_carla_scenario.authoring.persistence import load_document
 
