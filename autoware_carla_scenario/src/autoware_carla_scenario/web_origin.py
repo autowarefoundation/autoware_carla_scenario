@@ -14,6 +14,7 @@ re-exports every name.
 
 from __future__ import annotations
 
+import ipaddress
 from urllib.parse import urlsplit
 
 from .serve_bind import DEFAULT_HOST, is_loopback
@@ -43,9 +44,55 @@ def _normalize_host(name: str) -> str:
     return name.strip().strip("[]").rstrip(".").lower()
 
 
+def _is_zero_ipv4(name: str) -> bool:
+    """Whether *name* is an IPv4 literal ``inet_aton`` reads as ``0.0.0.0``.
+
+    One to four dot-separated parts, each of nothing but zeros (``0``,
+    ``0.0``, ``00.0.0.0``): an empty part is no literal, and the resolver
+    would look a name like that up instead.
+    """
+    parts = name.split(".")
+    if len(parts) > 4:
+        return False
+    for part in parts:
+        if not part or any(c != "0" for c in part):
+            return False
+    return True
+
+
+def _is_zero_ipv6(name: str) -> bool:
+    """Whether *name* is an IPv6 literal of the unspecified address (``::``).
+
+    A valid literal (``ipaddress`` reads it) with no digit but zero: every
+    group, and an embedded IPv4 address, is zero.  No zone (``::%eth0``),
+    which names one interface.
+    """
+    if any(c not in "0:." for c in name):
+        return False
+    try:
+        ipaddress.IPv6Address(name)
+    except ValueError:
+        return False
+    return True
+
+
 def is_wildcard(host: str) -> bool:
-    """Whether *host* is an address that binds every interface (``0.0.0.0``, ``::``)."""
-    return _normalize_host(host) in ("0.0.0.0", "::", "")  # noqa: S104
+    """Whether *host* is an address that binds every interface (``0.0.0.0``, ``::``).
+
+    Every numeric spelling of the unspecified address counts -- ``0``,
+    ``0.0``, ``::0``, ``0:0:0:0:0:0:0:0`` bind every interface as well -- and
+    an empty host, which uvicorn binds as ``0.0.0.0``.  Nothing else does: a
+    string that is no IP literal (``0.0.0.0.0``, ``:::``) is looked up as a
+    host name, which may resolve to one interface, so its ``Host`` is checked.
+    So is one with a trailing dot (``0.0.0.0.``), an absolute host name to the
+    resolver: unlike :func:`_normalize_host`, the dot is kept here.
+    """
+    name = host.strip().strip("[]").lower()
+    if not name:
+        return True
+    if ":" in name:
+        return _is_zero_ipv6(name)
+    return _is_zero_ipv4(name)
 
 
 class HostAllowlist:
