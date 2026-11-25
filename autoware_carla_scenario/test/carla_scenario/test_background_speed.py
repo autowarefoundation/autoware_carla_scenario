@@ -132,6 +132,7 @@ def _sumo_backend() -> tuple[SumoTrafficBackend, list[tuple[Any, ...]]]:
         vehicle=SimpleNamespace(
             add=lambda vid, rid, **kw: calls.append(("add", vid, kw["departSpeed"])),
             setMaxSpeed=lambda vid, v: calls.append(("setMaxSpeed", vid, v)),
+            setLength=lambda vid, length: None,
         ),
     )
     backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
