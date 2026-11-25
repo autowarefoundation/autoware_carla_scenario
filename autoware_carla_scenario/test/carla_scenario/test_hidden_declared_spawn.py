@@ -295,12 +295,16 @@ class TestSameSpawn:
         scenario = _scenario(
             _document(
                 _hidden("a"),
+                _hidden("parked"),
                 Entity(id="b", spawn=SpawnSpec(lanelet_id=2, s=SValue(value=5.0))),
-            )
+            ),
+            unplaced=("parked",),
         )
         scenario.ego_config.spawn_retry_max_count = 10
         built = _built(scenario)
         assert built["a"]._config.spawn_retry_max_count == 0
+        # Parked under the ego's spawn, in its own waiting spot.
+        assert built["parked"]._config.spawn_retry_max_count == 0
         assert built["b"]._config.spawn_retry_max_count == 10
         assert built["b"]._config.od_pose is None
 

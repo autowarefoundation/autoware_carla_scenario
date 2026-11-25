@@ -417,7 +417,6 @@ def _cut_in_setup(config: CutInConfig, goal: Lanelet2Pose | None = None) -> Any:
     with (
         unittest.mock.patch.object(scenario, "_setup_ego_spawn", return_value=stub),
         unittest.mock.patch.object(cut_in, "snap_to_carla_road", return_value=stub),
-        unittest.mock.patch.object(cut_in, "to_opendrive", return_value=stub),
         unittest.mock.patch.object(cut_in, "VehicleEntity"),
         unittest.mock.patch(
             "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",

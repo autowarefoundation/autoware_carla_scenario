@@ -805,7 +805,10 @@ class DeclarativeScenario(BaseScenario):
                     spawn_location=SpawnTransform(self._parking_transform(entity)),
                     vehicle_type=vehicle_type,
                     initial_speed_kmh=entity.initial_speed_kmh,
-                    spawn_retry_max_count=self.ego_config.spawn_retry_max_count,
+                    # Parked under the map, in its own waiting spot: nothing
+                    # is in the way, and a retry would move it off the spot
+                    # the next one is stacked against.
+                    spawn_retry_max_count=0,
                     spawn_retry_t_step=self.ego_config.spawn_retry_t_step,
                     spawn_retry_z_step=self.ego_config.spawn_retry_z_step,
                     ground_projection=self._ground_projection,
