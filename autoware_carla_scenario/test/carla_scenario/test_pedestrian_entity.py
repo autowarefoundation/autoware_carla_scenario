@@ -340,3 +340,78 @@ class TestWalkingSpeed:
         assert walker_speed_command(2.0) == pytest.approx(2.0)
         assert walker_control_speed(3.0) == pytest.approx(3.0)
         assert walker_control_speed(40.0) == pytest.approx(10.0)
+
+
+class TestWalkStraightHeldSpeed:
+    """A speed the server cannot walk is held at its walker maximum (#2487)."""
+
+    @pytest.fixture
+    def walker(self) -> PedestrianEntity:
+        entity = PedestrianEntity(
+            PedestrianEntityConfig(
+                role_name="walker1",
+                spawn_location=SpawnTransform(carla.Transform()),
+            )
+        )
+        actor = MagicMock()
+        transform = MagicMock()
+        transform.get_forward_vector.return_value = carla.Vector3D(1.0, 0.0, 0.0)
+        actor.get_transform.return_value = transform
+        entity._walker = actor
+        return entity
+
+    def test_carla_010_holds_3_mps_at_2_and_warns(
+        self,
+        walker: PedestrianEntity,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_speed_command,
+        )
+
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "ue5-dev")
+        with caplog.at_level(logging.WARNING):
+            walker.walk_straight(3.0)
+        actor = walker.actor
+        assert actor is not None
+        assert actor.apply_control.call_args[0][0].speed == pytest.approx(
+            walker_speed_command(2.0)
+        )
+        held = [r.getMessage() for r in caplog.records if "held at" in r.getMessage()]
+        assert len(held) == 1
+        assert "3.00" in held[0] and "2.00" in held[0]
+
+    def test_a_backend_is_given_the_held_speed(
+        self, walker: PedestrianEntity, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "ue5-dev")
+        backend = MagicMock()
+        backend.walk_straight.return_value = True
+        walker.set_traffic_backend(backend)
+        walker.walk_straight(3.0, yaw_deg=90.0)
+        backend.walk_straight.assert_called_once_with(walker, 2.0, yaw_deg=90.0)
+
+    def test_carla_10_walks_3_mps_as_asked(
+        self, walker: PedestrianEntity, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "1.0")
+        walker.walk_straight(3.0)
+        actor = walker.actor
+        assert actor is not None
+        assert actor.apply_control.call_args[0][0].speed == pytest.approx(3.0)
+
+    def test_walker_held_speed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from autoware_carla_scenario.entity.pedestrian_entity import (
+            walker_held_speed,
+        )
+
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "ue5-dev")
+        assert walker_held_speed(2.82) == pytest.approx(2.0)
+        assert walker_held_speed(1.4) == pytest.approx(1.4)
+        assert walker_held_speed(-1.0) == 0.0
+        monkeypatch.setenv("TYPESAFE_CARLA_CARLA_REF", "1.0")
+        assert walker_held_speed(2.82) == pytest.approx(2.82)
+        assert walker_held_speed(12.0) == pytest.approx(10.0)

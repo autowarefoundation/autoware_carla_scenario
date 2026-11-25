@@ -417,3 +417,19 @@ def test_a_walker_held_by_its_timing_short_of_its_end_is_still_walking(
     assert entity.walking
     assert _WALKER_ID in _walker_ai._DRIVEN
     assert walker.x < 1.0
+
+
+def test_back_progress_counts_the_seconds_without_getting_nearer() -> None:
+    """The stall check a routed walker and WalkStraightAction share (#2487)."""
+    step = _walker_ai._BACK_PROGRESS_M
+    nearest, stalled = _walker_ai.back_progress(3.0, math.inf, 0.0, 0.05)
+    assert (nearest, stalled) == (3.0, 0.0)
+    # Less than the progress step nearer: not progress yet.
+    nearest, stalled = _walker_ai.back_progress(3.0 - step / 2, nearest, 0.0, 0.05)
+    assert nearest == 3.0 and stalled == pytest.approx(0.05)
+    # Past it, counted from the nearest: progress, and the count starts over.
+    nearest, stalled = _walker_ai.back_progress(3.0 - step * 1.5, nearest, 0.4, 0.05)
+    assert nearest == pytest.approx(3.0 - step * 1.5) and stalled == 0.0
+    for _ in range(round(_walker_ai.BACK_STALL_S / 0.05)):
+        nearest, stalled = _walker_ai.back_progress(nearest, nearest, stalled, 0.05)
+    assert stalled >= _walker_ai.BACK_STALL_S - 1e-9

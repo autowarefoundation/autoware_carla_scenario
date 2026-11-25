@@ -55,6 +55,9 @@ scenario_rules:
       parts:
         staged:
           uniform: {low: 8.0, high: 30.0}
+    # CARLA 0.10 walks a walker at 2 m/s at most, and WalkStraightAction
+    # holds a faster draw at that (docs/odd.md); CARLA 1.0, the default,
+    # walks up to 10 m/s, so the range is kept for it.
     crossing_pedestrian_speed:
       text: How fast the pedestrian runs, m/s.
       parts:
