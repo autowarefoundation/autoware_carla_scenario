@@ -2823,13 +2823,43 @@ something that is not a call of <code>join</code> at that column, get none.</p>
 before Codon runs (#529): a <code>return</code> of a literal, an f-string or a display in
 a function declared <code>-&gt; bool</code> (Codon converts it to a <code>bool</code>; Python returns
 the <code>str</code>), and a function declared to return a type other than <code>None</code>,
-<code>Optional[...]</code>, <code>Any</code> or <code>NoReturn</code> whose body can run off its end. The flow
-analysis follows <code>if</code>, <code>while</code>, <code>for</code>, <code>try</code>, <code>with</code> and <code>match</code>; a <code>while
-True</code> without a <code>break</code>, a <code>raise</code>, <code>assert False</code>, <code>sys.exit()</code> and a call of
-a function declared <code>NoReturn</code> end a path, and a body that is only <code>...</code>,
-<code>pass</code> or a docstring (an abstract method, an overload) is not checked. A
-returned expression whose type is not obvious from its syntax
+<code>Optional[...]</code>, <code>Any</code> or <code>NoReturn</code> whose body can run off its end. An alias
+the scenario's modules define at module level (<code>MaybeF = Optional[float]</code>,
+<code>MaybeF: TypeAlias = ...</code>, <code>type MaybeF = float | None</code>), or import from one
+another, is read as what it names (#2513). The flow analysis follows <code>if</code>,
+<code>while</code>, <code>for</code>, <code>try</code>, <code>with</code> and <code>match</code>. A <code>while True</code> without a <code>break</code>,
+a <code>raise</code>, <code>assert False</code> and a call that never returns end a path:
+<code>sys.exit()</code>, <code>os._exit()</code>, <code>os.abort()</code>, <code>os.execv()</code> and the rest of
+<code>os.exec*()</code>, <code>pytest.fail()</code> / <code>skip()</code> / <code>xfail()</code> / <code>exit()</code>, <code>exit()</code>,
+<code>quit()</code>, <code>assert_never()</code>, and a function declared <code>NoReturn</code>. Such a
+function ends a path where the call is known to be it: a module-level
+function of the scenario's modules called by its name or through an import,
+or a method called on <code>self</code>, <code>cls</code>, <code>super()</code> or a parameter annotated with
+one of their classes, looked up in that class and its bases (#2513:
+<code>b.stop()</code> of a <code>b: B</code> whose <code>stop</code> returns <code>None</code> no longer ends a path just
+because some other class's <code>stop</code> is <code>NoReturn</code>). A body that is only <code>...</code>, <code>pass</code> or a
+docstring (an abstract method, an overload) is not checked. A
+<code>with contextlib.suppress(...)</code> block goes on after it when its body raises,
+so a <code>return</code> inside one ends no path. A <code>match</code> runs off its end when a
+case's body does, and when no case catches every subject: every case has a
+guard (<code>case _ if ready:</code>; a guard that always holds, <code>True</code> or a
+<code>sys.version_info</code>, <code>sys.platform</code> or <code>TYPE_CHECKING</code> test mypy decides, is
+none), or the subject is a parameter annotated <code>int</code>,
+<code>float</code>, <code>str</code>, <code>bytes</code> or <code>complex</code> and the cases without a guard are all
+literals (<code>case 1:</code> then <code>case n if n &gt; 0:</code>). A match whose cases may be
+exhaustive (class patterns, an enum's members, a <code>bool</code>) is taken to be, as
+mypy does. A returned expression whose type is not obvious from its syntax
 (<code>return some_str</code>) is not judged.</p>
+<p>Where the check cannot tell what a call stands for, it errs on accepting:
+a method called on an object whose class is not one of the scenario's
+modules (a framework base class, <code>unittest.TestCase</code>, an unannotated
+parameter or a local variable) ends a path when its name is one of <code>exit</code>,
+<code>_exit</code>, <code>abort</code>, <code>fail</code>, <code>skip</code>, <code>xfail</code>, <code>quit</code>, <code>assert_never</code> or that of
+any function of the scenario declared <code>NoReturn</code>, so <code>parser.exit()</code> of an
+<code>ArgumentParser</code> is not refused, nor is <code>x.fail()</code> of any other <code>x</code>. A
+context manager other than <code>contextlib.suppress</code> that swallows an exception,
+an alias defined outside the scenario's modules, and a match the subject's
+type makes exhaustive in a way the syntax does not show are not caught.</p>
 <p><strong>Then mypy checks that an <code>Optional</code> is tested for <code>None</code> before it is
 used</strong> (#239). Codon unwraps an <code>Optional[T]</code> implicitly wherever a <code>T</code> is
 needed, so <code>cfg.min_speed_kmh / 3.6</code> of a <code>float | None</code> field compiled, and
@@ -3572,7 +3602,9 @@ scenario has to do itself:</p>
   assigns reads as <code>0</code> (or <code>""</code>, an empty list) in the check, and Python
   raises <code>AttributeError</code> at its first read. The check refuses a bare
   class-level annotation (no default; not a dataclass, <code>NamedTuple</code>,
-  <code>TypedDict</code> or <code>Protocol</code> field, nor a <code>ClassVar</code>) that a method of the
+  <code>TypedDict</code> or <code>Protocol</code> field, nor a <code>ClassVar</code>, <code>Final</code> or <code>InitVar</code>,
+  read by the exact name of the annotation's head: <code>FinalPose</code> is a class
+  like any other, #2513) that a method of the
   class or of a subclass reads (<code>self._count</code>, <code>self._count += 1</code>: an
   augmented assignment reads first) when nothing assigns it, at the
   annotation:</p>
@@ -3622,8 +3654,11 @@ the float is the value stored in <code>k</code> here".</p>
     <code>= None</code> line, each unannotated local of the checked modules that is first
     bound to <code>None</code> and rebound, as a likely cause. The type comes from what
     the local is rebound to where the source says it plainly (a literal, an
-    annotated parameter, the element of an annotated list it loops over);
-    otherwise it is written <code>&lt;T&gt;</code>:</p>
+    annotated parameter, the element of an annotated list it loops over, the
+    class of an <code>except ValueError as best</code>); otherwise it is written <code>&lt;T&gt;</code>.
+    Every binder counts as a rebinding: an assignment, a loop or <code>with</code>
+    target, <code>except ... as</code>, a match capture, an import, a <code>def</code> or <code>class</code>
+    of the name, and a walrus, also inside a comprehension (#2513):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>error: Codon failed without a diagnostic: exit status -11
 <a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>scenario.py:72: error: Codon crashed (exit status -11); a likely cause: Codon fixes the type of the local `best` at its first assignment, `best = None` on line 72, and cannot widen it when it is rebound (line 75): annotate it: `best: float | None = None`
 </code></pre></div>
@@ -4673,7 +4708,11 @@ runs (<code>typecheck/static_raises.py</code>):</p>
   the other aliases of <code>typing</code>, "Subscripted generics cannot be used with
   class and instance checks"); in a tuple or a union, once the value is none
   of the classes before it (a <code>|</code> union on Python 3.10: at once). Test against the bare
-  class (<code>isinstance(v, list)</code>) and check the elements separately; for a
+  class (<code>isinstance(v, list)</code>) and check the elements separately (the same
+  for the other generic classes of <code>typing</code>, <code>collections.abc</code> and
+  <code>collections</code>, and <code>re.Pattern[str]</code>, <code>re.Match[str]</code>,
+  <code>typing.ContextManager[int]</code>, <code>contextlib.AbstractContextManager[int]</code>,
+  <code>collections.abc.Coroutine[...]</code>, <code>AsyncGenerator[...]</code>, #2513); for a
   <code>Literal[...]</code>, compare the value. <code>isinstance(x, int | float)</code>, an
   unsubscripted <code>typing.List</code>, <code>Optional[int]</code> and an index into a tuple of
   classes (<code>TYPES[0]</code>) are left alone, and so is a name the module binds
@@ -7932,7 +7971,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   is not; that is Codon's, and only <code>JSONValue</code>, whose type is opaque by
   design, is rewritten. The check warns, without failing, when the static
   type of the subject is certain from the syntax (an annotated parameter or
-  local, a local bound once to a literal, an annotated <code>self</code> attribute) and
+  local, a local bound once to a literal and by nothing else: no <code>except ...
+  as</code>, match capture, import, <code>def</code>, <code>class</code> or walrus of the same name, an
+  annotated <code>self</code> attribute of the enclosing class; a class name two
+  classes of the module share, a function's own <code>class Holder</code> beside the
+  module's, names neither, nor does a class derived from it) and
   cannot be the class: <code>isinstance(x, str): x is statically int here, so this
   branch is not checked by the static check; an error in it is not reported</code>,
   #565.) (A module that never imports <code>json</code> but gets a
@@ -9229,7 +9272,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 22:09:10 UTC"><span class="timeago" datetime="2026-11-25T22:09:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 22:09:10 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 23:39:24 UTC"><span class="timeago" datetime="2026-11-25T23:39:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 23:39:24 UTC">2026-11-25</span>
   </span>
 
     
