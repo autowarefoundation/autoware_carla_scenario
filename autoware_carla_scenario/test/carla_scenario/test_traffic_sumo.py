@@ -2295,6 +2295,27 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
         backend.close()
 
 
+@needs_sumo
+def test_a_background_vehicle_has_the_length_its_bumper_was_put_ahead_by(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """SUMO was never told the 4.6 m a background vehicle's centre is turned
+    into its bumper with, and gave it back with its default 5 m: 0.2 m behind
+    the spot asked for (#2471)."""
+    from autoware_carla_scenario.traffic.sumo.backend import _BACKGROUND_LENGTH_M
+
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        handle = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert handle is not None
+        assert tc.vehicle.getLength(handle) == pytest.approx(_BACKGROUND_LENGTH_M)
+    finally:
+        backend.close()
+
+
 def _block_the_spot(backend: Any, world: _FakeWorld, x: float, y: float) -> str:
     """A SUMO car of its own standing where a background vehicle asked for at
     CARLA ``(x, y)`` would enter: SUMO keeps that one pending."""

@@ -343,8 +343,9 @@ _TL_RED_YELLOW_GREEN_STATE = 0x20
 #: whatever lane is there whoever may use it (4).  Without the 4 a pedestrian
 #: crossing the road is put on the nearest footway, where no vehicle sees it.
 _KEEP_ROUTE_ANYWHERE = 2 | 4
-#: The length SUMO is told a background vehicle has before its CARLA mirror
-#: exists, m, and how many junctions its route runs through.
+#: The length SUMO is told a background vehicle has (``setLength`` when it is
+#: added; SUMO's own default is 5 m), m, and how many junctions its route
+#: runs through.
 _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
 #: How far from a pedestrian an edge to add its person on is looked for, m.
@@ -434,7 +435,11 @@ def _runs_along(shape: Any, offset: float, heading: float) -> bool:
     past its end)."""
     from sumolib.geomhelper import polyLength, rotationAtShapeOffset  # noqa: PLC0415
 
-    rotation = rotationAtShapeOffset(shape, min(offset, polyLength(shape)))
+    # Just short of the end: sumolib has no rotation at the end itself
+    # (rotationAtShapeOffset answers None there), where a point past the
+    # lane's last vertex projects.
+    end = max(polyLength(shape) - 1e-6, 0.0)
+    rotation = rotationAtShapeOffset(shape, min(max(offset, 0.0), end))
     if rotation is None:
         return False
     turn = _wrap(math.degrees(rotation) - heading)
@@ -3049,6 +3054,9 @@ class SumoTrafficBackend(TrafficBackend):
                 # junction is one SUMO refuses to insert the vehicle at.
                 departSpeed="max",
             )
+            # The length its bumper was put ahead by, so that its centre is
+            # given back where it was asked for (background_vehicles).
+            tc.vehicle.setLength(sumo_id, _BACKGROUND_LENGTH_M)
             # Exactly the cap asked for, as the TrafficManager backend gives
             # it: no floor of SUMO's own (#967).
             tc.vehicle.setMaxSpeed(sumo_id, speed_kmh / 3.6)

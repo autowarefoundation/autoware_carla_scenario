@@ -445,3 +445,17 @@ def test_a_network_without_elevation_says_so(grid: Path) -> None:
     roads = MesoRoads(sumolib.net.readNet(str(grid)))
     assert not roads.has_elevation
     assert roads.pose("A0B0", 50.0).z == 0.0
+
+
+def test_a_vehicle_just_past_a_lanes_end_takes_its_last_segments_heading() -> None:
+    """sumolib has no rotation at a lane's end, where a point past it
+    projects: a lane running north was given 90 degrees there, which refused
+    every vehicle not facing east (#2471)."""
+    from autoware_carla_scenario.traffic.sumo.mesosim import MesoRoads
+
+    north = _Lane([(0.0, 0.0, 0.0), (0.0, 50.0, 0.0)])
+    roads = MesoRoads(_Net(_Edge("north", [north], 50.0)))
+    located = roads.locate(0.3, 50.5, 0.0)
+    assert located is not None and located[0] == "north"
+    assert roads.locate(0.3, 50.5, 90.0) is None
+    assert roads.locate(0.3, 50.5, 180.0) is None
