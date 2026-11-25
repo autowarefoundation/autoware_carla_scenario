@@ -1,5 +1,24 @@
 # Migrating
 
+## `debug_markers.plan_markers` is gone
+
+The helper was exported but nothing in the framework called it: the
+driver-backed entities draw their plan with `ego_plan.ego_plan_markers()`,
+which also leaves out a point that is not a finite number (#2477). Code
+importing `plan_markers` builds the same markers from the two helpers that
+remain:
+
+```python
+from autoware_carla_scenario.debug_markers import (
+    DebugMarkers,
+    plan_polyline,
+    world_point,
+)
+
+markers = DebugMarkers()
+markers.add_polyline(plan_polyline([world_point(pose) for pose in plan.poses]))
+```
+
 ## `visibility.at_quantile` is gone
 
 The helper was exported but nothing read it: the weather rules' quantities
