@@ -206,9 +206,9 @@ of the collisions.
 | `reach_drivable_area_sum_m2` | m^2 | The same, summed over the horizon's steps (CriMe's DA) | min |
 
 A measure of the road user ahead in the ego's lane -- TTC, THW, HW,
-ALongReq, BTN, and ALatReq and STN, which take TTC -- reads nothing only when
-no other road user is within `radius_m` of the ego. With road users within it
-but none ahead in the ego's lane (beside it, behind it, on another lanelet),
+ALongReq, BTN, and ALatReq and STN, which take TTC -- reads nothing when no
+other road user is within `radius_m` of the ego. With road users within it
+but none ahead in the ego's lane (beside it, behind it, in another lane),
 CriMe reads that none is: TTC, THW and HW `inf`, ALongReq, ALatReq, BTN and
 STN `0`. The same frame with no one ahead thus reads nothing alone on the
 road and `inf` or `0` with a car in the next lane. TTCE and DCE read the

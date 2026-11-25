@@ -20,8 +20,8 @@ and speaks to it one line at a time, each request answered by one line:
     ``0``, never CriMe's ``-Infinity``, when braking at full (TTB) or every
     evasive manoeuvre (TTR) no longer avoids the collision even now.  A
     measure of the road user ahead in the ego's lane (TTC, THW, HW, ALongReq
-    and the rest) is ``null`` only when the frame has no other road user at
-    all: with road users but none ahead in the ego's lane it reads that none
+    and the rest) is ``null`` when the frame has no other road user at all,
+    but with road users and none ahead in the ego's lane it reads that none
     is (TTC ``Infinity``, ALongReq ``0``).  A road user with a NaN
     or an infinity among its numbers is a reading gone bad in this frame, not
     a request out of protocol: every measure asked is ``null`` and failed with

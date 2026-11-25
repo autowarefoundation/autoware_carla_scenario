@@ -143,9 +143,9 @@ same search with braking at full alone, and reads `0` likewise when braking
 no longer avoids the collision even now (CriMe's `-Infinity`: no step does, or
 the ego is in contact already).
 
-A measure of the road user ahead in the ego's lane reads `null` only when the
+A measure of the road user ahead in the ego's lane reads `null` when the
 frame has no other road user at all. With road users around but none ahead in
-the ego's lane -- beside it, behind it, on another lanelet -- CriMe reads that
+the ego's lane -- beside it, behind it, in another lane -- CriMe reads that
 none is: TTC, THW and HW `Infinity`, ALongReq, ALatReq, BTN and STN `0`. TTCE
 and DCE read the closest road user, in the ego's lane or not. TTB and TTR
 search the ego's own predicted path (CriMe's TTC\*, which counts the road's
