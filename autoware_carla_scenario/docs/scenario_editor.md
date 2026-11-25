@@ -1279,6 +1279,7 @@ not needing to know which Python the target runs before exporting.
 | `typesafe-carla` | the framework's own requirement (`>=0.8.1,<0.9`), locked in `uv.lock` like everything else |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
+| Where it installs | `[tool.uv] required-environments`: Linux x86_64 and aarch64 under every interpreter the wheelhouse is built for, so `uv.lock` never picks a release that lacks a wheel or an sdist for one of them |
 | Everything else | `uv.lock`, and then the wheels built from it |
 
 A **branch is never emitted** -- `main`, `master` and `HEAD` all move, so a
