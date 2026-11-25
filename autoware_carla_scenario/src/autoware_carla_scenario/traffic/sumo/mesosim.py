@@ -751,9 +751,13 @@ class MesoRoads:
             offset = float(
                 geom.polygonOffsetWithMinimumDistanceToPoint((x, y), shape, False)
             )
-            angle = 90.0 - math.degrees(
-                geom.rotationAtShapeOffset(shape, offset) or 0.0
-            )
+            # Just short of the end, where sumolib has a rotation (it answers
+            # None at the end itself, where a point past the lane projects).
+            along = min(offset, max(geom.polyLength(shape) - 1e-6, 0.0))
+            rotation = geom.rotationAtShapeOffset(shape, along)
+            if rotation is None:
+                continue
+            angle = 90.0 - math.degrees(rotation)
             if _angle_between(angle, heading_deg) > LOCATE_HEADING_DEG:
                 continue
             best = (distance, edge_id, offset)

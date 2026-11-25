@@ -268,3 +268,16 @@ def test_the_backend_s_sumo_class_reads_the_actor(
         "" if base_type is None else base_type.lower(), backend.is_emergency(actor)
     )
     assert backend._sumo_class(actor) == want
+
+
+def test_a_point_past_a_lanes_last_vertex_runs_along_its_last_segment() -> None:
+    """sumolib answers no rotation at the end itself, where such a point
+    projects: the lane was refused although its last segment runs that way
+    (#2471)."""
+    from sumolib.geomhelper import polyLength
+
+    shape = [(0.0, 0.0), (7.3, 0.1), (15.1, 0.3)]
+    assert backend._runs_along(shape, polyLength(shape), 0.0)
+    assert backend._runs_along(shape, polyLength(shape) + 3.0, 0.0)
+    assert backend._runs_along(shape, 5.0, 0.0)
+    assert not backend._runs_along(shape, polyLength(shape), 180.0)
