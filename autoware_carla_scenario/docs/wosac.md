@@ -193,8 +193,10 @@ not four -- is refused, naming the file, before anything is written.
 Each agent's `object_id` has to be the same in every rollout, though CARLA
 gives its actor a new id in every run. It is derived from what does stay the
 same, the agent's role name, which the scenario gives the entity
-(`npc1`, `background3`, ...): the first 31 bits of the SHA-256 of its
-canonical role name (`ego` and `hero` are `Ego`), `object_id_of()`. A
+(`npc1`, `background3`, ...): the first 4 bytes of the SHA-256 of its
+canonical role name (`ego` and `hero` are `Ego`), read as a big-endian
+integer with the top bit cleared (`int(sha256(name).hexdigest()[:8], 16) &
+0x7FFFFFFF`), `object_id_of()`. A
 scenario replaying a Waymo scenario gives its entities the tracks' ids with
 `--object-ids` (`object_ids=`).
 
