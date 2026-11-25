@@ -461,15 +461,41 @@ class SensorRecorder:
         return self.path
 
 
+#: One sweep at a time: each puts back the global recordings it found.
+_cleanup_lock = threading.Lock()
+
+
 def _cleanup_orphaned_recordings(sdk: Any) -> None:
     """End the threads of the recordings nothing references any more, with
     the SDK's ``flush_and_cleanup_orphaned_recordings`` (Rerun 0.38); nothing
-    with an SDK without it."""
-    cleanup = getattr(
-        getattr(sdk, "bindings", None), "flush_and_cleanup_orphaned_recordings", None
-    )
-    if cleanup is not None:
-        cleanup()
+    with an SDK without it.
+
+    The sweep also unsets the process's global recordings (``rr.init``'s), as
+    ``rr.init`` wants it to: a policy or scenario logging to its own global
+    recording in the same process would lose everything it logged after the
+    run's sensors were closed.  They are put back.  The other recordings
+    (the converter's, another run's sensors, a thread's own) are only
+    flushed: something still references them."""
+    bindings = getattr(sdk, "bindings", None)
+    cleanup = getattr(bindings, "flush_and_cleanup_orphaned_recordings", None)
+    if cleanup is None:
+        return
+    slots: list[tuple[Any, Any]] = [
+        (
+            getattr(bindings, f"get_global_{kind}_recording", None),
+            getattr(bindings, f"set_global_{kind}_recording", None),
+        )
+        for kind in ("data", "blueprint")
+    ]
+    slots = [(get, put) for get, put in slots if get is not None and put is not None]
+    with _cleanup_lock:
+        held = [get() for get, _ in slots]
+        try:
+            cleanup()
+        finally:
+            for (get, put), recording in zip(slots, held):
+                if recording is not None and get() is None:
+                    put(recording)
 
 
 #: The name it had when it recorded the LiDAR alone.

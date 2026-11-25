@@ -578,6 +578,30 @@ def test_sensor_recordings_leave_no_threads_behind(tmp_path: Path) -> None:
     assert _threads() <= before
 
 
+def test_closing_a_recording_keeps_the_global_one(tmp_path: Path) -> None:
+    """The SDK's sweep of orphaned recordings unsets ``rr.init``'s global
+    recording: a policy logging to it in the same process would lose
+    everything it logged after the run's sensors were closed."""
+    rr = pytest.importorskip("rerun")
+    from rerun_bindings import rerun_bindings as bindings
+
+    rr.init("global_test", recording_id="global_test", spawn=False)
+    rr.save(str(tmp_path / "global.rrd"))
+    try:
+        held = bindings.get_global_data_recording()
+        assert held is not None
+        rr.log("before", rr.Points3D([[0.0, 0.0, 0.0]]))
+        LidarRecorder(tmp_path / "r.sensors.rrd", "r", 0).close()
+        assert bindings.get_global_data_recording() is not None
+        rr.log("after", rr.Points3D([[1.0, 1.0, 1.0]]))
+    finally:
+        rr.disconnect()
+        bindings.set_global_data_recording(None)
+    assert bindings.check_for_rrd_footer(str(tmp_path / "global.rrd"))
+    entities = {chunk.entity_path for chunk in _read(tmp_path / "global.rrd")}
+    assert {"/before", "/after"} <= entities
+
+
 def _read(recording: Path) -> list[Any]:
     """The chunks of *recording*'s one recording."""
     chunk = pytest.importorskip("rerun.chunk")
