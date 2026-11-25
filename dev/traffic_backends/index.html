@@ -4202,7 +4202,8 @@ OpenDRIVE the world runs (the file the run installed, or
 <code>world.get_map().to_opendrive()</code>), converts it with
 <a href="https://github.com/hakuturu583/hdmap_generator">roadgen</a> into netconvert's
 plain-XML input and builds it with netconvert. The result is cached under
-<code>~/.cache/autoware_carla_scenario/sumo/</code>, keyed by the OpenDRIVE and the tool
+<code>$XDG_CACHE_HOME/autoware_carla_scenario/sumo/</code> (<code>~/.cache/autoware_carla_scenario/sumo/</code>
+when <code>XDG_CACHE_HOME</code> is unset), keyed by the OpenDRIVE and the tool
 versions, so a map is converted once. roadgen writes the network without offset
 normalisation, so SUMO's x/y are OpenDRIVE's and CARLA's are the same with y
 mirrored. <code>traffic.options.net_path</code> runs on an existing <code>.net.xml</code> instead.</p>
@@ -4881,7 +4882,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 09:48:36 UTC"><span class="timeago" datetime="2026-11-24T09:48:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 09:48:36 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 20:16:31 UTC"><span class="timeago" datetime="2026-11-25T20:16:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 20:16:31 UTC">2026-11-25</span>
   </span>
 
     
