@@ -143,7 +143,12 @@ def is_supported_version(version: str) -> bool:
 
 
 def _prepend(value: str, existing: str | None) -> str:
-    return value if not existing else value + os.pathsep + existing
+    """*value* before *existing*, as a search path; an empty one is left out.
+
+    An empty entry of ``LD_LIBRARY_PATH`` is the current directory to the
+    loader, so neither may add one (#2511).
+    """
+    return os.pathsep.join(part for part in (value, existing) if part)
 
 
 def codon_environment(tc: Toolchain, codon_path: Path) -> dict[str, str]:
@@ -156,5 +161,7 @@ def codon_environment(tc: Toolchain, codon_path: Path) -> dict[str, str]:
     env["CODON_DIR"] = str(tc.codon_dir)
     env["CODON_PATH"] = str(codon_path)  # one directory: Codon reads no more
     ld = [str(d) for d in tc.library_dirs()]
-    env["LD_LIBRARY_PATH"] = _prepend(os.pathsep.join(ld), env.get("LD_LIBRARY_PATH"))
+    library_path = _prepend(os.pathsep.join(ld), env.get("LD_LIBRARY_PATH"))
+    if library_path:
+        env["LD_LIBRARY_PATH"] = library_path
     return env

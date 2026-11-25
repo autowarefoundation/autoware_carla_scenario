@@ -87,6 +87,7 @@ from .transform import (
     _ENUM_BASES,
     _TYPE_VAR_NAMES,
     _dotted,
+    _is_dataclass_node,
     _is_none,
     _members_or_self,
     _names_any,
@@ -121,7 +122,6 @@ LIBRARY_PACKAGE = "_acs_lib"
 #: varied one at a time, the others taking their first member.
 MAX_CALLS = 16
 
-_DATACLASS = {"dataclass", "dataclasses.dataclass"}
 _FIELD_FUNCTIONS = {"field", "dataclasses.field"}
 #: OmegaConf's mandatory-value marker: a field "defaulted" to it is required.
 _MANDATORY = {"MISSING"}
@@ -670,10 +670,7 @@ class _Renderer:
         name = node.name
         bases = [(_dotted(b) or "").rsplit(".", 1)[-1] for b in node.bases]
         is_enum = any(b in _ENUM_BASES for b in bases)
-        decorators = {
-            _dotted(d.func if isinstance(d, ast.Call) else d)
-            for d in node.decorator_list
-        }
+        is_dataclass = _is_dataclass_node(node)
         methods = [
             m
             for m in node.body
@@ -684,9 +681,9 @@ class _Renderer:
             pass
         elif init is not None and not is_enum:
             self.calls(init, name, f"{name}.__init__", drop_first=True, owner=name)
-        elif decorators & _DATACLASS and not is_enum:
+        elif is_dataclass and not is_enum:
             self._dataclass_init(node)
-        if not is_enum and not decorators & _DATACLASS:
+        if not is_enum and not is_dataclass:
             self._class_defaults(node)
         for method in methods:
             if method.name == "__init__":
@@ -1031,10 +1028,8 @@ class _Renderer:
                 continue
             if (_dotted(stmt.annotation) or "").endswith("KW_ONLY"):
                 break  # keyword-only fields: not modelled, so not called
-            if isinstance(stmt.annotation, ast.Subscript) and (
-                _dotted(stmt.annotation.value) or ""
-            ).endswith("ClassVar"):
-                continue
+            if _names_class_var(stmt.annotation):
+                continue  # `ClassVar[T]` or a bare `ClassVar`: no field
             value = stmt.value
             if isinstance(value, ast.Call) and any(
                 kw.arg == "init"
@@ -1065,7 +1060,7 @@ class _Renderer:
         base = self.classes.get((_dotted(base_node) or "").rsplit(".", 1)[-1])
         if base is None or base.name in seen:
             return []
-        if _is_dataclass(base):
+        if _is_dataclass_node(base):
             return [base]
         return [
             b for n in base.bases for b in self._dataclasses_of(n, seen | {base.name})
@@ -1151,13 +1146,6 @@ def _has_default(value: ast.expr | None) -> bool:
     return True
 
 
-def _is_dataclass(node: ast.ClassDef) -> bool:
-    return bool(
-        {_dotted(d.func if isinstance(d, ast.Call) else d) for d in node.decorator_list}
-        & _DATACLASS
-    )
-
-
 def _never_returns(
     func: ast.FunctionDef | ast.AsyncFunctionDef, decorators: set[str]
 ) -> bool:
@@ -1188,6 +1176,19 @@ def _is_class_var(annotation: ast.expr) -> bool:
     if isinstance(annotation, ast.Subscript):
         annotation = annotation.value
     return _dotted(annotation) in _CLASS_VAR
+
+
+def _names_class_var(annotation: ast.expr) -> bool:
+    """Whether *annotation* is a ``ClassVar``, by whatever module it is read.
+
+    :func:`_is_class_var`, and also ``t.ClassVar[T]`` / ``t.ClassVar`` of a
+    ``typing`` (or ``typing_extensions``) imported under another name: a
+    dataclass has no field of either, so its constructor takes none (#2511).
+    """
+    if isinstance(annotation, ast.Subscript):
+        annotation = annotation.value
+    name = _dotted(annotation) or ""
+    return name == "ClassVar" or name.endswith(".ClassVar")
 
 
 def _class_var_type(annotation: ast.expr) -> ast.expr | None:

@@ -42,10 +42,14 @@ scenario's ``setup()`` and ``is_done()`` return, strictly: ``None`` and a
 
 from __future__ import annotations
 
+import builtins
+import collections.abc
 import copy
 import dataclasses
 import enum
+import inspect
 import math
+import sys
 import types
 import typing
 from dataclasses import dataclass, field
@@ -92,9 +96,35 @@ class Driver:
     build_error: str = ""
 
 
+#: The names the driver's own text uses at module level (its fixed imports,
+#: the locals of its functions, the builtins it calls and annotates with).
+#: A rendered class of one of these names would shadow it, so it is
+#: imported under an alias (:meth:`_Imports.name`).
+_DRIVER_NAMES = frozenset(
+    {
+        "carla",
+        "BaseScenario",
+        "EgoConfig",
+        "GroundProjectionConfig",
+        "Lanelet2Pose",
+        "SpawnTransform",
+        "config",
+        "scenario",
+        "value",
+        *dir(builtins),
+    }
+)
+
+
 class _Imports:
-    def __init__(self, *, shape: bool = False) -> None:
-        self.lines: list[str] = []
+    def __init__(self, *, shape: bool = False, share: _Imports | None = None) -> None:
+        #: The import lines, shared with *share*: a shape renders the same
+        #: classes as the program, under the same names.
+        self.lines: list[str] = [] if share is None else share.lines
+        #: ``(module, top-level name)`` -> the name it is imported as.
+        self.aliases: dict[tuple[str, str], str] = (
+            {} if share is None else share.aliases
+        )
         #: Render each value as a token of its type (:func:`_literal`).
         self.shape = shape
         #: ``(statement, config path)``: a scalar field of a nested dataclass,
@@ -104,11 +134,26 @@ class _Imports:
         self.checks: list[tuple[str, str]] = []
 
     def name(self, cls: type) -> str:
-        """The name *cls* is imported as in the driver."""
-        line = f"from {cls.__module__} import {cls.__qualname__.split('.')[0]}"
-        if line not in self.lines:
-            self.lines.append(line)
-        return cls.__qualname__
+        """The name *cls* is imported as in the driver.
+
+        Its own name, unless that is taken: by the driver's own text
+        (:data:`_DRIVER_NAMES`, ``_acs_*``) or by a class of another module
+        (a package's own ``EgoConfig``, two enums named ``Mode``).  Then
+        it is imported under an alias of its own, ``_acs_cls<n>_<name>``,
+        so that each name in the driver means the class it was rendered for.
+        """
+        top, dot, rest = cls.__qualname__.partition(".")
+        key = (cls.__module__, top)
+        alias = self.aliases.get(key)
+        if alias is None:
+            alias = top
+            taken = set(self.aliases.values())
+            if alias in _DRIVER_NAMES or alias.startswith("_acs_") or alias in taken:
+                alias = f"_acs_cls{len(self.aliases) + 1}_{top}"
+            self.aliases[key] = alias
+            as_ = "" if alias == top else f" as {alias}"
+            self.lines.append(f"from {cls.__module__} import {top}{as_}")
+        return f"{alias}{dot}{rest}"
 
 
 #: The runtime value is not known (the config did not build in Python).
@@ -187,7 +232,10 @@ def _render(
     if isinstance(actual, enum.Enum) and not isinstance(value, enum.Enum):
         value = actual
     elif isinstance(actual, tuple) and isinstance(value, list):
-        value = actual
+        # A tuple of the config's own items, each rendered against the item
+        # the runner holds: an item the config converted (a mapping it made
+        # a dataclass) is rendered from its mapping, not as its repr().
+        value = tuple(value) if len(value) == len(actual) else actual
     if isinstance(value, enum.Enum):
         cls = imports.name(type(value))
         return f"<{cls}>" if imports.shape else f"{cls}.{value.name}"
@@ -213,6 +261,11 @@ def _render(
             and (actual is _UNKNOWN or isinstance(actual, hint))
         ):
             return _render_dataclass(hint, value, imports, actual, path)
+        if dataclasses.is_dataclass(actual) and not isinstance(actual, type):
+            # The config converted the mapping to a dataclass its field's
+            # annotation does not name (or names in a way that does not
+            # resolve): render what the runner holds there.
+            return _render_dataclass(type(actual), value, imports, actual, path)
         key_hint, value_hint = (args + (Any, Any))[:2] if origin is dict else (Any, Any)
 
         def item(k: Any, v: Any) -> str:
@@ -229,19 +282,93 @@ def _render(
 
         return "{" + ", ".join(item(k, v) for k, v in value.items()) + "}"
     if isinstance(value, (list, tuple)):
-        item_hint = args[0] if origin in (list, tuple) and args else Any
-        items = ", ".join(
-            _render(v, item_hint, imports, _at(actual, i), f"{path}[{i}]")
-            for i, v in enumerate(value)
+        # The transform declares a `tuple[X, ...]` field, and a
+        # `Sequence[X]`-like one, as the `List[X]` it holds
+        # (`codon_annotation`): its value is a list whatever the config
+        # turned it into.  A fixed `tuple[X, Y]` is a tuple of its own
+        # item types.
+        listed = origin in _LISTED or (
+            origin is tuple and len(args) == 2 and args[1] is Ellipsis
         )
-        return f"({items},)" if isinstance(value, tuple) and value else f"[{items}]"
+        if listed:
+            item_hints: list[Any] = [args[0] if args else Any] * len(value)
+        elif origin is tuple:
+            fixed = [a for a in args if a != ()]
+            item_hints = [
+                fixed[i] if i < len(fixed) else Any for i in range(len(value))
+            ]
+        else:
+            item_hints = [Any] * len(value)
+        items = ", ".join(
+            _render(v, h, imports, _at(actual, i), f"{path}[{i}]")
+            for i, (v, h) in enumerate(zip(value, item_hints))
+        )
+        if isinstance(value, tuple) and not listed:
+            return f"({items},)" if value else "()"
+        return f"[{items}]"
     return repr(value)
 
 
+#: The origins of the annotations whose value the transform declares a list.
+_LISTED = (
+    list,
+    collections.abc.Sequence,
+    collections.abc.MutableSequence,
+    collections.abc.Iterable,
+    collections.abc.Collection,
+)
+
+
 def _field_hints(cls: type) -> dict[str, Any]:
+    """The type of each field of *cls*, as far as it resolves.
+
+    ``typing.get_type_hints()`` fails as a whole on one name it cannot
+    resolve (a ``TYPE_CHECKING``-only import under ``from __future__ import
+    annotations``): each field of a dataclass is then resolved on its own,
+    and only one that does not resolve renders as ``Any``.
+    """
     try:
         return typing.get_type_hints(cls)
-    except Exception:  # noqa: BLE001 - an unresolvable hint renders as Any
+    except Exception:  # noqa: BLE001 - resolved field by field below
+        pass
+    if not dataclasses.is_dataclass(cls):
+        return {}
+    hints: dict[str, Any] = {}
+    for f in dataclasses.fields(cls):
+        hint = _field_hint(cls, f.name, f.type)
+        if hint is not _UNKNOWN:
+            hints[f.name] = hint
+    return hints
+
+
+def _field_hint(cls: type, name: str, annotation: Any) -> Any:
+    """The type field *name* of *cls* is annotated *annotation*, or _UNKNOWN.
+
+    Resolved in the namespace of the class of *cls*'s MRO that declares the
+    field first (a field a base declares names what that base's module
+    imports, even where *cls*'s module has a class of the same name), then
+    in each other class's in turn.
+    """
+    holder = type("_AcsField", (), {"__annotations__": {name: annotation}})
+    declaring = [b for b in cls.__mro__ if name in _own_annotations(b)][:1]
+    for base in [*declaring, *(b for b in cls.__mro__ if b not in declaring)]:
+        module = sys.modules.get(base.__module__)
+        try:
+            return typing.get_type_hints(
+                holder,
+                globalns=dict(vars(module)) if module is not None else {},
+                localns=dict(vars(base)),
+            )[name]
+        except Exception:  # noqa: BLE001, S112 - unresolvable here: the next base
+            continue
+    return _UNKNOWN
+
+
+def _own_annotations(cls: type) -> dict[str, Any]:
+    """The annotations *cls* itself declares (not a base's), or ``{}``."""
+    try:
+        return inspect.get_annotations(cls)
+    except Exception:  # noqa: BLE001 - one that does not evaluate: none known
         return {}
 
 
@@ -328,7 +455,7 @@ def render_driver(
 
     by_assignment = _all_fields_have_defaults(config_cls)
     # The same program with each value a token of its type: the key.
-    shape_imports = _Imports(shape=True)
+    shape_imports = _Imports(shape=True, share=imports)
     config_args: list[tuple[str, str, str]] = []  # (key, line, shaped line)
     for key, value in scenario_dict.items():
         hint = hints.get(key, Any)

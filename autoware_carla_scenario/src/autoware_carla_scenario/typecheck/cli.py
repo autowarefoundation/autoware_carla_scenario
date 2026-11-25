@@ -27,6 +27,9 @@ A package author checks only theirs: ``scenario='my_package/*'``.
 the checked modules they import (docs/typecheck.md, "Checking the framework
 itself").  A name that is not a module of the package, or that it EXCLUDES,
 is refused (``[FAILED]``, exit status 1) before Codon is looked for.
+Likewise, the configs are composed and their ``controls:`` validated before
+Codon is looked for: a wrong control fails the command (exit status 1) with
+Codon or without.
 
 The flags are ``-h``/``--help`` and ``--library``.  Any other argument that
 starts with ``-`` is refused with ``Error: scenario-check does not take
@@ -47,7 +50,7 @@ from typing import Any
 
 from .check import find_supported_codon, refuse_library_modules, typecheck_library
 from .mode import typecheck_registered
-from .toolchain import ToolchainError
+from .toolchain import Toolchain, ToolchainError
 
 __all__ = ["main"]
 
@@ -102,14 +105,14 @@ def _main(argv: list[str] | None) -> int:
         if refusal is not None:
             print(f"[FAILED] {refusal.format()}")  # noqa: T201
             return 1
-    try:
-        toolchain = find_supported_codon()
-    except ToolchainError as exc:
-        print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
-        return 2
     if library:
         try:
-            result = typecheck_library(modules or None, toolchain=toolchain)
+            library_toolchain = find_supported_codon()
+        except ToolchainError as exc:
+            print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
+            return 2
+        try:
+            result = typecheck_library(modules or None, toolchain=library_toolchain)
         except Exception as exc:  # noqa: BLE001 - reported as a failed check
             print(_checker_error("library check", exc))  # noqa: T201
             return 1
@@ -172,6 +175,26 @@ def _main(argv: list[str] | None) -> int:
         if errors:
             control_errors[config_name] = errors
 
+    # Composing the configs and validating their controls needs no Codon:
+    # it is looked for only now, so a wrong control fails the command (exit
+    # status 1) with Codon or without (#2511), as a refused --library
+    # module does (#2288).
+    to_check = [c for n, c in zip(names, cfgs) if n not in control_errors]
+    toolchain: Toolchain | None = None
+    if to_check:
+        try:
+            toolchain = find_supported_codon()
+        except ToolchainError as exc:
+            print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
+            if not control_errors:
+                return 2
+    if control_errors and toolchain is None:
+        print(  # noqa: T201
+            f"{len(control_errors)} of {len(names)} scenario config(s) failed "
+            "the static check"
+        )
+        return 1
+
     def check(cfg: Any) -> Any:
         # An exception is this config's failure, not the command's: it is
         # returned, so the pool does not re-raise it and drop every other
@@ -186,7 +209,6 @@ def _main(argv: list[str] | None) -> int:
     # Each check is a separate `codon build`: run a few side by side (each
     # takes a CPU core and some memory of its own).
     # A config whose controls are wrong is reported above, not compiled.
-    to_check = [c for n, c in zip(names, cfgs) if n not in control_errors]
     with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
         checked = iter(list(pool.map(check, to_check)))
     results: list[Any] = [None if n in control_errors else next(checked) for n in names]
