@@ -295,3 +295,19 @@ def test_the_search_stops_where_the_successors_run_out(
         == []
     )
     graph.following.assert_called_once()
+
+
+def test_the_wrapper_needs_no_graph_at_depth_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #2509: the lanelet alone has no successors to find in the run's graph.
+    from autoware_carla_scenario.coordinate import stop_line
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    lanelet_map, ids, line = _road_with_stop_line_on(1)
+    mm = _NoGraphMapManager(lanelet_map)
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    assert stop_line.get_stop_line_linestrings_with_following(ids[0], 0) == []
+    assert stop_line.get_stop_line_poses_with_following(ids[0], depth=0) == []
+    found = stop_line.get_stop_line_linestrings_with_following(ids[1], 0)
+    assert [(owner, ls.id) for owner, ls in found] == [(ids[1], line)]

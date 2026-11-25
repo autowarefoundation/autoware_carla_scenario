@@ -262,22 +262,9 @@ def get_stop_line_linestrings_with_following(
         ValueError: If *depth* is negative, or the lanelet ID is not found in
             the map.
     """
-    if depth < 0:
-        raise ValueError(f"Stop line search depth must not be negative, got {depth}")
-    lanelet = _lanelet(lanelet_map, lanelet_id)
-
-    seen_ids: set[int] = set()
-
-    # First: check the lanelet itself
-    results = _collect_stop_lines_from_reg_elems(lanelet.regulatoryElements, seen_ids)
-    if results:
-        return [(lanelet_id, ls) for ls in results]
-    if depth == 0:
-        # The lanelet alone: no successors to find, so no routing graph to
-        # build for them, which reads the whole map (#2187).
-        return []
-
-    # Second: check following lanelets
+    search = _StopLineSearch(lanelet_map, lanelet_id, depth)
+    if not search.needs_routing_graph():
+        return search.own
     if routing_graph is None:
         import lanelet2.routing  # noqa: PLC0415
         import lanelet2.traffic_rules  # noqa: PLC0415
@@ -287,27 +274,75 @@ def get_stop_line_linestrings_with_following(
             lanelet2.traffic_rules.Participants.Vehicle,
         )
         routing_graph = lanelet2.routing.RoutingGraph(lanelet_map, traffic_rules)
-    # A Lanelet, then the routing graph's ConstLanelets.
-    frontier: list[ConstLanelet] = []
-    frontier.append(lanelet)
-    visited = {lanelet_id}
-    for _ in range(depth):
-        following: list[ConstLanelet] = []
-        for current in frontier:
-            for fll in routing_graph.following(current):
-                if fll.id not in visited:
-                    visited.add(fll.id)
-                    following.append(fll)
-        frontier = following
-        if not frontier:
-            # A dead end: no step further on has a lanelet to search.
-            break
-        all_results: list[tuple[int, ConstLineString3d]] = []
-        for fll in frontier:
-            fll_results = _collect_stop_lines_from_reg_elems(
-                fll.regulatoryElements, seen_ids
+    return search.following(routing_graph)
+
+
+class _StopLineSearch:
+    """One search of :func:`get_stop_line_linestrings_with_following`, in two
+    halves around the routing graph.
+
+    Constructing it refuses a negative depth, finds the lanelet and reads its
+    own stop lines (:attr:`own`); :meth:`following` searches its successors.
+    Only that half needs a routing graph, which reads the whole map, so a
+    caller that holds the graph lazily (:mod:`..coordinate.stop_line`) asks
+    :meth:`needs_routing_graph` before fetching it (#2187, #2509).
+
+    Raises:
+        ValueError: If *depth* is negative, or the lanelet ID is not found in
+            the map.
+    """
+
+    lanelet: ConstLanelet
+    lanelet_id: int
+    depth: int
+    seen_ids: set[int]
+    own: list[tuple[int, ConstLineString3d]]
+
+    def __init__(self, lanelet_map: LaneletMap, lanelet_id: int, depth: int) -> None:
+        if depth < 0:
+            raise ValueError(
+                f"Stop line search depth must not be negative, got {depth}"
             )
-            all_results.extend((fll.id, ls) for ls in fll_results)
-        if all_results:
-            return all_results
-    return []
+        self.lanelet = _lanelet(lanelet_map, lanelet_id)
+        self.lanelet_id = lanelet_id
+        self.depth = depth
+        self.seen_ids = set()
+        found = _collect_stop_lines_from_reg_elems(
+            self.lanelet.regulatoryElements, self.seen_ids
+        )
+        self.own = [(lanelet_id, ls) for ls in found]
+
+    def needs_routing_graph(self) -> bool:
+        """Whether the search goes on to the successors: the lanelet has no
+        stop line of its own and *depth* is not ``0`` (the lanelet alone)."""
+        return not self.own and self.depth > 0
+
+    def following(
+        self, routing_graph: RoutingGraph
+    ) -> list[tuple[int, ConstLineString3d]]:
+        """The stop lines of the first step of successors in *routing_graph*
+        that has any, up to *depth* steps; empty if none has."""
+        # A Lanelet, then the routing graph's ConstLanelets.
+        frontier: list[ConstLanelet] = []
+        frontier.append(self.lanelet)
+        visited = {self.lanelet_id}
+        for _ in range(self.depth):
+            following: list[ConstLanelet] = []
+            for current in frontier:
+                for fll in routing_graph.following(current):
+                    if fll.id not in visited:
+                        visited.add(fll.id)
+                        following.append(fll)
+            frontier = following
+            if not frontier:
+                # A dead end: no step further on has a lanelet to search.
+                break
+            all_results: list[tuple[int, ConstLineString3d]] = []
+            for fll in frontier:
+                fll_results = _collect_stop_lines_from_reg_elems(
+                    fll.regulatoryElements, self.seen_ids
+                )
+                all_results.extend((fll.id, ls) for ls in fll_results)
+            if all_results:
+                return all_results
+        return []

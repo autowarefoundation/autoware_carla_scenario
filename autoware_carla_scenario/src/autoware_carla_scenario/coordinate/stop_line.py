@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 import lanelet2
 
 from ..utils.stop_line import (
+    _StopLineSearch,
     get_stop_line_linestrings as _linestrings_of,
-    get_stop_line_linestrings_with_following as _linestrings_of_with_following,
 )
 from .map_manager import MapManager
 from .poses import Lanelet2Pose
@@ -51,8 +51,8 @@ def get_stop_line_linestrings_with_following(
     Successors are found in the :attr:`MapManager.routing_graph` (by German
     traffic rules, for a vehicle, as one built for the call would be), which
     is built once for the run rather than on every call -- and only when
-    they are searched: a lanelet with a stop line of its own, or one not in
-    the map, never asks for it.
+    they are searched: a lanelet with a stop line of its own, one not in the
+    map, or a *depth* of ``0`` never asks for it.
 
     Requires :class:`MapManager` to be initialised.
 
@@ -60,20 +60,14 @@ def get_stop_line_linestrings_with_following(
         ValueError: If *depth* is negative, or the lanelet ID is not found in
             the map.
     """
-    # Refused here too: a lanelet with a stop line of its own never reaches
-    # the search below, and a negative depth is wrong whatever the lanelet.
-    if depth < 0:
-        raise ValueError(f"Stop line search depth must not be negative, got {depth}")
     mm = MapManager.get_instance()
-    lanelet_map = mm.lanelet_map
-    # The lanelet's own stop lines first, as the search itself does, so that
-    # the graph (some 40 s on a city map) is built only to look further.
-    own = _linestrings_of(lanelet_map, lanelet_id)
-    if own:
-        return [(lanelet_id, ls) for ls in own]
-    return _linestrings_of_with_following(
-        lanelet_map, lanelet_id, depth, routing_graph=mm.routing_graph
-    )
+    # The search's first half reads the lanelet's own stop lines; only the
+    # second, for its successors, needs the graph (some 40 s on a city map),
+    # so it is fetched only then (#2509).
+    search = _StopLineSearch(mm.lanelet_map, lanelet_id, depth)
+    if not search.needs_routing_graph():
+        return search.own
+    return search.following(mm.routing_graph)
 
 
 def _linestring_to_pose(ls: ConstLineString3d, lanelet_id: int) -> Lanelet2Pose | None:
