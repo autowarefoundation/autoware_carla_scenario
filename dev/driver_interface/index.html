@@ -3050,6 +3050,14 @@ numbers, its <code>fps</code> positive and finite, its <code>fov</code> in (0, 1
 renders the pinhole of the horizontal <code>fov</code> -- and its mount (<code>position_x/y/z</code>,
 <code>roll</code>, <code>pitch</code>, <code>yaw</code>) finite. A camera out of these bounds is refused as the
 config is read, not when it attaches after the ego spawned.</p>
+<p>A camera renders at most once a 0.05 s tick, on a tick, so its frame period is
+rounded to whole ticks: an <code>fps</code> above 20 delivers 20 frames a second, and an
+<code>fps</code> whose <code>1 / fps</code> is not a whole number of ticks alternates between the two
+around it (<code>fps: 15</code> sends a frame after 1, then 2 ticks: 15 on average, with
+50 or 100 ms between frames). Neither is refused; the run warns once as the
+config is read, naming the rate the camera delivers, and the camera's
+<code>CarlaCameraSensor attached</code> log line gives that rate (#2499). <code>fps</code> 20, 10,
+5, ... are whole numbers of ticks.</p>
 <p>A <code>null</code> setting of a <code>driver.cameras</code> or <code>driver.lidars</code> entry is its default,
 as an absent one, the way a ROS 2 camera's is: <code>logical_id: null</code> is
 <code>camera_front_wide_120fov</code> (a LiDAR's <code>lidar_top</code>), <code>fov: null</code> 120 degrees,
@@ -3504,7 +3512,12 @@ the same numbers here.</p>
 <p>The contract has no LiDAR submission RPC, so sweeps ride in <code>renderer_data</code> too. Each
 <code>driver.lidars</code> entry mounts a <code>sensor.lidar.ray_cast</code> (mount in CARLA's convention, like
 a camera) that sweeps once per policy step (<code>policy_timestep_s</code>), and each policy step
-sends that sweep, already converted into the rig frame. The sweep may come from an
+sends that sweep, already converted into the rig frame. The LiDAR turns once a tick
+(20 Hz), so a sweep is one revolution, taken within its tick, and holds
+<code>points_per_second × 0.05</code> points -- 60000 at the default 1200000 -- however long the
+policy step: copying a 10 Hz sensor's <code>points_per_second</code> gives half its points a
+revolution, so double it to keep its angular density. The LiDAR's
+<code>CarlaLidarSensor attached</code> log line gives the points a sweep (#2499). The sweep may come from an
 earlier simulation tick of the step than the one the step is sent on; it is stamped
 with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
 within a second is left out rather than replaced by an older one. CARLA first sweeps
@@ -3563,7 +3576,7 @@ an <code>EnvironmentAction</code> mid-run set it alike
 <tr>
 <td><code>noise_seed</code></td>
 <td><code>null</code></td>
-<td>Seed of the noise; with the sweep's frame, it repeats a run's sweeps. Null takes the run's <code>seed</code>, mixed with the LiDAR's <code>logical_id</code>, so that LiDARs alike draw different noise on the same frame and each the same in every run of a seed; a seed given is used as it is, so two LiDARs given the same one draw the same noise</td>
+<td>Seed of the noise; with the sweep's frame counted from the LiDAR's first read (not the server's frame, which a reused server keeps counting across runs), it repeats a run's sweeps. Null takes the run's <code>seed</code>, mixed with the LiDAR's <code>logical_id</code>, so that LiDARs alike draw different noise on the same frame and each the same in every run of a seed; a seed given is used as it is, so two LiDARs given the same one draw the same noise</td>
 </tr>
 <tr>
 <td><code>fog_density_scale</code></td>
@@ -3890,7 +3903,7 @@ drift from the <code>.proto</code> files (<code>compile_protos.py --check</code>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 06:49:11 UTC"><span class="timeago" datetime="2026-11-25T06:49:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 06:49:11 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 17:27:37 UTC"><span class="timeago" datetime="2026-11-25T17:27:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 17:27:37 UTC">2026-11-25</span>
   </span>
 
     
