@@ -1,5 +1,29 @@
 # Migrating
 
+## `launcher.time` is text, never a number
+
+`launcher.time` written as a number is now refused, as the config is read
+([SLURM](slurm.md)). YAML reads an unquoted `12:00:00` as the base-60 number
+43200 (and `120:00` as 7200), which `sbatch --time` took as minutes: a job
+meant for 12 hours asked for 30 days. Such a number cannot be told from one
+meant as minutes, so `time: 90` (and `time: 1.5`) is refused with it (#2483).
+Quote the value in a config:
+
+```yaml
+time: "12:00:00"   # was: time: 12:00:00
+time: "90"         # was: time: 90 (minutes)
+```
+
+On the command line `launcher.time=12:00:00` is text already; minutes are
+quoted for Hydra: `launcher.time="'90'"`, not `launcher.time=90`. The viewer's
+run panel quotes the field itself. Batches already submitted resubmit as
+before: their manifest holds the time as text.
+
+The same release caps `launcher.signal_grace_seconds` at 65535, what
+`sbatch --signal` takes, and runs `launcher.setup` in the directory the batch
+was submitted from and with `set +u` in every job, not only with
+`launcher.remote_cwd`.
+
 ## `debug_markers.plan_markers` is gone
 
 The helper was exported but nothing in the framework called it: the
