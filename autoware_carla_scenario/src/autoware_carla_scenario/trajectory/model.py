@@ -1350,6 +1350,10 @@ class ResolvedTrajectory:
             # The whole path; on a loop, also when the window covers it.
             return self._nearest(x, y, 0, len(self._arc) - 1)[1]
         if not loop:
+            # An open path has nothing past its ends: a *near* beyond them
+            # (a FOLLOW's initial offset past the end) looks from that end,
+            # so the window always takes in some of the path.
+            near = min(max(near, 0.0), length)
             first, stop = self._window(near - window, near + window)
             return self._nearest(x, y, first, stop)[1]
         # A closed path: the window, its centre taken modulo the length, and
