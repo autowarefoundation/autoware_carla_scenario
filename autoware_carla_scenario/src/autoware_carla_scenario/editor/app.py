@@ -152,10 +152,19 @@ def map_viewer_url() -> str:
 def build_service(
     draft_dir: str | Path | None = None, export_dir: str | Path | None = None
 ) -> EditorService:
-    """Build the service the app's routes operate through."""
-    store = DraftStore(Path(draft_dir) if draft_dir else default_draft_dir())
+    """Build the service the app's routes operate through.
+
+    A directory given is expanded and resolved as the defaults read from
+    ``SCENARIO_EDITOR_DRAFTS`` and ``SCENARIO_EDITOR_EXPORT_DIR`` are, so
+    ``~/drafts`` means the same directory however it reaches the editor -- a
+    flag, a variable, or ``create_app()`` -- and never a ``./~`` (#2559).
+    """
+    store = DraftStore(
+        Path(draft_dir).expanduser().resolve() if draft_dir else default_draft_dir()
+    )
     return EditorService(
-        store, Path(export_dir) if export_dir else default_export_dir()
+        store,
+        Path(export_dir).expanduser().resolve() if export_dir else default_export_dir(),
     )
 
 
@@ -286,7 +295,10 @@ def create_app(
 
     @application.exception_handler(EditorStorageError)
     def _storage_error(request: Request, exc: Exception) -> Response:
-        """Render a drafts directory that refused a write as a page, not a 500 traceback.
+        """Render a directory that refused a write as a page, not a 500 traceback.
+
+        The drafts directory, or the export directory staging a wheelhouse
+        (#2559); the exception's ``heading`` says which.
 
         The server's fault, not the request's, so a 5xx: 507 Insufficient
         Storage when the disk is full (what that status means), and 500
@@ -301,7 +313,7 @@ def create_app(
             request=request,
             name="error.html",
             context={
-                "heading": "Cannot save drafts",
+                "heading": getattr(exc, "heading", "Cannot save drafts"),
                 "message": str(exc),
                 "page": "error",
             },
