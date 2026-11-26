@@ -1125,8 +1125,8 @@ those models declare.
 
 A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites `X | None` into
-`Optional[X]`, drops `@dataclass` (and appends the `==`, ordering and hash it
-generates) and resolves `field(...)` defaults, accepts
+`Optional[X]`, drops `@dataclass` (and appends the `==`, ordering, hash and
+repr it generates) and resolves `field(...)` defaults, accepts
 keyword-only parameters, required ones after a default included (a call
 that passes one by position is refused at the call, as Python refuses it:
 `gap() takes 1 positional argument but more were given: scale is keyword-only`,
@@ -1642,6 +1642,37 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     identity, as a plain class does (below). Python refuses `<` without
     `order=True` and `hash()` of a non-frozen dataclass, and so does the
     check, with a hint naming the flag.
+  - A `@dataclass` (`repr=True`, the default) also gets Python's `__repr__`
+    (#2536), `Pt(x=1.0, name='a')`, of its fields in the same order
+    (`field(repr=False)`, `ClassVar`, `InitVar` and `KW_ONLY` left out), so
+    `repr([pt])`, `repr(best)` of an `Optional[Pt]` and `f"{plan!r}"` of a
+    dataclass holding one compile: Codon gives a class only a default repr
+    (`<Pt object at 0x...>`), which `repr(pt)` and `str(pt)` fall back on
+    but an `Optional`'s and a container's `__repr__` do not ("'Pt' object
+    has no attribute '__repr__'"). A `__repr__` the class defines (or
+    assigns) is kept, and `@dataclass(repr=False)` gets none. It is written
+    only where Codon compiles `repr()` of every field shown: `int`, `float`,
+    `str`, `bool`, `complex`, a `Literal`, an enum (of the module, another
+    checked module or the model, by its bare name, which no class of the
+    module that is no enum shadows), a class of the module
+    that has a `__repr__` (its own or this one, the class itself too), and
+    an `Optional`, `list`, `set`, `tuple` or `dict` of those; a field of a
+    class of the module without one (shown by the default repr) as it is,
+    not inside an `Optional` or a container. Any other field (a `Union`,
+    which Codon has no `repr()` of, `Any`, an alias, an imported class such
+    as `Path` or `Lanelet2Pose`, a NumPy type) leaves the class with Codon's
+    default, as a generated method calling the missing `__repr__` would
+    make `repr()` and `str()` of the class, which compile on the default,
+    fail; so does a module that binds a `repr` of its own. The same holds for the bases and nesting as `==` (above): a base
+    dataclass's fields come first, a field declared again keeping its
+    place, and a nested dataclass gets it at the end of its body (named
+    `Plans.Leg`). The check does not run it, so only its type matters.
+    `str()` of a type, such as `f"{type(pose)}"` of a `Union` value, is
+    the type's `repr()` in the check (the model's `_tc.codon`): Codon's own
+    `str()` takes a type of a `Union` for a `Union` value and fails on
+    `__ptr__()` of it ("only takes identifiers or tuple fields as
+    arguments") once a member has a `__str__` or a `__repr__`, as each of
+    these dataclasses now does.
   - A plain class (one that does not define `__eq__`) compares and hashes by
     identity, as Python's `object` does (#596): `a in npcs`,
     `npcs.remove(a)`, `a == b`, `{t}`, `{t: 1}` and `dict[Npc, float]`
