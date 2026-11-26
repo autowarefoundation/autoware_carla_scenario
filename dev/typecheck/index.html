@@ -3510,8 +3510,8 @@ those models declare.</p>
 <h2 id="writing-a-scenario-that-type-checks">Writing a scenario that type-checks<a class="headerlink" href="#writing-a-scenario-that-type-checks" title="Permanent link">&para;</a></h2>
 <p>A scenario is ordinary typed Python. Codon is stricter than Python in a few
 places, and the checker smooths over most of them (it rewrites <code>X | None</code> into
-<code>Optional[X]</code>, drops <code>@dataclass</code> (and appends the <code>==</code>, ordering and hash it
-generates) and resolves <code>field(...)</code> defaults, accepts
+<code>Optional[X]</code>, drops <code>@dataclass</code> (and appends the <code>==</code>, ordering, hash and
+repr it generates) and resolves <code>field(...)</code> defaults, accepts
 keyword-only parameters, required ones after a default included (a call
 that passes one by position is refused at the call, as Python refuses it:
 <code>gap() takes 1 positional argument but more were given: scale is keyword-only</code>,</p>
@@ -4006,6 +4006,37 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     identity, as a plain class does (below). Python refuses <code>&lt;</code> without
     <code>order=True</code> and <code>hash()</code> of a non-frozen dataclass, and so does the
     check, with a hint naming the flag.</li>
+<li>A <code>@dataclass</code> (<code>repr=True</code>, the default) also gets Python's <code>__repr__</code>
+    (#2536), <code>Pt(x=1.0, name='a')</code>, of its fields in the same order
+    (<code>field(repr=False)</code>, <code>ClassVar</code>, <code>InitVar</code> and <code>KW_ONLY</code> left out), so
+    <code>repr([pt])</code>, <code>repr(best)</code> of an <code>Optional[Pt]</code> and <code>f"{plan!r}"</code> of a
+    dataclass holding one compile: Codon gives a class only a default repr
+    (<code>&lt;Pt object at 0x...&gt;</code>), which <code>repr(pt)</code> and <code>str(pt)</code> fall back on
+    but an <code>Optional</code>'s and a container's <code>__repr__</code> do not ("'Pt' object
+    has no attribute '<strong>repr</strong>'"). A <code>__repr__</code> the class defines (or
+    assigns) is kept, and <code>@dataclass(repr=False)</code> gets none. It is written
+    only where Codon compiles <code>repr()</code> of every field shown: <code>int</code>, <code>float</code>,
+    <code>str</code>, <code>bool</code>, <code>complex</code>, a <code>Literal</code>, an enum (of the module, another
+    checked module or the model, by its bare name, which no class of the
+    module that is no enum shadows), a class of the module
+    that has a <code>__repr__</code> (its own or this one, the class itself too), and
+    an <code>Optional</code>, <code>list</code>, <code>set</code>, <code>tuple</code> or <code>dict</code> of those; a field of a
+    class of the module without one (shown by the default repr) as it is,
+    not inside an <code>Optional</code> or a container. Any other field (a <code>Union</code>,
+    which Codon has no <code>repr()</code> of, <code>Any</code>, an alias, an imported class such
+    as <code>Path</code> or <code>Lanelet2Pose</code>, a NumPy type) leaves the class with Codon's
+    default, as a generated method calling the missing <code>__repr__</code> would
+    make <code>repr()</code> and <code>str()</code> of the class, which compile on the default,
+    fail; so does a module that binds a <code>repr</code> of its own. The same holds for the bases and nesting as <code>==</code> (above): a base
+    dataclass's fields come first, a field declared again keeping its
+    place, and a nested dataclass gets it at the end of its body (named
+    <code>Plans.Leg</code>). The check does not run it, so only its type matters.
+    <code>str()</code> of a type, such as <code>f"{type(pose)}"</code> of a <code>Union</code> value, is
+    the type's <code>repr()</code> in the check (the model's <code>_tc.codon</code>): Codon's own
+    <code>str()</code> takes a type of a <code>Union</code> for a <code>Union</code> value and fails on
+    <code>__ptr__()</code> of it ("only takes identifiers or tuple fields as
+    arguments") once a member has a <code>__str__</code> or a <code>__repr__</code>, as each of
+    these dataclasses now does.</li>
 <li>A plain class (one that does not define <code>__eq__</code>) compares and hashes by
     identity, as Python's <code>object</code> does (#596): <code>a in npcs</code>,
     <code>npcs.remove(a)</code>, <code>a == b</code>, <code>{t}</code>, <code>{t: 1}</code> and <code>dict[Npc, float]</code>
@@ -9289,7 +9320,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 03:59:26 UTC"><span class="timeago" datetime="2026-11-26T03:59:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 03:59:26 UTC">2026-11-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 12:12:18 UTC"><span class="timeago" datetime="2026-11-26T12:12:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 12:12:18 UTC">2026-11-26</span>
   </span>
 
     
