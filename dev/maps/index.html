@@ -2705,11 +2705,15 @@ They are passed to git as written, but every log line, error message,
 this framework writes shows them redacted
 (<code>https://oauth2:***@host/o/r</code>; an http(s) user name with no password, which
 is how a token is often passed, as <code>***</code>). The cache entry is keyed on the URL
-without its password, so a replaced token reuses the entry, and <strong>Refresh</strong>
-fetches with the token now in the source.</p>
+without its password, or without that http(s) user name, so a replaced token
+reuses the entry, and <strong>Refresh</strong> fetches with the token now in the source.
+A map cached through a <code>https://TOKEN@host/...</code> URL before that user name was
+dropped from the key is cloned again once, into the new entry.</p>
 <p>The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's <code>/tree/&lt;ref&gt;/&lt;path&gt;</code> and HuggingFace's
-<code>/tree/</code>, <code>/resolve/</code> and <code>/raw/</code> forms all parse. Paste the page you are
+<code>/tree/</code>, <code>/resolve/</code> and <code>/raw/</code> forms all parse, as do Gitea's and
+Forgejo's <code>/src/branch/&lt;ref&gt;/&lt;path&gt;</code> (or <code>tag</code>, <code>commit</code>) and Bitbucket's
+<code>/src/&lt;ref&gt;/&lt;path&gt;</code>. Paste the page you are
 looking at. The anchor such a URL may end in is the page's, not a path: on a
 <code>/tree/</code>, <code>/blob/</code> (or other view) URL the view's own path wins over any <code>#</code>,
 and on any other <code>https://</code> page a line anchor (<code>#L10</code>, <code>#L10-L20</code>) or a
@@ -3140,7 +3144,7 @@ without one. A map whose CARLA assets need it installed is run with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 23:44:47 UTC"><span class="timeago" datetime="2026-11-24T23:44:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 23:44:47 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 14:31:15 UTC"><span class="timeago" datetime="2026-11-26T14:31:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 14:31:15 UTC">2026-11-26</span>
   </span>
 
     
