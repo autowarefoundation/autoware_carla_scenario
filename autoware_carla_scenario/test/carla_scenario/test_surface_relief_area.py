@@ -123,6 +123,24 @@ class TestReading:
         assert grid.v[0] == pytest.approx(-2.0)
         assert grid.values[round(22.0 / 0.05) - 300][40] == pytest.approx(0.06)
 
+    def test_a_header_line_may_end_in_a_comment(self, tmp_path: Path) -> None:
+        """``!`` starts a comment on a block line and the format line (#2541)."""
+        plain = _crg_text(15.0, 45.0, -2.0, 2.5, _hump_and_groove)
+        commented: list[str] = []
+        for line in plain.splitlines():
+            if line.startswith("#:") or (
+                line.startswith("$") and not line.startswith("$$$$")
+            ):
+                line = f"{line}      ! a comment"
+            commented.append(line)
+        path = tmp_path / "g.crg"
+        path.write_text("\n".join(commented) + "\n")
+        expected = tmp_path / "plain.crg"
+        expected.write_text(plain)
+        grid = read_crg(path)
+        assert grid == read_crg(expected)
+        assert len(grid.u) == 601 and len(grid.v) == 91
+
     def test_a_raised_part_and_a_grooved_part_are_two_regions(
         self, surface: Path
     ) -> None:

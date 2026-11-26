@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -43,6 +42,7 @@ from .cache import (
     DERIVED_SUBDIR,
     CachedRepo,
     GitMapCache,
+    _SLUG_UNSAFE,
     is_lfs_pointer,
     _literal_pattern,
 )
@@ -77,8 +77,6 @@ LOCAL_DERIVED_SUBDIR = "local"
 
 #: Autoware's projection descriptor, written next to the Lanelet2 map.
 PROJECTOR_INFO_FILENAME = "map_projector_info.yaml"
-
-_SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 #: Projection descriptors :func:`projector_info_path` has warned about, by
 #: path, so a map read many times a run says so once.

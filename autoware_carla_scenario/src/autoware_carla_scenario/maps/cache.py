@@ -64,7 +64,7 @@ from .source import (
     MapSourceError,
     looks_like_commit,
     redacted_url,
-    url_without_password,
+    url_cache_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -273,11 +273,11 @@ class GitMapCache:
         The slug is readable so that a person can find a map in the cache by
         eye; the digest after it is what actually keeps two repositories apart,
         since sanitising a URL is not injective.  The digest is of the URL
-        without its password (:func:`~...maps.source.url_without_password`):
-        the same repository reached with another token is the same entry, and
-        a URL with no password keys the entry it always did.
+        without its password, or the http(s) user name that is a token
+        (:func:`~...maps.source.url_cache_key`): the same repository reached
+        with another token is the same entry.
         """
-        identity = f"{url_without_password(source.repo_url)}\n{source.ref}"
+        identity = f"{url_cache_key(source.repo_url)}\n{source.ref}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:10]
         slug = _SLUG_UNSAFE.sub("-", f"{source.repo_name}-{source.ref or 'HEAD'}")
         return self.root / REPOS_SUBDIR / f"{slug.strip('-').lower()}-{digest}"
@@ -300,7 +300,7 @@ class GitMapCache:
         the same map cloned here.  A stale file is replaced the way it always
         was, by fetching again with ``refresh``.
         """
-        url = url_without_password(source.repo_url)
+        url = url_cache_key(source.repo_url)
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
         slug = _SLUG_UNSAFE.sub("-", source.repo_name).strip("-").lower() or "repo"
         return self.root / DERIVED_SUBDIR / f"{slug}-{digest}" / (source.path or "root")
@@ -458,7 +458,20 @@ class GitMapCache:
         if not at_commit.pinned:
             logger.warning("%s names no ref in %s.", ref, redacted_url(source.repo_url))
             return source
-        self._write_tip(source, at_commit.ref, expansion)
+        try:
+            self._write_tip(source, at_commit.ref, expansion)
+        except OSError as exc:
+            # A root this process cannot write (another user's, read-only)
+            # still serves what it holds: without the note the commit is
+            # asked for again next time, as it was before notes existed.
+            logger.warning(
+                "Could not record which commit %s of %s is at in %s (%s); "
+                "using it without the note.",
+                ref,
+                redacted_url(source.repo_url),
+                self.tip_file(source),
+                exc,
+            )
         return at_commit
 
     def remember_tip(self, source: MapSource, commit: str) -> None:
@@ -690,6 +703,11 @@ class GitMapCache:
 
             commit = self._git(worktree, "rev-parse", "HEAD", capture=True).strip()
             self._write_meta(staging, source, commit)
+            # The entry lock is held, so whatever is at the entry's name but
+            # holds no repository -- a checkout someone deleted, a clone
+            # interrupted by a full disk -- is no other resolve's work: it is
+            # moved aside, or the rename below could never succeed (#2541).
+            _discard_stale_entry(entry, source)
             try:
                 staging.replace(entry)
             except OSError:
@@ -1405,6 +1423,50 @@ if not TYPE_CHECKING:
             after_in_parent=_release_fork_guard,
             after_in_child=_forget_locks,
         )
+
+
+def _discard_stale_entry(entry: Path, source: MapSource) -> None:
+    """Move *entry* aside and remove it if it is there without ``repo/.git``.
+
+    Called holding the entry's lock, just before a fresh clone is renamed
+    into place: :meth:`GitMapCache.peek` reports such an entry as not cloned,
+    and a non-empty directory in the way would fail every later clone of it.
+
+    Raises:
+        MapCacheError: If it cannot be moved aside.
+    """
+    if not os.path.lexists(entry) or (entry / "repo" / ".git").exists():
+        return
+    logger.warning(
+        "Replacing the map cache entry %s of %s: it holds no repository.",
+        entry,
+        redacted_url(source.repo_url),
+    )
+    try:
+        if entry.is_dir() and not entry.is_symlink():
+            aside = Path(
+                tempfile.mkdtemp(prefix=f".{entry.name}.stale.", dir=str(entry.parent))
+            )
+            # Onto the empty directory just made: a rename, so the entry's
+            # name is free at once, and removing the rest can fail harmlessly.
+            entry.replace(aside)
+            if (aside / "repo" / ".git").exists():
+                # Where the lock could not be taken (`_lock_file`), another
+                # process's clone may have landed between the look and the
+                # move: it is a good entry, so it goes back, unless yet
+                # another one took the name meanwhile.
+                try:
+                    aside.replace(entry)
+                except OSError:
+                    pass
+            shutil.rmtree(aside, ignore_errors=True)
+        else:
+            entry.unlink()
+    except OSError as exc:
+        raise MapCacheError(
+            f"The map cache entry {entry} of {redacted_url(source.repo_url)} holds "
+            f"no repository and could not be removed ({exc}); remove it by hand."
+        ) from exc
 
 
 def _warn_unlocked(key: str, exc: OSError) -> None:
