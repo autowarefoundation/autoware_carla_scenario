@@ -202,7 +202,7 @@ def secrets(tmp_path: Path) -> Path:
         )
     )
     (outside / "manifest.json").write_text(
-        json.dumps({"cases": [{"index": 0, "label": "SECRET_SCENARIO"}]})
+        json.dumps({"version": 2, "cases": [{"index": 0, "label": "SECRET_SCENARIO"}]})
     )
     (outside / "0.json").write_text(
         json.dumps({"result": {"passed": True, "message": "SECRET_MESSAGE"}})
@@ -324,6 +324,12 @@ def test_symlinked_slurm_records_are_not_read(
         assert entry["pending"] is True and "SECRET" not in json.dumps(entry)
     assert "SECRET" not in client.get("/").text
     assert "SECRET" not in client.get(f"/session/batch/{DATE}/11-00-00").text
+    if linked in ("manifest", "slurm"):
+        # Nor is the batch's SLURM panel, or an action on it, a batch's.
+        status = client.get(f"/api/slurm/{DATE}/11-00-00/status")
+        assert status.status_code == 404 and "SECRET" not in status.text
+        action = client.post(f"/api/slurm/{DATE}/11-00-00/collect")
+        assert action.status_code == 404
 
 
 # ── single and batch URLs name their own sessions (#2543) ───────────────────
