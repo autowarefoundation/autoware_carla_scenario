@@ -16,7 +16,7 @@ from ..entity_role import _refuse_ego_role_name
 from ..traffic.base import DrivenEntity
 from ..traffic.driven import BackendDriven
 from ..utils.vehicles import is_emergency_vehicle_type, set_siren_lights
-from ._spawn import SpawnLocation, spawn_vehicle_actor
+from ._spawn import SpawnLocation, SpawnPointIndex, SpawnTransform, spawn_vehicle_actor
 
 #: Module-level flag set by :class:`~autoware_carla_scenario.scenario_runner.ScenarioRunner`
 #: after warm-up ticks complete.  When ``True``, :meth:`VehicleEntity.spawn`
@@ -125,13 +125,23 @@ def _same_vehicle_config(a: VehicleEntityConfig, b: VehicleEntityConfig) -> bool
     )
 
 
+def _spawn_location_repr(location: SpawnLocation) -> str:
+    """``repr()`` of a spawn location, one variant at a time: Codon has no
+    ``repr()`` of a ``Union`` (#2536)."""
+    if isinstance(location, SpawnPointIndex):
+        index: SpawnPointIndex = location
+        return repr(index)
+    transform: SpawnTransform = location
+    return repr(transform)
+
+
 def _vehicle_config_repr_fields(config: VehicleEntityConfig) -> str:
     """The :class:`VehicleEntityConfig` fields of *config* as the dataclass's
     ``__repr__`` writes them (``role_name='npc1', spawn_location=...``), for a
     subclass's own ``__repr__`` to add its state to (#2534)."""
     return (
         f"role_name={config.role_name!r}, "
-        f"spawn_location={config.spawn_location!r}, "
+        f"spawn_location={_spawn_location_repr(config.spawn_location)}, "
         f"vehicle_type={config.vehicle_type!r}, "
         f"initial_speed_kmh={config.initial_speed_kmh!r}, "
         f"spawn_retry_max_count={config.spawn_retry_max_count!r}, "
