@@ -136,6 +136,70 @@ def test_a_rewrite_keeps_the_value_and_the_lines(source: str, expected: str) -> 
             '    r = (lambda _acs_f0: f"{_acs_f0}")((yield))\n',
             9,
         ),
+        (
+            "def g():\n"
+            "    r = format((yield))\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send(9)\n",
+            "    r = str((yield))\n",
+            9,
+        ),
+        (
+            "def g():\n"
+            "    r = format(x, (yield))\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send('')\n",
+            "    r = x.__format__((yield))\n",
+            "",
+        ),
+        (
+            "def g():\n"
+            "    r = ascii((yield))\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send(9)\n",
+            "    r = repr((yield))\n",
+            9,
+        ),
+        (
+            "def g():\n"
+            "    r = round((yield))\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send(2.5)\n",
+            "    r = int(round((yield)))\n",
+            2.5,
+        ),
+        (
+            "def g():\n"
+            "    r = round((yield), ndigits=1)\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send(2.25)\n",
+            "    r = round((yield), 1)\n",
+            2.25,
+        ),
+        (
+            "def g():\n"
+            "    r = round(2.25, ndigits=(yield))\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send(1)\n",
+            "    r = round(2.25, (yield))\n",
+            1,
+        ),
+        (
+            "def g():\n"
+            '    r = "ab".startswith(("a", (yield)))\n'
+            "    yield r\n"
+            "it = g(); next(it); r = it.send('b')\n",
+            '    r = ((lambda _acs_a0, _acs_a1, _acs_a2: _acs_a0.startswith(_acs_a1) or _acs_a0.startswith(_acs_a2))("ab", "a", (yield)))\n',
+            "b",
+        ),
+        (
+            "def g():\n"
+            "    r = d.keys() | (yield)\n"
+            "    yield r\n"
+            "it = g(); next(it); r = it.send({'y'})\n",
+            "    r = (set(d.keys()) | set((yield)))\n",
+            {"y"},
+        ),
     ],
 )
 def test_a_pasted_yield_keeps_its_parentheses(
@@ -144,6 +208,29 @@ def test_a_pasted_yield_keeps_its_parentheses(
     text = _rewritten(source)
     assert text.splitlines(keepends=True)[1] == expected
     assert _run(text) == _run(source)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "t.count((yield))",
+            "(t.count((yield)) if hasattr(t, 'count') else _acs_count(t, (yield)))",
+        ),
+        ("(1, 2).index((yield))", "(_acs_index((1, 2), (yield)))"),
+        (
+            "isinstance((yield), dict)",
+            "(isinstance((yield), dict) or (isinstance((yield), json.JSONValue)"
+            " and ((yield))._acs_isjson()))",
+        ),
+    ],
+)
+def test_a_yield_pasted_into_a_helper_call_keeps_its_parentheses(
+    source: str, expected: str
+) -> None:
+    """Where the result calls a model helper CPython has not (#2517)."""
+    text = _rewritten(f"import json\ndef g(t):\n    r = {source}\n")
+    assert text.splitlines()[2] == f"    r = {expected}"
 
 
 def test_a_rewrite_writes_no_fstring_syntax_of_python_3_12() -> None:

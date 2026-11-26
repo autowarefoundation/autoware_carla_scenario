@@ -1707,7 +1707,7 @@ class _Pass(ShadowScopes):
             or any(isinstance(a, ast.Starred) for a in node.args)
         ):
             return None
-        subject, kinds = (self._text(a) for a in node.args)
+        subject, kinds = (self._grouped(a) for a in node.args)
         if (
             "\n" in subject
             or "\n" in kinds
@@ -1815,10 +1815,10 @@ class _Pass(ShadowScopes):
             if func.id == "format" and plain_call and len(node.args) in (1, 2):
                 value = self._operand(node.args[0])
                 if len(node.args) == 1:
-                    return f"str({self._text(node.args[0])})"
-                return f"{value}.__format__({self._text(node.args[1])})"
+                    return f"str({self._grouped(node.args[0])})"
+                return f"{value}.__format__({self._grouped(node.args[1])})"
             if func.id == "ascii" and plain_call and len(node.args) == 1:
-                return f"repr({self._text(node.args[0])})"
+                return f"repr({self._grouped(node.args[0])})"
             if func.id == "round":
                 return self._round(node)
             if func.id == "getattr" and plain_call and len(node.args) == 3:
@@ -1883,7 +1883,7 @@ class _Pass(ShadowScopes):
             return None
         helper = _SEQUENCE_HELPERS[func.attr]
         receiver = func.value
-        arguments = ", ".join(self._text(a) for a in node.args)
+        arguments = ", ".join(self._grouped(a) for a in node.args)
         if "\n" in arguments:
             return None
         if isinstance(receiver, ast.Tuple):
@@ -1939,7 +1939,7 @@ class _Pass(ShadowScopes):
             # set: so does a set of each operand.
             parts = []
             for operand in (node.left, node.right):
-                text = self._text(operand)
+                text = self._grouped(operand)
                 if not isinstance(operand, (ast.Set, ast.SetComp)):
                     text = f"set({text})"
                 parts.append(text)
@@ -1989,7 +1989,7 @@ class _Pass(ShadowScopes):
         if number is None:
             return None
         lost = self._text(node).count("\n")
-        text = self._text(number)
+        text = self._grouped(number)
         if ndigits is None or (
             isinstance(ndigits, ast.Constant) and ndigits.value is None
         ):
@@ -1999,7 +1999,7 @@ class _Pass(ShadowScopes):
             return f"int(round({text}{chr(10) * max(lost, 0)}))"
         if not node.keywords:
             return None
-        digits = self._text(ndigits)
+        digits = self._grouped(ndigits)
         lost -= text.count("\n") + digits.count("\n")
         return f"round({text}, {digits}{chr(10) * max(lost, 0)})"
 
@@ -2081,7 +2081,7 @@ class _Pass(ShadowScopes):
             for i in items
         )
         lambda_params = ", ".join(params[id(p)] for p in parts)
-        values = ", ".join(self._text(p) for p in parts)
+        values = ", ".join(self._grouped(p) for p in parts)
         return self._wrapped(node, f"(lambda {lambda_params}: {body})({values})")
 
     def _format(self, node: ast.Call, template: str) -> str | None:
