@@ -1017,6 +1017,109 @@ class TestAnOpenDriveAddressNeedsNoMap:
         assert details["lane_id"] == 2
 
 
+class _StraightLaneMap:
+    """A CARLA map of one straight driving lane along +x, 3.5 m wide and
+    centred on y = 0: road 80, lane -1.
+
+    ``get_waypoint(project_to_road=False)`` finds the lane only under it, as
+    CARLA's does; with the default ``project_to_road=True`` it snaps any point
+    onto the lane's centre, however far off it is.
+    """
+
+    WIDTH = 3.5
+
+    def __init__(self) -> None:
+        self.queries: list[bool] = []
+
+    def get_waypoint(
+        self, location: object, project_to_road: bool = True, lane_type: int = 0
+    ) -> object:
+        import typesafe_carla.carla as carla
+
+        self.queries.append(project_to_road)
+        x, y = float(location.x), float(location.y)  # type: ignore[attr-defined]
+        if not project_to_road and abs(y) > self.WIDTH / 2.0:
+            return None
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            road_id=80,
+            lane_id=-1,
+            lane_type=int(carla.LaneType.Driving),
+            lane_width=self.WIDTH,
+            transform=SimpleNamespace(
+                location=SimpleNamespace(x=x, y=0.0, z=0.0),
+                rotation=SimpleNamespace(yaw=0.0),
+            ),
+            get_left_lane=lambda: None,
+            get_right_lane=lambda: None,
+        )
+
+
+class TestAnOpenDriveLaneIsOnlyMatchedOnTheLane:
+    """The OpenDRIVE conversion snaps to the nearest driving lane at any
+    distance, so the condition asks first whether the entity is on one: a
+    walker on the sidewalk beside road 80 is not on road 80, lane -1 (#2528)."""
+
+    @pytest.fixture
+    def lane_map(self) -> Generator[_StraightLaneMap, None, None]:
+        saved = MapManager._instance
+        MapManager._instance = None
+        fake = _StraightLaneMap()
+        MapManager.get_instance()._carla_map = fake  # type: ignore[assignment]
+        # What the conversion reports for every point: the snapped lane.
+        with patch(
+            "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
+            return_value=OpenDrivePose(road_id="80", lane_id=-1, s=10.0, t=0.0),
+        ):
+            yield fake
+        MapManager._instance = saved
+
+    def _condition(self) -> EntityLanePositionCondition:
+        return EntityLanePositionCondition(
+            "ego", OpenDrivePose(road_id="80", lane_id=-1, s=0.0), label="on_lane"
+        )
+
+    def test_an_entity_on_the_lane_matches(self, lane_map: _StraightLaneMap) -> None:
+        result = self._condition().check(
+            _make_world_with_actor("ego", 10.0, 1.0), elapsed=1.0
+        )
+        assert result is not None and result.passed
+        assert False in lane_map.queries  # asked without projecting
+
+    def test_an_entity_beside_the_road_does_not(
+        self, lane_map: _StraightLaneMap
+    ) -> None:
+        """5 m from the lane's centre: on the sidewalk, not on lane -1."""
+        world = _make_world_with_actor("ego", 10.0, 5.0)
+        assert self._condition().check(world, elapsed=1.0) is None
+
+    def test_nor_for_a_condition_on_any_lane_of_the_road(
+        self, lane_map: _StraightLaneMap
+    ) -> None:
+        condition = EntityLanePositionCondition.anywhere_on_road(
+            "ego", "80", label="on_road"
+        )
+        assert condition.check(_make_world_with_actor("ego", 10.0, 30.0), 1.0) is None
+        assert condition.check(_make_world_with_actor("ego", 10.0, 0.0), 1.0)
+
+    def test_without_a_carla_map_it_matches_as_before(self) -> None:
+        """The brute-force conversion then used cannot tell; nothing to ask."""
+        saved = MapManager._instance
+        MapManager._instance = None
+        try:
+            with patch(
+                "autoware_carla_scenario.conditions.composition.entity_lane_position.to_opendrive",
+                return_value=OpenDrivePose(road_id="80", lane_id=-1, s=10.0, t=0.0),
+            ):
+                result = self._condition().check(
+                    _make_world_with_actor("ego", 10.0, 5.0), elapsed=1.0
+                )
+        finally:
+            MapManager._instance = saved
+        assert result is not None and result.passed
+
+
 def test_a_guard_reads_a_gone_entity_quietly(caplog: pytest.LogCaptureFixture) -> None:
     """A composition condition's guard on an entity that is gone (despawned)
     is nothing to check, not an error each tick; the ego's own existence

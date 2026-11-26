@@ -53,9 +53,12 @@ class TimeToCollisionCondition(CompositionCondition):
     sits at an offset from its actor's origin, a vehicle's about a metre
     forward -- and each box's reach along that line is subtracted.  Those are
     the centres :func:`~.distance_measure.separation` measures between, and
-    for a pair lined up along a box axis the two ranges agree; off that axis
-    ``separation``'s Euclidean gap is taken per world axis instead, so the two
-    can differ.  The velocities are the actors' own (``get_velocity``; a
+    for a pair lined up along an axis of both boxes -- one following the other
+    in a lane, on a road turned any way on the map -- the two ranges agree.
+    Off that axis ``separation``'s Euclidean gap is the distance between the
+    two oriented boxes, and the reach subtracted here, being the gap between
+    the boxes' shadows on the line of sight, is never more than that: this
+    range can read shorter, never longer.  The velocities are the actors' own (``get_velocity``; a
     walker's measured from where it stood when last checked, for CARLA's
     walker controller places its walker and ``get_velocity`` reads 0), not
     their box centres': a turning actor's box centre moves a little faster or

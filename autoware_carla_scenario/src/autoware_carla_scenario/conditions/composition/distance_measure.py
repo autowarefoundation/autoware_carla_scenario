@@ -21,6 +21,7 @@ import math
 from typing import TYPE_CHECKING, Optional
 
 from ...kinematics import Vector3
+from ...utils.polygon import polygon_distance
 from .base import entity_axes
 
 if TYPE_CHECKING:
@@ -177,41 +178,67 @@ def _box_centre(actor: "carla.Actor") -> Vector3:
     )
 
 
-#: World axes, for the per-axis gap of the Euclidean measurement.
-_WORLD_X = Vector3(1.0, 0.0, 0.0)
-_WORLD_Y = Vector3(0.0, 1.0, 0.0)
+#: The world's vertical axis, for the height gap of the Euclidean measurement.
 _WORLD_Z = Vector3(0.0, 0.0, 1.0)
+
+
+def _ground_corners(actor: "carla.Actor", centre: Vector3) -> list[tuple[float, float]]:
+    """Return the corners of *actor*'s oriented box on the ground plane.
+
+    The box sits at *centre* (:func:`_box_centre`) and is turned to its own
+    axes (:func:`_box_axes`), so its offset and its yaw are those every other
+    measurement in this module uses.  An actor with no bounding box, or whose
+    heading is degenerate, is the single point *centre* -- the same "contributes
+    nothing" :func:`half_extent_along` gives it.
+    """
+    box = _bounding_box(actor)
+    axes = _box_axes(actor)
+    if box is None or axes is None:
+        return [(centre.x, centre.y)]
+    forward, left = axes
+    extent = box.extent
+    fx, fy = forward.x * extent.x, forward.y * extent.x
+    lx, ly = left.x * extent.y, left.y * extent.y
+    return [
+        (centre.x + fx + lx, centre.y + fy + ly),
+        (centre.x + fx - lx, centre.y + fy - ly),
+        (centre.x - fx - lx, centre.y - fy - ly),
+        (centre.x - fx + lx, centre.y - fy + ly),
+    ]
 
 
 def _euclidean_gap(
     source: "carla.Actor",
     target: "carla.Actor",
-    delta: Vector3,
+    src: Vector3,
+    tgt: Vector3,
     vertical: bool,
 ) -> float:
-    """Return the closest distance between the two boxes.
+    """Return the closest distance between the two boxes centred at *src*, *tgt*.
 
-    Measured per world axis and recombined, rather than by subtracting each
-    box's reach along the centre-to-centre line.  The radial subtraction is
-    wrong whenever the two are separated along more than one axis: for boxes
-    of half-extent ``(2.5, 1.0)`` whose centres are ``(6, 6)`` apart it gives
-    3.54 m where the true gap is 4.12 m, so a threshold between the two fires
-    for a pair that is not that close.
+    The ground-plane gap is the distance between the two oriented boxes
+    (:func:`~autoware_carla_scenario.utils.polygon.polygon_distance`), zero
+    once they touch or overlap, so it does not depend on how the road happens
+    to be turned on the map.  Subtracting each box's reach along the
+    centre-to-centre line is wrong whenever the two are separated along more
+    than one of their axes (for boxes of half-extent ``(2.5, 1.0)`` whose
+    centres are ``(6, 6)`` apart it gives 3.54 m where the true gap is
+    4.12 m), and taking each box as its world-aligned enclosure is wrong for
+    any heading off a world axis (two cars 10 m apart on a 45 degree road
+    read 3 m rather than 5 m).
 
-    Each box is taken as its world-aligned enclosure, which is exact while the
-    two actors are axis-aligned and conservative -- never reporting more room
-    than there is -- when they are not.
+    With *vertical*, the height gap -- the boxes' separation along z beyond
+    their two half-heights -- is combined with the ground gap as the other leg
+    of a right angle, which is exact for two upright boxes.
     """
-    axes = [(_WORLD_X, delta.x), (_WORLD_Y, delta.y)]
-    if vertical:
-        axes.append((_WORLD_Z, delta.z))
-
-    total = 0.0
-    for axis, offset in axes:
-        reach = half_extent_along(source, axis) + half_extent_along(target, axis)
-        gap = max(0.0, abs(offset) - reach)
-        total += gap * gap
-    return math.sqrt(total)
+    ground = polygon_distance(
+        _ground_corners(source, src), _ground_corners(target, tgt)
+    )
+    if not vertical:
+        return ground
+    reach = half_extent_along(source, _WORLD_Z) + half_extent_along(target, _WORLD_Z)
+    height = max(0.0, abs(tgt.z - src.z) - reach)
+    return math.sqrt(ground * ground + height * height)
 
 
 def separation(
@@ -260,7 +287,7 @@ def separation(
     if distance_type is RelativeDistanceType.EUCLIDEAN:
         if not edge_to_edge:
             return delta.magnitude()
-        return _euclidean_gap(source, target, delta, vertical)
+        return _euclidean_gap(source, target, src, tgt, vertical)
 
     axes = entity_axes(source)
     if axes is None:

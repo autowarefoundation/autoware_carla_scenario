@@ -6,6 +6,7 @@ import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+from ...coordinate.map_manager import MapManager
 from ...coordinate.poses import CarlaWorldPose, Lanelet2Pose, OpenDrivePose
 from ...coordinate.transform import (
     lane_change_target_lanelets,
@@ -17,6 +18,7 @@ from ...coordinate.transform import (
     to_opendrive,
 )
 from ...entity_role import EntityRole
+from ...metrics import _driving_lane_at
 from ..base import ScenarioResult, find_actor_by_role_name
 from ..comparison import ScalarComparisonRule
 from .base import CompositionCondition
@@ -50,6 +52,10 @@ class EntityLanePositionCondition(CompositionCondition):
       road and lane.  The entity's position is converted to an
       :class:`OpenDrivePose`, the condition matches on its ``road_id`` and
       ``lane_id``, and ``s`` / ``t`` are the road's, along its reference line.
+      The entity has to be on a driving lane first (:func:`_on_a_driving_lane`):
+      the conversion snaps a point to the nearest driving lane however far off
+      it is, so without that a walker on the sidewalk, or a car in a parking
+      lot beside the road, would be "on" the lane next to it (#2528).
 
     The lane is named by a *position* in whichever frame the author thinks in.
     A scenario is written in Lanelet2 -- that is the map an author reads and the
@@ -216,6 +222,20 @@ class EntityLanePositionCondition(CompositionCondition):
         if self._lanelet_id is not None:
             return self._check_on_lanelet(carla_pose, elapsed)
 
+        # to_opendrive() snaps to the nearest driving lane at any distance, so
+        # being off every driving lane has to be asked first (#2528).
+        if not _on_a_driving_lane(carla_pose):
+            logger.debug(
+                "EntityLanePositionCondition: '%s' is on no driving lane "
+                "at (%.1f, %.1f, %.1f) t=%.2fs",
+                self._entity_name,
+                loc.x,
+                loc.y,
+                loc.z,
+                elapsed,
+            )
+            return None
+
         # Always use to_opendrive() first — it finds the nearest road and
         # therefore acts as the authoritative "is the entity on this road?" check.
         od_pose = to_opendrive(carla_pose)
@@ -357,6 +377,34 @@ class EntityLanePositionCondition(CompositionCondition):
 
 #: The lanes :class:`EntityLaneOfCondition` can mean, relative to a position's.
 LANE_RELATIONS: tuple[str, ...] = ("same", "left", "right", "any")
+
+
+def _on_a_driving_lane(pose: CarlaWorldPose) -> bool:
+    """Whether *pose* is on one of the run's OpenDRIVE driving lanes.
+
+    Asked as the ``offroad`` metric asks it, of the map the OpenDRIVE
+    conversion reads (:attr:`MapManager.carla_map`):
+    ``get_waypoint(project_to_road=False, lane_type=Driving)``, and, where
+    that finds no lane in the narrow band it misses inside a lane next to the
+    lane beside it, the lane the point projects to or one beside it when the
+    point is within its half width and 0.1 m
+    (:func:`~autoware_carla_scenario.metrics._driving_lane_at`, #1997).  A
+    point on a sidewalk, a shoulder or off the road is on none.
+
+    ``True`` when there is no CARLA map to ask: the brute-force conversion
+    then used cannot tell, and the condition matches as it always did.
+    """
+    held = MapManager.get_instance().carla_map
+    if held is None:
+        return True
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+    carla_map: carla.Map = held
+    found = _driving_lane_at(
+        carla_map, (pose.x, pose.y), pose.z, int(carla.LaneType.Driving)
+    )
+    return found is not None
 
 
 def beside_lane_id(lane_id: int, side: str, traffic_rule: str = "RHT") -> int:
