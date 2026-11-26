@@ -414,6 +414,12 @@ class TestValidation:
         raw["route"]["segments"] = []
         messages = _messages(ScenarioDocument.model_validate(raw))
         assert any("at least one segment" in m for m in messages)
+        # #2551: a lane min the search, growing it to 300 m with no max,
+        # could never meet.
+        raw = _raw()
+        raw["route"]["segments"][0]["length"] = {"min": 400}
+        messages = _messages(ScenarioDocument.model_validate(raw))
+        assert any("set length.max too" in m for m in messages)
 
     def test_a_route_and_a_constraint_search_together(self) -> None:
         raw = _raw()

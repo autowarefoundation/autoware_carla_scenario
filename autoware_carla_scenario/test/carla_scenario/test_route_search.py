@@ -142,6 +142,36 @@ class TestParsing:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
 
+    @pytest.mark.parametrize("position", [0, 2])
+    def test_a_lane_min_beyond_the_default_max_needs_a_max(self, position: int) -> None:
+        """#2551: with no max a lane segment is grown to 300 m at most, so a
+        longer min could never be met -- a first or middle segment never
+        matched, and a last one ended at 300 m, short of its min."""
+        segments: list[dict[str, Any]] = [_lane(), _junction(), _lane()]
+        segments[position] = _lane(length={"min": 400})
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": segments})
+        assert str(error.value) == (
+            f"segments[{position}].length.min 400 m is above the 300 m a lane "
+            "segment with no max is grown to; set length.max too"
+        )
+
+    def test_a_junction_min_beyond_300_m_is_taken(self) -> None:
+        # A junction segment is not grown to a default max: its min stands.
+        spec = parse_route_search({"segments": [_junction(length={"min": 400})]})
+        assert spec.segments[0].length.min == 400.0
+
+    @pytest.mark.parametrize(
+        "length", [{"min": 300}, {"min": 400, "max": 500}, {"min": 0}, {}]
+    )
+    def test_a_lane_min_the_search_can_meet_is_taken(
+        self, length: dict[str, float]
+    ) -> None:
+        (lane,) = parse_route_search({"segments": [_lane(length=length)]}).segments
+        assert isinstance(lane, LaneSegmentSpec)
+        assert lane.length.min == length.get("min")
+        assert lane.max_length >= (lane.length.min or 0.0)
+
     @pytest.mark.parametrize("key", ["shape", "turn"])
     @pytest.mark.parametrize("value", [False, 0, "", " ", True, ["left"]])
     def test_a_shape_or_turn_that_is_no_text_is_refused_showing_it(
@@ -669,6 +699,39 @@ class TestTheMatchAsConfig:
         with pytest.raises(ValueError, match=rf"^scenario\.route\.{key}: {message}$"):
             RouteMatch.from_config(self._config(**{key: value}))
 
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            ("start_s", float("nan"), "nan is not finite"),
+            ("start_s", "nan", "'nan' is not finite"),
+            ("start_s", float("inf"), "inf is not finite"),
+            ("end_s", "-inf", "'-inf' is not finite"),
+            ("end_s", float("nan"), "nan is not finite"),
+            ("segment_ends", [float("nan")], "nan is not finite"),
+            ("segment_ends", [5.0, float("inf")], "inf is not finite"),
+            ("start_s", -1.0, "-1\\.0 is negative; it is metres along the lanelet"),
+            ("end_s", "-0.5", "-0\\.5 is negative; it is metres along the lanelet"),
+        ],
+    )
+    def test_a_distance_that_is_no_place_is_refused_by_its_key(
+        self, key: str, value: Any, message: str
+    ) -> None:
+        """#2551: float() read nan and inf, and nan passed the check that a
+        segment does not end before it starts; a negative start_s or end_s
+        is no place on its lanelet."""
+        overrides: dict[str, Any] = {key: value}
+        if key == "segment_ends" and len(value) == 2:
+            overrides.update(
+                segment_kinds=["lane", "lane"], segment_lanelet_counts=[1, 1]
+            )
+        with pytest.raises(ValueError, match=rf"^scenario\.route\.{key}: {message}$"):
+            RouteMatch.from_config(self._config(**overrides))
+
+    def test_a_zero_start_and_end_are_taken(self) -> None:
+        match = RouteMatch.from_config(self._config(start_s=0.0, end_s=-0.0))
+        assert match is not None
+        assert (match.start_s, match.end_s) == (0.0, 0.0)
+
     def test_what_float_and_int_read_is_read_as_before(self) -> None:
         match = RouteMatch.from_config(
             self._config(
@@ -1110,6 +1173,45 @@ class TestJunctionPaths:
             RouteFrame(match, *split),
         )
         assert (pose.lanelet_id, pose.s) == (rm.SPLIT_FIRST, pytest.approx(1.0))  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("split_path", [False, True])
+def test_the_search_and_the_junction_members_read_a_path_s_turn_alike(
+    split_path: bool,
+) -> None:
+    """#2551: the ego's way through a junction (the search) and the other
+    paths through it (junction_members) are given their turn by one rule."""
+    from autoware_carla_scenario.route import geometry, search
+    from autoware_carla_scenario.route.geometry import MapFeatures
+
+    # Still importable from route.search, where it used to be.
+    assert search.junction_turn is geometry.junction_turn
+    lanelet_map = rm.crossroads(split_path=split_path)
+    graph = rm.routing_graph(lanelet_map)
+    features = MapFeatures(lanelet_map, graph)
+    matches = find_route_matches(
+        parse_route_search({"segments": [_junction()], "max_matches": 1000}),
+        lanelet_map,
+        graph,
+    )
+    by_way = {
+        segment.lanelet_ids: segment.turn
+        for match in matches
+        for segment in match.segments
+        if segment.kind == "junction"
+    }
+    compared = 0
+    for ids in by_way:
+        way = [lanelet_map.laneletLayer[i] for i in ids]
+        for member in features.junction_members(way):
+            path = tuple(int(ll.id) for ll in features._path_into(member.lanelet))
+            if path in by_way:
+                assert member.turn == by_way[path], path
+                compared += 1
+    assert compared > 0
+    assert {"left", "right", "straight"} <= set(by_way.values())
+    if split_path:
+        assert any(len(ids) == 2 for ids in by_way)
 
 
 class TestPathsOfTheEgosApproach:

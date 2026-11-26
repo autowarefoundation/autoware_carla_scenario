@@ -222,7 +222,8 @@ class LaneSegmentSpec:
 
     Attributes:
         length: Its length along the route (m).  Unset ``max`` grows it to
-            :data:`DEFAULT_SEGMENT_MAX_M` at most.
+            :data:`DEFAULT_SEGMENT_MAX_M` at most, so a longer ``min`` needs
+            a ``max``.
         lanes_left: How many lanes of the same direction lie to its left --
             on every lanelet of the segment.
         lanes_right: The same, to its right.
@@ -412,6 +413,18 @@ def _parse_segment(index: int, raw: Any) -> "LaneSegmentSpec | JunctionSegmentSp
             raise ValueError(f"{where}.length.min must not be negative")
         if length.max is not None and length.max <= 0.0:
             raise ValueError(f"{where}.length.max must be positive")
+        if (
+            length.max is None
+            and length.min is not None
+            and length.min > DEFAULT_SEGMENT_MAX_M
+        ):
+            # With no max the segment is grown to DEFAULT_SEGMENT_MAX_M at
+            # most, so a longer min could never be met (#2551).
+            raise ValueError(
+                f"{where}.length.min {length.min:g} m is above the"
+                f" {DEFAULT_SEGMENT_MAX_M:g} m a lane segment with no max is"
+                " grown to; set length.max too"
+            )
         return LaneSegmentSpec(
             length=length,
             lanes_left=Range.parse(
@@ -747,13 +760,16 @@ class RouteMatch:
 
         A segment kind is ``lane`` or ``junction``, and each segment ends no
         earlier than it starts (where the one before ends, the first at 0):
-        what :meth:`to_config` writes (#2266).
+        what :meth:`to_config` writes (#2266).  A number is finite, and
+        ``start_s`` and ``end_s``, metres along their lanelets, are not
+        negative (#2551).
 
         Raises:
             ValueError: On keys that do not describe one route, naming the
-                key of a value that is not a number, not a whole number or
-                not a list, of a segment kind that is none, and of a segment
-                end below its start.
+                key of a value that is not a number, not finite, not a whole
+                number or not a list, of a segment kind that is none, of a
+                segment end below its start, and of a negative ``start_s``
+                or ``end_s``.
         """
 
         def whole(key: str, value: Any) -> int:
@@ -797,8 +813,9 @@ class RouteMatch:
                 raise ValueError(
                     f"scenario.route.{key}: {shown(value)} is not a number"
                 )
+            result = 0.0
             try:
-                return float(value)
+                result = float(value)
             except (TypeError, ValueError):
                 raise ValueError(
                     f"scenario.route.{key}: {shown(value)} is not a number"
@@ -807,6 +824,22 @@ class RouteMatch:
                 raise ValueError(
                     f"scenario.route.{key}: {shown(value)} is not finite"
                 ) from None
+            # nan and inf read as floats but are no distance: nan passes
+            # every comparison below (#2551).
+            if not math.isfinite(result):
+                raise ValueError(f"scenario.route.{key}: {shown(value)} is not finite")
+            return result
+
+        def distance(key: str) -> float:
+            # Where on its lanelet the route starts or ends: metres along it,
+            # never before its start (#2551).
+            value = number(key, given(key, 0.0))
+            if value < 0.0:
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is negative; it is "
+                    "metres along the lanelet"
+                )
+            return value
 
         lanelet_ids = [whole("lanelet_ids", v) for v in items("lanelet_ids")]
         if not lanelet_ids:
@@ -862,8 +895,8 @@ class RouteMatch:
             start, first = end, first + count
         return cls(
             lanelet_ids=tuple(lanelet_ids),
-            start_s=number("start_s", given("start_s", 0.0)),
-            end_s=number("end_s", given("end_s", 0.0)),
+            start_s=distance("start_s"),
+            end_s=distance("end_s"),
             segments=tuple(segments),
             index=whole("index", given("index", 0)),
         )
