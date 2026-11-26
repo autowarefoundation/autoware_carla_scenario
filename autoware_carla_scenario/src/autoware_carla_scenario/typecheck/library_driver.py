@@ -91,6 +91,7 @@ from .transform import (
     _is_none,
     _members_or_self,
     _names_any,
+    _names_class_var,
     _union_members,
     callable_annotation,
     codon_annotation,
@@ -904,7 +905,9 @@ class _Renderer:
         annotation names ``Any`` (``dict[str, Any]``, a free-form Hydra
         mapping) is left out of the call, as the model leaves it out of its
         class, and the fields after it are passed by keyword; the checked
-        class keeps it, with a default of its type (``_field_default``).
+        class keeps it, with a default of its type (``_field_default``).  So
+        is a ``field(init=False)``, which Codon's constructor takes with the
+        empty value of its type the check gives it.
 
         The fields of a dataclass base class come first, as in Python's
         constructor and Codon's, a field redefined keeping its place.  Of
@@ -1037,8 +1040,10 @@ class _Renderer:
                 and kw.value.value is False
                 for kw in value.keywords
             ):
-                # Not in the constructor, even redefining a base's field.
-                fields.pop(stmt.target.id, None)
+                # Not in the constructor, even redefining a base's field; but
+                # in Codon's, with its empty value (`_field_default`): the
+                # fields after it are passed by keyword.
+                fields[stmt.target.id] = (ast.arg(_LEFT_OUT, stmt.annotation), True)
                 continue
             name = stmt.target.id
             if value is not None and _names_any(stmt.annotation):
@@ -1176,19 +1181,6 @@ def _is_class_var(annotation: ast.expr) -> bool:
     if isinstance(annotation, ast.Subscript):
         annotation = annotation.value
     return _dotted(annotation) in _CLASS_VAR
-
-
-def _names_class_var(annotation: ast.expr) -> bool:
-    """Whether *annotation* is a ``ClassVar``, by whatever module it is read.
-
-    :func:`_is_class_var`, and also ``t.ClassVar[T]`` / ``t.ClassVar`` of a
-    ``typing`` (or ``typing_extensions``) imported under another name: a
-    dataclass has no field of either, so its constructor takes none (#2511).
-    """
-    if isinstance(annotation, ast.Subscript):
-        annotation = annotation.value
-    name = _dotted(annotation) or ""
-    return name == "ClassVar" or name.endswith(".ClassVar")
 
 
 def _class_var_type(annotation: ast.expr) -> ast.expr | None:

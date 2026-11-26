@@ -1789,9 +1789,11 @@ def test_a_dataclass_takes_its_base_fields_as_python_does() -> None:
     checks = render_library_checks(ast.parse(_MIXED_DATACLASSES))
     calls = [c.strip() for c in checks.source.splitlines() if "_acs_value(" in c]
     # Through a plain class derived from a dataclass, and without a field
-    # redefined with init=False, as Python's constructor takes them.
+    # redefined with init=False, as Python's constructor takes them: Codon's
+    # takes that one too, with its default, so the fields after it go by
+    # keyword (#2521).
     assert "Through(_acs_value(int), _acs_value(float))" in calls
-    assert "Hidden(_acs_value(float))" in calls
+    assert "Hidden(depth=_acs_value(float))" in calls
     for name, count in [("Through", 2), ("Hidden", 1)]:
         cls = namespace[name]
         assert dataclasses.is_dataclass(cls)
