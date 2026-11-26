@@ -246,8 +246,9 @@ A keyframes file lists full-body poses:
 
 - `time_s` is the time into the motion: finite and not negative.
 - `x`, `y` and `yaw_deg` place the pose in CARLA's world; each is finite.
-  Without them, the pose is placed where the motion began and faces the way it
-  did then.
+  `x` and `y` go together: an entry with only one of them is refused. Without
+  them, the pose is placed where the motion began; without `yaw_deg`, it faces
+  the way the motion did then.
 - `joints` gives each joint the generator places (the `joint_names` it answers
   with; ARDY's SOMA model has 30) in metres. The axes are forward, left and up
   from the root's ground point, as the body faces. Every component is finite.

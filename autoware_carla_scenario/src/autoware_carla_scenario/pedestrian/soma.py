@@ -159,11 +159,6 @@ class SomaMotion:
         """How many frames the motion has."""
         return int(self.directions.shape[0])
 
-    @property
-    def duration_s(self) -> float:
-        """How long the motion plays, in seconds."""
-        return self.frame_count / self.fps
-
     def frame(self, index: int) -> dict[str, Vector]:
         """Frame *index*'s bone directions, by SOMA joint."""
         row = self.directions[index]

@@ -16,6 +16,7 @@ import yaml
 from ..authoring.persistence import load_yaml
 from ..t4_scene.grid import stem_collision, trajectory_logs
 from .convert import CURRENT_INDEX, FUTURE_STEPS, write_rollout
+from .ids import _checked_object_ids
 from .pack import (
     HEADING_TOLERANCE_RAD,
     POSITION_TOLERANCE_M,
@@ -81,6 +82,11 @@ def _export(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
             object_ids = _mapping(args.object_ids, "--object-ids")
         except ValueError as error:
             parser.error(str(error))
+        try:
+            # write_rollout() checks them too, but once per log (#2553).
+            _checked_object_ids(object_ids)
+        except ValueError as error:
+            parser.error(f"--object-ids {args.object_ids}: {error}")
     failed = False
     for log in logs:
         try:

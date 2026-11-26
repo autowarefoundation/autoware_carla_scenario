@@ -26,7 +26,19 @@ logger = logging.getLogger(__name__)
 #: Slower than this (m/s), a placed walker stands still.
 _STILL_MS = 0.05
 
-__all__ = ["WalkerPoser"]
+__all__ = ["WalkerPoser", "motion_frame"]
+
+
+def motion_frame(elapsed: float, fps: float, end_s: Optional[float]) -> Optional[int]:
+    """The frame of a motion at *fps* that *elapsed* seconds into it shows,
+    or ``None`` once it has played to *end_s* (``None``: it does not end).
+
+    The tolerances absorb the clock's summing error: 20 ticks of 0.05 s can
+    read 0.9999999999999998 s (ElapsedTimeCondition).
+    """
+    if end_s is not None and elapsed >= end_s - 1e-9:
+        return None
+    return int(math.floor(elapsed * fps + 1e-9))
 
 
 class WalkerPoser:

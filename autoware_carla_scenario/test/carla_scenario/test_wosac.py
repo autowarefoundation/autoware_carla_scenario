@@ -815,6 +815,30 @@ def test_the_command_takes_object_ids_from_a_file(tmp_path: Path) -> None:
     assert sorted(_trajectories(rollouts)) == [0, 1]
 
 
+@pytest.mark.parametrize(
+    ("ids", "message"),
+    [
+        ({"ego": -1}, "the object id of 'ego' must be a whole number from 0"),
+        ({"ego": 1, "hero": 2}, "the object ids 'ego' and 'hero' are both"),
+    ],
+)
+def test_the_command_refuses_bad_object_ids_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], ids: dict, message: str
+) -> None:
+    logs = [
+        str(_write_log(tmp_path / f"Run{index}.trajectory.jsonl")) for index in range(3)
+    ]
+    path = tmp_path / "ids.json"
+    path.write_text(json.dumps(ids))
+    with pytest.raises(SystemExit) as raised:
+        main(["export", *logs, "--object-ids", str(path)])
+    assert raised.value.code == 2
+    err = capsys.readouterr().err
+    assert err.count(message) == 1
+    assert f"--object-ids {path}: " in err
+    assert not list(tmp_path.glob("*.wosac.pb"))
+
+
 def test_the_command_finds_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

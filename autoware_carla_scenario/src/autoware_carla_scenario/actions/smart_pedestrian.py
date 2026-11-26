@@ -34,7 +34,7 @@ from ..pedestrian.motion_client import (
     to_carla,
     to_contract,
 )
-from ..pedestrian.poser import WalkerPoser
+from ..pedestrian.poser import WalkerPoser, motion_frame
 from ..pedestrian.skeleton import Vector, directions_from_joints
 from ..prepare.declare import need_prepare
 from ..prepare.pool import running_backend
@@ -318,12 +318,10 @@ class SmartPedestrianControllerAction(BaseAction):
 
     def _step(self, world: carla.World) -> None:
         elapsed = world_seconds(world) - self._started_at
-        # The tolerance absorbs the clock's summing error: 20 ticks of 0.05 s
-        # can read 0.9999999999999998 s (ElapsedTimeCondition).
-        if self._end_s is not None and elapsed >= self._end_s - 1e-9:
+        frame = motion_frame(elapsed, self._fps, self._end_s)
+        if frame is None:
             self._end()
             return
-        frame = int(math.floor(elapsed * self._fps + 1e-9))
         client = self._client
         if client is None:
             return
@@ -417,7 +415,9 @@ class _Keyframe:
             x, y = start[0], start[1]
         else:
             x, y, _ = to_contract(self.root[0], self.root[1], 0.0)
-        heading = start[2] if self.yaw_deg is None else -math.radians(self.yaw_deg)
+        heading = (
+            start[2] if self.yaw_deg is None else to_contract(0.0, 0.0, self.yaw_deg)[2]
+        )
         cos, sin = math.cos(heading), math.sin(heading)
         joints = []
         for name in names:
@@ -450,9 +450,16 @@ def _read_keyframes(path: Union[str, Path]) -> tuple[_Keyframe, ...]:
                 )
                 for name, p in entry["joints"].items()
             }
+            if ("x" in entry) != ("y" in entry):
+                # Its root would be dropped, the pose left at the start (#2553).
+                given, absent = ("x", "y") if "x" in entry else ("y", "x")
+                raise ValueError(
+                    f"the keyframe at {time_s} s gives {given} without {absent}: "
+                    "give both or neither"
+                )
             root = (
                 (_finite(entry["x"], "x"), _finite(entry["y"], "y"))
-                if "x" in entry and "y" in entry
+                if "x" in entry
                 else None
             )
             yaw = _finite(entry["yaw_deg"], "yaw_deg") if "yaw_deg" in entry else None
