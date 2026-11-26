@@ -3,8 +3,9 @@
 The ego entities split along one line: who drives.
 :class:`~autoware_carla_scenario.entity.ego.EgoVehicle` itself is driven by the
 run's traffic backend (the TrafficManager by default); every other ego is driven
-by a stack of its own -- Autoware, an external driver policy, ROS 2 nodes -- and
-those share everything that follows from that, which lives here:
+by a stack of its own -- Autoware, an external driver policy, ROS 2 nodes, the
+ECUs of a HILS bench -- and those share everything that follows from that,
+which lives here:
 
 * :attr:`use_autopilot` is ``False``, so the runner never puts the actor under
   the TrafficManager;
@@ -19,6 +20,7 @@ The hierarchy::
     └── ExternallyDrivenEgo         driven by a stack of its own
         ├── CarlaDriverEntity       (an egodriver policy over gRPC)
         ├── Ros2EgoEntity           (ROS 2 nodes over DDS)
+        ├── HilsEgoEntity           (ECUs under test, through the HILS bridge)
         └── BridgedEgoEntity        (a stack that reaches the AutowareBridge)
             └── AutowareEgoEntity   (Autoware through autoware_carla_interface)
 """

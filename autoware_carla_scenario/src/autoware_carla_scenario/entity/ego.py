@@ -11,7 +11,11 @@ from ..constants import EGO_ROLE_NAME
 from ..coordinate import Lanelet2Pose
 from ..debug_markers import DebugMarkers
 from ._spawn import SpawnLocation, spawn_vehicle_actor
-from .vehicle_entity import VehicleEntityConfig
+from .vehicle_entity import (
+    VehicleEntityConfig,
+    _same_vehicle_config,
+    _vehicle_config_repr_fields,
+)
 from ..traffic.driven import BackendDriven
 
 
@@ -67,6 +71,25 @@ class EgoConfig(VehicleEntityConfig):
         if waypoint_poses:
             poses = list(waypoint_poses)
         self.waypoint_poses = poses
+
+    # Not a dataclass itself (its constructor is its own), so the dataclass's
+    # __eq__ and __repr__ would leave the goal and the waypoints out (#2534).
+    # __hash__ stays None, as the dataclass's is.
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, EgoConfig):
+            return NotImplemented
+        return (
+            _same_vehicle_config(self, other)
+            and self.goal_pose == other.goal_pose
+            and self.waypoint_poses == other.waypoint_poses
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"EgoConfig({_vehicle_config_repr_fields(self)}, "
+            f"goal_pose={self.goal_pose!r}, "
+            f"waypoint_poses={self.waypoint_poses!r})"
+        )
 
 
 class EgoVehicle(BackendDriven):

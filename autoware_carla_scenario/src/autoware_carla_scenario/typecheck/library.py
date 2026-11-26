@@ -419,6 +419,14 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.wosac.ids",
 )
 
+#: The reason of a vehicle config subclass's repr (#2534).
+_CONFIG_REPR = (
+    "writes the config's fields with `repr()`, which Codon has neither for a "
+    "union (the spawn location, `Union[SpawnTransform, SpawnPointIndex]`) nor "
+    "for the poses (no `__repr__`); nothing in the framework calls it, and the "
+    "`__eq__` beside it, which compares the same fields, is checked"
+)
+
 #: The reason of a method that builds a dict of mixed value types.
 _DETAILS = "builds a dict[str, Any] of mixed value types, which Codon cannot express"
 
@@ -606,6 +614,9 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.driver.observation.encode_frame_jpeg": "encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled",
     "autoware_carla_scenario.hils.host_devices.HostSetup.playbooks": "builds each playbook's variables as a `Dict[str, Any]` of mixed value types (a list of interfaces beside a user and booleans), which Codon cannot express; what it derives them from is the checked host_devices()'s",
     "autoware_carla_scenario.hils.wire.encode": "takes a message of any shape (`Mapping[str, Any]`: JSON values of mixed types), which Codon cannot express",
+    "autoware_carla_scenario.entity.ego.EgoConfig.__repr__": _CONFIG_REPR,
+    "autoware_carla_scenario.entity.vehicle_entity.EmergencyVehicleEntityConfig.__repr__": _CONFIG_REPR,
+    "autoware_carla_scenario.entity.vehicle_entity._vehicle_config_repr_fields": _CONFIG_REPR,
     "autoware_carla_scenario.entity.registry.find_entity_by_role_name": "returns the entity of any kind registered under a role (`Optional[Any]`), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups",
     "autoware_carla_scenario.maps.config.resolve_map_paths": "takes the `map` config node as `Any` (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; it only reads the settings, and the checked _resolve() resolves them",
     "autoware_carla_scenario.entity.registry.register_entity": "takes an entity of any kind (`Any`: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base and scenario_runner call",

@@ -104,6 +104,44 @@ class VehicleEntityConfig:
         _check_non_negative_finite("spawn_retry_z_step", self.spawn_retry_z_step)
 
 
+def _same_vehicle_config(a: VehicleEntityConfig, b: VehicleEntityConfig) -> bool:
+    """Whether *a* and *b* hold the same :class:`VehicleEntityConfig` fields,
+    compared in order as the dataclass's ``__eq__`` compares them.
+
+    For a subclass that adds state of its own and is not a dataclass itself
+    (:class:`EmergencyVehicleEntityConfig`, ``EgoConfig``): its ``__eq__``
+    compares these and then its own (#2534).
+    """
+    return (
+        a.role_name == b.role_name
+        and a.spawn_location == b.spawn_location
+        and a.vehicle_type == b.vehicle_type
+        and a.initial_speed_kmh == b.initial_speed_kmh
+        and a.spawn_retry_max_count == b.spawn_retry_max_count
+        and a.spawn_retry_t_step == b.spawn_retry_t_step
+        and a.spawn_retry_z_step == b.spawn_retry_z_step
+        and a.od_pose == b.od_pose
+        and a.ground_projection == b.ground_projection
+    )
+
+
+def _vehicle_config_repr_fields(config: VehicleEntityConfig) -> str:
+    """The :class:`VehicleEntityConfig` fields of *config* as the dataclass's
+    ``__repr__`` writes them (``role_name='npc1', spawn_location=...``), for a
+    subclass's own ``__repr__`` to add its state to (#2534)."""
+    return (
+        f"role_name={config.role_name!r}, "
+        f"spawn_location={config.spawn_location!r}, "
+        f"vehicle_type={config.vehicle_type!r}, "
+        f"initial_speed_kmh={config.initial_speed_kmh!r}, "
+        f"spawn_retry_max_count={config.spawn_retry_max_count!r}, "
+        f"spawn_retry_t_step={config.spawn_retry_t_step!r}, "
+        f"spawn_retry_z_step={config.spawn_retry_z_step!r}, "
+        f"od_pose={config.od_pose!r}, "
+        f"ground_projection={config.ground_projection!r}"
+    )
+
+
 def _check_non_negative_finite(name: str, value: float) -> None:
     """Refuse *value* of the config field *name* unless finite and at least 0.
 
@@ -448,6 +486,20 @@ class EmergencyVehicleEntityConfig(VehicleEntityConfig):
         # Never the ego, so not ``Ego`` either (#2046).
         _refuse_ego_role_name(self.role_name, "an emergency vehicle")
         self.emergency = emergency
+
+    # Not a dataclass itself (its constructor is its own), so the dataclass's
+    # __eq__ and __repr__ would leave *emergency* out (#2534).  __hash__ stays
+    # None, as the dataclass's is.
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, EmergencyVehicleEntityConfig):
+            return NotImplemented
+        return _same_vehicle_config(self, other) and self.emergency == other.emergency
+
+    def __repr__(self) -> str:
+        return (
+            f"EmergencyVehicleEntityConfig({_vehicle_config_repr_fields(self)}, "
+            f"emergency={self.emergency!r})"
+        )
 
 
 class EmergencyVehicleEntity(VehicleEntity):
