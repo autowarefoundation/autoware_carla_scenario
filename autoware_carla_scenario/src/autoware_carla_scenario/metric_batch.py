@@ -21,8 +21,9 @@ CARLA map is still loaded, :func:`evaluate_metrics` replays those frames:
   -- the frames shared among several workers that run at once
   (:func:`~autoware_carla_scenario.commonroad.session.evaluate_commonroad`).
 
-The simulation never waits on a metric, and the frames, being independent of
-one another, are evaluated in parallel.
+The simulation never waits on a metric. The replayed metrics run over every
+tick in order (the weaving metrics depend on it); only the CommonRoad frames,
+being independent of one another, are evaluated in parallel.
 """
 
 from __future__ import annotations

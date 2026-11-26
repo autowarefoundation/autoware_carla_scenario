@@ -505,11 +505,16 @@ class NpcCollisionMonitor:
         with self._lock:
             heard, self._heard = self._heard, []
         out: list[NpcCollision] = []
+        # The two actors' sensors queue from their own threads, so a batch
+        # (or the next tick's) can hold a later frame before an earlier one:
+        # take them in frame order, and keep a contact's earliest frame.
+        heard.sort(key=lambda event: event[0])
         for frame, parent, other, other_name, impulse in heard:
             self._names.setdefault(other, other_name)
             pair = (min(parent, other), max(parent, other))
             contact = self._contacts.get(pair)
             if contact is not None:
+                contact.frame = min(contact.frame, frame)
                 contact.last = elapsed
                 contact.impulse = max(contact.impulse, impulse)
                 continue

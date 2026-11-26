@@ -546,7 +546,7 @@ the simulation never waits on a metric. When the run is over, while its CARLA
 map is still loaded, the frames are replayed: AlpaSim's metrics and the run's
 own every tick, in order, by the code that reads them off a live world, on a
 stand-in world answering with the recorded actors and the run's map; the
-CommonRoad metrics every `period_s` (0.1 s by default; `crime_ttr_s` every
+CommonRoad metrics on the frames at least `period_s` apart (0.1 s by default; `crime_ttr_s` every
 0.5 s -- see `metric_periods_s`), by the workers at once. A metric that raises
 in a frame reads nothing there, the first exception logged with a warning;
 one that raises in every frame evaluated (a map whose `get_waypoint` raises,
