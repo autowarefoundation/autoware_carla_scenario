@@ -1450,6 +1450,15 @@ def _discard_stale_entry(entry: Path, source: MapSource) -> None:
             # Onto the empty directory just made: a rename, so the entry's
             # name is free at once, and removing the rest can fail harmlessly.
             entry.replace(aside)
+            if (aside / "repo" / ".git").exists():
+                # Where the lock could not be taken (`_lock_file`), another
+                # process's clone may have landed between the look and the
+                # move: it is a good entry, so it goes back, unless yet
+                # another one took the name meanwhile.
+                try:
+                    aside.replace(entry)
+                except OSError:
+                    pass
             shutil.rmtree(aside, ignore_errors=True)
         else:
             entry.unlink()

@@ -4486,6 +4486,34 @@ class TestMapsScanFollowUps:
         assert f"Replacing the map cache entry {entry}" in caplog.text
         assert not [p for p in entry.parent.iterdir() if ".stale." in p.name]
 
+    def test_a_clone_landing_while_the_stale_entry_is_moved_aside_is_kept(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Without the lock file (`_lock_file` returned -1), another process
+        # can rename its clone into place between the look and the move.
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        entry = tmp_path / "repos" / "r-main-0123456789"
+        (entry / "leftover").mkdir(parents=True)
+        warning = cache_module.logger.warning
+
+        def _clone_lands(message: str, *args: object) -> None:
+            warning(message, *args)
+            if message.startswith("Replacing the map cache entry"):
+                import shutil
+
+                shutil.rmtree(entry)
+                (entry / "repo" / ".git").mkdir(parents=True)
+
+        monkeypatch.setattr(cache_module.logger, "warning", _clone_lands)
+        cache_module._discard_stale_entry(
+            entry, MapSource.parse("https://github.com/o/r@main#m")
+        )
+        assert (entry / "repo" / ".git").is_dir()
+        assert [p.name for p in entry.parent.iterdir()] == [entry.name]
+
     def test_an_entry_that_cannot_be_moved_aside_is_named(
         self,
         origin_repo: Path,
