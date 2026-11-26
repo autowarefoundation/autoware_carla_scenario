@@ -3116,10 +3116,6 @@ and composite conditions reset their children.</p>
 <td>Fails once at least <code>fraction</code> (in <code>(0, 1]</code>) of the sample points of a 5 x 3 grid over an entity's (default: the ego's) bounding box -- edges and corners included, not an area -- are on no driving lane. The pass/fail counterpart of the <code>offroad</code> metric, with a tolerance. See <a href="../metrics/#off-the-road-as-a-fail-condition">Metrics</a>.</td>
 </tr>
 <tr>
-<td><code>TrafficSignalAction(..., route_junction=0, route_approach="same", route_turn="any")</code></td>
-<td>With <code>lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE</code>: sets the lights of the paths through junction <code>route_junction</code> of the scenario's route that enter it from <code>route_approach</code> and turn <code>route_turn</code>, found on the map the run is on (<code>route.positions.junction_traffic_lights</code>). An action, in <code>autoware_carla_scenario.actions</code>.</td>
-</tr>
-<tr>
 <td><code>EntityAreaDistanceCondition(entity_name, area, value, rule=LESS_THAN, tolerance=1e-6, *, label)</code></td>
 <td>The distance on the ground from an entity's body (its bounding box, not its origin) to the nearest outline of an area of the map, <code>0</code> once the body touches or is over it, compared with <code>rule</code> and <code>value</code>. Whether or not it fires, it keeps the closest the entity came: <code>closest_m</code> and <code>closest_at_s</code>, and its details (<code>closest_m</code>, <code>closest_at_s</code>, <code>closest</code> naming the nearest element -- <code>lanelet 587</code>, <code>raised 0.060 m on road 80</code> -- and <code>closest_lanelet</code> or <code>closest_polygon</code> with its id) carry them into the run's result, so a run that never came within <code>value</code> still says how near it got. <code>reset()</code> forgets them. The area is resolved on the run's Lanelet2 map when the condition is built (<code>MapManager</code> initialised, as in <code>setup()</code>); an area no map could hold (picked lanelets for a ground of polygons) is refused there, while one this map cannot hold (a picked lanelet it lacks or of another ground, a ground it has none of) is said once as a warning, and the condition then never holds, its details carrying the <code>problem</code> -- the scenario editor's places panel outlines the area and says so before the run. The measurement is in plan: an area on a road stacked above or below is as near as in the plan (#2314). The <code>area_distance</code> card (<em>Distance to an area</em>).</td>
 </tr>
@@ -3134,6 +3130,10 @@ and composite conditions reset their children.</p>
 <tr>
 <td><code>TrafficSignalCondition</code></td>
 <td>Traffic-light state check: fires while every matching light shows the expected state, and is pending otherwise.</td>
+</tr>
+<tr>
+<td><code>TrafficSignalControllerCondition(controller, phase, *, label)</code></td>
+<td>Fires while a junction's controller (declared under <code>map.traffic_signal_controllers</code>) is showing the named phase; a phase the cycle passes straight through within one tick (a 0 s clearance) counts as shown on that tick. Read off the controller, not the lights. The counterpart of <code>TrafficSignalControllerAction</code>.</td>
 </tr>
 <tr>
 <td><code>RouteProgressCondition</code></td>
@@ -3213,6 +3213,10 @@ child condition tree internally:</p>
 <tr>
 <td><code>TrafficSignalAction</code>, <code>TrafficLightTarget</code></td>
 <td>Set traffic-light states: of the lights of the given Lanelet2 traffic-light regulatory element ids, of every light (<code>TrafficLightTarget.ALL</code>), or of a path through a junction of the scenario's route (<code>TrafficLightTarget.ROUTE</code>).</td>
+</tr>
+<tr>
+<td><code>TrafficSignalAction(..., route_junction=0, route_approach="same", route_turn="any")</code></td>
+<td>With <code>lanelet2_traffic_light_ids=TrafficLightTarget.ROUTE</code>: sets the lights of the paths through junction <code>route_junction</code> of the scenario's route that enter it from <code>route_approach</code> and turn <code>route_turn</code>, found on the map the run is on (<code>route.positions.junction_traffic_lights</code>). An action, in <code>autoware_carla_scenario.actions</code>.</td>
 </tr>
 <tr>
 <td><code>RoutingAction</code>, <code>RoutingMode</code></td>
@@ -4143,7 +4147,7 @@ packages, in <code>autoware_carla_scenario.examples.run</code> unless noted:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 04:12:12 UTC"><span class="timeago" datetime="2026-11-25T04:12:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 04:12:12 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 05:46:33 UTC"><span class="timeago" datetime="2026-11-26T05:46:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 05:46:33 UTC">2026-11-26</span>
   </span>
 
     
