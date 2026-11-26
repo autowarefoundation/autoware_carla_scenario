@@ -290,13 +290,55 @@ class TestEditor:
         monkeypatch.setattr(app_module, "create_app", create_app)
         monkeypatch.setenv("SCENARIO_EDITOR_EXPORT_DIR", str(tmp_path / "env"))
         editor.main(["--drafts", str(tmp_path / "drafts")])
+        # A variable is the app's to read (default_export_dir()), as it is
+        # under uvicorn, not main()'s (#2559).
         assert made == [
             {
                 "draft_dir": tmp_path / "drafts",
-                "export_dir": tmp_path / "env",
+                "export_dir": None,
                 "host": "127.0.0.1",
             }
         ]
+
+    def test_a_variable_reaches_the_service(
+        self,
+        served: list[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("SCENARIO_EDITOR_DRAFTS", str(tmp_path / "drafts"))
+        monkeypatch.setenv("SCENARIO_EDITOR_EXPORT_DIR", str(tmp_path / "env"))
+        editor.main([])
+        service = served[0]["app"].state.service
+        assert service.store.root == (tmp_path / "drafts").resolve()
+        assert service.export_dir == (tmp_path / "env").resolve()
+
+    @pytest.mark.parametrize("by", ["flag", "variable"])
+    def test_a_tilde_is_the_home_directory(
+        self,
+        served: list[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        by: str,
+    ) -> None:
+        """A quoted ``~/...`` (a Docker env file, a systemd unit) is the home
+        directory under the CLI too, as under uvicorn: never a ``./~`` (#2559)."""
+        home = tmp_path / "home"
+        home.mkdir()
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir(cwd)
+        if by == "flag":
+            editor.main(["--drafts", "~/drafts", "--export-dir", "~/exports"])
+        else:
+            monkeypatch.setenv("SCENARIO_EDITOR_DRAFTS", "~/drafts")
+            monkeypatch.setenv("SCENARIO_EDITOR_EXPORT_DIR", "~/exports")
+            editor.main([])
+        service = served[0]["app"].state.service
+        assert service.store.root == (home / "drafts").resolve()
+        assert service.export_dir == (home / "exports").resolve()
+        assert not (cwd / "~").exists()
 
     @pytest.mark.parametrize("blank", ["", "  ", "\t\n"])
     def test_a_blank_directory_variable_is_unset(

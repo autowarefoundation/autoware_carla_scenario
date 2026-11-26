@@ -1040,9 +1040,9 @@ memory); a reload puts the tab back in step.
 
 A button that names a row by its position -- remove a signal group, a
 controller or a phase, move a phase, add a phase to a controller, remove a
-waypoint condition -- or that posts a whole order (`/actors`) carries the
-revision too, and is checked **strictly**: only the draft's current revision
-passes, with no allowance for the page's own saves. Any save since the button
+waypoint condition -- carries the revision too, and is checked **strictly**:
+only the draft's current revision passes, with no allowance for the page's
+own saves. Any save since the button
 was rendered may have moved the rows it points at, so a stale tab's click is
 refused rather than removing or moving the wrong row, and so is the second of
 two quick clicks in one tab, sent before the answer to the first renumbered
@@ -1367,6 +1367,8 @@ environment (`uv run scenario-editor --host 0.0.0.0 --port 9200`). An unknown
 option is an error (exit 2) and serves nothing, as is a port (`--port` or
 `SCENARIO_EDITOR_PORT`) that is not an integer within 1-65535: 0, which would
 have the system pick a port the editor does not report, is refused too.
+A leading `~` in a directory, given by its flag or its variable, is your home
+directory either way, as it is under `uvicorn ...editor.app:app`.
 
 The drafts directory holds every `*.yaml` the editor finds there, drafts or
 not. A file that is not a draft is left out of the list, and so is one the
@@ -1376,6 +1378,8 @@ A drafts directory the editor may not write to -- or a read-only file system --
 turns creating, saving or deleting a draft into a page that names the directory
 (status 500; 507 when its disk is full) instead of a traceback, and the stored
 draft is left as it was.
+An export directory that refuses the wheelhouse's archive is reported the
+same way, naming the export directory, and nothing is staged.
 
 !!! warning "The editor listens on this machine only by default"
     The editor has no authentication, so it binds `127.0.0.1` unless told

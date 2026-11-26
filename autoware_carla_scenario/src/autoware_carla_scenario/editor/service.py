@@ -179,22 +179,33 @@ _WRITER_DRAFTS = WRITER_DRAFTS
 
 
 class EditorStorageError(Exception):
-    """Raised when a draft cannot be written to the drafts directory.
+    """Raised when a directory the editor writes to refused the write.
+
+    The drafts directory, for a draft (#1747), or the export directory, for
+    a wheelhouse being staged for download (#2559).
 
     Not an :class:`EditorError`: that one is the request's problem, shown as
     "not found" or as a notice beside the form, while this one is the
-    server's -- a drafts directory it may not write to, a read-only file
-    system, a full disk -- and no edit of the request fixes it (#1747).
+    server's -- a directory it may not write to, a read-only file system, a
+    full disk -- and no edit of the request fixes it.
 
     Attributes:
-        directory: The drafts directory the write went to.
+        directory: The directory the write went to.
         errno: The failed write's ``errno``, if it had one.
+        heading: What the error page says could not be done.
     """
 
-    def __init__(self, message: str, directory: Path, errno: int | None) -> None:
+    def __init__(
+        self,
+        message: str,
+        directory: Path,
+        errno: int | None,
+        heading: str = "Cannot save drafts",
+    ) -> None:
         super().__init__(message)
         self.directory = directory
         self.errno = errno
+        self.heading = heading
 
 
 @contextmanager
@@ -214,6 +225,30 @@ def _storage_errors(store: DraftStore, action: str = "written to") -> "Iterator[
             "left on its disk (it is set by --drafts or SCENARIO_EDITOR_DRAFTS).",
             directory=store.root,
             errno=exc.errno,
+        ) from exc
+
+
+@contextmanager
+def _export_errors(directory: Path) -> "Iterator[None]":
+    """Turn a failed write to the export *directory* into an
+    :class:`EditorStorageError`, as :func:`_storage_errors` does for the
+    drafts directory.
+
+    Staging writes a wheelhouse of a few hundred MB, so a full disk is a
+    realistic way for an export to fail after its build succeeded (#2559).
+    """
+    try:
+        yield
+    except OSError as exc:
+        raise EditorStorageError(
+            "The exported wheelhouse could not be staged for download in the "
+            f"export directory {directory}: {exc.strerror or exc}. Check that "
+            "the directory exists, that the editor may write to it, and that "
+            "there is space left on its disk (it is set by --export-dir or "
+            f"{EXPORT_DIR_ENV}).",
+            directory=directory,
+            errno=exc.errno,
+            heading="Cannot stage the export",
         ) from exc
 
 
@@ -428,7 +463,7 @@ class EditorService:
             raise
         return StagedArchive(file=handle, name=archive.name, size=size)
 
-    def _stage_archive(self, source: Path, draft: Draft) -> Path:
+    def _stage_archive(self, source: Path, draft: Draft) -> Optional[Path]:
         """Zip *source* and move it into place as *draft*'s archive.
 
         Zipped under a name of its own and renamed in, so a download never sees
@@ -440,22 +475,31 @@ class EditorService:
         is made under the lock :meth:`delete_draft` removes the archive under,
         and only if the draft is still stored, so a late export cannot leave
         behind an archive no route can reach any more.
+
+        Returns:
+            The staged archive, or ``None`` when the draft was deleted
+            meanwhile and nothing was staged.
+
+        Raises:
+            EditorStorageError: If the export directory refused the write.
+                Nothing is staged in that case.
         """
         archive = self.archive_path(draft)
-        archive.parent.mkdir(parents=True, exist_ok=True)
         partial = archive.parent / f".{uuid.uuid4().hex}.zip.partial"
-        try:
-            _zip_directory(source, partial)
-            with self._archive_lock(draft.id):
-                if not self.store.path_for(draft.id).is_file():
-                    shutil.rmtree(archive.parent, ignore_errors=True)
-                    return archive
-                os.replace(partial, archive)
-                for stale in archive.parent.glob(f"*{_ARCHIVE_SUFFIX}"):
-                    if stale != archive:
-                        stale.unlink(missing_ok=True)
-        finally:
-            partial.unlink(missing_ok=True)
+        with _export_errors(self.export_dir):
+            try:
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                _zip_directory(source, partial)
+                with self._archive_lock(draft.id):
+                    if not self.store.path_for(draft.id).is_file():
+                        shutil.rmtree(archive.parent, ignore_errors=True)
+                        return None
+                    os.replace(partial, archive)
+                    for stale in archive.parent.glob(f"*{_ARCHIVE_SUFFIX}"):
+                        if stale != archive:
+                            stale.unlink(missing_ok=True)
+            finally:
+                partial.unlink(missing_ok=True)
         return archive
 
     def export_archive(self, draft: Draft, **options: Any) -> Any:
@@ -483,6 +527,9 @@ class EditorService:
         Raises:
             PackageExportError: If the export itself failed, or produced no
                 wheelhouse.  Nothing is staged in that case.
+            EditorStorageError: If the export directory refused the archive.
+            EditorError: If the draft was deleted while it was exported, so
+                nothing was staged and there is nothing to download.
         """
         from ..authoring.package_export import (  # noqa: PLC0415
             PackageExportError,
@@ -501,7 +548,12 @@ class EditorService:
                     "that can be installed without uv and a network.",
                     log=result.log,
                 )
-            self._stage_archive(result.wheelhouse.root, draft)
+            if self._stage_archive(result.wheelhouse.root, draft) is None:
+                raise EditorError(
+                    f"Draft {draft.id!r} was deleted while it was being "
+                    "exported, so nothing was staged and there is nothing to "
+                    "download."
+                )
             return result
         finally:
             shutil.rmtree(build_dir, ignore_errors=True)
@@ -684,6 +736,9 @@ class EditorService:
 
         *client* is the page that asked, as for :meth:`save`.
 
+        An operation that changed nothing saves nothing, so the revision stays
+        and the forms showing the draft stay current.
+
         Returns:
             The saved draft and whatever *operation* returned.
 
@@ -699,6 +754,7 @@ class EditorService:
         changed = {f for f in fields if getattr(after, f) != getattr(before, f)}
         with self.editing(draft_id):
             draft = self.require_draft(draft_id)
+            stored = self.content(draft)
             current = draft.document.map
             contested = sorted(
                 f
@@ -713,7 +769,10 @@ class EditorService:
                 )
             for f in changed:
                 setattr(current, f, getattr(after, f))
-            return self.save(draft, client), result
+            # An operation that changed nothing -- fetching the OpenDRIVE, or
+            # fetching a map already resolved -- keeps the revision, so it
+            # does not make another tab's forms stale (#2559).
+            return self.save(draft, client, unless_same_as=stored), result
 
     def validate(self, draft: Draft) -> ValidationReport:
         """Return the validation report for a draft's document."""
@@ -1746,10 +1805,12 @@ class EditorService:
                 action.phase = requested
         # Only an action whose constructor takes ``once`` can fire again; any
         # other offers no checkbox and always fires once.
-        action.once = action.type not in ONCE_ACTIONS or "once" in form
+        action.once = action.type not in ONCE_ACTIONS or is_checked(form, "once")
         # Only an action that commands an entity's control domains can take
         # one over; for any other, there is nothing to override.
-        action.overrides = action.type in OVERRIDING_ACTIONS and "overrides" in form
+        action.overrides = action.type in OVERRIDING_ACTIONS and is_checked(
+            form, "overrides"
+        )
         action.params.update(_parse(spec.fields, form))
 
     def delete_action(self, document: ScenarioDocument, action_id: str) -> None:
@@ -1789,12 +1850,18 @@ class EditorService:
         so that would draw a dependency the runtime cannot honour.  The layout
         is repaired afterwards rather than the move refused, so a card lands as
         close to where it was aimed as its dependencies allow.
+
+        Only the sign of *delta* counts: a move is one step, as the canvas's
+        buttons send.  A larger one would be stored as a column hint the
+        canvas then draws a column per step for, on every later page of the
+        draft (#2559).
         """
         action = document.action(action_id)
         if action is None:
             raise EditorError(f"No action named {action_id!r}.")
         column = document.ui.column_of(action.id)
-        target = max(0, column + delta)
+        step = (delta > 0) - (delta < 0)
+        target = max(0, column + step)
         if target == column:
             return
         document.ui.set_column(action.id, target)

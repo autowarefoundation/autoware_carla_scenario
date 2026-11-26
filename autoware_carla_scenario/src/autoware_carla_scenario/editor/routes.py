@@ -1268,6 +1268,13 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     Declared ``async`` but doing its work through a blocking call would stall
     the event loop for the length of a dependency resolution, so the export runs
     in a worker thread.
+
+    A failed export is the report, with its log.  What is not the export's
+    failure propagates to the app's handlers instead, so no Download link is
+    rendered for an archive that was never written (#2559): an export
+    directory that refused the archive is the storage error page naming it
+    (507 on a full disk), and a draft deleted while it was exported is the
+    "not found" page saying so.
     """
     form = dict(await request.form())
     service = _service(request)

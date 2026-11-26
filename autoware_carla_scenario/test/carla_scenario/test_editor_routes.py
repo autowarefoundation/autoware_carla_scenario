@@ -310,7 +310,11 @@ class TestPages:
         """
         document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
         action_id = document["actions"][0]["id"]
-        client.post(f"/draft/{draft_id}/action/{action_id}/move", data={"delta": "2"})
+        # A move is one step (#2559), so two of them make two.
+        for _ in range(2):
+            client.post(
+                f"/draft/{draft_id}/action/{action_id}/move", data={"delta": "1"}
+            )
         document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
         assert document["ui"]["nodes"][action_id]["column_hint"] == 2
 
@@ -418,7 +422,8 @@ class TestPages:
         )
         document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
         action = document["actions"][-1]["id"]
-        client.post(f"/draft/{draft_id}/action/{action}/move", data={"delta": "3"})
+        for _ in range(3):
+            client.post(f"/draft/{draft_id}/action/{action}/move", data={"delta": "1"})
 
         report = validate_document(_document(store, draft_id))
         assert report.ok, "a position is presentation; it must not block anything"
@@ -617,7 +622,8 @@ class TestPages:
             data={"action": cut_in, "state": "completeState"},
         )
 
-        client.post(f"/draft/{draft_id}/action/{cut_in}/move", data={"delta": "2"})
+        for _ in range(2):
+            client.post(f"/draft/{draft_id}/action/{cut_in}/move", data={"delta": "1"})
         stored = _document(store, draft_id)
         assert stored.ui.column_of(cut_in) == 2
         assert stored.ui.column_of(reaction) == 3
@@ -4916,7 +4922,7 @@ class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
         source = tmp_path / "src" / f"{draft.id}_wheelhouse"
         source.mkdir(parents=True)
         (source / "a-0.1.0-py3-none-any.whl").write_text("x", encoding="utf-8")
-        return service._stage_archive(source, draft)
+        return _present(service._stage_archive(source, draft), "the staged archive")
 
     def test_deleting_a_draft_removes_its_archive(self, tmp_path: Path) -> None:
         service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
@@ -4986,9 +4992,10 @@ class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
             real_zip(source, archive)
 
         monkeypatch.setattr(service_module, "_zip_directory", _slow_zip)
+        answers: list[Any] = []
         exporter = threading.Thread(
-            target=lambda: client.post(
-                f"/draft/{draft_id}/export", data={"dev_mode": "on"}
+            target=lambda: answers.append(
+                client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
             )
         )
         exporter.start()
@@ -5002,6 +5009,13 @@ class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
         assert not exporter.is_alive(), "the export never finished"
         packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
         assert not (packages / draft_id).exists()
+        # Nothing was staged, so the answer offers no link to download it but
+        # says why (#2559): the link would be a 404.
+        [answer] = answers
+        assert answer.status_code == 404
+        assert "was deleted while it was being exported" in answer.text
+        assert "wheelhouse.zip" not in answer.text
+        assert "Wheelhouse exported" not in answer.text
 
 
 class TestTheDownloadOpensTheArchiveUnderItsLock:
@@ -5936,3 +5950,179 @@ class TestTheGate:
         assert gate is not None
         assert gate.min_runs == 1234568
         assert gate.min_success_rate == pytest.approx(0.125)
+
+
+class TestAMapOperationThatChangesNothingKeepsTheRevision:
+    """A map operation that changed nothing saves nothing (#2559).
+
+    ``run_map_operation`` saved unconditionally, so fetching the OpenDRIVE --
+    which never changes the document -- or fetching a map already resolved
+    bumped the revision, and another tab's next edit was refused with 409.
+    """
+
+    def test_another_tab_s_form_stays_current(self, tmp_path: Path) -> None:
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        draft = service.create_draft()
+
+        saved, result = service.run_map_operation(
+            draft.id, lambda document: "OpenDRIVE written.", client="tab-a"
+        )
+
+        assert result == "OpenDRIVE written."
+        assert saved.revision == draft.revision
+        assert service.require_draft(draft.id).revision == draft.revision
+        with service.editing(draft.id):
+            # Raises StaleDraftError if the no-op made tab B's form stale.
+            service.check_revision(
+                service.require_draft(draft.id), str(draft.revision), "tab-b"
+            )
+
+    def test_an_operation_that_changes_the_map_still_saves(
+        self, tmp_path: Path
+    ) -> None:
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        draft = service.create_draft()
+
+        def _operation(document: ScenarioDocument) -> None:
+            document.map.xodr_path = "elsewhere.xodr"
+
+        saved, _ = service.run_map_operation(draft.id, _operation, client="tab-a")
+        assert saved.revision == draft.revision + 1
+        stored = service.require_draft(draft.id)
+        assert stored.document.map.xodr_path == "elsewhere.xodr"
+
+
+class TestAnExportDirectoryTheEditorCannotWriteTo:
+    """Staging an export into an unusable directory is a page naming it (#2559).
+
+    ``_stage_archive`` and ``_zip_directory`` raised a bare ``OSError``, which
+    the export route did not catch, so the browser showed "HTTP 500" -- while
+    the drafts directory has had a page naming it since #1747.
+    """
+
+    @staticmethod
+    def _assert_page(response: Any, exports: Path, status: int) -> None:
+        assert response.status_code == status
+        assert "Cannot stage the export" in response.text
+        text = html.unescape(response.text)
+        assert str(exports) in text
+        assert "SCENARIO_EDITOR_EXPORT_DIR" in text
+        assert "Wheelhouse exported" not in text
+        assert "wheelhouse.zip" not in text
+        assert "Traceback" not in text
+
+    @pytest.mark.parametrize(
+        ("code", "status"), [(errno.ENOSPC, 507), (errno.EACCES, 500)]
+    )
+    def test_a_refused_archive_is_the_storage_error(
+        self,
+        client: TestClient,
+        offline_export: None,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        draft_id: str,
+        code: int,
+        status: int,
+    ) -> None:
+        """507 when the disk is full, as for the drafts directory; 500 for a
+        permission the editor lacks."""
+        from autoware_carla_scenario.editor import service as service_module
+
+        def _zip(source: Path, archive: Path) -> None:
+            raise OSError(code, os.strerror(code), str(archive))
+
+        monkeypatch.setattr(service_module, "_zip_directory", _zip)
+        response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        self._assert_page(response, tmp_path / "packages", status)
+        assert os.strerror(code) in response.text
+        # Nothing is staged, half-written or whole.
+        assert not [p for p in (tmp_path / "packages").rglob("*") if p.is_file()]
+        download = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        assert download.status_code == 404
+
+    def test_an_export_directory_under_a_file(
+        self,
+        offline_export: None,
+        at_repo_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        """No monkeypatching the failure: the directory cannot be created."""
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a directory", encoding="utf-8")
+        exports = blocker / "exports"
+        client = TestClient(
+            create_app(draft_dir=tmp_path / "drafts", export_dir=exports),
+            base_url="http://127.0.0.1",
+        )
+        created = client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
+        draft_id = created.headers["location"].rsplit("/", 1)[-1]
+        response = client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        self._assert_page(response, exports, 500)
+
+
+class TestAMoveIsOneStep:
+    """A move's ``delta`` counts by its sign only (#2559).
+
+    ``move_action`` stored ``column + delta``, and the canvas draws a column
+    per step, so one post of ``delta=200000`` made every later page of the
+    draft tens of megabytes.
+    """
+
+    def test_a_huge_delta_moves_one_step(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        action_id = _document(store, draft_id).actions[0].id
+        before = _document(store, draft_id).ui.column_of(action_id)
+        size = len(client.get(f"/draft/{draft_id}").text)
+
+        response = client.post(
+            f"/draft/{draft_id}/action/{action_id}/move", data={"delta": "200000"}
+        )
+        assert response.status_code == 200
+        assert _document(store, draft_id).ui.column_of(action_id) == before + 1
+        # One more column at most, not two hundred thousand.
+        assert len(client.get(f"/draft/{draft_id}").text) < 2 * size
+
+        client.post(
+            f"/draft/{draft_id}/action/{action_id}/move", data={"delta": "-200000"}
+        )
+        assert _document(store, draft_id).ui.column_of(action_id) == before
+
+    def test_a_zero_delta_moves_nothing(self, tmp_path: Path) -> None:
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        document = service.create_draft().document
+        action_id = document.actions[0].id
+        before = document.ui.column_of(action_id)
+        service.move_action(document, action_id, 0)
+        assert document.ui.column_of(action_id) == before
+
+
+class TestOnceAndOverridesAreReadAsCheckboxes:
+    """``once`` and ``overrides`` are read by value, not by presence (#2559).
+
+    ``"once" in form`` counted a posted ``once=0`` or ``once=off`` as ticked;
+    the rest of the editor reads a checkbox through ``registry.is_checked``.
+    """
+
+    @pytest.mark.parametrize("value", ["0", "off", "false", ""])
+    def test_a_falsy_value_is_not_ticked(
+        self, client: TestClient, store: DraftStore, draft_id: str, value: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action", data={"type_id": "turn", "actor": "ego"}
+        )
+        turn = next(a for a in _document(store, draft_id).actions if a.type == "turn")
+        client.post(
+            f"/draft/{draft_id}/action/{turn.id}",
+            data={"direction": "left", "once": "on", "overrides": "on"},
+        )
+        stored = _action(store, draft_id, turn.id)
+        assert stored.once is True and stored.overrides is True
+
+        client.post(
+            f"/draft/{draft_id}/action/{turn.id}",
+            data={"direction": "left", "once": value, "overrides": value},
+        )
+        stored = _action(store, draft_id, turn.id)
+        assert stored.once is False
+        assert stored.overrides is False
