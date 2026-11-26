@@ -139,16 +139,6 @@ class ReadinessAggregator:
         return self.route_state == ROUTE_STATE_UNSET
 
     @property
-    def route_changeable(self) -> bool:
-        """Whether the AD API would change the route now.
-
-        ``RoutingNode::on_change_route_points`` changes a route that is SET and
-        refuses one that is not ("The route is not set yet."), including while
-        an earlier change is still CHANGING.
-        """
-        return self.route_state == ROUTE_STATE_SET
-
-    @property
     def route_arrived(self) -> bool:
         """Whether the vehicle has reached the goal of the route.
 

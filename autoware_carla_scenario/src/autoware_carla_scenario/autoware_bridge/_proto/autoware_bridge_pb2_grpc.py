@@ -13,8 +13,8 @@ from . import autoware_bridge_pb2 as autoware__bridge_dot_v0_dot_autoware__bridg
 class AutowareBridgeStub(object):
     """-- Service ----------------------------------------------------------------
 
-    Hosted by the scenario library; the autoware_carla_interface node is the
-    client (see the topology note above).
+    Hosted by the scenario library; the scenario_bridge node is the client (see
+    the topology note above).
     """
 
     def __init__(self, channel):
@@ -43,14 +43,14 @@ class AutowareBridgeStub(object):
 class AutowareBridgeServicer(object):
     """-- Service ----------------------------------------------------------------
 
-    Hosted by the scenario library; the autoware_carla_interface node is the
-    client (see the topology note above).
+    Hosted by the scenario library; the scenario_bridge node is the client (see
+    the topology note above).
     """
 
     def GetMission(self, request, context):
         """Fetch the scenario's mission (initial pose, goal, waypoints). The client
-        polls this until `available`; the Autoware side then auto-initializes,
-        routes, and engages from it. It keeps polling after that, more slowly, to
+        polls this until `available`, then initializes localization, routes,
+        and engages from it. It keeps polling after that, more slowly, to
         follow a re-route (a new `mission_version`).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -104,8 +104,8 @@ def add_AutowareBridgeServicer_to_server(servicer, server):
 class AutowareBridge(object):
     """-- Service ----------------------------------------------------------------
 
-    Hosted by the scenario library; the autoware_carla_interface node is the
-    client (see the topology note above).
+    Hosted by the scenario library; the scenario_bridge node is the client (see
+    the topology note above).
     """
 
     @staticmethod

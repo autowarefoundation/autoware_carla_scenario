@@ -1,14 +1,15 @@
 """Concrete :class:`AutowareBridge` that hosts the gRPC server.
 
-Splatsim-consistent topology: the scenario library **hosts** this
-``AutowareBridge`` gRPC server and ``autoware_carla_interface`` is the **client**
-that dials it (see the topology note in
+The scenario library **hosts** this ``AutowareBridge`` gRPC server and the
+framework's own ``scenario_bridge`` ROS 2 node
+(:mod:`~autoware_carla_scenario.autoware_bridge.ros_bridge.node`) is the
+**client** that dials it (see the topology note in
 ``proto/autoware_bridge/v0/autoware_bridge.proto``).  Because only the client
 initiates, the three RPCs are direction-inverted from a "framework pushes" model:
 
 * ``GetMission`` - the client pulls the scenario's mission (initial pose, goal,
   waypoints).  It returns ``available=False`` until :meth:`configure` has been
-  called, so the interface node can start polling before the scenario hands over
+  called, so the node can start polling before the scenario hands over
   the mission.  Each :meth:`configure` and :meth:`reroute` bumps the response's
   ``mission_version``, which is how the client, still polling once Autoware is
   driving, tells a re-route from the route it already set.  Every response
@@ -42,7 +43,9 @@ answering is told from one that is driving, and how a booting one that has the
 mission is told from one that has not reached the bridge at all.
 
 The framework never imports ROS 2 / rclpy: all ROS 2 / Autoware AD API I/O lives
-on the client, inside the interface node.  This class only serves the mission and
+on the client, the ``scenario_bridge`` node, which calls
+``/api/localization/initialize`` and ``change_to_autonomous`` itself and runs
+the readiness aggregator in-process.  This class only serves the mission and
 latches the reported readiness behind a lock, since the RPCs are handled on the
 server's thread pool while the entity drives :meth:`configure` / :meth:`is_ready`
 from the tick loop.
@@ -68,9 +71,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["GrpcAutowareBridgeServer", "server_options"]
 
-#: Maximum gRPC message size.  The readiness contract is tiny (a couple of poses
-#: and a bool), but the limits are set explicitly for parity with the egodriver
-#: client's channel options.
+#: Maximum gRPC message size the server sends and receives.  The readiness
+#: contract is tiny (a few poses and a bool), so 1 MiB is ample.  It is the
+#: server's own limit: the ``scenario_bridge`` node's client dials with gRPC's
+#: default channel options.
 MAX_MESSAGE_BYTES: int = 1 * 1024 * 1024
 
 
@@ -252,7 +256,11 @@ class GrpcAutowareBridgeServer(AutowareBridge):
 
     @property
     def port(self) -> Optional[int]:
-        """The port the server is listening on, or ``None`` before :meth:`start`."""
+        """The port the server is listening on.
+
+        ``None`` while it is not listening: before :meth:`start`, after a
+        failed one, and after :meth:`close`.
+        """
         return self._port
 
     @property
@@ -277,13 +285,19 @@ class GrpcAutowareBridgeServer(AutowareBridge):
     def client_address(self) -> Optional[str]:
         """The address the client dials: the bound port, on this host.
 
+        ``None`` while the server is not listening (:attr:`port` is ``None``):
+        before :meth:`start`, after a failed one, and after :meth:`close`.
+
         A server bound to every interface (``0.0.0.0``, ``[::]``) is dialed on
         ``localhost``, which is where a stack on this host's network finds it.
+        An empty or bare IPv6 host (``:50052``, ``:::50052``) never gets here:
+        :class:`~autoware_carla_scenario.autoware_bridge.base.AutowareBridgeConfig`
+        refuses it.
         """
         if self._port is None:
             return None
         host = self._config.address.rsplit(":", 1)[0]
-        if host in ("", "0.0.0.0", "[::]", "::"):  # noqa: S104 - a bind address, not a bind
+        if host in ("0.0.0.0", "[::]"):  # noqa: S104 - a bind address, not a bind
             host = "localhost"
         return f"{host}:{self._port}"
 
@@ -415,3 +429,5 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         # No thread of the server outlives close() (#2257).
         self._stop_server()
         logger.info("AutowareBridge server on port %d stopped", self._port)
+        # Nothing listens there any more: port and client_address say so.
+        self._port = None

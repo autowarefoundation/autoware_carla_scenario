@@ -1,7 +1,7 @@
 """Round-trip tests for the gRPC-backed :class:`GrpcAutowareBridge` server.
 
 The bridge hosts the ``AutowareBridge`` server in-process on a real loopback port;
-each test plays the ``autoware_carla_interface`` client, pulling the mission and
+each test plays the ``scenario_bridge`` node's client, pulling the mission and
 pushing readiness over a real gRPC channel.  This exercises the generated stubs
 and the server end to end without needing a live Autoware stack or CARLA.
 """
@@ -328,6 +328,39 @@ def test_a_server_on_every_interface_is_dialed_on_localhost() -> None:
         assert server.client_address == f"localhost:{server.port}"
     finally:
         server.close()
+
+
+def test_a_closed_bridge_reports_no_address() -> None:
+    """#2555: once closed, nothing listens on the port, so neither it nor the
+    address to dial is reported; a restart reports the port it binds."""
+    server = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address="0.0.0.0:0"),  # noqa: S104 - test bind
+    )
+    try:
+        assert server.port is not None
+        server.close()
+        assert server.port is None
+        assert server.client_address is None
+        server.close()  # still idempotent
+        assert server.port is None
+
+        server.start()
+        assert server.port is not None
+        assert server.client_address == f"localhost:{server.port}"
+        with _client(server) as stub:
+            response = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+        assert not response.available
+    finally:
+        server.close()
+    assert server.port is None
+
+
+@pytest.mark.parametrize("address", [":50052", ":::50052", "::50052"])
+def test_an_empty_or_bare_ipv6_host_never_reaches_the_server(address: str) -> None:
+    """``client_address`` maps only ``0.0.0.0`` and ``[::]`` to localhost: an
+    empty or unbracketed ``::`` host is refused by the config first."""
+    with pytest.raises(ValueError, match="^address must be a host:port"):
+        AutowareBridgeConfig(address=address)
 
 
 def test_a_closed_bridge_starts_afresh() -> None:

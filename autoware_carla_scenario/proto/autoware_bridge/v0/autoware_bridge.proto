@@ -1,48 +1,48 @@
-// gRPC wire contract between the scenario framework and
-// autoware_carla_interface. The contract is intentionally tiny: the scenario
+// gRPC wire contract between the scenario framework and the Autoware stack
+// that drives its ego. The contract is intentionally tiny: the scenario
 // framework hands Autoware the mission (initial pose, goal and waypoints, and
-// any re-route of it later in the run), and the Autoware
-// side reports back a single readiness flag. The Autoware side owns the entire
-// startup sequence.
+// any re-route of it later in the run), and the Autoware side reports back a
+// single readiness flag. The Autoware side owns the entire startup sequence.
 //
-// Delegation (all on the Autoware side, not the framework):
-//   - localization init  : autoware_automatic_pose_initializer (GNSS) or a
-//                          published /initialpose via initial_pose_adaptor.
-//   - routing            : the AD API's set_route_points, from the goal pose
+// The Autoware side of the bridge is the framework's own scenario_bridge ROS 2
+// node (autoware_carla_scenario.autoware_bridge.ros_bridge.node), run in
+// Autoware's ROS 2 environment. Through the AD API it does the whole startup
+// itself:
+//   - localization init  : /api/localization/initialize at the mission's
+//                          initial pose (skipped when the node's
+//                          initialize_localization parameter is off).
+//   - routing            : /api/routing/set_route_points, from the goal pose
 //                          and waypoints; change_route_points on a re-route.
-//   - engage + readiness : small Autoware-side helpers (an auto-engage node and
-//                          a readiness aggregator that ANDs localization /
-//                          routing / operation-mode state) - see the follow-up
-//                          issues.
+//   - engage + readiness : /api/operation_mode/change_to_autonomous (behind
+//                          the node's auto_engage parameter), and a readiness
+//                          aggregator, run in-process, that ANDs localization /
+//                          routing / operation-mode state.
 //
 // This is DELIBERATELY SEPARATE from the alpasim egodriver contract
 // (proto/alpasim_grpc/v0/egodriver.proto), which is a driving-policy interface.
-// Autoware drives the ego itself through the ROS 2 interface node.
+// Autoware drives the ego itself, through autoware_carla_interface.
 //
-// Topology (splatsim-consistent): the SERVER is hosted by the scenario library
-// and the autoware_carla_interface node is the CLIENT, matching splatsim, where
-// the interface node runs a gRPC client (splatsim/grpc_client.py) against a
-// server launched in Docker (splatsim/docker_manager.py). Here the interface
-// node likewise launches the scenario-library container and then dials this
-// AutowareBridge server. Keeping the interface node a client lets it reuse that
-// existing splatsim client/Docker-launch scaffolding, and keeps the scenario
-// library free of any ROS 2 dependency (all ROS 2 / Autoware AD API I/O lives on
-// the client, inside the interface node).
+// Topology: the SERVER is hosted by the scenario library and the
+// scenario_bridge node is the CLIENT that dials it. Keeping the node a client
+// keeps the scenario library free of any ROS 2 dependency (all ROS 2 /
+// Autoware AD API I/O lives on the client, inside the scenario_bridge node).
 //
-// Because only the client initiates, the two RPCs are direction-inverted from a
-// "framework pushes" contract: the client PULLS the mission (GetMission) and
-// PUSHES its readiness (ReportReadiness). The framework holds the mission and
-// latches the reported readiness so AutowareEgoEntity can poll it per tick.
+// Because only the client initiates, the three RPCs are direction-inverted
+// from a "framework pushes" contract: the client PULLS the mission
+// (GetMission) and PUSHES its readiness (ReportReadiness) and Autoware's
+// turn-indicator command (ReportTurnIndicators). The framework holds the
+// mission and latches the reported readiness so AutowareEgoEntity can poll it
+// per tick.
 //
 // High-bandwidth data (sensors, control, /clock, tf) never flows here; it stays
-// on ROS 2 topics and direct CARLA control inside the interface node. The one
-// command that does is the turn indicators (ReportTurnIndicators): a change a
-// few times a run, which the framework applies to the CARLA ego itself. Ego
+// on ROS 2 topics and direct CARLA control inside autoware_carla_interface. The
+// one command that does is the turn indicators (ReportTurnIndicators): a change
+// a few times a run, which the framework applies to the CARLA ego itself. Ego
 // pose/velocity for scenario conditions is read directly from the CARLA world.
 //
-// This file is the design-time contract only. Stub generation (via
-// scripts/compile_protos.py) and the server/client implementations are
-// follow-up work.
+// The Python stubs generated from this file (scripts/compile_protos.py) are
+// committed under autoware_carla_scenario/autoware_bridge/_proto/; the server is
+// autoware_bridge/grpc_server.py and the client autoware_bridge/ros_bridge/.
 
 syntax = "proto3";
 
@@ -140,12 +140,12 @@ message ReportTurnIndicatorsResponse {}
 
 // -- Service ----------------------------------------------------------------
 
-// Hosted by the scenario library; the autoware_carla_interface node is the
-// client (see the topology note above).
+// Hosted by the scenario library; the scenario_bridge node is the client (see
+// the topology note above).
 service AutowareBridge {
   // Fetch the scenario's mission (initial pose, goal, waypoints). The client
-  // polls this until `available`; the Autoware side then auto-initializes,
-  // routes, and engages from it. It keeps polling after that, more slowly, to
+  // polls this until `available`, then initializes localization, routes,
+  // and engages from it. It keeps polling after that, more slowly, to
   // follow a re-route (a new `mission_version`).
   rpc GetMission(GetMissionRequest) returns (GetMissionResponse);
 
