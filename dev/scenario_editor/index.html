@@ -4186,9 +4186,9 @@ behind was made before the editor restarted (or has dropped out of that
 memory); a reload puts the tab back in step.</p>
 <p>A button that names a row by its position -- remove a signal group, a
 controller or a phase, move a phase, add a phase to a controller, remove a
-waypoint condition -- or that posts a whole order (<code>/actors</code>) carries the
-revision too, and is checked <strong>strictly</strong>: only the draft's current revision
-passes, with no allowance for the page's own saves. Any save since the button
+waypoint condition -- carries the revision too, and is checked <strong>strictly</strong>:
+only the draft's current revision passes, with no allowance for the page's
+own saves. Any save since the button
 was rendered may have moved the rows it points at, so a stale tab's click is
 refused rather than removing or moving the wrong row, and so is the second of
 two quick clicks in one tab, sent before the answer to the first renumbered
@@ -4571,7 +4571,9 @@ guess.</p>
 environment (<code>uv run scenario-editor --host 0.0.0.0 --port 9200</code>). An unknown
 option is an error (exit 2) and serves nothing, as is a port (<code>--port</code> or
 <code>SCENARIO_EDITOR_PORT</code>) that is not an integer within 1-65535: 0, which would
-have the system pick a port the editor does not report, is refused too.</p>
+have the system pick a port the editor does not report, is refused too.
+A leading <code>~</code> in a directory, given by its flag or its variable, is your home
+directory either way, as it is under <code>uvicorn ...editor.app:app</code>.</p>
 <p>The drafts directory holds every <code>*.yaml</code> the editor finds there, drafts or
 not. A file that is not a draft is left out of the list, and so is one the
 editor cannot read (a permission it lacks, a file that is not UTF-8), with a
@@ -4579,7 +4581,9 @@ warning in the log naming it; opening either by its id is a 404 that says why.
 A drafts directory the editor may not write to -- or a read-only file system --
 turns creating, saving or deleting a draft into a page that names the directory
 (status 500; 507 when its disk is full) instead of a traceback, and the stored
-draft is left as it was.</p>
+draft is left as it was.
+An export directory that refuses the wheelhouse's archive is reported the
+same way, naming the export directory, and nothing is staged.</p>
 <div class="admonition warning">
 <p class="admonition-title">The editor listens on this machine only by default</p>
 <p>The editor has no authentication, so it binds <code>127.0.0.1</code> unless told
@@ -4742,7 +4746,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 13:28:18 UTC"><span class="timeago" datetime="2026-11-25T13:28:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 13:28:18 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 23:29:10 UTC"><span class="timeago" datetime="2026-11-26T23:29:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 23:29:10 UTC">2026-11-26</span>
   </span>
 
     
