@@ -23,9 +23,10 @@ away from the rest.
 Which projection a map wants is not a guess: Autoware ships it next to the map,
 in ``map_projector_info.yaml``, and :mod:`.projection` -- which every loader in
 this package shares -- is what reads it.  A ``Local``
-map -- the CARLA towns again -- is read with ``UtmProjector`` at the map origin,
-which reproduces the ``local_x``/``local_y`` the file stores and makes the
-offset above zero.
+map -- the CARLA towns again -- is read at the ``local_x``/``local_y`` (and
+``local_z``) the file stores (:data:`.projection.LOCAL_XY`), as Autoware's own
+loader reads it; only a node without them, and the origin, go through
+``UtmProjector`` at the map origin, which makes the offset above zero.
 """
 
 from __future__ import annotations

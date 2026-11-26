@@ -1283,6 +1283,7 @@ graph LR
     L2 -->|"to_carla_world()"| CW
     OD -->|"to_carla_world()"| CW
     CW -->|"to_lanelet2()"| L2
+    OD -->|"to_lanelet2()"| L2
     L2 -->|"snap_to_carla_road()"| CW
     OD -->|"snap_to_carla_road()"| CW
     CW -->|"to_opendrive()"| OD
@@ -1292,7 +1293,9 @@ graph LR
 
 `to_carla_world()` returns a `CarlaWorldPose`; `to_carla_location()` takes any of the three (or a `carla.Location`) and returns the `carla.Location` of its `CarlaWorldPose`.
 
-**`snap_to_carla_road()`** puts a pose on the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world. A `Lanelet2Pose` keeps the x, y and yaw its own lanelet gives it, and an `OpenDrivePose` those of its road's reference line; neither is projected onto the other map. A `CarlaWorldPose` is moved onto the nearest road with CARLA's waypoint API. In every case only z comes from CARLA, from a ray cast down onto the ground from the pose's own level of road.
+Where several OpenDRIVE roads hold a `CarlaWorldPose` -- a junction's connecting roads overlap -- `to_opendrive()` reads it on the one whose reference line runs nearest its `yaw` (either way along the line), as `to_lanelet2()` picks among overlapping lanelets by heading; CARLA's waypoint API reads no heading, so a waypoint on a junction road is checked against that ranking.
+
+**`snap_to_carla_road()`** puts a pose on the actual 3D road surface, accounting for terrain height differences between the map definition and the rendered world. A `Lanelet2Pose` keeps the x, y and yaw its own lanelet gives it, and an `OpenDrivePose` those of its road's reference line; neither is projected onto the other map. A `CarlaWorldPose` is moved onto the nearest road with CARLA's waypoint API, which gives its x and y too. For a `Lanelet2Pose` and an `OpenDrivePose` only z comes from CARLA; in every case z is found by a ray cast down onto the ground from the pose's own level of road (for an `OpenDrivePose` whose `lane_id` names no lane at its `s`, from the OpenDRIVE map's own height there).
 
 A `Lanelet2Pose`'s `s` must lie on its lanelet, from 0 to the lanelet's length (1e-6 m of float error either side is accepted): one past either end is clamped onto the nearer end with a warning naming the lanelet, `s` and the length, logged once per lanelet and `s` in a run so a pose converted on every tick does not flood the log. A point further on belongs on the next lanelet. A NaN `s` raises `ValueError`.
 

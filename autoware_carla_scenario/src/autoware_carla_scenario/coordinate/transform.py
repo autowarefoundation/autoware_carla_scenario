@@ -61,6 +61,22 @@ logger = logging.getLogger(__name__)
 #: roads -- and the tie is broken by which road the point starts.
 _SEAM_TOLERANCE = 1e-3
 
+#: How much farther (rad) from the pose's heading than the best-aligned road
+#: that holds a point another road holding it may run and still be weighed
+#: (:func:`_choose_road`).  Within it the roads run the same way -- connected
+#: roads at their seam, a junction's connecting roads where they leave the
+#: same lane, before they part -- and the nearer reference line decides, as
+#: it always did; a sampled reference line's direction is good to a few
+#: hundredths of a radian, and roads that do part are tenths apart (#2545).
+_HEADING_TOLERANCE_RAD = 0.2
+
+#: How near (rad) the pose's heading a road holding a point has to run for
+#: heading to weigh at all (:func:`_choose_road`): where none of them runs
+#: the pose's way -- a vehicle across the lanes, or a map whose lanelets and
+#: roads part near a junction -- heading tells them apart no better than
+#: distance does.
+_ALIGNED_TURN_RAD = 0.1
+
 #: How many lanelets nearest in plan view are weighed against the pose's
 #: elevation, to tell stacked lanelets apart.
 _STACKED_CANDIDATES = 8
@@ -106,23 +122,42 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     Unlike :func:`to_opendrive` which finds the nearest road, this projects
     directly onto the specified road regardless of distance.
 
+    A road too short for its reference line to be sampled at two points --
+    pyxodr samples none for some of a junction's connecting roads, a few
+    centimetres long -- is measured along the straight line its first
+    ``<geometry>`` starts (:func:`_unsampled_road_start`).
+
     Args:
         pose: The CARLA world pose to project.
         road_id: The OpenDRIVE road ID to project onto.
 
     Returns:
         An :class:`OpenDrivePose` with ``road_id`` set to *road_id*.
+
+    Raises:
+        ValueError: If the road has fewer than two reference-line samples and
+            no ``<geometry>`` to place it by.
     """
     mm = MapManager.get_instance()
     road = mm.road_network.road_ids_to_object[road_id]
     ref_line: np.ndarray = road.reference_line
 
     od_heading = -math.radians(pose.yaw)
-    _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
-        ref_line,
-        np.array([pose.x, -pose.y]),
-        _road_arc_lengths(mm.road_network, road_id),
-    )
+    if len(ref_line) < 2:
+        # Too short for pyxodr to sample (#2545): measured along the line its
+        # <geometry> starts, as _opendrive_to_carla places it.
+        x0, y0, _z0, heading_ref = _unsampled_road_start(road, road_id)
+        dx = pose.x - x0
+        dy = -pose.y - y0
+        along = dx * math.cos(heading_ref) + dy * math.sin(heading_ref)
+        s = min(max(along, 0.0), _xml_length(road))
+        t = math.cos(heading_ref) * dy - math.sin(heading_ref) * dx
+    else:
+        _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
+            ref_line,
+            np.array([pose.x, -pose.y]),
+            _road_arc_lengths(mm.road_network, road_id),
+        )
 
     return OpenDrivePose(
         road_id=road_id,
@@ -703,19 +738,36 @@ def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
 
 
 def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
-    """Convert an OpenDRIVE (s, t) pose to CARLA world coordinates."""
+    """Convert an OpenDRIVE (s, t) pose to CARLA world coordinates.
+
+    A road too short for its reference line to be sampled at two points
+    (pyxodr samples none for some of a junction's connecting roads, a few
+    centimetres long) is placed along the straight line its first
+    ``<geometry>`` starts: ``s`` along its ``hdg`` from its ``x``/``y``,
+    clamped to the road's length (:func:`_unsampled_road_start`).
+
+    Raises:
+        ValueError: If the road has fewer than two reference-line samples and
+            no ``<geometry>`` to place it by.
+    """
     mm = MapManager.get_instance()
     road = mm.road_network.road_ids_to_object[pose.road_id]
     ref_line: np.ndarray = road.reference_line  # shape (N, 2)
 
-    z_coords: np.ndarray = road.z_coordinates  # shape (N,)
-    arc_lengths = _road_arc_lengths(mm.road_network, pose.road_id)
+    if len(ref_line) < 2:
+        x0, y0, z_ref, heading_ref = _unsampled_road_start(road, pose.road_id)
+        along = min(max(pose.s, 0.0), _xml_length(road))
+        x_ref = x0 + along * math.cos(heading_ref)
+        y_ref = y0 + along * math.sin(heading_ref)
+    else:
+        z_coords: np.ndarray = road.z_coordinates  # shape (N,)
+        arc_lengths = _road_arc_lengths(mm.road_network, pose.road_id)
 
-    x_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 0]))
-    y_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 1]))
-    z_ref = float(np.interp(pose.s, arc_lengths, z_coords))
+        x_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 0]))
+        y_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 1]))
+        z_ref = float(np.interp(pose.s, arc_lengths, z_coords))
 
-    heading_ref = _heading_at_s(ref_line, arc_lengths, pose.s)
+        heading_ref = _heading_at_s(ref_line, arc_lengths, pose.s)
     total_heading = heading_ref + pose.heading
 
     # OpenDRIVE defines t as the offset perpendicular to the REFERENCE LINE,
@@ -737,6 +789,48 @@ def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
     # just flip y for CARLA's left-hand system (South=+y).
     carla_yaw_deg = -math.degrees(total_heading)
     return CarlaWorldPose(x=x, y=-y, z=z_ref, yaw=carla_yaw_deg)
+
+
+def _unsampled_road_start(
+    road: Road, road_id: str
+) -> tuple[float, float, float, float]:
+    """``(x, y, z, hdg)`` of *road* at ``s = 0``, from its XML, in the
+    OpenDRIVE frame: for a road whose reference line pyxodr sampled at fewer
+    than two points (#2545).
+
+    ``x``, ``y`` and ``hdg`` are its first ``<geometry>``'s; ``z`` is the
+    first height pyxodr sampled, else its first ``<elevation>`` record's
+    ``a``, else 0.
+
+    Raises:
+        ValueError: If the road has no ``<planView>/<geometry>``.
+    """
+    plan_view = road.road_xml.find("planView")
+    geometries = [] if plan_view is None else plan_view.findall("geometry")
+    if not geometries:
+        raise ValueError(
+            f"OpenDRIVE road {road_id!r} has fewer than two reference-line "
+            "samples and no <planView>/<geometry> to place it by"
+        )
+    first = geometries[0]
+    x0 = float(first.attrib["x"])
+    y0 = float(first.attrib["y"])
+    heading = float(first.attrib["hdg"])
+    zs: np.ndarray = road.z_coordinates
+    if len(zs) > 0:
+        return x0, y0, float(zs[0]), heading
+    z0 = 0.0
+    profile = road.road_xml.find("elevationProfile")
+    if profile is not None:
+        elevations = profile.findall("elevation")
+        if elevations:
+            z0 = float(elevations[0].attrib.get("a", "0.0"))
+    return x0, y0, z0, heading
+
+
+def _xml_length(road: Road) -> float:
+    """The road's ``length`` attribute (m), 0 where it has none."""
+    return float(road.road_xml.get("length", "0.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -799,6 +893,9 @@ def _carla_to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose:
 
     Uses ``carla.Map.get_waypoint()`` when available for accurate road/lane
     identification; falls back to brute-force reference-line search otherwise.
+    ``get_waypoint()`` takes no heading, so where it names a road inside a
+    junction -- whose connecting roads overlap -- the pose's heading is asked
+    too (:func:`_recheck_junction_road`).
     """
     mm = MapManager.get_instance()
     carla_map = mm.carla_map
@@ -806,7 +903,7 @@ def _carla_to_opendrive(pose: CarlaWorldPose) -> OpenDrivePose:
     if carla_map is not None:
         result = _carla_to_opendrive_via_waypoint(pose, carla_map, mm)
         if result is not None:
-            return result
+            return _recheck_junction_road(pose, result, mm)
         logger.warning(
             "Waypoint lookup failed for (%.2f, %.2f); "
             "falling back to brute-force search",
@@ -868,6 +965,37 @@ def _carla_to_opendrive_via_waypoint(
     )
 
 
+def _recheck_junction_road(
+    pose: CarlaWorldPose, found: OpenDrivePose, mm: MapManager
+) -> OpenDrivePose:
+    """*found*, the waypoint's reading of *pose*, or the brute-force one where
+    the waypoint's road is inside a junction and lines up worse with the pose.
+
+    ``carla.Map.get_waypoint()`` reads a location, not a heading, and in a
+    junction several connecting roads hold the same point: a vehicle going
+    straight on can be read as on the turn beside it, and a lane distance then
+    follows the turn (#2545).  So for a junction road the brute-force search
+    (:func:`_carla_to_opendrive_bruteforce`), which breaks that tie by the
+    pose's heading, is asked too, and its road is taken when it holds the
+    point, a road holding it runs within :data:`_ALIGNED_TURN_RAD` of the
+    pose's heading, and the waypoint's road runs farther from it, axis-wise,
+    than the best-aligned of them by more than :data:`_HEADING_TOLERANCE_RAD`
+    -- a road the search would not have weighed (:func:`_choose_road`).  A
+    road outside a junction is kept as the waypoint reads it.
+    """
+    road = mm.road_network.road_ids_to_object[found.road_id]
+    if road.road_xml.get("junction", "-1") == "-1":
+        return found
+    best, least_turn = _bruteforce_best(pose, mm)
+    if best is None or best[4] == found.road_id or best[0] > _SEAM_TOLERANCE:
+        return found
+    if least_turn > _ALIGNED_TURN_RAD:
+        return found
+    if _axis_turn(found.heading) <= least_turn + _HEADING_TOLERANCE_RAD:
+        return found
+    return _bruteforce_pose(pose, best)
+
+
 def _carla_to_opendrive_bruteforce(
     pose: CarlaWorldPose,
     mm: MapManager,
@@ -878,25 +1006,78 @@ def _carla_to_opendrive_bruteforce(
     fails.  The road whose lanes hold the point wins over one whose reference
     line merely passes closer: a lane two lanes out from its own reference
     line is still nearer the end of the road before it than to that line.
-    Among roads that hold it (or none that do), the one whose lanes it is
-    nearest to wins, then the one whose reference line is nearest.
+    Where several roads hold it -- a junction's connecting roads overlap --
+    and one of them runs the pose's way (within :data:`_ALIGNED_TURN_RAD`),
+    those running farther from the pose's heading than the best-aligned of
+    them by more than :data:`_HEADING_TOLERANCE_RAD` are left out first
+    (:func:`_choose_road`), as :func:`.stacked.choose_lanelet` weighs heading
+    on the Lanelet2 side (#2545).  Then the one whose lanes it is nearest to
+    wins, then the one whose reference line is nearest.  A pose's ``yaw`` is
+    always read: one built from a location alone faces East (``yaw = 0``),
+    which only matters where several roads hold it.
     """
+    best, _least_turn = _bruteforce_best(pose, mm)
+    if best is None:
+        return OpenDrivePose(road_id="", lane_id=0, s=0.0, t=0.0, heading=0.0)
+    return _bruteforce_pose(pose, best)
+
+
+def _bruteforce_pose(
+    pose: CarlaWorldPose,
+    best: tuple[float, float, float, bool, str, Road, float, float, float],
+) -> OpenDrivePose:
+    """The :class:`OpenDrivePose` of *pose* on the road *best* measured."""
+    _outside, _turn, _dist, _at_end, road_id, road, s, t, heading_ref = best
+    return OpenDrivePose(
+        road_id=road_id,
+        lane_id=_find_lane_at_t(road, s, t),
+        s=s,
+        t=t,
+        heading=normalize_angle_rad(-math.radians(pose.yaw) - heading_ref),
+    )
+
+
+def _axis_turn(heading_diff: float) -> float:
+    """How far (rad, in [0, pi/2]) a heading *heading_diff* off a reference
+    line is from its axis, whichever way along it."""
+    turn = abs(normalize_angle_rad(heading_diff))
+    return min(turn, math.pi - turn)
+
+
+def _bruteforce_best(
+    pose: CarlaWorldPose,
+    mm: MapManager,
+) -> tuple[
+    Optional[tuple[float, float, float, bool, str, Road, float, float, float]], float
+]:
+    """``(outside, turn, dist, at_end, road_id, road, s, t, heading_ref)`` of
+    the road :func:`_carla_to_opendrive_bruteforce` reads *pose* on (``None``
+    when the network has no road with a sampled reference line), and the
+    least ``turn`` of the roads holding it (:func:`_choose_road`)."""
     # CARLA world coords share the same origin as XODR; just flip y back.
     point = np.array([pose.x, -pose.y])
+    od_heading = -math.radians(pose.yaw)
 
     # Every vertex of the map measured at once; each road then reads its own.
     _network, roads, stacked, starts, _arcs = _ref_lines(mm.road_network)
     all_dists = np.linalg.norm(stacked - point, axis=1)
 
-    # (outside, dist, at_end, road_id, road, s, t, heading_ref) of the best so far
-    best: Optional[tuple[float, float, bool, str, Road, float, float, float]] = None
+    # (outside, turn, dist, at_end, road_id, road, s, t, heading_ref) of
+    # every road measured, and of the best so far by _beats alone.
+    measured: list[
+        tuple[float, float, float, bool, str, Road, float, float, float]
+    ] = []
+    best: Optional[tuple[float, float, float, bool, str, Road, float, float, float]] = (
+        None
+    )
     for (road_id, road, ref_line, arc_lengths), begin in zip(roads, starts):
         dists = all_dists[begin : begin + len(ref_line)]
         nearest_idx = int(np.argmin(dists))
         dist = float(dists[nearest_idx])
         overshoot = _overshoot_along(ref_line, nearest_idx, point)
         # The lane widths are the costly part, and overshooting the road's end
-        # alone already puts a point further out than the best road so far.
+        # alone already puts a point further out than the best road so far
+        # (so it holds no point: it is never one _choose_road weighs).
         if best is not None and overshoot > best[0] + _SEAM_TOLERANCE:
             continue
         s = float(arc_lengths[nearest_idx])
@@ -912,6 +1093,7 @@ def _carla_to_opendrive_bruteforce(
         )
         candidate = (
             outside,
+            _axis_turn(od_heading - heading_ref),
             dist,
             nearest_idx == len(ref_line) - 1,
             road_id,
@@ -920,35 +1102,79 @@ def _carla_to_opendrive_bruteforce(
             t,
             heading_ref,
         )
+        measured.append(candidate)
         if best is None or _beats(candidate, best):
             best = candidate
-
     if best is None:
-        return OpenDrivePose(road_id="", lane_id=0, s=0.0, t=0.0, heading=0.0)
-    _outside, _dist, _at_end, road_id, road, s, t, heading_ref = best
-    return OpenDrivePose(
-        road_id=road_id,
-        lane_id=_find_lane_at_t(road, s, t),
-        s=s,
-        t=t,
-        heading=normalize_angle_rad(-math.radians(pose.yaw) - heading_ref),
-    )
+        return best, 0.0
+    chosen, least_turn = _choose_road(measured)
+    # Through an Optional local: Codon will not widen a tuple to one in a return.
+    chosen_road: Optional[
+        tuple[float, float, float, bool, str, Road, float, float, float]
+    ] = measured[chosen]
+    return chosen_road, least_turn
+
+
+def _choose_road(
+    candidates: list[tuple[float, float, float, bool, str, Road, float, float, float]],
+) -> tuple[int, float]:
+    """The index in *candidates* of the road a point is on, and the least
+    ``turn`` of the roads that hold it (0 where none does).
+
+    Each is ``(outside, turn, dist, at_end, ...)``: how far (m) the point is
+    outside the road's lanes, how far (rad, axis-wise: :func:`_axis_turn`)
+    the pose's heading is from its reference line's, and how far the point
+    is from the line's nearest vertex.  Where two or more roads hold the
+    point (``outside`` within :data:`_SEAM_TOLERANCE`) -- a junction's
+    connecting roads overlap -- and one of them runs within
+    :data:`_ALIGNED_TURN_RAD` of the pose's heading, only those holding it
+    within :data:`_HEADING_TOLERANCE_RAD` of the least ``turn`` among them
+    are weighed (#2545), as :func:`.stacked.choose_lanelet` keeps the
+    lanelets at the pose's level before it ranks them.  Of those weighed --
+    every candidate, otherwise -- :func:`_beats` picks, in order, as it
+    always did.
+
+    Raises:
+        ValueError: If there are no candidates.
+    """
+    if not candidates:
+        raise ValueError("no road to choose from")
+    holding: list[int] = []
+    for index in range(len(candidates)):
+        if candidates[index][0] <= _SEAM_TOLERANCE:
+            holding.append(index)
+    weighed: list[int] = list(range(len(candidates)))
+    least_turn = 0.0
+    for position, index in enumerate(holding):
+        if position == 0 or candidates[index][1] < least_turn:
+            least_turn = candidates[index][1]
+    if len(holding) >= 2 and least_turn <= _ALIGNED_TURN_RAD:
+        weighed = []
+        for index in holding:
+            if candidates[index][1] <= least_turn + _HEADING_TOLERANCE_RAD:
+                weighed.append(index)
+    best = weighed[0]
+    for index in weighed[1:]:
+        if _beats(candidates[index], candidates[best]):
+            best = index
+    return best, least_turn
 
 
 def _beats(
-    candidate: tuple[float, float, bool, str, Road, float, float, float],
-    best: tuple[float, float, bool, str, Road, float, float, float],
+    candidate: tuple[float, float, float, bool, str, Road, float, float, float],
+    best: tuple[float, float, float, bool, str, Road, float, float, float],
 ) -> bool:
     """Whether road *candidate* holds the point better than road *best*.
 
-    Both are ``(outside, dist, at_end, ...)``.  A point on the seam between two
+    Both are ``(outside, turn, dist, at_end, ...)``; ``turn`` is not read here
+    (:func:`_choose_road` weighs it first).  A point on the seam between two
     connected roads is as near to the end of one as to the start of the next.
     A road covers [0, length), so the seam belongs to the road that starts
     there -- otherwise which one won would depend on the order the roads were
     read in.
     """
-    outside, dist, at_end = candidate[:3]
-    best_outside, best_dist, best_at_end = best[:3]
+    outside, dist, at_end = candidate[0], candidate[2], candidate[3]
+    best_outside, best_dist, best_at_end = best[0], best[2], best[3]
     if abs(outside - best_outside) > _SEAM_TOLERANCE:
         return outside < best_outside
     if abs(dist - best_dist) > _SEAM_TOLERANCE:
@@ -1113,6 +1339,10 @@ def _interpolate_at_s(
 ) -> tuple[float, float, float, float]:
     """Interpolate position and heading at arc length s along a 3D polyline.
 
+    The heading is that of the segment *s* lies on, a vertex belonging to the
+    segment that starts there; at the end, that of the last segment of
+    non-zero length (:func:`_segment_heading`).
+
     Returns
     -------
     (x, y, z, heading)  where heading is the tangent direction in radians.
@@ -1128,12 +1358,8 @@ def _interpolate_at_s(
     y = float(np.interp(s_clamped, arc, ys))
     z = float(np.interp(s_clamped, arc, zs))
 
-    # Heading via finite difference of nearest segment
     idx = int(np.searchsorted(arc, s_clamped, side="right")) - 1
-    idx = max(0, min(idx, len(points) - 2))
-    heading = math.atan2(ys[idx + 1] - ys[idx], xs[idx + 1] - xs[idx])
-
-    return x, y, z, heading
+    return x, y, z, _segment_heading(xs, ys, idx)
 
 
 def _heading_at_s(
@@ -1141,13 +1367,47 @@ def _heading_at_s(
     arc_lengths: np.ndarray[tuple[int], np.dtype[np.float64]],
     s: float,
 ) -> float:
-    """Return the tangent heading (radians) at arc length s along a 2D polyline."""
+    """Return the tangent heading (radians) at arc length s along a 2D polyline.
+
+    The segment *s* lies on, as :func:`_interpolate_at_s` reads it
+    (:func:`_segment_heading`).
+    """
     s_clamped = float(np.clip(s, arc_lengths[0], arc_lengths[-1]))
     idx = int(np.searchsorted(arc_lengths, s_clamped, side="right")) - 1
-    idx = max(0, min(idx, len(ref_line) - 2))
-    dx = ref_line[idx + 1, 0] - ref_line[idx, 0]
-    dy = ref_line[idx + 1, 1] - ref_line[idx, 1]
-    return math.atan2(dy, dx)
+    return _segment_heading(ref_line[:, 0], ref_line[:, 1], idx)
+
+
+def _segment_heading(
+    xs: np.ndarray[tuple[int], np.dtype[np.float64]],
+    ys: np.ndarray[tuple[int], np.dtype[np.float64]],
+    idx: int,
+) -> float:
+    """The direction (rad) of segment *idx* of the polyline ``(xs, ys)``,
+    clamped to its segments.
+
+    A segment of zero length -- a repeated point, which a centreline often
+    ends on -- has no direction: the last one of non-zero length before it is
+    read instead, else the first after it (#2545, as
+    :func:`~autoware_carla_scenario.trajectory.relative_lane._heading_at` does
+    since #2367), else 0 (a polyline of one distinct point).  Read off the
+    repeated point itself, the heading was ``atan2(0, 0)``: East, whichever
+    way the polyline ran.
+    """
+    count = len(xs) - 1
+    if count < 1:
+        return 0.0
+    idx = max(0, min(idx, count - 1))
+    for i in range(idx, -1, -1):
+        dx = float(xs[i + 1] - xs[i])
+        dy = float(ys[i + 1] - ys[i])
+        if dx != 0.0 or dy != 0.0:
+            return math.atan2(dy, dx)
+    for i in range(idx + 1, count):
+        dx = float(xs[i + 1] - xs[i])
+        dy = float(ys[i + 1] - ys[i])
+        if dx != 0.0 or dy != 0.0:
+            return math.atan2(dy, dx)
+    return 0.0
 
 
 def _signed_perp_distance(
