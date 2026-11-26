@@ -103,11 +103,21 @@ def umask_022() -> Iterator[None]:
 
 
 @pytest.fixture
-def free_port() -> int:
-    """A local TCP port nothing listens on."""
+def free_port() -> Iterator[int]:
+    """A local TCP port nothing listens on, for as long as the test runs.
+
+    The port stays bound (not listening) until the test ends: a port given
+    back at once can be handed to another worker's listener asking for port
+    0 -- a HILS bridge greets each connection with JSON, and a CARLA client
+    reading that aborts the whole process (``clmdep_msgpack::v1::type_error``).
+    Held, it is never picked for port 0 nor as a connection's source port, a
+    connection to it is refused, and ``SO_REUSEADDR`` still lets a test's
+    own fake server bind it explicitly with ``SO_REUSEADDR``.
+    """
     with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("localhost", 0))
-        return int(probe.getsockname()[1])
+        yield int(probe.getsockname()[1])
 
 
 @pytest.fixture(autouse=True)
