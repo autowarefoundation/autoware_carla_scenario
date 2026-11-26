@@ -69,9 +69,12 @@ COMMAND_VALUE_LIMIT = 3.4028234663852886e38
 def command_value(value: float) -> Optional[float]:
     """A command field's *value* as a float, or ``None`` when it is not a
     number CARLA can take: not finite (NaN, an infinity), or beyond
-    :data:`COMMAND_VALUE_LIMIT`.  A caller holding an integer too large for a
-    float (``float()`` raises ``OverflowError``) has one beyond the limit."""
-    number = float(value)
+    :data:`COMMAND_VALUE_LIMIT` -- an integer too large for a float (whose
+    ``float()`` raises ``OverflowError``) included."""
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
     if not math.isfinite(number) or abs(number) > COMMAND_VALUE_LIMIT:
         return None
     return number

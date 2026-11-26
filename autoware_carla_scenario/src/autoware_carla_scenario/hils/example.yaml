@@ -118,6 +118,9 @@ devices:
 # matching fields (it fails the phase after `timeout` s), or sleep.
 #   startup         once, when the bridge starts (no ego: constants only)
 #   scenario_start  a scenario starts; the run waits for these steps
+#   warmup          right after, the sensors streaming and the world followed
+#                   (the ECUs getting ready to drive); the run waits for
+#                   these too, then its clock starts
 #   scenario_end    the scenario ends (also when the run goes away)
 #   shutdown        once, when the bridge stops (Ctrl-C, SIGTERM)
 lifecycle:

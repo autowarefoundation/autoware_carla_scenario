@@ -3207,18 +3207,20 @@ def test_a_non_finite_ecu_field_is_dropped_by_the_bridge(
     with caplog.at_level("WARNING"):
         for _ in range(3):
             assert spec.values({"Raw": value, "Ok": 1.0}) == {"_ok": 1.0}
-    assert InputSource(field="Raw").resolve({"Raw": value}) is None
     dropped = [r for r in caplog.records if "non-finite" in r.getMessage()]
     assert len(dropped) == 1
     assert key in dropped[0].getMessage()
 
 
 def test_a_scale_that_overflows_is_dropped_by_the_bridge() -> None:
-    from autoware_carla_scenario.hils.config import InputSource
+    from autoware_carla_scenario.hils.config import InputSource, InputSpec
 
-    assert InputSource(field="Raw", scale=1e308).resolve({"Raw": 10.0}) is None
-    assert InputSource(field="Raw", scale=2.0).resolve({"Raw": 10**400}) is None
-    assert InputSource(field="Raw", scale=2.0).resolve({"Raw": 1.5}) == 3.0
+    def values(source: InputSource, raw: Any) -> dict[str, float]:
+        return InputSpec(name="C", command={"x": source}).values({"Raw": raw})
+
+    assert values(InputSource(field="Raw", scale=1e308), 10.0) == {}
+    assert values(InputSource(field="Raw", scale=2.0), 10**400) == {}
+    assert values(InputSource(field="Raw", scale=2.0), 1.5) == {"x": 3.0}
 
 
 def test_the_bridge_forwards_no_non_finite_command(world: _World, dbc: Path) -> None:
@@ -3286,8 +3288,7 @@ def test_a_command_field_beyond_a_32_bit_float_is_dropped(value: float) -> None:
 
     spec = InputSpec(name="Command", command={"speed": InputSource(field="Raw")})
     assert spec.values({"Raw": value}) == {}
-    assert InputSource(field="Raw").resolve({"Raw": value}) is None
-    assert InputSource(field="Raw").resolve({"Raw": 3.0e38}) == 3.0e38
+    assert spec.values({"Raw": 3.0e38}) == {"speed": 3.0e38}
 
 
 @pytest.mark.parametrize("gear", [1e30, -1e30, 2.0**63, 2**40])

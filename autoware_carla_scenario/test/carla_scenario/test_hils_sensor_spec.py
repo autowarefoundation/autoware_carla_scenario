@@ -55,6 +55,11 @@ def test_protocol_re_exports_command_value(name: str) -> None:
         (math.inf, None),
         (-math.inf, None),
         (math.nan, None),
+        # An integer too large for a float: beyond the limit, not an
+        # OverflowError for the caller (#2557).
+        (10**400, None),
+        (-(10**400), None),
+        (2**64, float(2**64)),
     ],
 )
 def test_command_value(value: float, expected: object) -> None:
