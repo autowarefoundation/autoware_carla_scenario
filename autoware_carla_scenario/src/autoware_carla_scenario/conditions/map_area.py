@@ -380,7 +380,9 @@ def area_shapes(lanelet_map: "LaneletMap", area: MapArea) -> list[AreaShape]:
 
 def area_lanelet_ids(lanelet_map: "LaneletMap", area: MapArea) -> list[int]:
     """The ids of the lanelets of *lanelet_map* in *area* (none for a ground
-    of polygons): what the scenario editor outlines on its map."""
+    of polygons): the lanelet layer of :func:`area_shapes`, which is what the
+    scenario editor outlines on its map.  A shorthand for asking which
+    lanelets an area takes; the framework itself calls :func:`area_shapes`."""
     return [
         s.element_id for s in area_shapes(lanelet_map, area) if s.layer == "lanelet"
     ]

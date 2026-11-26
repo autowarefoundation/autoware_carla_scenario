@@ -245,6 +245,123 @@ class TestFreespace:
         )
 
 
+def _heading(degrees: float) -> tuple[float, float]:
+    """The forward vector of an actor yawed *degrees* in CARLA's world frame."""
+    return (math.cos(math.radians(degrees)), math.sin(math.radians(degrees)))
+
+
+def _placed(degrees: float, along: float, across: float) -> tuple[float, float, float]:
+    """The world point *along* metres ahead and *across* metres to the right
+    of the origin, in a frame yawed *degrees* (CARLA's +y is to the right)."""
+    fx, fy = _heading(degrees)
+    return (along * fx - across * fy, along * fy + across * fx, 0.0)
+
+
+class TestFreespaceOnATurnedRoad:
+    """The gap between two boxes does not depend on how the road is turned (#2528).
+
+    Each box used to be taken as its world-aligned enclosure, which for a car
+    not heading along a world axis is far bigger than the car: on a 45 degree
+    road two cars 10 m apart read 3 m, and a car in the next lane read as
+    touching.
+    """
+
+    @pytest.mark.parametrize("road", [0.0, 30.0, 45.0, 60.0, 90.0, 135.0, -30.0])
+    def test_a_car_following_at_10_m_is_5_m_away(self, road: float) -> None:
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(road)),
+            _actor("npc1", _placed(road, 10.0, 0.0), heading=_heading(road)),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        assert math.isclose(gap, 5.0, abs_tol=0.01)
+
+    @pytest.mark.parametrize("road", [0.0, 30.0, 45.0, 90.0])
+    def test_a_car_in_the_next_lane_is_not_touching(self, road: float) -> None:
+        """3.5 m between the lane centres, 1.0 m half-widths: 1.5 m between them."""
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(road)),
+            _actor("npc1", _placed(road, 0.0, -3.5), heading=_heading(road)),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        assert math.isclose(gap, 1.5, abs_tol=0.01)
+
+    @pytest.mark.parametrize("road", [0.0, 30.0, 45.0])
+    def test_a_diagonal_gap_turns_with_the_road(self, road: float) -> None:
+        """The (6, 6) pair of TestFreespace, turned: still 4.12 m apart."""
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(road)),
+            _actor("npc1", _placed(road, 6.0, 6.0), heading=_heading(road)),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        assert math.isclose(gap, math.hypot(1.0, 4.0), abs_tol=0.01)
+
+    def test_overlapping_boxes_on_a_turned_road_clamp_at_zero(self) -> None:
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(45.0)),
+            _actor("npc1", _placed(45.0, 1.0, 1.5), heading=_heading(45.0)),
+        )
+        assert _measured(_condition(edge_to_edge=True), world) == 0.0
+
+    def test_actors_with_different_headings(self) -> None:
+        """A car crossing 10 m ahead of the subject, both off the world axes.
+
+        The subject heads at 45 degrees, the other car at -45 degrees, side on
+        to it: the subject's front is 2.5 m ahead of its centre and the other
+        car's flank 1.0 m from its own, so 6.5 m remain.  The world-aligned
+        enclosures read 3.0 m.
+        """
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(45.0)),
+            _actor("npc1", _placed(45.0, 10.0, 0.0), heading=_heading(-45.0)),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        assert math.isclose(gap, 6.5, abs_tol=0.01)
+
+    def test_a_corner_nearest_a_face(self) -> None:
+        """A car turned 30 degrees, 10 m ahead of an aligned subject: its rear
+        corner, 2.5 cos 30 + 1.0 sin 30 m behind its centre and within the
+        subject's width, is the nearest point."""
+        world = _world(
+            _actor("Ego", (0, 0, 0)),
+            _actor("npc1", (10, 0, 0), heading=_heading(30.0)),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        reach = 2.5 * math.cos(math.radians(30.0)) + 1.0 * math.sin(math.radians(30.0))
+        assert math.isclose(gap, 10.0 - 2.5 - reach, abs_tol=0.01)
+
+    def test_height_combines_with_the_ground_gap(self) -> None:
+        """On a 30 degree road, 5 m of ground gap and 8.5 m of height gap."""
+        x, y, _ = _placed(30.0, 10.0, 0.0)
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(30.0)),
+            _actor("npc1", (x, y, 10.0), heading=_heading(30.0)),
+        )
+        gap = _measured(_condition(edge_to_edge=True, vertical=True), world)
+        assert math.isclose(gap, math.hypot(5.0, 8.5), abs_tol=0.01)
+
+    def test_the_box_offset_turns_with_the_actor(self) -> None:
+        """A box a metre forward of its origin, on a 45 degree road."""
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(45.0)),
+            _actor(
+                "npc1",
+                _placed(45.0, 10.0, 0.0),
+                heading=_heading(45.0),
+                box_offset=(1.0, 0.0, 0.0),
+            ),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        assert math.isclose(gap, 6.0, abs_tol=0.01)
+
+    def test_an_actor_without_a_box_on_a_turned_road(self) -> None:
+        world = _world(
+            _actor("Ego", (0, 0, 0), heading=_heading(45.0)),
+            _actor("npc1", _placed(45.0, 10.0, 0.0), extent=None),
+        )
+        gap = _measured(_condition(edge_to_edge=True), world)
+        assert math.isclose(gap, 7.5, abs_tol=0.01)
+
+
 class TestDefaultsAndGuards:
     def test_the_default_is_the_previous_behaviour(self) -> None:
         world = _world(_actor("Ego", (0, 0, 0)), _actor("npc1", (3, 4, 0)))
