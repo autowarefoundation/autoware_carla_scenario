@@ -277,13 +277,6 @@ def _shared_overrides(jobs: list[list[str]]) -> set[str]:
     return shared
 
 
-def _mtime(path: Path) -> float:
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
 def _stat(path: Path) -> tuple[int, int]:
     """*path*'s modification time (ns) and size, ``(0, -1)`` when missing."""
     try:

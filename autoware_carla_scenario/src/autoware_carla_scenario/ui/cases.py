@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 # Whether a SLURM case's outcome is stale, compiled by the library check.
 from ..slurm.collect import _stale as _stale
@@ -41,7 +41,6 @@ from ..slurm.manifest import BatchLayout, verdict_of_document
 # share, compiled by the library check; every name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _COVERAGE as _COVERAGE
-from .case_paths import _mtime as _mtime
 from .case_paths import _only_case as _only_case
 from .case_paths import _RESULT as _RESULT
 from .case_paths import _STEM_NUMBER as _STEM_NUMBER
@@ -56,6 +55,7 @@ from .case_paths import _summary_is_current as _summary_is_current
 from .case_paths import batch_stamp as batch_stamp
 from .case_paths import contained as contained
 from .case_paths import job_dir as job_dir
+from .case_paths import own_file
 from .case_paths import session_dir as session_dir
 from .case_paths import stem_order as stem_order
 
@@ -67,10 +67,13 @@ __all__ = [
     "batch_stamp",
     "case_files",
     "contained",
+    "has_result",
+    "is_batch",
     "job_dir",
     "match_batch_stems",
     "session_dir",
     "session_overrides",
+    "session_type_matches",
     "stem_order",
 ]
 
@@ -82,8 +85,42 @@ def _read_json(path: Path | None) -> Any:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
+        # RecursionError: a document nested deeper than the parser recurses
+        # (``"[" * 100000``), which must not break every page (#2543).
         return None
+
+
+def _own_member(directory: Path, *parts: str) -> Path | None:
+    """*directory* joined with *parts*, when that is a file of the
+    directory's own (:func:`~.case_paths.own_file`) reached through no
+    symbolic link: neither the file nor a directory between (``.hydra``,
+    ``slurm``, ``slurm/results``) is one, as a link may name a file outside
+    the viewer's base (#2543). ``None`` otherwise."""
+    path = directory
+    for part in parts[:-1]:
+        path = path / part
+        if path.is_symlink():
+            return None
+    path = path / parts[-1]
+    return path if own_file(path) else None
+
+
+def _member_json(directory: Path, *parts: str) -> Any:
+    """The JSON document at *directory* joined with *parts*, read as
+    :func:`_read_json` reads it, unless it is no file of the directory's own
+    (:func:`_own_member`): ``None`` then, as for a file that is not there."""
+    return _read_json(_own_member(directory, *parts))
+
+
+def has_result(data: Any) -> TypeGuard[dict[str, Any]]:
+    """Whether *data*, a case's ``_result.json`` as :func:`_read_json` read
+    it, is a result: a JSON object with something in it. A case without one
+    (its file missing, unreadable, or no object) is *without a result*
+    (pending), neither passed nor failed: the one rule the session list, the
+    session page (``ui.scanner``) and the compare page (``ui.results``)
+    count a multirun job or a single run by (#2285, #2543)."""
+    return isinstance(data, dict) and bool(data)
 
 
 def _passed(value: Any) -> bool | None:
@@ -115,9 +152,11 @@ def _hydra_overrides(directory: Path) -> list[str]:
     try:
         import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
 
-        data = yaml.safe_load(
-            (directory / ".hydra" / "overrides.yaml").read_text(encoding="utf-8")
-        )
+        path = _own_member(directory, ".hydra", "overrides.yaml")
+        if path is None:
+            # Not there, or a symbolic link (the file or .hydra), #2543.
+            return []
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
         return []
     return [str(o) for o in data] if isinstance(data, list) else []
@@ -134,7 +173,11 @@ def _multirun_task(directory: Path) -> list[str] | None:
     try:
         import yaml  # noqa: PLC0415
 
-        data = yaml.safe_load((directory / "multirun.yaml").read_text(encoding="utf-8"))
+        path = _own_member(directory, "multirun.yaml")
+        if path is None:
+            # Not there, or a symbolic link (#2543).
+            return None
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
         return None
     hydra = data.get("hydra") if isinstance(data, dict) else None
@@ -223,7 +266,7 @@ def match_batch_stems(
     yet.
     """
     stems = _stems_in(directory)
-    results = {stem: _read_json(directory / f"{stem}{_RESULT}") for stem in stems}
+    results = {stem: _member_json(directory, f"{stem}{_RESULT}") for stem in stems}
     coverages: dict[str, Any] = {}
     used: set[str] = set()
     out: list[str | None] = []
@@ -238,7 +281,7 @@ def match_batch_stems(
                 if stem in used or not _same_result(entry, results.get(stem)):
                     continue
                 if stem not in coverages:
-                    coverages[stem] = _read_json(directory / f"{stem}{_COVERAGE}")
+                    coverages[stem] = _member_json(directory, f"{stem}{_COVERAGE}")
                 if _same_case(entry, coverages[stem]):
                     chosen = stem
                     break
@@ -254,7 +297,7 @@ def _manifest_cases(directory: Path) -> list[dict[str, Any]] | None:
     list, or a case that is not an object with a whole-number ``index`` of
     its own (0 or more).  One bad file must not break the session list
     (#1726, #1964)."""
-    manifest = _read_json(directory / "slurm" / "manifest.json")
+    manifest = _member_json(directory, "slurm", "manifest.json")
     if not isinstance(manifest, dict):
         return None
     cases = manifest.get("cases")
@@ -314,8 +357,8 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     entries: list[dict[str, Any]] = []
     for case in cases:
         overrides = case.get("case_overrides")
-        record = _read_json(
-            directory / "slurm" / "results" / f"{int(case['index'])}.json"
+        record = _member_json(
+            directory, "slurm", "results", f"{int(case['index'])}.json"
         )
         entry: dict[str, Any] = {
             "scenario": case.get("label") or case.get("scenario") or "unknown",
@@ -356,14 +399,41 @@ def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:
     """A batch's entries: its ``batch_results.json``, or, for a SLURM batch
     not collected yet or submitted again since it was collected, what its
     tasks have recorded so far; and whether they are final (the summary).
-    ``None`` when *directory* holds no batch."""
-    entries = _read_json(directory / "batch_results.json")
+    ``None`` when *directory* holds no batch.
+
+    Each of the batch's files is read only when it is the batch's own: one
+    that is a symbolic link, or under a ``slurm`` or ``slurm/results`` that is
+    one, is not read (:func:`_own_member`, #2543)."""
+    entries = _member_json(directory, "batch_results.json")
     if isinstance(entries, list) and _summary_is_current(directory):
         return entries, True
     slurm = _slurm_entries(directory)
     if slurm is not None:
         return slurm, False
     return (entries, True) if isinstance(entries, list) else None
+
+
+def is_batch(directory: Path) -> bool:
+    """Whether *directory* (under ``outputs/``) holds a batch: whether
+    :func:`batch_entries` finds one there (a ``batch_results.json`` list, or
+    a SLURM manifest), without reading the cases a SLURM batch's tasks
+    recorded. A directory under ``outputs/`` that holds none is a single
+    run's."""
+    return (
+        isinstance(_member_json(directory, "batch_results.json"), list)
+        or _manifest_cases(directory) is not None
+    )
+
+
+def session_type_matches(directory: Path, session_type: str) -> bool:
+    """Whether the session in *directory* is of *session_type*: ``batch``
+    and ``single`` share ``outputs/`` (:func:`session_dir`), so a URL's type
+    must be the directory's (:func:`is_batch`), else ``/session/single/`` of a
+    batch shows its last case as a single run and ``/session/batch/`` of a
+    single run an empty batch (#2543). A ``multirun`` directory is one."""
+    if session_type == "multirun":
+        return True
+    return is_batch(directory) == (session_type == "batch")
 
 
 _batch_cache: dict[str, tuple[tuple[tuple[int, int], ...], list[CaseFiles | None]]] = {}
@@ -401,6 +471,9 @@ def case_files(
         job = job_dir(base, date, time, index)
         return _only_case(job) if job is not None else None
     if session_type == "single":
-        return _only_case(directory) if index == 0 else None
+        if index != 0 or is_batch(directory):
+            # A batch's directory is no single run's (#2543).
+            return None
+        return _only_case(directory)
     files = batch_case_files(directory)
     return files[index] if index < len(files) else None

@@ -40,6 +40,7 @@ from .cases import (
     CaseFiles,
     batch_entries,
     case_files,
+    has_result,
     job_dir,
     session_dir,
     session_overrides,
@@ -120,7 +121,10 @@ class CaseResult:
     files: CaseFiles | None
     coverage: dict[str, Any] | None
     metrics: dict[str, float] = field(default_factory=dict)
-    #: A SLURM batch's case without an outcome yet (``passed`` ``None``).
+    #: A case without a result yet (``passed`` ``None``): a SLURM batch's
+    #: case without an outcome, or a multirun job's or single run's case whose
+    #: result file is missing or unreadable (``cases.has_result``), as the
+    #: session pages count it (#2543).
     pending: bool = False
 
     @cached_property
@@ -446,15 +450,18 @@ def load_results(
         shared = session_overrides(directory, [o for _, o in jobs])
         for index, overrides in jobs:
             files = case_files(base, session_type, date, time, index)
-            result = _own_json(files.result) if files else None
-            result = result if isinstance(result, dict) else {}
+            document = _own_json(files.result) if files else None
+            # No result to read yet (a job still running, or one that
+            # crashed): pending, as the session pages count it
+            # (cases.has_result), not an error (#2543).
+            result = document if has_result(document) else {}
             label = _override_label(overrides) or (files.stem if files else "unknown")
             out.append(
                 CaseResult(
                     index=index,
                     label=label,
                     passed=_passed(result.get("passed")),
-                    errored=files is None or not result,
+                    errored=False,
                     elapsed_seconds=_seconds(result.get("elapsed_seconds")),
                     message=str(result.get("message") or ""),
                     overrides=[
@@ -464,6 +471,7 @@ def load_results(
                     ],
                     files=files,
                     coverage=_own_json(files.coverage) if files else None,
+                    pending=not result,
                 )
             )
     for case in out:
@@ -622,7 +630,8 @@ def cases_in_cell(
 
 def pending_count(found: list[CaseResult]) -> int:
     """How many of a session's cases are pending (a SLURM batch's cases
-    without an outcome yet), which :func:`compare` leaves out."""
+    without an outcome yet, a multirun job or single run without a result
+    yet), which :func:`compare` leaves out."""
     return sum(1 for r in found if r.pending)
 
 
@@ -637,7 +646,8 @@ def compare(
     cases were drawn over, :func:`default_axes` when not given): the checked
     ``ui.comparison``'s, fed each case's :meth:`CaseResult.compared`.
 
-    A pending case (a SLURM batch's case without an outcome yet) is left out,
+    A pending case (a SLURM batch's case without an outcome yet, a multirun
+    job or single run without a result yet) is left out,
     as if its session had not run it: it has no verdict to tally or to compare
     with, and counting it as not passing would report a regression and lower
     the pass rate before the case has finished. The compare page shows how

@@ -18,6 +18,7 @@ import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 import pytest
@@ -282,35 +283,42 @@ def test_a_group_that_cannot_be_killed_is_an_error(
 
 
 class _FakePopen:
-    """A Popen whose communicate() calls give, in turn, *replies*: an
-    ``(stdout, stderr)`` pair, or an exception to raise."""
+    """A Popen that writes *output* to the file it is given as its stdout,
+    and whose wait() calls give, in turn, *replies*: ``None`` (the process
+    ended), or an exception to raise. ``wait`` with no reply left ends."""
 
-    def __init__(self, replies: list[Any], returncode: int = 0) -> None:
+    def __init__(
+        self, replies: list[Any], returncode: int = 0, output: str = ""
+    ) -> None:
         self.replies = list(replies)
         self.returncode = returncode
+        self.output = output
         self.pid = 777
         self.calls: list[Any] = []
+        self.stdout: Any = None
 
     def __call__(self, command: list[str], **kwargs: Any) -> _FakePopen:
+        self.stdout = kwargs["stdout"]
         self.calls.append(("Popen", command, kwargs))
+        self.stdout.write(self.output)
+        self.stdout.flush()
         return self
 
-    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
-        self.calls.append(("communicate", timeout))
-        reply = self.replies.pop(0)
+    def wait(self, timeout: float | None = None) -> int:
+        self.calls.append(("wait", timeout))
+        reply = self.replies.pop(0) if self.replies else None
         if isinstance(reply, BaseException):
             raise reply
-        return reply
-
-    def wait(self) -> int:
-        self.calls.append(("wait",))
         return self.returncode
 
 
 def _fake_process(
-    monkeypatch: pytest.MonkeyPatch, replies: list[Any], returncode: int = 0
+    monkeypatch: pytest.MonkeyPatch,
+    replies: list[Any],
+    returncode: int = 0,
+    output: str = "",
 ) -> _FakePopen:
-    fake = _FakePopen(replies, returncode)
+    fake = _FakePopen(replies, returncode, output)
     monkeypatch.setattr(subprocess, "Popen", fake)
     monkeypatch.setattr(
         slurm_launch,
@@ -320,36 +328,39 @@ def _fake_process(
     return fake
 
 
-_POPEN_KWARGS = {
-    "cwd": "/the/base",
-    "stdin": subprocess.DEVNULL,
-    "stdout": subprocess.PIPE,
-    "stderr": subprocess.PIPE,
-    "encoding": "utf-8",
-    "errors": "replace",
-    "start_new_session": True,
-}
+def _popen_kwargs(fake: _FakePopen) -> dict[str, Any]:
+    """The keywords a submit starts its command with: its output to a file
+    (the one *fake* was given), never a pipe (#2543)."""
+    return {
+        "cwd": "/the/base",
+        "stdin": subprocess.DEVNULL,
+        "stdout": fake.stdout,
+        "stderr": subprocess.STDOUT,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "start_new_session": True,
+    }
 
 
-@pytest.mark.parametrize(
-    ("stdout", "stderr", "output"),
-    [
-        ("out\n", "err\n", "out\n\nerr\n"),
-        ("out", "", "out"),
-        ("", "err", "err"),
-        ("", "", ""),
-    ],
-)
+def _output_log(fake: _FakePopen) -> Path:
+    return Path(fake.stdout.name)
+
+
+@pytest.mark.parametrize("output", ["out\nerr\n", "out", ""])
 def test_a_submit_gives_its_status_and_output(
-    stdout: str, stderr: str, output: str, monkeypatch: pytest.MonkeyPatch
+    output: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _fake_process(monkeypatch, [(stdout, stderr)], returncode=3)
+    fake = _fake_process(monkeypatch, [None], returncode=3, output=output)
     result = slurm_launch._run_submit(["scenario", "x"], Path("/the/base"))
     assert result == (3, output)
     assert fake.calls == [
-        ("Popen", ["scenario", "x"], _POPEN_KWARGS),
-        ("communicate", 1800.0),
+        ("Popen", ["scenario", "x"], _popen_kwargs(fake)),
+        ("wait", 1800.0),
     ]
+    assert fake.stdout is not subprocess.PIPE
+    assert _output_log(fake).name.startswith("scenario-slurm-submit-")
+    # Read back, then removed.
+    assert not _output_log(fake).exists()
 
 
 @pytest.mark.parametrize(
@@ -363,13 +374,31 @@ def test_a_submit_gives_its_status_and_output(
 def test_a_submit_that_cannot_start_says_why(
     error: Exception, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    logs: list[Path] = []
+
     def popen(command: list[str], **kwargs: Any) -> Any:
+        logs.append(Path(kwargs["stdout"].name))
         raise error
 
     monkeypatch.setattr(subprocess, "Popen", popen)
     assert slurm_launch._run_submit(["scenario", "x"], Path("/b")) == (
         None,
         f"Could not run scenario: {error}",
+    )
+    assert len(logs) == 1 and not logs[0].exists()
+
+
+def test_a_submit_whose_output_file_cannot_be_made_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def mkstemp(**kwargs: Any) -> Any:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(slurm_launch.tempfile, "mkstemp", mkstemp)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("ran"))
+    assert slurm_launch._run_submit(["scenario"], Path("/b")) == (
+        None,
+        "Could not run scenario: [Errno 13] Permission denied",
     )
 
 
@@ -388,53 +417,35 @@ _REASON = (
     ("timeout", "shown"), [(1800.0, "1800"), (1.5, "1.5"), (0.25, "0.25")]
 )
 @pytest.mark.parametrize(
-    ("stdout", "stderr", "before"),
+    ("written", "before"),
     [
-        ("checking\n", "warn\n", "checking\n\nwarn\n\n"),
-        ("checking", "", "checking\n"),
-        ("", "", ""),
+        ("checking\nwarn\n", "checking\nwarn\n\n"),
+        ("checking", "checking\n"),
+        ("", ""),
     ],
 )
 def test_a_submit_that_hangs_is_stopped_with_what_it_wrote(
     timeout: float,
     shown: str,
-    stdout: str,
-    stderr: str,
+    written: str,
     before: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(slurm_launch, "SUBMIT_TIMEOUT_SECONDS", timeout)
     expired = subprocess.TimeoutExpired(["scenario"], timeout)
-    fake = _fake_process(monkeypatch, [expired, (stdout, stderr)])
+    fake = _fake_process(monkeypatch, [expired, None], output=written)
     code, output = slurm_launch._run_submit(["scenario"], Path("/the/base"))
     assert code == slurm_launch.TIMED_OUT == 124
     assert output == before + _REASON.format(shown)
+    # Its output is a file, which nothing left of the group holds open as it
+    # could a pipe: the killed command is reaped at once, unbounded.
     assert fake.calls == [
-        ("Popen", ["scenario"], _POPEN_KWARGS),
-        ("communicate", timeout),
+        ("Popen", ["scenario"], _popen_kwargs(fake)),
+        ("wait", timeout),
         ("kill", fake),
-        ("communicate", 10.0),
+        ("wait", None),
     ]
-
-
-def test_a_stopped_submit_whose_pipes_stay_open_is_reaped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _fake_process(
-        monkeypatch,
-        [
-            subprocess.TimeoutExpired(["scenario"], 1800.0),
-            subprocess.TimeoutExpired(["scenario"], 10.0),
-        ],
-    )
-    code, output = slurm_launch._run_submit(["scenario"], Path("/the/base"))
-    assert (code, output) == (124, _REASON.format("1800"))
-    assert fake.calls[1:] == [
-        ("communicate", 1800.0),
-        ("kill", fake),
-        ("communicate", 10.0),
-        ("wait",),
-    ]
+    assert not _output_log(fake).exists()
 
 
 @pytest.mark.parametrize("raised", [KeyboardInterrupt(), RuntimeError("boom")])
@@ -445,7 +456,67 @@ def test_a_submit_interrupted_while_waiting_is_killed_and_reaped(
     with pytest.raises(type(raised)) as caught:
         slurm_launch._run_submit(["scenario"], Path("/the/base"))
     assert caught.value is raised
-    assert fake.calls[1:] == [("communicate", 1800.0), ("kill", fake), ("wait",)]
+    assert fake.calls[1:] == [("wait", 1800.0), ("kill", fake), ("wait", None)]
+    assert not _output_log(fake).exists()
+
+
+# A fake submitter: says whether its output is a pipe, writes to both
+# streams, and with an argument leaves a process behind that keeps its
+# output open and writes to it after it has ended.
+_SUBMITTER = """\
+import os, stat, subprocess, sys, time
+print("stdout is a pipe:", stat.S_ISFIFO(os.fstat(1).st_mode), flush=True)
+print("to stderr", file=sys.stderr, flush=True)
+if len(sys.argv) > 1:
+    subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(1); print('late')"],
+        start_new_session=True,
+    )
+print("SLURM job 1: 1 case(s); outputs in " + os.getcwd(), flush=True)
+"""
+
+
+def test_a_real_submitter_writes_to_a_file_not_a_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The submitter's output is a file, so it can outlive the viewer (whose
+    end would break a pipe, #2543), and a process it leaves behind holding
+    that output open does not keep the submit waiting."""
+    script = tmp_path / "submitter.py"
+    script.write_text(_SUBMITTER)
+    made: list[Path] = []
+    real = slurm_launch._output_file
+
+    def output_file() -> Path:
+        made.append(real())
+        return made[-1]
+
+    monkeypatch.setattr(slurm_launch, "_output_file", output_file)
+    started = monotonic()
+    code, output = slurm_launch._run_submit(
+        [sys.executable, str(script), "leave-one"], tmp_path
+    )
+    assert monotonic() - started < 1.0
+    assert code == 0
+    assert output.splitlines() == [
+        "stdout is a pipe: False",
+        "to stderr",
+        f"SLURM job 1: 1 case(s); outputs in {tmp_path}",
+    ]
+    assert len(made) == 1 and not made[0].exists()
+
+
+def test_a_real_submitter_that_hangs_is_killed_with_what_it_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "submitter.py"
+    script.write_text("import time\nprint('checking', flush=True)\ntime.sleep(60)\n")
+    monkeypatch.setattr(slurm_launch, "SUBMIT_TIMEOUT_SECONDS", 0.5)
+    started = monotonic()
+    code, output = slurm_launch._run_submit([sys.executable, str(script)], tmp_path)
+    assert monotonic() - started < 30.0
+    assert code == slurm_launch.TIMED_OUT
+    assert output.startswith("checking\n\n")
 
 
 # ── What a submit records ──────────────────────────────────────────────────

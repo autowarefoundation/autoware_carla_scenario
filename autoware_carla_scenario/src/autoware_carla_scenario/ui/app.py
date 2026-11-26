@@ -171,9 +171,15 @@ def _session_dir_or_404(session_type: str, date: str, time: str) -> Path:
     under the base (:func:`cases.session_dir`: an unknown type, ``..``, a
     separator, or a path that resolves outside ``multirun/`` / ``outputs/``)
     or there is no such directory: a session that does not exist has no page,
-    rather than an empty one."""
+    rather than an empty one. So does a ``single`` or ``batch`` URL whose
+    type is not the directory's (:func:`cases.session_type_matches`): the two
+    share ``outputs/``, and neither is shown as the other (#2543)."""
     directory = cases.session_dir(_base_path(), session_type, date, time)
-    if directory is None or not directory.is_dir():
+    if (
+        directory is None
+        or not directory.is_dir()
+        or not cases.session_type_matches(directory, session_type)
+    ):
         raise HTTPException(status_code=404)
     return directory
 
@@ -851,7 +857,10 @@ def _parse_ref(ref: str) -> tuple[str, str, str] | None:
     if len(parts) != 3:
         return None
     session_type, date, time = parts
-    if cases.session_dir(_base_path(), session_type, date, time) is None:
+    directory = cases.session_dir(_base_path(), session_type, date, time)
+    # A single run's URL does not name a batch, nor a batch's a single run
+    # (#2543).
+    if directory is None or not cases.session_type_matches(directory, session_type):
         return None
     return session_type, date, time
 

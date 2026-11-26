@@ -24,7 +24,7 @@ from .cases import _hydra_overrides as _read_overrides
 from .cases import _passed as _passed
 from .cases import _read_json
 from .cases import _seconds as _seconds
-from .cases import batch_entries, case_files
+from .cases import batch_entries, case_files, has_result
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import _read_raw_log as _read_raw_log
 
@@ -259,7 +259,7 @@ def _scan_multirun_session(
         data = _read_result_json(result_file) if result_file is not None else None
         if result_file is not None:
             scenario_names.add(_extract_scenario_name(data, job_dir))
-        if not data:
+        if not has_result(data):
             # A missing or unreadable result: without a result, as the
             # session page counts it (#2285).
             pending_count += 1
@@ -308,7 +308,7 @@ def _scan_outputs_session(
         return None  # Skip directories with no result
 
     data = _read_result_json(result_file)
-    passed = bool(_passed(data.get("passed"))) if data else False
+    passed = bool(_passed(data.get("passed"))) if has_result(data) else False
     scenario_name = _extract_scenario_name(data, session_dir)
     return SessionSummary(
         date=date,
@@ -319,7 +319,7 @@ def _scan_outputs_session(
         total_count=1,
         # An unreadable result: without a result, as the session page
         # counts it (#2285).
-        pending_count=0 if data else 1,
+        pending_count=0 if has_result(data) else 1,
     )
 
 
@@ -416,7 +416,7 @@ def load_session(
             result_file = result_path(job)
             if result_file is not None:
                 data = _read_result_json(result_file)
-                if data:
+                if has_result(data):
                     items.append(
                         SessionItem(
                             index=index,
@@ -481,7 +481,7 @@ def load_session(
         result_file = result_path(directory)
         if result_file is not None:
             data = _read_result_json(result_file)
-            if data:
+            if has_result(data):
                 items.append(
                     SessionItem(
                         index=0,
@@ -518,23 +518,57 @@ def load_session(
     return items
 
 
-def _build_condition_tree(details: dict[str, Any]) -> list[ConditionNode]:
-    """Recursively extract child condition nodes from a details dict."""
-    children: list[ConditionNode] = []
+#: How deep the scenario page's condition tree goes: the nodes below this
+#: many levels are shown as one "…" node, so that a result whose tree nests
+#: deeper than Python recurses (hundreds of levels) renders, cut short,
+#: rather than failing the page (#2543). A scenario's own trees are a few
+#: levels deep.
+MAX_CONDITION_DEPTH = 64
+
+#: The label of the node that stands for the levels not shown.
+TRUNCATED_LABEL = "…"
+
+
+def _truncated_node() -> ConditionNode:
+    """The node that stands for a condition's children nested deeper than
+    :data:`MAX_CONDITION_DEPTH`."""
+    return ConditionNode(
+        label=TRUNCATED_LABEL,
+        satisfied=False,
+        message=f"Nested deeper than {MAX_CONDITION_DEPTH} levels: not shown",
+        condition_type="",
+        role="",
+        details={},
+        children=[],
+    )
+
+
+def _build_condition_tree(
+    details: dict[str, Any], depth: int = 1
+) -> list[ConditionNode]:
+    """Recursively extract child condition nodes from a details dict, the
+    children of a node *depth* levels down the tree (its top level is 1);
+    below :data:`MAX_CONDITION_DEPTH` levels, one "…" node stands for them."""
+    child_details: list[Any] = []
 
     # Composite conditions (AndCondition, OrCondition) have "children"
     if "children" in details and isinstance(details["children"], list):
-        for child_detail in details["children"]:
-            node = _detail_to_condition_node(child_detail)
-            if node:
-                children.append(node)
+        child_details.extend(details["children"])
 
     # Wrapper conditions (StickyCondition, PersistentCondition, NotCondition) have "child"
     if "child" in details and isinstance(details["child"], dict):
-        node = _detail_to_condition_node(details["child"])
+        child_details.append(details["child"])
+
+    if depth >= MAX_CONDITION_DEPTH:
+        if any(isinstance(d, dict) for d in child_details):
+            return [_truncated_node()]
+        return []
+
+    children: list[ConditionNode] = []
+    for child_detail in child_details:
+        node = _detail_to_condition_node(child_detail, depth + 1)
         if node:
             children.append(node)
-
     return children
 
 
@@ -550,8 +584,11 @@ _STRUCTURAL_KEYS = {
 }
 
 
-def _detail_to_condition_node(detail: dict[str, Any]) -> ConditionNode | None:
-    """Convert a detail dict (from nested condition tree) to a ConditionNode."""
+def _detail_to_condition_node(
+    detail: dict[str, Any], depth: int = 1
+) -> ConditionNode | None:
+    """Convert a detail dict (from nested condition tree), a node *depth*
+    levels down the tree, to a ConditionNode."""
     if not isinstance(detail, dict):
         return None
 
@@ -561,7 +598,7 @@ def _detail_to_condition_node(detail: dict[str, Any]) -> ConditionNode | None:
     message = _text(detail.get("message"))
 
     # Build children recursively
-    children = _build_condition_tree(detail)
+    children = _build_condition_tree(detail, depth)
 
     return ConditionNode(
         label=label,
