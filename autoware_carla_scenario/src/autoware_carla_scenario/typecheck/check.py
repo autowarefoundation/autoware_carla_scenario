@@ -183,7 +183,21 @@ _LOCATION = re.compile(
     r"^(?P<file>[^\s:][^:]*):(?P<line>\d+)(?: \((?P<col>\d+)(?:-(?P<end>\d+))?\))?: "
 )
 _ERROR = re.compile(r"error: ?(?P<message>.*)$")
-_CRASH_MARKERS = ("Assert failed", "Segmentation fault", "Aborted")
+#: A crash Codon reports in its output, matched on a whole line of it (ANSI
+#: escapes stripped) that is no error of Codon's: its own failed assertion
+#: (``seqassert``: ``Assert failed:\t<message>``, then ``Expression:`` and
+#: ``Source:`` lines, then ``abort()``), or a shell's report of a signal, as
+#: a wrapper script around Codon prints it: alone on a line from ``dash``
+#: (``Aborted (core dumped)``, ``Segmentation fault``), after the script's
+#: line and the process id from ``bash`` (``codon.sh: line 3:  4242
+#: Segmentation fault      (core dumped) codon build ...``).  Never a
+#: substring: an error's text may name a class ``Aborted`` (#2519).  A signal
+#: Codon dies of without a shell is its negative return code.
+_CRASH_LINE = re.compile(
+    r"^(?:Assert failed:"
+    r"|(?:Aborted|Segmentation fault)(?: \(core dumped\))?[ \t]*$"
+    r"|\S.*: line \d+: +\d+ (?:Aborted|Segmentation fault)(?:\s|$))"
+)
 #: Codon's error on ``t.count(x)`` / ``t.index(x)`` of a tuple left as
 #: written, as in a compile without the rewrite (#609).
 _UNREWRITTEN_SEQUENCE_METHOD = re.compile(r"no attribute '(?:count|index)'")
@@ -1254,12 +1268,22 @@ def _conditional_expression_at(diagnostic: Diagnostic) -> bool:
     )
 
 
+def _lines(text: str) -> list[str]:
+    """The lines of *text*, numbered as Python numbers a source's lines.
+
+    Split at ``"\\n"`` only: :meth:`str.splitlines` also splits at a form
+    feed, U+2028 and other characters that end no line of a source, which
+    shifts every line after them (#2519).
+    """
+    return text.split("\n")
+
+
 def _source_line(diagnostic: Diagnostic) -> str:
     """The line of the author's file *diagnostic* is at, or ``""``."""
     if diagnostic.path is None or diagnostic.line is None:
         return ""
     try:
-        lines = Path(diagnostic.path).read_text(encoding="utf-8").splitlines()
+        lines = _lines(Path(diagnostic.path).read_text(encoding="utf-8"))
         return lines[diagnostic.line - 1]
     except (OSError, UnicodeDecodeError, IndexError):
         return ""
@@ -1407,14 +1431,24 @@ def _replace_helper_location(
     )
 
 
+def _by_basename(ws: _Workspace) -> dict[str, list[str]]:
+    """The checked modules of *ws* (workspace-relative) by their basename,
+    which is all Codon's frames name a file by."""
+    by_name: dict[str, list[str]] = {}
+    for rel in ws.files:
+        by_name.setdefault(Path(rel).name, []).append(rel)
+    return by_name
+
+
 def _unique_basenames(ws: _Workspace) -> dict[str, str]:
     """The path of each checked module of *ws* by its basename, for the
     basenames no other checked module has (Codon's frames name a file by its
     basename alone)."""
-    by_name: dict[str, list[str]] = {}
-    for rel, original in ws.files.items():
-        by_name.setdefault(Path(rel).name, []).append(original)
-    return {name: paths[0] for name, paths in by_name.items() if len(paths) == 1}
+    return {
+        name: ws.files[rels[0]]
+        for name, rels in _by_basename(ws).items()
+        if len(rels) == 1
+    }
 
 
 def _replace_thunk_message(diagnostic: Diagnostic) -> Diagnostic:
@@ -2264,10 +2298,8 @@ def _rewritten_lines(
     compiled and line *original_line* of the author's *original*, when they
     differ."""
     try:
-        compiled = checked.read_text(encoding="utf-8").splitlines()[line - 1]
-        written = (
-            Path(original).read_text(encoding="utf-8").splitlines()[original_line - 1]
-        )
+        compiled = _lines(checked.read_text(encoding="utf-8"))[line - 1]
+        written = _lines(Path(original).read_text(encoding="utf-8"))[original_line - 1]
     except (OSError, IndexError, ValueError):
         return None
     return None if compiled == written else (compiled, written)
@@ -2394,15 +2426,16 @@ def _checked_files(
 
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     """Codon's errors, each located at its innermost frame in the scenario's files."""
-    by_basename: dict[str, list[str]] = {}
-    for rel in ws.files:
-        by_basename.setdefault(Path(rel).name, []).append(rel)
+    by_basename = _by_basename(ws)
 
-    #: The (compiled, author's) text of each (file, line) of Codon's that the
-    #: check rewrote: a column after the rewrite is not the author's.
+    #: The (compiled, author's) text of each line of Codon's, by the checked
+    #: file it was placed in and Codon's line, that the check rewrote: a
+    #: column after the rewrite is not the author's.  Keyed by the checked
+    #: file, not Codon's basename, so a basename two checked files share
+    #: never reads one's text for the other's error (#2519).
     moved: dict[tuple[str, int], tuple[str, str]] = {}
-    #: The (file, line) of Codon's of each error in an f-string field, which
-    #: Codon puts a line late at no column of the line (#610).
+    #: The (checked file, Codon's line) of each error in an f-string field,
+    #: which Codon puts a line late at no column of the line (#610).
     in_fields: set[tuple[str, int]] = set()
     #: The (file, line) of Codon's of each frame whose basename more than one
     #: checked file has, none of which the frame tells apart: where it is in
@@ -2415,9 +2448,7 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         if rel not in trees:
             try:
                 text = (ws.root / rel).read_text(encoding="utf-8")
-                # Split at "\n" only, as Python numbers the lines: splitlines()
-                # also splits at a form feed or U+2028, which do not end one.
-                trees[rel] = (ast.parse(text), text.split("\n"))
+                trees[rel] = (ast.parse(text), _lines(text))
             except (OSError, SyntaxError, ValueError):
                 trees[rel] = None
         return trees[rel]
@@ -2453,8 +2484,9 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         message: str = "",
         end: int | None = None,
         realizing: str | None = None,
-    ) -> tuple[str, int, bool, str | None] | None:
-        """(path to show, line, is the scenario's own file, the appended call).
+    ) -> tuple[str, int, bool, str | None, str | None] | None:
+        """(path to show, line, is the scenario's own file, the appended call,
+        the checked file it was placed in).
 
         *realizing* is the function the enclosing frame names (its "during
         the realization of NAME(...)"), which tells apart checked files
@@ -2463,7 +2495,13 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         """
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
-            return (key if key else ws.driver_label, 0 if key else line, False, None)
+            return (
+                key if key else ws.driver_label,
+                0 if key else line,
+                False,
+                None,
+                None,
+            )
         candidates = narrowed(_checked_files(file, ws, by_basename), line, realizing)
         if not candidates:
             return None
@@ -2471,7 +2509,7 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             return place(candidates[0], file, line, column, message, end)
         places = [place(rel, file, line, column, message, end) for rel in candidates]
         ambiguous[(file, line)] = [
-            f"{where}:{at}" if at else where for where, at, _own, _note in places
+            f"{where}:{at}" if at else where for where, at, _own, _note, _rel in places
         ]
         return places[0]
 
@@ -2482,9 +2520,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         column: int | None,
         message: str,
         end: int | None,
-    ) -> tuple[str, int, bool, str | None]:
+    ) -> tuple[str, int, bool, str | None, str]:
         """:func:`locate`'s answer for Codon's *file* at *line*, the checked
         file *rel*."""
+        key = (rel, line)
         if line > _PRELUDE_LINES + 1 and not message.startswith("syntax error"):
             checked = checked_tree(rel)
             field = (
@@ -2493,7 +2532,7 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
                 else _fstring_field_line(checked[0], line, column, end, checked[1])
             )
             if field is not None:
-                in_fields.add((file, line))
+                in_fields.add(key)
                 line = field
         if rel in ws.appended and line > ws.appended[rel][0]:
             # A call the check appended: name the call it makes, and, in a
@@ -2504,8 +2543,8 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             note = f"<{ws.appended_label}: {call or rel}>"
             origin = ws.appended_origins.get(rel, {}).get(appended)
             if origin is not None:
-                return (ws.files[rel], origin, True, note)
-            return (note, 0, False, None)
+                return (ws.files[rel], origin, True, note, rel)
+            return (note, 0, False, None, rel)
         original = _original_line(ws.origins.get(rel), line)
         if (
             original < 1
@@ -2522,15 +2561,15 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             if found is not None:
                 original = found
                 # Codon's column within the field, not of the line (#696).
-                in_fields.add((file, line))
+                in_fields.add(key)
         if original < 1:
             # Still no line of the file (a position before its first line):
             # reported with none rather than a negative one (#696).
-            return (ws.files[rel], 0, True, None)
+            return (ws.files[rel], 0, True, None, rel)
         texts = _rewritten_lines(ws.root / rel, line, ws.files[rel], original)
         if texts is not None:
-            moved[(file, line)] = texts
-        return (ws.files[rel], original, True, None)
+            moved[key] = texts
+        return (ws.files[rel], original, True, None, rel)
 
     errors: list[tuple[str, list[tuple[str, int, int | None, str]]]] = []
     #: The end column of each frame that has one (by the frame's id).
@@ -2580,10 +2619,11 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
             ((f, loc) for f, loc in located if loc and loc[2]), None
         ) or next(((f, loc) for f, loc in located if loc), (None, None))
         column = pf[2] if pf is not None else None
-        if pf is not None and (pf[0], pf[1]) in in_fields:
+        placed = (primary[4], pf[1]) if pf is not None and primary is not None else None
+        if placed in in_fields:
             column = None  # Codon's column in an f-string field is no column (#610)
-        elif column is not None and pf is not None and (pf[0], pf[1]) in moved:
-            if not _column_survives(column, *moved[(pf[0], pf[1])]):
+        elif column is not None and placed in moved:
+            if not _column_survives(column, *moved[placed]):
                 column = None  # a column of the rewritten line (#494)
         if pf is not None and (pf[0], pf[1]) in ambiguous:
             # Codon's basename is more than one checked file's: name them all.
@@ -2848,6 +2888,12 @@ def _mypy_version() -> str:
         return ""
 
 
+def _distribution_name(dist: importlib.metadata.Distribution) -> str:
+    """*dist*'s name, normalised as PEP 503 does (``Typesafe_Carla`` is
+    ``typesafe-carla``)."""
+    return re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+
+
 @lru_cache(maxsize=1)
 def _distributions_digest() -> str:
     """The name and version of every distribution installed beside the
@@ -2859,7 +2905,7 @@ def _distributions_digest() -> str:
     own = _PACKAGE.replace("_", "-")
     names = set()
     for dist in importlib.metadata.distributions():
-        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        name = _distribution_name(dist)
         if name != own:
             names.add(f"{name}=={dist.version}")
     return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
@@ -2945,7 +2991,7 @@ def _editable_roots() -> tuple[tuple[str, str], ...]:
     own = _PACKAGE.replace("_", "-")
     roots = set()
     for dist in importlib.metadata.distributions():
-        name = re.sub(r"[-_.]+", "-", dist.metadata["Name"] or "").lower()
+        name = _distribution_name(dist)
         if name == own:
             continue
         try:
@@ -3060,7 +3106,10 @@ def typecheck_scenario(
         toolchain: The Codon to compile with; found as typesafe_carla finds
             it, and of a supported release (:func:`find_supported_codon`), by
             default.
-        timeout: Seconds the compile may take.
+        timeout: Seconds each compile may take (the wait for memory aside).
+            A crash with no diagnostic in a module with the tuple helpers
+            is compiled once more, under a timeout of its own (#609), so a
+            check may run Codon for up to twice *timeout*.
 
     Returns:
         The result; ``result.ok`` is ``False`` when the scenario must not run.
@@ -3594,6 +3643,15 @@ def _timed_out(name: str, timeout: float) -> TypeCheckResult:
     )
 
 
+def _crash_reported(output: str) -> bool:
+    """Whether *output* has a line of :data:`_CRASH_LINE`, outside every error
+    Codon located (``file:line (col): error: ...``)."""
+    return any(
+        _CRASH_LINE.match(text) and not _LOCATION.match(text)
+        for text in (_ANSI.sub("", raw).rstrip("\r") for raw in output.split("\n"))
+    )
+
+
 def _compile(
     name: str,
     sources: _Sources,
@@ -3652,13 +3710,16 @@ def _compile(
         except subprocess.TimeoutExpired:
             return None
         output = proc.stdout + proc.stderr
-        diagnostics = _data_model_hints(
-            _with_member_reasons(
-                _variadic_hints(_parse_output(output, ws), _unique_basenames(ws)),
-                sources,
-            ),
-            sources,
-        )
+        diagnostics = _parse_output(output, ws)
+        try:
+            diagnostics = _variadic_hints(diagnostics, _unique_basenames(ws))
+        except Exception:  # only a hint: never lose Codon's own errors to it
+            pass
+        try:
+            diagnostics = _with_member_reasons(diagnostics, sources)
+        except Exception:  # only a hint: never lose Codon's own errors to it
+            pass
+        diagnostics = _data_model_hints(diagnostics, sources)
         try:
             diagnostics = _keyword_only_hints(diagnostics, sources)
         except Exception:  # only a hint: never lose Codon's own errors to it
@@ -3683,12 +3744,15 @@ def _compile(
     )
     codegen = proc.returncode != 0 and _LLVM_ERROR in output
     if codegen:
-        diagnostics = [_codegen_crash(output, sources)]
+        try:
+            diagnostics = [_codegen_crash(output, sources)]
+        except Exception:  # only a hint: the crash is reported either way
+            pass  # Codon's own errors, or its last line below
     crashed = proc.returncode != 0 and (
         proc.returncode < 0
         or proc.returncode > 128
         or codegen
-        or any(m in output for m in _CRASH_MARKERS)
+        or _crash_reported(output)
     )
     # Killed from outside (the out-of-memory killer): no verdict on the code,
     # so neither the #609 rerun nor the #584 hints, which would blame it.
@@ -4478,7 +4542,10 @@ def typecheck_library(
         modules: Dotted module names; :data:`.library.CHECKED` by default.
         toolchain: The Codon to compile with (:func:`find_supported_codon`
             by default).
-        timeout: Seconds the compile may take.
+        timeout: Seconds each compile may take (the wait for memory aside).
+            A crash with no diagnostic in a module with the tuple helpers
+            is compiled once more, under a timeout of its own (#609), so a
+            check may run Codon for up to twice *timeout*.
 
     The modules compiled are then given the None check, as a scenario's are
     (:func:`_with_none_misuses`): an ``Optional`` CARLA or the framework
