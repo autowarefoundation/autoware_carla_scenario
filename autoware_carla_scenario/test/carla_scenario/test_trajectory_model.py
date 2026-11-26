@@ -863,6 +863,15 @@ class TestAlongThePath:
         assert u_turn.project(5.0, 0.5, near=96.0, window=10.0) == pytest.approx(96.0)
         assert u_turn.project(5.0, 0.4, near=5.0, window=10.0) == pytest.approx(5.0)
 
+    def test_project_near_past_an_open_path_s_ends_looks_from_that_end(self) -> None:
+        """A FOLLOW's initial offset can lie past either end (#2526)."""
+        path = ResolvedTrajectory(
+            xs=[0.0, 10.0, 20.0], ys=[0.0] * 3, zs=[0.0] * 3, yaws=[None] * 3
+        )
+        assert path.project(19.0, 0.0, near=60.0) == pytest.approx(19.0)
+        assert path.project(1.0, 0.0, near=-40.0) == pytest.approx(1.0)
+        assert path.project(12.0, 0.0, near=-40.0) == pytest.approx(12.0)
+
     def test_project_near_answers_as_a_scan_of_every_segment_would(self) -> None:
         """The window is found by bisection rather than by testing each
         segment; the answer is the one a test of each segment gives, at the
@@ -882,6 +891,8 @@ class TestAlongThePath:
 
         def scanned(x: float, y: float, near: float, window: float) -> float:
             arc = path._arc
+            # Past an open path's ends, *near* looks from that end.
+            near = min(max(near, 0.0), path.length)
             best, along = math.inf, 0.0
             for i in range(len(arc) - 1):
                 if arc[i + 1] < near - window or arc[i] > near + window:

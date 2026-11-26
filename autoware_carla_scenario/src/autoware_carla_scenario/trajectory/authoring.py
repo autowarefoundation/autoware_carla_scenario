@@ -522,8 +522,8 @@ def authored_trajectory(
     """The trajectory a *Set Goal* card's written-out waypoints describe.
 
     Args:
-        path_source: ``vertices``, ``lanelets`` or ``relative_lane`` (see
-            :data:`PATH_SOURCES`).
+        path_source: ``vertices``, ``lanelets``, ``relative_lane`` or
+            ``route`` (see :data:`PATH_SOURCES`).
         vertices: The ``vertices`` source's rows (see :func:`parse_vertices`).
         lanelet_ids: The ``lanelets`` source's route, in driving order.
         speed_kmh: The ``lanelets`` source's speed, which times its vertices.
