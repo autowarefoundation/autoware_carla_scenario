@@ -26,7 +26,6 @@ _MOVED = (
     "stem_order",
     "_stems_in",
     "_only_case",
-    "_mtime",
     "_stat",
     "batch_stamp",
     "_summary_is_current",
@@ -55,10 +54,13 @@ def test_cases_still_exports_every_name() -> None:
         "batch_stamp",
         "case_files",
         "contained",
+        "has_result",
+        "is_batch",
         "job_dir",
         "match_batch_stems",
         "session_dir",
         "session_overrides",
+        "session_type_matches",
         "stem_order",
     ]
     for name in cases.__all__:

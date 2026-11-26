@@ -73,8 +73,9 @@ def test_a_malformed_manifest_does_not_break_the_listing(
 ) -> None:
     _slurm_batch(base, {"cases": case_list})
     assert client.get("/").status_code == 200
-    assert client.get(f"/session/batch/{DATE}/{TIME}").status_code == 200
-    # The batch has no case to read: no such case (#2344), and no 500.
+    # A manifest that cannot be read makes no batch (cases.is_batch): no
+    # batch page (#2543), no such case (#2344), and no 500.
+    assert client.get(f"/session/batch/{DATE}/{TIME}").status_code == 404
     assert client.get(f"/session/batch/{DATE}/{TIME}/0").status_code == 404
     assert client.get(f"/compare?s=batch/{DATE}/{TIME}").status_code == 200
 
@@ -377,3 +378,100 @@ def test_a_submission_while_another_is_made_is_a_409(
         "status": "error",
         "message": "A batch is still being submitted",
     }
+
+
+# ── Documents nested too deep (#2543) ───────────────────────────────────────
+
+
+def _run(base: Path, time: str, document: str) -> Path:
+    run = base / "outputs" / DATE / time
+    run.mkdir(parents=True)
+    (run / "X_result.json").write_text(document)
+    return run
+
+
+def test_a_document_nested_deep_is_read_as_json_loads_reads_it(tmp_path: Path) -> None:
+    """A document json.loads() cannot read for its depth (a RecursionError,
+    which Python 3.14's parser no longer raises at this depth) is unreadable,
+    as any other; one it reads is read."""
+    text = "[" * 100_000 + "]" * 100_000
+    path = tmp_path / "deep.json"
+    path.write_text(text)
+    try:
+        expected = json.loads(text)
+    except RecursionError:
+        assert cases._read_json(path) is None
+    else:
+        assert cases._read_json(path) == expected
+
+
+def test_a_document_nested_too_deep_does_not_hide_the_sessions(
+    base: Path, client: TestClient
+) -> None:
+    _run(base, "09-00-00", json.dumps({"passed": True, "message": "ok"}))
+    _run(base, "10-00-00", "[" * 100_000 + "]" * 100_000)
+    batch = base / "outputs" / DATE / "11-00-00"
+    batch.mkdir(parents=True)
+    (batch / "batch_results.json").write_text("[" * 100_000 + "]" * 100_000)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert f"{DATE}/09-00-00" in response.text
+    # The unreadable result is one without a result (pending).
+    [summary] = [s for s in scanner.scan_sessions(base) if s.time == "10-00-00"]
+    assert summary.pending_count == 1
+
+
+def _nested(depth: int) -> dict[str, Any]:
+    """A condition's details whose ``child`` wrappers nest *depth* deep, the
+    innermost labelled ``innermost``."""
+    tree: dict[str, Any] = {"label": "innermost"}
+    for level in range(depth - 1, 0, -1):
+        tree = {"label": f"level-{level}", "child": tree}
+    return tree
+
+
+def _depth(node: Any) -> int:
+    return 1 + max((_depth(c) for c in node.children), default=0)
+
+
+@pytest.mark.parametrize("depth", [65, 300, 900])
+def test_a_condition_tree_nested_too_deep_is_shown_cut_short(
+    base: Path, client: TestClient, depth: int
+) -> None:
+    statuses = [{"label": "top", "details": _nested(depth)}]
+    _run(
+        base,
+        "11-00-00",
+        json.dumps({"passed": True, "message": "ok", "condition_statuses": statuses}),
+    )
+    view = scanner.load_scenario(base, "single", DATE, "11-00-00", 0)
+    assert view is not None
+    [top] = view.condition_statuses
+    # MAX_CONDITION_DEPTH levels from the top node down, then one "…".
+    assert _depth(top) == scanner.MAX_CONDITION_DEPTH + 1
+    node = top
+    while node.children:
+        node = node.children[0]
+    assert node.label == scanner.TRUNCATED_LABEL
+    assert "not shown" in node.message
+    page = client.get(f"/session/single/{DATE}/11-00-00/0")
+    assert page.status_code == 200
+    assert scanner.TRUNCATED_LABEL in page.text and "innermost" not in page.text
+
+
+def test_a_condition_tree_within_the_cap_is_shown_whole(base: Path) -> None:
+    depth = scanner.MAX_CONDITION_DEPTH
+    statuses = [{"label": "top", "details": _nested(depth)}]
+    _run(
+        base,
+        "11-00-00",
+        json.dumps({"passed": True, "message": "ok", "condition_statuses": statuses}),
+    )
+    view = scanner.load_scenario(base, "single", DATE, "11-00-00", 0)
+    assert view is not None
+    [top] = view.condition_statuses
+    assert _depth(top) == depth
+    node = top
+    while node.children:
+        node = node.children[0]
+    assert node.label == "innermost"

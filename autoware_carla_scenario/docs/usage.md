@@ -2267,14 +2267,19 @@ session's page) compares two or more sessions of the same scenarios
   cases drawn in no bucket of the attributes picked).
 - **Pass rates** of each session.
 
-A SLURM batch can be compared before it is collected, from what its tasks
-have recorded: a case without an outcome yet is PENDING and is left out of
-the comparison, as if that session had not run it (no regression, and not in
-its pass rate), and each session's summary says how many of its cases are
-pending (`1/1 passed · 1 pending (not collected)`). A task that crashed
-recorded no outcome, so its case stays pending until the batch is collected.
-A case whose recorded outcome holds no verdict, or a result that cannot be
-reported, is compared as an error.
+A session can be compared before all of its cases have a result, as the
+session pages count them ([How a session's cases are
+counted](#how-a-sessions-cases-are-counted)): a case without a result yet --
+a multirun job or a single run whose result file is missing or unreadable (a
+job still running, or one that crashed), or a SLURM batch's case without an
+outcome yet, compared from what its tasks have recorded before the batch is
+collected -- is PENDING and is left out of the comparison, as if that session
+had not run it (no regression, and not in its pass rate), and each session's
+summary says how many of its cases are pending (`1/1 passed · 1 pending (not
+collected)` for a batch, `(no result yet)` for the others). A SLURM task that
+crashed recorded no outcome, so its case stays pending until the batch is
+collected. A case whose recorded outcome holds no verdict, or a result that
+cannot be reported, is compared as an error.
 
 ### Running through SLURM
 
@@ -2291,7 +2296,11 @@ any other. The
 viewer runs `scenario [--multirun] scenario=... launcher=slurm ... --no-wait`
 (with a sweeper, every case of the sweep) in its base path, and opens the
 batch's page once it is submitted. The command is run with no input and in
-a process group of its own; one that has not ended after 30 minutes (it runs
+a process group of its own, its output written to a temporary file rather
+than a pipe, so a viewer stopped while it submits does not break the
+submission: the command finishes it (its collect job included), and its
+output stays in that file (`scenario-slurm-submit-*.log`); one that has not
+ended after 30 minutes (it runs
 the batch's checks before `sbatch`) is killed with its whole group, and the
 submission is marked failed (exit status 124) with why, so the next submit is
 taken. Stopped during `sbatch`, it leaves the batch's submission record in

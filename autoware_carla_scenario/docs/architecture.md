@@ -1027,7 +1027,7 @@ graph TB
     end
 
     subgraph External["External Process (uv run scenario)"]
-        subprocess["subprocess.run()"]
+        subprocess["subprocess.Popen()"]
         ext_main["main()<br/>(examples/run.py)"]
         ext_queue["ScenarioQueue"]
         ext_runner["ScenarioRunner"]
@@ -1060,12 +1060,12 @@ graph TB
 |-----------|------|----------------|
 | **`app.py`** | `ui/app.py` | FastAPI routes, template rendering, SSE streaming |
 | **`scanner.py`** | `ui/scanner.py` | Scan `outputs/` and `multirun/` directories for result JSON files. Build session lists and condition trees. |
-| **`runner.py`** | `ui/runner.py` | Execute `uv run scenario` as subprocesses in a background thread. Track progress with thread-safe global state. |
+| **`runner.py`** | `ui/runner.py` | Execute `uv run scenario` as subprocesses in a background thread (`subprocess.Popen`, each job in a session of its own, its output written to a file). Track progress with thread-safe global state. |
 | **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Expand a scenario's sweep into concrete per-job override lists without launching CARLA, through the CLI's `sweeper.expand.expand_config` (constraints, route searches, ODD draws); a failure, or a scenario whose sweep expands to no case, is reported to the Run panel and nothing runs. The jobs run with the Run panel's extra overrides. |
 | **`models.py`** | `ui/models.py` | Pydantic data models for the viewer UI. |
-| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). Its `session_dir` is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under `multirun/` or `outputs/`; else 404). |
+| **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). Its `session_dir` is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under `multirun/` or `outputs/`; else 404), and its `session_type_matches` keeps a `single` and a `batch` URL, which share `outputs/`, to their own directories (a batch is a directory `batch_entries` finds one in; else 404). Metadata (`.hydra/overrides.yaml`, `multirun.yaml`, `batch_results.json`, the SLURM manifest and case outcomes) is read only when neither it nor a directory between is a symbolic link, as a case's own files are; a batch whose manifest is one, or is under a `slurm/` that is one, is no SLURM batch to the SLURM panel's API either (404). |
 | **`results.py`** | `ui/results.py` | A session's cases with their ODD case, coverage and metrics off the trajectory log; the cases in a cell of openodd's coverage view; sessions compared, cases matched by what they ran. |
-| **`slurm_launch.py`** | `ui/slurm_launch.py` | Submit a batch through SLURM (`launcher=slurm --no-wait`) and follow it from its directory and `squeue`; resubmit, collect, cancel with `scenario-slurm`. |
+| **`slurm_launch.py`** | `ui/slurm_launch.py` | Submit a batch through SLURM (`launcher=slurm --no-wait`, in a session of its own, its output written to a temporary file rather than a pipe, so a viewer stopped meanwhile does not break the submission) and follow it from its directory and `squeue`; resubmit, collect, cancel with `scenario-slurm`. |
 | **`slurm_options.py`** | `ui/slurm_options.py` | The `launcher.*` keys the run panel sets: what each may hold, the Hydra overrides they become (quoted as Hydra reads them back) and the `scenario ... --no-wait` command line. Checked by the library check (`docs/typecheck.md`). |
 | **`recordings.py`** | `ui/recordings.py` | A case's Rerun recording, made from its trajectory log on demand in a worker thread (the optional `autoware_carla_scenario_rerun`), and where the page loads Rerun's web viewer from (a copy it serves, or the CDN). |
 
@@ -1537,7 +1537,7 @@ graph LR
 | **9000** | 9000 | Viewer Web Server | HTTP | `viewer --port`, `VIEWER_PORT` env var | FastAPI/Uvicorn server for the result viewer web UI. Serves HTML pages, REST API, and SSE progress stream. |
 
 !!! note
-    The CARLA RPC port and TrafficManager port are used within the **scenario subprocess**, not the viewer process. The viewer communicates with CARLA only indirectly through `subprocess.run(["uv", "run", "scenario", ...])`.
+    The CARLA RPC port and TrafficManager port are used within the **scenario subprocess**, not the viewer process. The viewer communicates with CARLA only indirectly, through the `uv run scenario` jobs its runner starts (`subprocess.Popen(["uv", "run", "scenario", ...])`, each in a session of its own, its output written to a file).
 
 ### Environment Variables
 

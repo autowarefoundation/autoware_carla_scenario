@@ -1394,3 +1394,70 @@ def test_the_session_page_links_its_odd_and_comparison(
     assert f'href="/compare?s={ref}"' in page.text
     # And the case pages are still the case pages.
     assert client.get(f"/session/{ref}/1").status_code == 200
+
+
+# ── A job without a result yet is pending, not an error (#2543) ─────────────
+
+
+def _sweep_session(base: Path, time: str, verdicts: list[bool | None | str]) -> str:
+    """A multirun session of one job per verdict, ``ego.speed`` 10, 20, ...:
+    ``None`` writes no result (a job still running), ``"bad"`` one that
+    cannot be read."""
+    for i, verdict in enumerate(verdicts):
+        job = base / "multirun" / "2026-01-01" / time / str(i)
+        (job / ".hydra").mkdir(parents=True)
+        (job / ".hydra" / "overrides.yaml").write_text(
+            f"- scenario=s/x\n- ego.speed={10 * (i + 1)}\n"
+        )
+        (job / "X.trajectory.jsonl").write_text("")
+        if verdict == "bad":
+            (job / "X_result.json").write_text("{not json")
+        elif verdict is not None:
+            (job / "X_result.json").write_text(
+                json.dumps({"passed": verdict, "message": "", "elapsed_seconds": 1.0})
+            )
+    return f"multirun/2026-01-01/{time}"
+
+
+@pytest.mark.parametrize("missing", [None, "bad"])
+def test_a_job_without_a_result_is_pending_in_a_comparison(
+    tmp_path: Path, missing: str | None
+) -> None:
+    a = _sweep_session(tmp_path, "10-00-00", [True, True])
+    b = _sweep_session(tmp_path, "11-00-00", [True, missing])
+    loaded = [
+        (ref, results.load_results(tmp_path, *ref.split("/"), metrics=False))
+        for ref in (a, b)
+    ]
+    second = loaded[1][1][1]
+    assert second.pending and not second.errored and second.passed is None
+    # As the session page counts it.
+    items = scanner.load_session(tmp_path, "multirun", "2026-01-01", "11-00-00")
+    assert [it.pending for it in items] == [False, True]
+    assert results.pending_count(loaded[1][1]) == 1
+    comparison = results.compare(loaded)
+    # Left out: no regression, and not in the pass rate.
+    assert comparison.count("regression") == 0
+    assert comparison.totals == [(2, 2), (1, 1)]
+
+
+def test_a_single_run_without_a_readable_result_is_pending(tmp_path: Path) -> None:
+    run = tmp_path / "outputs" / "2026-01-01" / "12-00-00"
+    run.mkdir(parents=True)
+    (run / "X_result.json").write_text("[]")
+    [case] = results.load_results(tmp_path, "single", "2026-01-01", "12-00-00")
+    assert case.pending and not case.errored
+    [item] = scanner.load_session(tmp_path, "single", "2026-01-01", "12-00-00")
+    assert item.pending
+
+
+def test_the_compare_page_says_a_job_has_no_result_yet(
+    client: TestClient, tmp_path: Path
+) -> None:
+    a = _sweep_session(tmp_path, "10-00-00", [True, True])
+    b = _sweep_session(tmp_path, "11-00-00", [True, None])
+    page = client.get("/compare", params=[("s", a), ("s", b)])
+    assert page.status_code == 200
+    assert "1/1 passed" in page.text
+    assert "1 pending (no result yet)" in page.text
+    assert "pending (not collected)" not in page.text

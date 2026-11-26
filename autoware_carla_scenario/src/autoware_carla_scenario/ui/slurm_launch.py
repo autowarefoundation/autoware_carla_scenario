@@ -24,6 +24,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -49,6 +50,10 @@ from ..slurm.records import JsonMembers
 # run`` in front of it and the sbatch or checks it started.
 from ..utils.process_group import kill_group as _kill_group
 from .case_paths import session_order
+
+# The end of a file a process wrote its output to, read back as the runner
+# reads a job's.
+from .runner import _tail
 from .slurm_case_state import case_state, no_job_case_state
 
 # SLURM's command-line tools are run in the checked slurm.queue (#1634):
@@ -295,37 +300,88 @@ def _joined(stdout: str | None, stderr: str | None) -> str:
     return "\n".join(written)
 
 
-def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
-    """Run the submitting *command* in *base*, as :func:`run_cli` runs
-    ``scenario-slurm``: its exit status and output; :data:`TIMED_OUT`, with
-    why, when it did not end within :data:`SUBMIT_TIMEOUT_SECONDS`, its whole
-    process group killed; ``None`` when it could not be started."""
+#: How much of a submit's output, its end, is read back once it has ended:
+#: the line naming the batch's directory is its last, and the viewer's API
+#: sends the last 8000 characters (:meth:`Submission.to_dict`).
+_OUTPUT_MAX_BYTES = 256 * 1024
+
+
+def _output_file() -> Path:
+    """A new, empty temporary file for a submit's output.
+
+    Raises:
+        OSError: It cannot be made.
+    """
+    fd, name = tempfile.mkstemp(prefix="scenario-slurm-submit-", suffix=".log")
+    os.close(fd)
+    return Path(name)
+
+
+def _read_output(log: Path) -> str:
+    """What a submit wrote to *log*: its end (:data:`_OUTPUT_MAX_BYTES`),
+    its bytes that are not UTF-8 replaced; empty when it cannot be read."""
     try:
-        process = subprocess.Popen(  # noqa: S603
-            command,
-            cwd=str(base),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-            start_new_session=True,
-        )
-    except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
+        return _tail(log, _OUTPUT_MAX_BYTES)
+    except OSError:
+        return ""
+
+
+def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
+    """Run the submitting *command* in *base*: its exit status and output
+    (stdout and stderr, in the order written); :data:`TIMED_OUT`, with why,
+    when it did not end within :data:`SUBMIT_TIMEOUT_SECONDS`, its whole
+    process group killed; ``None`` when it could not be started.
+
+    Its output goes to a temporary file as it runs (:func:`_output_file`),
+    read back once it has ended and then removed, never to a pipe, as the
+    runner writes a job's (#2543): it runs in a session of its own, so it
+    outlives a viewer stopped while it submits, and with a pipe its next
+    write would then raise ``BrokenPipeError``, between the batch's
+    submission record and its collect job (``slurm/submit.py``), leaving an
+    array job without its collect job. Writing to a file, it finishes the
+    submission; the file of one the viewer stopped waiting for is left in
+    the temporary directory, with what it wrote.
+    """
+    try:
+        log = _output_file()
+    except OSError as exc:
         return None, f"Could not run {command[0]}: {exc}"
+    try:
+        return _run_submit_into(command, base, log)
+    finally:
+        try:
+            log.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _run_submit_into(
+    command: list[str], base: Path, log: Path
+) -> tuple[int | None, str]:
+    """:func:`_run_submit`, its output written to *log*."""
+    with log.open("w", encoding="utf-8") as output:
+        try:
+            process = subprocess.Popen(  # noqa: S603
+                command,
+                cwd=str(base),
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=True,
+            )
+        except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
+            return None, f"Could not run {command[0]}: {exc}"
     timeout = SUBMIT_TIMEOUT_SECONDS
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
+        process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_group(process)
-        # Bounded: what the killed group wrote, once its pipes close.
-        try:
-            stdout, stderr = process.communicate(timeout=10.0)
-        except subprocess.TimeoutExpired:
-            # A process that left the group holds the pipes: reap ours.
-            process.wait()
-            stdout, stderr = "", ""
-        output = _joined(stdout, stderr)
+        # Its output is a file, which no process left of the group can hold
+        # open as it could a pipe: the killed command is reaped at once.
+        process.wait()
+        written = _read_output(log)
         reason = (
             f"{command[0]} did not end within {timeout:g} s and was stopped: "
             "the batch's checks or sbatch hung (is the SLURM controller "
@@ -338,12 +394,12 @@ def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
         )
         # Typed as the function returns it: Codon's tuples do not widen.
         timed_out: int | None = TIMED_OUT
-        return timed_out, f"{output}\n{reason}" if output else reason
+        return timed_out, f"{written}\n{reason}" if written else reason
     except BaseException:
         _kill_group(process)
         process.wait()
         raise
-    return process.returncode, _joined(stdout, stderr)
+    return process.returncode, _read_output(log)
 
 
 def _submit(command: list[str], base: Path, record: Submission) -> None:
