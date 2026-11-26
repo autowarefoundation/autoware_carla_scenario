@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
-from ..conditions.base import BaseCondition, ScenarioResult
+from ..conditions.base import BaseCondition, ScenarioResult, refuse_post_run
 from ..constants import EGO_ROLE_NAME
 from ..entity.hils_entity import HilsEgoEntity, find_hils_entity
 from ..entity_role import EntityRole
@@ -73,8 +74,9 @@ class CommunicationLossAction(BaseAction):
         until: A condition that ends the run, and with it the loss.
 
     Raises:
-        ValueError: *direction* is not one of the three, or *duration* is a
-            boolean or not positive.
+        ValueError: *direction* is not one of the three, *duration* is a
+            boolean, not positive or not finite, or *until* is a
+            :class:`MetricCondition` (judged once the run is over).
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -108,13 +110,21 @@ class CommunicationLossAction(BaseAction):
             )
         if duration is not None:
             # Annotated, so Codon unwraps the Optional (docs/typecheck.md);
-            # True would read as 1 s (#2273).
+            # True would read as 1 s (#2273); infinity is the loss without a
+            # duration, said by ``duration=None``.
             seconds: float = duration
-            if isinstance(seconds, bool) or not seconds > 0.0:
+            if isinstance(seconds, bool) or not (
+                math.isfinite(seconds) and seconds > 0.0
+            ):
                 raise ValueError(
-                    "CommunicationLossAction: duration must be positive "
-                    f"(a number), got {seconds!r}"
+                    "CommunicationLossAction: duration must be positive and "
+                    f"finite (a number), got {seconds!r}"
                 )
+        if until is not None:
+            # Checked here: BaseAction.__init__ sees only the _LossEnds that
+            # wraps it, and a condition judged after the run would never end
+            # the loss (#2532).
+            refuse_post_run(until, f"CommunicationLossAction {label!r}: until")
         # The run lasts until the loss ends, so it is never instantaneous.
         end: BaseCondition = _LossEnds(self, until, duration, label)
         super().__init__(

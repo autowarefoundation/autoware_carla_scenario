@@ -217,8 +217,8 @@ class TrajectoryRun(BaseAction):
 
     Raises:
         ValueError: If a timing is given for an untimed trajectory, the
-            initial distance offset is negative or not finite, the speed is
-            negative or not finite,
+            initial distance offset is negative, not finite or a boolean, the
+            speed is negative, not finite or a boolean,
             or *hidden_outside_trajectory* is asked for without ``POSITION``
             mode and a time reference.
     """
@@ -290,8 +290,13 @@ class TrajectoryRun(BaseAction):
                 f"trajectory {trajectory.name!r} has no vertex times, so a "
                 "time reference has nothing to apply to; pass time_reference=None"
             )
-        # NaN passes `< 0.0`.
-        if not math.isfinite(initial_distance_offset) or initial_distance_offset < 0.0:
+        # NaN passes `< 0.0`.  A boolean is refused too: True would be read
+        # as 1 m or 1 m/s (#2532).
+        if (
+            isinstance(initial_distance_offset, bool)
+            or not math.isfinite(initial_distance_offset)
+            or initial_distance_offset < 0.0
+        ):
             raise ValueError(
                 "initial_distance_offset must be finite and not negative, "
                 f"not {initial_distance_offset!r}"
@@ -300,7 +305,11 @@ class TrajectoryRun(BaseAction):
         # (#1333); ``None`` is how the entity keeps its own speed.
         if speed is not None:
             given_speed: float = speed
-            if not math.isfinite(given_speed) or given_speed < 0.0:
+            if (
+                isinstance(given_speed, bool)
+                or not math.isfinite(given_speed)
+                or given_speed < 0.0
+            ):
                 raise ValueError(
                     f"speed must be finite and not negative, not {given_speed!r}"
                 )
