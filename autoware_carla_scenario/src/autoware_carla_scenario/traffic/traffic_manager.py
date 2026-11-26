@@ -381,6 +381,7 @@ class TrafficManagerBackend(TrafficBackend):
     _random_seed: Optional[int]
     _closed: bool
     _background: dict[str, "carla.Actor"]
+    _capped: set[int]
     _unticked: dict[str, tuple[int, float, float, float]]
     _background_count: int
     _started: bool
@@ -439,6 +440,11 @@ class TrafficManagerBackend(TrafficBackend):
         self._closed = False
         #: Handle -> actor of every background vehicle spawned this run.
         self._background = {}
+        #: The background vehicles capped at a speed (their spawn speed), by
+        #: actor id: the cap is exactly that on every backend
+        #: (:meth:`TrafficBackend.spawn_background`), so no draw of their
+        #: speed factor lifts it (:meth:`_draw_for`).
+        self._capped = set()
         #: Handle -> the frame a background vehicle was spawned on and where
         #: (x, y, z): until the world ticks, a client reads a new actor as
         #: not alive and at the origin (actor_destroyed).
@@ -611,11 +617,16 @@ class TrafficManagerBackend(TrafficBackend):
         own speed factor's.  Released, each gets its own back: its speed, or
         its percentage.  Without ``follow_visibility``, the visibility is only
         logged, with the speed it would hold a car to.
+
+        Each vehicle follows it as its own parameters say
+        (:meth:`_follows_visibility`): an entity override
+        (``TrafficParametersAction`` with ``entity_name``) turns it on or off
+        for that vehicle alone, whatever the run's.
         """
         self._keep_scenario_vehicles(world, elapsed)
         self._carry_out_lane_changes(world)
         seen = world_visibility(episode_of(world))
-        follows = self.vehicle_parameters.follow_visibility is True
+        follows = self._any_follows_visibility()
         changed = seen != self._visibility
         if changed:
             self._visibility = seen
@@ -651,15 +662,38 @@ class TrafficManagerBackend(TrafficBackend):
             except RuntimeError:
                 continue  # destroyed under us: forgotten at the next update
 
+    def _any_follows_visibility(self) -> bool:
+        """Whether any vehicle may follow the visibility: the run's
+        parameters ask for it, or an entity override does for its vehicle."""
+        if self.vehicle_parameters.follow_visibility is True:
+            return True
+        for overrides in self._entity_overrides.values():
+            if overrides.follow_visibility is True:
+                return True
+        return False
+
+    def _follows_visibility(self, actor_id: int) -> bool:
+        """Whether vehicle *actor_id* follows the visibility: its entity
+        overrides' ``follow_visibility`` where they set it, else the run's
+        (what :meth:`_parameters_of` merges, without building the merge)."""
+        if actor_id in self._entity_overrides:
+            own = self._entity_overrides[actor_id].follow_visibility
+            if own is not None:
+                return own is True
+        return self.vehicle_parameters.follow_visibility is True
+
     def _sight_limit_kmh(self, actor_id: int) -> float:
         """The speed, km/h, vehicle *actor_id*'s driver keeps in the
         visibility it is held to: the weather rules' ``sight_speed`` at the
         driver's own quantile (:meth:`_give_quantile`), for SUMO's default
-        car; negative when nothing holds it, or it is not on autopilot."""
+        car; negative when nothing holds it (no visibility, or it does not
+        follow it: :meth:`_follows_visibility`), or it is not on autopilot."""
         seen = self._visibility
         if self._sight_kmh < 0.0 or seen is None:
             return -1.0
         if actor_id not in self._quantiles:
+            return -1.0
+        if not self._follows_visibility(actor_id):
             return -1.0
         return sight_speed_at(seen, self._quantiles[actor_id]) * 3.6
 
@@ -767,6 +801,7 @@ class TrafficManagerBackend(TrafficBackend):
             except RuntimeError:
                 pass
         self._background = {}
+        self._capped = set()
         self._unticked = {}
         self._background_count = 0
         self._started = False
@@ -901,6 +936,10 @@ class TrafficManagerBackend(TrafficBackend):
         if actor is None:
             return None  # The spot is taken; the caller tries elsewhere.
         self._background[handle] = actor
+        if speed_kmh is not None:
+            # Before its first draw (put on autopilot below during the run):
+            # no speed factor lifts the cap.
+            self._capped.add(int(actor.id))
         frame = _frame_of(world)
         if frame >= 0:
             self._unticked[handle] = (
@@ -1279,13 +1318,20 @@ class TrafficManagerBackend(TrafficBackend):
         tm.vehicle_percentage_speed_difference(_vehicle(actor), difference)
 
     def _own_speed_kmh(self, actor: "carla.Actor") -> float:
-        """What *actor* drives at when nothing is in its way, km/h."""
+        """What *actor* drives at when nothing is in its way, km/h: under
+        the sight speed it is held to if it is (:attr:`_held`, :meth:`tick`),
+        which a slowing for a crossing must never lift."""
         actor_id = int(actor.id)
+        held = actor_id in self._held
         if actor_id in self._exact_kmh:
+            if held:
+                return self._held[actor_id]
             return self._exact_kmh[actor_id]
         difference = self._speed_differences.get(
             actor_id, TM_DEFAULT_SPEED_DIFFERENCE_PCT
         )
+        if held:
+            difference = self._held[actor_id]
         road_kmh = float(_vehicle(actor).get_speed_limit())
         return road_kmh * (1.0 - difference / 100.0)
 
@@ -1847,6 +1893,13 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._own_ignores:
             del self._own_ignores[actor_id]
         self._emergencies.discard(actor_id)
+        self._capped.discard(actor_id)
+        self._released.discard(actor_id)
+        if actor_id in self._given:
+            del self._given[actor_id]
+        if actor_id in self._desired_mps:
+            del self._desired_mps[actor_id]
+        # _forget_overrides drops its crossing's and route's lane locks.
         self._forget_overrides(actor_id)
 
     def _forget_lead_out(self, actor_id: int) -> None:
@@ -1868,8 +1921,10 @@ class TrafficManagerBackend(TrafficBackend):
         was the command.  A speed it was given (:attr:`_exact_kmh`) is kept
         over its speed factor, as a speed given after the draw is, and a route
         it follows keeps the TrafficManager's own lane changes off
-        (:meth:`follow_route`).  Each value is drawn all the same, so the
-        vehicles after it draw what they would have.
+        (:meth:`follow_route`).  A background vehicle's cap (:attr:`_capped`)
+        is kept over every draw of its speed factor, first or not: it is
+        exactly its spawn speed on every backend.  Each value is drawn all the
+        same, so the vehicles after it draw what they would have.
         """
         if not parameters.set_fields():
             return
@@ -1886,8 +1941,11 @@ class TrafficManagerBackend(TrafficBackend):
             # The TrafficManager's is a percentage *under* the limit.
             factor = speed_factor.draw(rng, VEHICLE_BOUNDS["speed_factor"])
             difference = (1.0 - factor) * 100.0
-            # A first draw keeps a speed it was given before it: drawn, unsent.
-            if not (first and actor_id in self._exact_kmh):
+            # A first draw keeps a speed it was given before it, and a
+            # background vehicle's cap is exactly its spawn speed whatever is
+            # drawn after (TrafficBackend.spawn_background): drawn, unsent.
+            capped = actor_id in self._capped and actor_id in self._exact_kmh
+            if not capped and not (first and actor_id in self._exact_kmh):
                 tm.vehicle_percentage_speed_difference(vehicle, difference)
                 # Its own, which a hold to sight never drives it faster than:
                 # the TrafficManager drops the speed it was given for it.
@@ -2236,6 +2294,8 @@ class TrafficManagerBackend(TrafficBackend):
                 self._entity_overrides[actor_id] = own.restricted_to(kept)
             else:
                 del self._entity_overrides[actor_id]
+        if overrides.follow_visibility is not None:
+            self._sight_due = 0.0  # held or let go at the next tick
         for driven in sorted(world.get_actors().filter("vehicle.*"), key=_actor_id):
             # In the order they were spawned, as start() draws them.
             # The ones that drew already: a vehicle not yet on autopilot draws
@@ -2264,6 +2324,10 @@ class TrafficManagerBackend(TrafficBackend):
             ].overridden_by(overrides)
         else:
             self._entity_overrides[actor_id] = overrides
+        if overrides.follow_visibility is not None:
+            # Held, or given its own back, at the next tick: not at the next
+            # update of the other vehicles that follow the visibility.
+            self._sight_due = 0.0
         if actor_id in self._drawn:
             self._draw_for(vehicle, overrides)
         else:
@@ -2325,7 +2389,12 @@ class TrafficManagerBackend(TrafficBackend):
         """*overrides*, given vehicle *actor_id* before its first draw, came
         after the speed or route it was given before them: the one given last
         wins, so its first draw sends the fields they set (:meth:`_draw_for`)."""
-        if overrides.speed_factor is not None and actor_id in self._exact_kmh:
+        if (
+            overrides.speed_factor is not None
+            and actor_id in self._exact_kmh
+            and actor_id not in self._capped
+        ):
+            # A background vehicle's cap stays: no speed factor lifts it.
             del self._exact_kmh[actor_id]
         if overrides.lane_changes is not None:
             # The route's lock, not a crossing's: that one gives them back,

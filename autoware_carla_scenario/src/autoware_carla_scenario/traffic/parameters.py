@@ -3,7 +3,7 @@
 A backend's own options (:mod:`.config`, :mod:`.sumo.config`) say how the
 simulator behind it is set up -- a port, a network, a step.  How its road
 users behave is a different question, asked of every backend alike, and it
-has two parameter spaces of its own:
+has three parameter spaces of its own:
 
 * :class:`VehicleParameters`, ``traffic.vehicles``: how fast against the
   limit, how close behind the car ahead, whether drivers change lanes,
@@ -506,9 +506,12 @@ class VehicleParameters:
     Attributes:
         speed_factor: Desired speed as a multiple of the speed limit (1.0: at
             the limit, 0.8: 20 % under it).  TrafficManager: the vehicle's
-            speed difference, which a speed set on it (a background vehicle's
-            or a scenario's ``SetSpeedAction``) overrides.  SUMO: the
-            vehicle's speed factor.
+            speed difference.  The one given last wins between it and a speed
+            a scenario sets (``SetSpeedAction``), but a background vehicle's
+            spawn speed is its cap on every backend, which no draw of this
+            lifts: under the TrafficManager it keeps that speed whatever is
+            drawn.  SUMO: the vehicle's speed factor, under that cap
+            (``setMaxSpeed``).
         min_gap_m: Gap kept to the vehicle ahead when standing, metres.
         lane_changes: Whether vehicles change lanes of their own accord (to
             overtake, to keep right).  ``False`` under SUMO still lets a
