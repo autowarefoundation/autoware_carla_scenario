@@ -1,15 +1,21 @@
-"""Minimal contract for delegating Autoware startup to ``autoware_carla_interface``.
+"""Minimal contract between a scenario and the Autoware stack that drives its ego.
 
 The whole init sequence (localization pose initialization -> route/goal setting ->
-engage / change-to-autonomous) is owned by the Autoware side, not driven step by
-step from here:
+engage / change-to-autonomous) runs on the Autoware side of the bridge, in the
+framework's own ``scenario_bridge`` ROS 2 node
+(:mod:`~autoware_carla_scenario.autoware_bridge.ros_bridge.node`), not step by
+step from the scenario's tick loop.  Through Autoware's AD API, that node:
 
-* localization is auto-initialized by ``autoware_automatic_pose_initializer``
-  (GNSS) or from a published ``/initialpose``;
-* routing is auto-set by ``routing_adaptor`` from the goal pose;
-* engaging and a single readiness signal are provided by small Autoware-side
-  helpers (an auto-engage node + a readiness aggregator that ANDs
-  localization/routing/operation-mode state).
+* initializes localization at the mission's initial pose itself
+  (``/api/localization/initialize``), unless its ``initialize_localization``
+  parameter is off (ground-truth / E2E stacks);
+* sets the route to the goal, through the mission's waypoints
+  (``/api/routing/set_route_points``);
+* engages itself (``/api/operation_mode/change_to_autonomous``, behind its
+  ``auto_engage`` parameter), and folds localization, routing and
+  operation-mode state into a single readiness flag with the readiness
+  aggregator it runs in-process
+  (:class:`~autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api.ReadinessAggregator`).
 
 So the scenario framework only needs to (1) hand Autoware the scenario's initial
 pose and goal, and (2) wait for a single "ready" (initialized + routed + engaged
@@ -17,12 +23,11 @@ and now driving) signal.  That is the entire contract below.
 
 The framework core depends only on the abstract :class:`AutowareBridge`.  The
 concrete gRPC transport hosts the ``AutowareBridge`` *server*; the
-``autoware_carla_interface`` node is the *client* that dials it (splatsim-
-consistent - see the topology note in
-``proto/autoware_bridge/v0/autoware_bridge.proto``).  The transport and that wire
-contract are implemented separately, so this package never imports ROS 2 / rclpy
-(all ROS 2 / Autoware AD API I/O lives on the client, inside the interface node).
-Tests use
+``scenario_bridge`` node is the *client* that dials it (see the topology note
+in ``proto/autoware_bridge/v0/autoware_bridge.proto``).  All ROS 2 / Autoware AD
+API I/O lives in that node, under :mod:`.ros_bridge`, which runs in Autoware's
+ROS 2 environment; the rest of this package, and the framework, never imports
+ROS 2 / rclpy.  Tests use
 :class:`~autoware_carla_scenario.autoware_bridge.fake.FakeAutowareBridge`.
 
 Ego pose/velocity for scenario conditions is NOT part of this contract: it is
@@ -80,7 +85,7 @@ class AutowareBridgeConfig:
 
     Attributes:
         address: ``host:port`` the bridge gRPC server (hosted by the framework)
-            binds to and that the ``autoware_carla_interface`` client dials.
+            binds to and that the ``scenario_bridge`` node, its client, dials.
         timeout_s: Deprecated, and never had an effect: ``None`` (the default)
             or a positive, finite number, which is logged as ignored.  The
             ``scenario_bridge`` node's RPC timeouts are its own ROS parameters
@@ -307,9 +312,11 @@ class BridgePose:
     ) -> "BridgePose":
         """Build a pose from a position and roll/pitch/yaw (radians).
 
-        The angles are intrinsic ZYX (yaw, then pitch, then roll) about the
-        map frame's own axes -- the convention ROS uses, so the quaternion is
-        the one ``geometry_msgs/Pose`` would carry.
+        The angles are intrinsic ZYX: yaw about the map Z axis, then pitch
+        about the new Y axis, then roll about the body X axis (equivalently,
+        extrinsic roll, pitch, yaw about the fixed map axes) -- the convention
+        ROS uses, so the quaternion is the one ``geometry_msgs/Pose`` would
+        carry.
 
         Args:
             x: Position X in the map frame (metres).
@@ -485,7 +492,7 @@ class AutowareBridge(ABC):
 
     @property
     def client_address(self) -> Optional[str]:
-        """``host:port`` for the interface node to dial, once :meth:`start` ran.
+        """``host:port`` for the ``scenario_bridge`` node to dial, after :meth:`start`.
 
         ``None`` for a bridge with no address of its own.
         """

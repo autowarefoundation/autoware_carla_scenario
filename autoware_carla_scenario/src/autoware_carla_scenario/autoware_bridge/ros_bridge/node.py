@@ -1072,7 +1072,10 @@ class ScenarioBridgeNode(Node):
         if self._aggregator.route_arrived:
             self._ensure_route_cleared(version)
             return
-        if not self._aggregator.route_changeable:
+        # RoutingNode::on_change_route_points changes a route that is SET and
+        # refuses one that is not ("The route is not set yet."), including
+        # while an earlier change is still CHANGING.
+        if not self._aggregator.route_set:
             return
         if not self._change_route_cli.service_is_ready():
             return

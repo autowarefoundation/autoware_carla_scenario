@@ -6,9 +6,9 @@ push a single readiness flag (``ReportReadiness``), and forward Autoware's
 turn-indicator command (``ReportTurnIndicators``).  The scenario framework
 hosts the server
 (:class:`~autoware_carla_scenario.autoware_bridge.grpc_server.GrpcAutowareBridgeServer`);
-the interface node is the client and dials it, opening an ``insecure_channel``
-to its address.  Kept free of ``rclpy`` so it can be unit tested against an
-in-process server.
+the ``scenario_bridge`` node (:mod:`.node`) is the client and dials it,
+opening an ``insecure_channel`` to its address.  Kept free of ``rclpy`` so it
+can be unit tested against an in-process server.
 """
 
 from __future__ import annotations
@@ -31,7 +31,8 @@ class Mission:
     """The scenario's mission, as map-frame ``Pose`` wire messages.
 
     Attributes:
-        initial_pose: Where Autoware initializes localization.
+        initial_pose: Where the ``scenario_bridge`` node initializes
+            Autoware's localization (``/api/localization/initialize``).
         goal: Where Autoware plans the route to.
         waypoints: Poses the route must pass through, in order; empty leaves
             the way to the goal to Autoware.
