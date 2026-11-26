@@ -413,7 +413,9 @@ def test_str_of_a_type_bypasses_codon_union_str() -> None:
     text = (model / "_tc.codon").read_text(encoding="utf-8")
     block = text.split("@extend\nclass str:\n", 1)[1].split("\n\n\n", 1)[0]
     assert re.search(
-        r"@overload\n    def __new__\(what: TypeWrap\[T\], T: type\) -> str:\n"
-        r"        return what\.__repr__\(\)\n",
+        r"@overload\n    def __new__\(what\) -> str:\n"
+        r"        if isinstance\(what, type\):\n"
+        r"            return what\.__repr__\(\)\n"
+        r"        elif isinstance\(what, Union\):\n",
         block,
     ), block
