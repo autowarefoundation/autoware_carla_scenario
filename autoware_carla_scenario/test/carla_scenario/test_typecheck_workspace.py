@@ -443,3 +443,156 @@ def test_an_ambiguous_frame_of_one_error_leaves_another_error_alone(
     assert first.message.startswith("first (Codon names the file util.py only")
     assert second.path == "/user/acs_dupbase/b/util.py"
     assert second.message == "second"
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        # Codon's own failed assertion (seqassert), then its abort().
+        "Assert failed:\tunknown type\nExpression:\tt\nSource:\t\ttypecheck.cpp:12\n",
+        "\x1b[1mAssert failed:\x1b[0m\tbad\n",
+        # A shell's report of the signal, alone on its line.
+        "Aborted (core dumped)\n",
+        "partial output\nAborted\n",
+        "Segmentation fault (core dumped)\n",
+    ],
+)
+def test_a_crash_codon_reports_is_one(output: str) -> None:
+    assert check._crash_reported(output)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "scen.py:12 (5): error: 'Aborted' object has no attribute 'missing'\n",
+        "scen.py:12 (5): error: Assert failed: no such thing\n",
+        "error: 'Status.Aborted' does not match expected type 'int'\n",
+        "╰─ scen.py:3 (1): error: during the realization of Aborted()\n",
+        "Aborted is not defined here\n",
+        "  Segmentation fault\n",
+    ],
+)
+def test_an_error_naming_a_crash_marker_is_no_crash(output: str) -> None:
+    # A class or an enum member called Aborted is the program's (#2519).
+    assert not check._crash_reported(output)
+
+
+def _compile_with_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int, output: str
+) -> check.TypeCheckResult:
+    """:func:`check._compile` of a one-module scenario, Codon answering
+    *returncode* and *output*."""
+    source = "class Aborted:\n    pass\n\nx = Aborted().missing\n"
+    author = tmp_path / "scen.py"
+    author.write_text(source, encoding="utf-8")
+    sources = check._Sources()
+    sources.modules["scen"] = check._Module(author, False, source, ast.parse(source))
+
+    def build(root: Path) -> tuple[check._Workspace, list[check.Diagnostic]]:
+        ws = check._Workspace(root, None)
+        (root / "scen.py").write_text(check.PRELUDE + source, encoding="utf-8")
+        ws.files["scen.py"] = str(author)
+        ws.origins["scen.py"] = [1, 2, 3, 4]
+        return ws, []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, returncode, "", output)
+
+    monkeypatch.setattr(check.subprocess, "run", run)
+    tc = Toolchain(tmp_path / "bin" / "codon", tmp_path, source="test")
+    result = check._compile("s", sources, None, tc, tmp_path, 5.0, build)
+    assert result is not None
+    return result
+
+
+def test_a_type_error_of_a_class_called_aborted_is_no_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #2519: "Aborted" in the error's text took it for a crash, so the
+    # verdict was never kept and the report said Codon crashed.
+    line = check._PRELUDE_LINES + 4
+    output = f"scen.py:{line} (5): error: 'Aborted' object has no attribute 'missing'\n"
+    result = _compile_with_output(tmp_path, monkeypatch, 1, output)
+    assert not result.ok
+    assert not result.crashed
+    assert [d.message for d in result.diagnostics] == [
+        "'Aborted' object has no attribute 'missing'"
+    ]
+    assert result.diagnostics[0].line == 4
+
+
+@pytest.mark.parametrize(
+    ("returncode", "output"),
+    [
+        (1, "Assert failed:\tbad\nExpression:\tt\nSource:\t\tx.cpp:1\n"),
+        (-6, "Assert failed:\tbad\n"),
+        (-11, ""),
+        (134, "Aborted (core dumped)\n"),
+    ],
+)
+def test_a_codon_crash_is_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int, output: str
+) -> None:
+    assert _compile_with_output(tmp_path, monkeypatch, returncode, output).crashed
+
+
+def test_a_column_is_checked_against_the_file_its_error_is_in(
+    tmp_path: Path,
+) -> None:
+    # #2519: the first error leaves util.py:3 ambiguous, placed in both
+    # files; the second is good()'s, of a/util.py, whose line 3 is as
+    # written. b/util.py's rewritten line 3 must not drop its column.
+    ws = check._Workspace(tmp_path / "ws", None)
+    good = "def good(x):\n    y = 1\n    return foo(x, 1)\n"
+    bad = "def bad(x):\n    y = 1\n    return foo(x, 1)\n"
+    for rel, written, compiled in (
+        ("p/a/util.py", good, good),
+        ("p/b/util.py", bad, bad.replace("foo", "zzz")),
+    ):
+        checked = tmp_path / "ws" / rel
+        checked.parent.mkdir(parents=True, exist_ok=True)
+        checked.write_text(check.PRELUDE + compiled, encoding="utf-8")
+        author = tmp_path / "author" / rel
+        author.parent.mkdir(parents=True, exist_ok=True)
+        author.write_text(written, encoding="utf-8")
+        ws.files[rel] = str(author)
+        ws.origins[rel] = [1, 2, 3]
+    line = check._PRELUDE_LINES + 3
+    second = (
+        f"util.py:{line} (16): error: second\n"
+        "╰─ odds.py:5 (5): error: during the realization of good(x: int)\n"
+    )
+    (alone,) = check._parse_output(second, ws)
+    first, after = check._parse_output(
+        f"util.py:{line} (16): error: first\n" + second, ws
+    )
+    assert first.column is None  # ambiguous
+    assert after.path == alone.path == str(tmp_path / "author" / "p/a/util.py")
+    assert after.column == alone.column == 16
+
+
+@pytest.mark.parametrize("separator", ["\x0c", " ", "\x1c"])
+def test_a_character_splitlines_splits_at_is_no_new_line(
+    tmp_path: Path, separator: str
+) -> None:
+    # #2519: splitlines() splits at a form feed or U+2028, which end no
+    # line of a source, so every line after one was looked up a line late.
+    author = tmp_path / "author.py"
+    author.write_text(f"x = 1  #{separator}\ny = foo(1)\n", encoding="utf-8")
+    (tmp_path / "ws").mkdir()
+    checked = tmp_path / "ws" / "m.py"
+    checked.write_text(
+        check.PRELUDE + f"x = 1  #{separator}\ny = foo(1) or 0\n", encoding="utf-8"
+    )
+    ws = check._Workspace(tmp_path / "ws", None)
+    ws.files["m.py"] = str(author)
+    ws.origins["m.py"] = [1, 2]
+    line = check._PRELUDE_LINES + 2
+    (diagnostic,) = check._parse_output(f"m.py:{line} (5): error: bad\n", ws)
+    assert diagnostic.line == 2
+    assert diagnostic.column == 5  # "y = " is as written: the column stands
+    assert check._source_line(diagnostic) == "y = foo(1)"
+    assert check._rewritten_lines(checked, line, str(author), 2) == (
+        "y = foo(1) or 0",
+        "y = foo(1)",
+    )
