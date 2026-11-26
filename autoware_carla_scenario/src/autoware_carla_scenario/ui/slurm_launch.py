@@ -639,8 +639,14 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
     states (``squeue``), and whether it has been collected.  A submission
     whose record cannot be read is listed ``unreadable`` with a ``note``, as
     is one with no job id, which says why (``in_flight`` or
-    ``sbatch_timed_out``, else a stale record; #1791)."""
-    layout = BatchLayout(batch_dir)
+    ``sbatch_timed_out``, else a stale record; #1791).
+
+    No record is read through a symbolic link (the record's, or a directory's
+    between it and *batch_dir*), which may name a file outside the viewer's
+    base, as the session page reads none (``ui.cases._own_member``): such a
+    case's outcome or task status is taken as missing, and such a submission
+    record as unreadable (#2549)."""
+    layout = BatchLayout(batch_dir, own_files=True)
     try:
         manifest = layout.read_manifest()
     except (FileNotFoundError, ValueError, OSError):
@@ -652,12 +658,17 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
         if sub is None:
             path = layout.submission(index)
             if path.exists():  # else removed since: its sbatch failed
+                why = (
+                    "cannot be read (empty, not JSON, or not a JSON object)"
+                    if layout.own(path)
+                    else "is reached through a symbolic link, which the viewer "
+                    "does not read (#2549)"
+                )
                 submissions.append(
                     {
                         "index": index,
                         "unreadable": True,
-                        "note": f"Its record {path} cannot be read (empty, not "
-                        "JSON, or not a JSON object): its job is not shown and "
+                        "note": f"Its record {path} {why}: its job is not shown and "
                         "its cases count as not submitted by it.",
                         "job_id": None,
                         "collect_job_id": None,
@@ -738,6 +749,7 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
         counts[entry.state] = counts.get(entry.state, 0) + 1
     cases = [case_entry(entry) for entry in case_states]
     collected = layout.root / "collected.json"
+    summary = batch_dir / "batch_results.json"
     return {
         "batch_dir": str(batch_dir),
         "created": manifest.get("created"),
@@ -748,8 +760,8 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
         "total": len(cases),
         "submissions": submissions,
         "active": any(s["active"] for s in submissions),
-        "collected": collected.is_file(),
-        "summary": (batch_dir / "batch_results.json").is_file(),
+        "collected": layout.own(collected) and collected.is_file(),
+        "summary": layout.own(summary) and summary.is_file(),
     }
 
 
@@ -764,7 +776,10 @@ TIMED_OUT = 124
 def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
     """``scenario-slurm <args>``, run by this viewer's interpreter: its exit
     status and output; :data:`NOT_STARTED` or :data:`TIMED_OUT`, with why,
-    when it could not be started or did not end within *timeout* seconds."""
+    when it could not be started or did not end within *timeout* seconds.
+
+    The viewer's actions pass ``--own-files`` first, so that they act on no
+    record reached through a symbolic link, as its panel shows none (#2549)."""
     command = [sys.executable, "-m", "autoware_carla_scenario.slurm.cli", *args]
     try:
         done = subprocess.run(  # noqa: S603
@@ -805,7 +820,7 @@ def run_collect(batch_dir: Path, timeout: float = 300.0) -> tuple[bool, int, str
     """
     collected = BatchLayout(batch_dir).root / "collected.json"
     before = _stat_key(collected)
-    code, output = run_cli(["collect", str(batch_dir)], timeout)
+    code, output = run_cli(["--own-files", "collect", str(batch_dir)], timeout)
     after = _stat_key(collected)
     ok = code == 0 or (code == 1 and after is not None and after != before)
     return ok, code, output

@@ -1282,7 +1282,7 @@ class BatchLayout(BatchPaths):
                 version this framework cannot read (#1630).
             OSError: The manifest cannot be read.
         """
-        if not self.manifest.is_file():
+        if not self.manifest.is_file() or not self.own(self.manifest):
             raise FileNotFoundError(
                 f"{self.batch_dir} holds no SLURM batch (no {self.manifest})"
             )
@@ -1332,23 +1332,32 @@ class BatchLayout(BatchPaths):
         (:class:`FileNotFoundError` when it is missing, another
         :class:`OSError`, a :class:`ValueError` for what is not JSON).
 
-        Parsed here, as :func:`read_submission_record` parses it."""
-        members = parse_object(self.submission(index).read_text(encoding="utf-8"))
+        Parsed here, as :func:`read_submission_record` parses it.  One that
+        is not the batch's own (:meth:`~.scripts.BatchPaths.own`) is missing."""
+        path = self.submission(index)
+        if not self.own(path):
+            raise FileNotFoundError(f"{path} is reached through a symbolic link")
+        members = parse_object(path.read_text(encoding="utf-8"))
         if members is None:
             return None
         return submission_record_of(members)
 
     def submission_record(self, index: int) -> SubmissionRecord | None:
         """Submission *index*'s record, or ``None`` when it is missing or
-        cannot be read as one (:func:`read_submission_record`)."""
-        return read_submission_record(self.submission(index))
+        cannot be read as one (:func:`read_submission_record`), or is not
+        the batch's own (:meth:`~.scripts.BatchPaths.own`)."""
+        path = self.submission(index)
+        if not self.own(path):
+            return None
+        return read_submission_record(path)
 
     def read_result(self, case: int) -> CaseOutcome | None:
         """Case *case*'s outcome, or ``None`` when there is none to read:
         missing, cannot be read, not JSON (not UTF-8 among them), or JSON
-        that is not an object (#1630)."""
+        that is not an object (#1630), or not the batch's own
+        (:meth:`~.scripts.BatchPaths.own`)."""
         path = self.result(case)
-        if not path.is_file():
+        if not path.is_file() or not self.own(path):
             return None
         try:
             members = parse_object(path.read_text(encoding="utf-8"))
@@ -1361,9 +1370,10 @@ class BatchLayout(BatchPaths):
     def read_task(self, submission: int, task: int) -> TaskStatus | None:
         """Task *task* of submission *submission*'s status, or ``None`` when
         there is none to read: missing, cannot be read, not JSON (not UTF-8
-        among them), or JSON that is not an object (#1630)."""
+        among them), or JSON that is not an object (#1630), or not the
+        batch's own (:meth:`~.scripts.BatchPaths.own`)."""
         path = self.task(submission, task)
-        if not path.is_file():
+        if not path.is_file() or not self.own(path):
             return None
         try:
             members = parse_object(path.read_text(encoding="utf-8"))

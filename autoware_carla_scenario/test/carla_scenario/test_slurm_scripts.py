@@ -368,7 +368,8 @@ def test_the_batch_layout_is_the_checked_batch_paths() -> None:
     assert isinstance(layout, scripts.BatchPaths)
     assert layout == BatchLayout(Path("/b"))
     assert layout != scripts.BatchPaths(Path("/b"))
-    assert repr(layout) == "BatchLayout(batch_dir=PosixPath('/b'))"
+    assert repr(layout) == "BatchLayout(batch_dir=PosixPath('/b'), own_files=False)"
+    assert layout != BatchLayout(Path("/b"), own_files=True)
     assert hash(layout) == hash(BatchLayout(Path("/b")))
     assert layout.root == Path("/b/slurm")
     assert layout.manifest == Path("/b/slurm/manifest.json")

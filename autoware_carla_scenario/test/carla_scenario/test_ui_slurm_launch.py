@@ -773,7 +773,9 @@ def test_a_collect_collected_on_status_0_or_1_with_a_new_record(
     monkeypatch.setattr(slurm_launch, "run_cli", run_cli)
     assert slurm_launch.run_collect(batch, 7.0) == (ok, code, "the output")
     assert slurm_launch.run_collect(batch) == (ok, code, "the output")
-    assert asked == [(["collect", str(batch)], 7.0), (["collect", str(batch)], 300.0)]
+    # Acting on no record reached through a symbolic link (#2549).
+    args = ["--own-files", "collect", str(batch)]
+    assert asked == [(args, 7.0), (args, 300.0)]
 
 
 def test_a_collect_that_leaves_the_record_as_it_was_did_not_collect(

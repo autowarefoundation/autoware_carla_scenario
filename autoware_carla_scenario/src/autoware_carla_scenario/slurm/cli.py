@@ -28,8 +28,8 @@ from .submit import after_submit, submit_cases
 __all__ = ["main"]
 
 
-def _layout(path: str) -> BatchLayout:
-    return BatchLayout(Path(path).expanduser().resolve())
+def _layout(path: str, own_files: bool = False) -> BatchLayout:
+    return BatchLayout(Path(path).expanduser().resolve(), own_files)
 
 
 # What status prints, whether the batch is busy, and what cancel cancels are
@@ -56,7 +56,7 @@ def _refuse_if_busy(layout: BatchLayout) -> Callable[[int], None]:
 
 
 def _resubmit(args: argparse.Namespace) -> int:
-    layout = _layout(args.batch_dir)
+    layout = _layout(args.batch_dir, args.own_files)
     manifest = layout.read_manifest()
     reason = None if args.force else _busy(layout)
     if reason is not None:
@@ -103,7 +103,7 @@ def _resubmit(args: argparse.Namespace) -> int:
 def _wait(args: argparse.Namespace) -> int:
     from .submit import follow  # noqa: PLC0415
 
-    layout = _layout(args.batch_dir)
+    layout = _layout(args.batch_dir, args.own_files)
     manifest = layout.read_manifest()
     submissions = layout.submissions()
     if not submissions:
@@ -122,6 +122,14 @@ def _parser() -> argparse.ArgumentParser:
         prog="scenario-slurm",
         description="Follow, collect, resubmit or cancel a batch submitted with "
         "launcher=slurm (docs/slurm.md).",
+    )
+    parser.add_argument(
+        "--own-files",
+        action="store_true",
+        help="read none of the batch's records through a symbolic link (the "
+        "record, or a directory between it and the batch directory): one that "
+        "is reached through one is taken as missing; the results viewer runs "
+        "its actions with it",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     batch_help = "the batch's output directory (outputs/<date>/<time>)"
@@ -226,16 +234,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "status":
-            return _status(_layout(args.batch_dir))
+            return _status(_layout(args.batch_dir, args.own_files))
         if args.command == "wait":
             return _wait(args)
         if args.command == "collect":
-            return collect(_layout(args.batch_dir))
+            return collect(_layout(args.batch_dir, args.own_files))
         if args.command == "resubmit":
             return _resubmit(args)
         # Called here, not through a function of this module: the records
         # are read as deep as before.
-        return cancel_batch(_layout(args.batch_dir))
+        return cancel_batch(_layout(args.batch_dir, args.own_files))
     # OSError covers FileNotFoundError, and an unreadable manifest or an
     # unwritable batch directory (shared storage, a read-only mount): one
     # line, not a traceback (#1740).

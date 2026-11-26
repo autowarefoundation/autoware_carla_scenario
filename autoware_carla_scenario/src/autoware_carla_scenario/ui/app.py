@@ -1195,7 +1195,9 @@ async def slurm_action(
             return JSONResponse(
                 status_code=503, content={"ok": False, "output": reason}
             )
-    args = [action, str(directory)]
+    # Acting on no record reached through a symbolic link, as the panel
+    # shows none (#2549).
+    args = ["--own-files", action, str(directory)]
     if action == "resubmit":
         try:
             body = await _json_object(request)

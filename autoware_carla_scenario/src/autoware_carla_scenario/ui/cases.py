@@ -353,7 +353,8 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     cases = _manifest_cases(directory)
     if cases is None:
         return None
-    layout = BatchLayout(directory)
+    # Read as the records above are: none through a link (#2549).
+    layout = BatchLayout(directory, own_files=True)
     entries: list[dict[str, Any]] = []
     for case in cases:
         overrides = case.get("case_overrides")
