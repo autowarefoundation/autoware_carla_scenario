@@ -16,6 +16,18 @@ import internal.static as static
 
 @extend
 class str:
+    # str() of a type, `f"{type(u)}"` of a Union value u among them (#2536).
+    # Codon's str(what) tests isinstance(what, Union) before
+    # isinstance(what, type), and a type of a Union is both, so it went to
+    # union_str, which reads the value of each member with a __str__ or a
+    # __repr__ through __ptr__() of the type ("__ptr__() only takes
+    # identifiers or tuple fields as arguments"): any such member, a
+    # dataclass's generated __repr__ too, failed the check. A type's str()
+    # is its repr(), as in Python.
+    @overload
+    def __new__(what: TypeWrap[T], T: type) -> str:
+        return what.__repr__()
+
     # `"%.1f" % x` is Python's printf formatting, which Codon's str lacks.
     def __mod__(self, args) -> str:
         return self

@@ -2238,6 +2238,52 @@ def test_an_enum_or_tuple_the_config_converts_compiles(tmp_path: Path) -> None:
     assert "scenario.mode" in paths
 
 
+_UNION_REPR_HELPERS = """
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Union
+
+
+@dataclass
+class North:
+    lanelet_id: int = 0
+
+
+@dataclass
+class South:
+    speed: float = 1.0
+
+
+@dataclass
+class Leg:
+    where: Union[North, South] = field(default_factory=North)
+
+
+def describe(leg: Leg) -> str:
+    return f"{type(leg.where)} {leg.where!r} {leg.where}"
+"""
+
+
+def test_str_of_the_type_of_a_union_of_dataclasses_compiles(tmp_path: Path) -> None:
+    # #2536: Codon's str() sent a type of a Union to union_str, which failed
+    # ("__ptr__() only takes identifiers or tuple fields as arguments") once a
+    # member had a __repr__, as each dataclass now has a generated one.
+    header = _HEADER.replace(
+        "from .configs import CaseConfig\n",
+        "from .configs import CaseConfig\nfrom .helpers import Leg, South, describe\n",
+        1,
+    )
+    scenario, config, _ = _write_case(
+        tmp_path,
+        'logger.info("%s", describe(Leg(South(2.0))))\n',
+        header=header,
+        modules={"helpers.py": _UNION_REPR_HELPERS},
+    )
+    result = typecheck_scenario(scenario, config)
+    assert result.ok, result.format()
+
+
 _LEGS_CONFIG = """
 from dataclasses import dataclass, field
 

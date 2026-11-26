@@ -1667,6 +1667,12 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     dataclass's fields come first, a field declared again keeping its
     place, and a nested dataclass gets it at the end of its body (named
     `Plans.Leg`). The check does not run it, so only its type matters.
+    `str()` of a type, such as `f"{type(pose)}"` of a `Union` value, is
+    the type's `repr()` in the check (the model's `_tc.codon`): Codon's own
+    `str()` takes a type of a `Union` for a `Union` value and fails on
+    `__ptr__()` of it ("only takes identifiers or tuple fields as
+    arguments") once a member has a `__str__` or a `__repr__`, as each of
+    these dataclasses now does.
   - A plain class (one that does not define `__eq__`) compares and hashes by
     identity, as Python's `object` does (#596): `a in npcs`,
     `npcs.remove(a)`, `a == b`, `{t}`, `{t: 1}` and `dict[Npc, float]`

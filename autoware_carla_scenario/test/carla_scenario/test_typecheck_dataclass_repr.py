@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import re
 import textwrap
+from pathlib import Path
 
 from autoware_carla_scenario.typecheck.transform import (
     PRELUDE,
@@ -396,3 +397,23 @@ def test_enum_name_shadowed_by_a_plain_class() -> None:
         enum_classes=["Phase"],
     )
     assert _reprs(text) == {}
+
+
+def test_str_of_a_type_bypasses_codon_union_str() -> None:
+    """``f"{type(u)}"`` of a Union value whose members have a ``__repr__``
+    (a generated one included) compiles: every checked module imports the
+    model's ``_tc``, whose ``str.__new__`` overload for a type comes before
+    Codon's, which sends a type of a Union to ``union_str`` and fails on
+    ``__ptr__()`` of the type (#2536, coordinate/transform.py's
+    ``to_carla_world``)."""
+    from autoware_carla_scenario.typecheck import transform
+
+    assert "from autoware_carla_scenario._tc import " in PRELUDE
+    model = Path(transform.__file__).parent / "codon" / "autoware_carla_scenario"
+    text = (model / "_tc.codon").read_text(encoding="utf-8")
+    block = text.split("@extend\nclass str:\n", 1)[1].split("\n\n\n", 1)[0]
+    assert re.search(
+        r"@overload\n    def __new__\(what: TypeWrap\[T\], T: type\) -> str:\n"
+        r"        return what\.__repr__\(\)\n",
+        block,
+    ), block
