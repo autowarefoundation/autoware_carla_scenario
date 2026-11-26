@@ -163,8 +163,8 @@ logger = logging.getLogger(__name__)
 VEHICLE_AHEAD_GAP_M = "vehicle_ahead_gap_m"
 #: That vehicle's speed along the ego's lane less the ego's, in km/h.
 VEHICLE_AHEAD_RELATIVE_SPEED_KPH = "vehicle_ahead_relative_speed_kph"
-#: Metres ahead of the nearest moving pedestrian, as read when it was first
-#: seen moving ahead (held from then on, not re-measured each frame).
+#: Metres ahead of the ego the nearest moving pedestrian ahead was when it
+#: was first seen moving there (held while it crosses, not re-measured).
 CROSSING_PEDESTRIAN_GAP_M = "crossing_pedestrian_gap_m"
 #: That pedestrian's speed, in m/s.
 CROSSING_PEDESTRIAN_SPEED_MS = "crossing_pedestrian_speed_ms"
