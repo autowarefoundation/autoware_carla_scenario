@@ -23,7 +23,10 @@ names (:meth:`~...maps.cache.GitMapCache.at_tip`).
 
 :meth:`MapSource.parse` also accepts the ``/tree/<ref>/<path>`` URLs of both
 hosts (and GitHub's ``/blob/``, HuggingFace's ``/resolve/``), and GitLab's
-``/-/tree/``, ``/-/blob/`` and ``/-/raw/`` ones, subgroups included.  Pasting the page
+``/-/tree/``, ``/-/blob/`` and ``/-/raw/`` ones, subgroups included, and the
+``/src/<ref>/<path>`` ones of Bitbucket (``bitbucket.org``) and
+``/src/branch|tag|commit/<ref>/<path>`` ones of Gitea and Forgejo (any
+other host, ``codeberg.org`` among them).  Pasting the page
 you are looking at is the intended way in, so the anchor such a page's URL may
 end in (``#L10``, ``#readme``) is not taken for a path.
 
@@ -39,7 +42,13 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-__all__ = ["MapSource", "MapSourceError", "redacted_url", "url_without_password"]
+__all__ = [
+    "MapSource",
+    "MapSourceError",
+    "redacted_url",
+    "url_cache_key",
+    "url_without_password",
+]
 
 
 class MapSourceError(ValueError):
@@ -53,9 +62,20 @@ class MapSourceError(ValueError):
 
 #: The ``/<kind>/<ref>/<path...>`` infix a web UI puts between the repository
 #: and the file being viewed.  ``tree`` and ``blob`` are GitHub's, ``resolve``
-#: and ``raw`` are HuggingFace's download and source views.  GitLab's
+#: and ``raw`` are HuggingFace's download and source views, ``src`` is
+#: Bitbucket's and Gitea's (see :data:`_GITEA_REF_KINDS`).  GitLab's
 #: ``/-/<kind>/`` form is handled separately (see :data:`_GITLAB_VIEW_KINDS`).
 _WEB_VIEW_SEGMENTS = ("tree", "blob", "resolve", "raw", "src")
+
+#: The segment Gitea and Forgejo put between ``src`` and the ref, saying
+#: what kind of ref it is: ``/src/branch/main/maps/T``.  Bitbucket's
+#: ``/src/<ref>/`` has none, so on ``bitbucket.org`` the segment after
+#: ``src`` is always the ref; elsewhere one of these, followed by a ref, is
+#: skipped.
+_GITEA_REF_KINDS = ("branch", "tag", "commit")
+
+#: The host whose ``/src/`` view names the ref directly.
+_BITBUCKET_HOST = "bitbucket.org"
 
 #: The segment GitLab puts between a repository and its web views, which is
 #: what makes a subgroup path (``group/subgroup/repo``) unambiguous.
@@ -110,13 +130,14 @@ def _scheme_before(text: str, mark: int) -> str:
     return text[start:mark]
 
 
-def _rewrite_userinfo(text: str, redact: bool) -> str:
+def _rewrite_userinfo(text: str, redact: bool, drop_token_user: bool = False) -> str:
     """*text* with the userinfo of every ``scheme://user:password@host`` in it
     rewritten.
 
     With *redact*, a password becomes ``***``, and so does a user name with
     no password where a token can stand in for one (:data:`_TOKEN_USER_SCHEMES`).
-    Without, only the password goes, with its ``:``.
+    Without, only the password goes, with its ``:``; with *drop_token_user*
+    as well, such a user name goes too, with its ``@``.
     """
     pieces: list[str] = []
     start = 0
@@ -136,15 +157,20 @@ def _rewrite_userinfo(text: str, redact: bool) -> str:
         else:
             userinfo = authority[:at]
             user, colon, _ = userinfo.partition(":")
+            token_user = _scheme_before(text, mark).lower() in _TOKEN_USER_SCHEMES
+            host = authority[at:]
             if not redact:
                 rewritten = user
+                if not colon and drop_token_user and token_user:
+                    rewritten = ""
+                    host = authority[at + 1 :]
             elif colon:
                 rewritten = f"{user}:{_REDACTED}"
-            elif _scheme_before(text, mark).lower() in _TOKEN_USER_SCHEMES:
+            elif token_user:
                 rewritten = _REDACTED
             else:
                 rewritten = userinfo
-            pieces.append(rewritten + authority[at:])
+            pieces.append(rewritten + host)
         start = end
     pieces.append(text[start:])
     return "".join(pieces)
@@ -170,6 +196,19 @@ def url_without_password(url: str) -> str:
     cache was keyed on before -- is its own key, unchanged.
     """
     return _rewrite_userinfo(url, False)
+
+
+def url_cache_key(url: str) -> str:
+    """*url* as a cache entry is keyed on: without its credentials' secrets.
+
+    :func:`url_without_password`, and an http(s) user name with no password
+    dropped as well, since that is how a token is often passed
+    (``https://TOKEN@github.com/...``): the same repository reached with
+    another token is the same entry either way (#2541).  An ssh user name,
+    and the user name before a password, are kept, so every other URL keys
+    the entry it always did.
+    """
+    return _rewrite_userinfo(url, False, True)
 
 
 def looks_like_commit(ref: str) -> bool:
@@ -352,6 +391,14 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
 
     repo_segments = segments[:repo_len]
     rest = segments[repo_len + 1 :]
+    if (
+        segments[repo_len] == "src"
+        and len(rest) >= 2
+        and rest[0] in _GITEA_REF_KINDS
+        and not parts.netloc.lower().endswith(_BITBUCKET_HOST)
+    ):
+        # Gitea/Forgejo: `src/<kind>/<ref>/<path...>`.
+        rest = rest[1:]
     if not rest:
         return url, "", ""
 

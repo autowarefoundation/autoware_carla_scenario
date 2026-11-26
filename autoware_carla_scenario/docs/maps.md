@@ -104,12 +104,16 @@ They are passed to git as written, but every log line, error message,
 this framework writes shows them redacted
 (`https://oauth2:***@host/o/r`; an http(s) user name with no password, which
 is how a token is often passed, as `***`). The cache entry is keyed on the URL
-without its password, so a replaced token reuses the entry, and **Refresh**
-fetches with the token now in the source.
+without its password, or without that http(s) user name, so a replaced token
+reuses the entry, and **Refresh** fetches with the token now in the source.
+A map cached through a `https://TOKEN@host/...` URL before that user name was
+dropped from the key is cloned again once, into the new entry.
 
 The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's `/tree/<ref>/<path>` and HuggingFace's
-`/tree/`, `/resolve/` and `/raw/` forms all parse. Paste the page you are
+`/tree/`, `/resolve/` and `/raw/` forms all parse, as do Gitea's and
+Forgejo's `/src/branch/<ref>/<path>` (or `tag`, `commit`) and Bitbucket's
+`/src/<ref>/<path>`. Paste the page you are
 looking at. The anchor such a URL may end in is the page's, not a path: on a
 `/tree/`, `/blob/` (or other view) URL the view's own path wins over any `#`,
 and on any other `https://` page a line anchor (`#L10`, `#L10-L20`) or a

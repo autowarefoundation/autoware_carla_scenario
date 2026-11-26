@@ -124,8 +124,9 @@ def list_maps(
             continue
         # The plain dirname of every file, which is *not*
         # `MapSource.directory` -- that one answers "which directory does this
-        # source name", and for `.../TownB.xodr` the answer is TownB, not the
-        # file's parent. Here every file is being bucketed by where it sits.
+        # source name": only a `.osm` path is taken for its parent, so for
+        # `.../TownB.xodr` the answer is the whole path. Here every file is
+        # being bucketed by where it sits.
         head, separator, name = path.rpartition("/")
         by_directory.setdefault(head if separator else "", []).append(name)
 

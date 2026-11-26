@@ -3847,8 +3847,12 @@ class TestCredentials:
     def test_a_url_without_credentials_keeps_its_entry(
         self, cache: GitMapCache
     ) -> None:
-        """Entries cached before the key dropped passwords are still found."""
-        for url in ("https://example.com/o/maps", "https://user@example.com/o/maps"):
+        """Entries cached before the key dropped passwords are still found.
+
+        Not an http(s) user name with no password: that is how a token is
+        passed, and is dropped from the key (#2541).
+        """
+        for url in ("https://example.com/o/maps", "ssh://git@example.com/o/maps"):
             source = MapSource(repo_url=url, ref="main", path="m")
             digest = hashlib.sha256(f"{url}\nmain".encode()).hexdigest()[:10]
             assert cache.entry_dir(source).name == f"maps-main-{digest}"
@@ -4434,3 +4438,138 @@ class TestLockFile:
         path = tmp_path / "entry.lock"
         assert cache_module._lock_file(path) == -1
         assert not path.exists()
+
+
+class TestMapsScanFollowUps:
+    """The periodic scan of ``maps/`` (#2541)."""
+
+    def test_a_tip_note_it_cannot_write_still_resolves_the_cached_map(
+        self,
+        origin_repo: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        first = resolve_map(_uri(origin_repo), cache=cache)
+        write = cache_module._write_atomically
+
+        def _refuse(path: Path, text: str) -> None:
+            if path.name.endswith(cache_module.TIP_SUFFIX):
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            write(path, text)
+
+        monkeypatch.setattr(cache_module, "_write_atomically", _refuse)
+        again = resolve_map(_uri(origin_repo), cache=cache)
+        assert again.commit == first.commit
+        assert again.lanelet2_path == first.lanelet2_path
+        assert "Could not record which commit main" in caplog.text
+        assert "Permission denied" in caplog.text
+
+    def test_an_entry_without_a_repository_is_replaced(
+        self,
+        origin_repo: Path,
+        cache: GitMapCache,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import shutil
+
+        first = resolve_map(_uri(origin_repo), cache=cache)
+        entry = first.directory.parents[2]
+        assert (entry / "repo" / ".git").is_dir()
+        # A checkout someone removed by hand, or a clone a full disk cut short.
+        shutil.rmtree(entry / "repo")
+        again = resolve_map(_uri(origin_repo), cache=cache)
+        assert again.lanelet2_path.read_text() == _OSM
+        assert again.commit == first.commit
+        assert f"Replacing the map cache entry {entry}" in caplog.text
+        assert not [p for p in entry.parent.iterdir() if ".stale." in p.name]
+
+    def test_an_entry_that_cannot_be_moved_aside_is_named(
+        self,
+        origin_repo: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import shutil
+
+        first = resolve_map(_uri(origin_repo), cache=cache)
+        entry = first.directory.parents[2]
+        shutil.rmtree(entry / "repo")
+        replace = Path.replace
+
+        def _refuse(self: Path, target: Any) -> Path:
+            if self == entry:
+                raise PermissionError(errno.EACCES, "Permission denied")
+            return replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _refuse)
+        with pytest.raises(MapCacheError, match="holds no repository") as caught:
+            resolve_map(_uri(origin_repo), cache=cache)
+        assert str(entry) in str(caught.value)
+
+    def test_a_token_as_the_user_name_keys_one_entry(self, cache: GitMapCache) -> None:
+        one = MapSource.parse("https://TOK1@github.com/o/r@main#m")
+        two = MapSource.parse("https://TOK2@github.com/o/r@main#m")
+        bare = MapSource.parse("https://github.com/o/r@main#m")
+        for source in (two, bare):
+            assert cache.entry_dir(source) == cache.entry_dir(one)
+            assert cache.derived_dir(source) == cache.derived_dir(one)
+        assert "TOK1" not in str(cache.entry_dir(one))
+        # The token is still what git is handed.
+        assert one.repo_url == "https://TOK1@github.com/o/r"
+        # An ssh user name is not a token: it keys the entry it always did.
+        ssh = MapSource.parse("ssh://git@github.com/o/r@main#m")
+        assert cache.entry_dir(ssh) != cache.entry_dir(
+            MapSource.parse("ssh://github.com/o/r@main#m")
+        )
+
+    def test_url_cache_key(self) -> None:
+        from autoware_carla_scenario.maps.source import url_cache_key
+
+        assert url_cache_key("https://TOK@h/o/r") == "https://h/o/r"
+        assert url_cache_key("git+https://TOK@h/o/r") == "git+https://h/o/r"
+        assert url_cache_key("https://u:p@h/o/r") == "https://u@h/o/r"
+        assert url_cache_key("ssh://git@h/o/r") == "ssh://git@h/o/r"
+        assert url_cache_key("https://h/o/r") == "https://h/o/r"
+
+    @pytest.mark.parametrize(
+        ("uri", "repo_url", "ref", "path"),
+        [
+            (
+                "https://codeberg.org/o/r/src/branch/main/maps/T",
+                "https://codeberg.org/o/r",
+                "main",
+                "maps/T",
+            ),
+            (
+                "https://gitea.example.com/o/r/src/tag/v1.0/maps/T/lanelet2_map.osm",
+                "https://gitea.example.com/o/r",
+                "v1.0",
+                "maps/T/lanelet2_map.osm",
+            ),
+            (
+                "https://codeberg.org/o/r/src/commit/" + "a" * 40,
+                "https://codeberg.org/o/r",
+                "a" * 40,
+                "",
+            ),
+            (
+                "https://bitbucket.org/o/r/src/main/maps/T",
+                "https://bitbucket.org/o/r",
+                "main",
+                "maps/T",
+            ),
+            # Bitbucket names the ref straight after `src`, whatever it is.
+            (
+                "https://bitbucket.org/o/r/src/branch/maps",
+                "https://bitbucket.org/o/r",
+                "branch",
+                "maps",
+            ),
+        ],
+    )
+    def test_a_src_page_url(self, uri: str, repo_url: str, ref: str, path: str) -> None:
+        source = MapSource.parse(uri)
+        assert (source.repo_url, source.ref, source.path) == (repo_url, ref, path)

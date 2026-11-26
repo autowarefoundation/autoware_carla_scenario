@@ -218,7 +218,9 @@ def read_crg(path: Path) -> CrgGrid:
             first_data = index + 1
             break
         if line.startswith("$"):
-            block = line[1:].strip().upper()
+            # `!` starts a comment here as in a header value: `$ROAD_CRG ! ...`
+            # is the ROAD_CRG block (#2541).
+            block = line[1:].split("!")[0].strip().upper()
             continue
         if block == "ROAD_CRG" and "=" in line:
             key, _sep, value = line.partition("=")
@@ -226,7 +228,7 @@ def read_crg(path: Path) -> CrgGrid:
         elif block == "KD_DEFINITION":
             stripped = line.strip()
             if stripped.startswith("#:"):
-                data_format = stripped[2:].strip().upper()
+                data_format = stripped[2:].split("!")[0].strip().upper()
             elif stripped.upper().startswith("D:"):
                 channels.append(stripped[2:])
             elif stripped.upper().startswith("U:"):
