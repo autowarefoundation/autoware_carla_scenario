@@ -106,23 +106,42 @@ def project_onto_road(pose: CarlaWorldPose, road_id: str) -> OpenDrivePose:
     Unlike :func:`to_opendrive` which finds the nearest road, this projects
     directly onto the specified road regardless of distance.
 
+    A road too short for its reference line to be sampled at two points --
+    pyxodr samples none for some of a junction's connecting roads, a few
+    centimetres long -- is measured along the straight line its first
+    ``<geometry>`` starts (:func:`_unsampled_road_start`).
+
     Args:
         pose: The CARLA world pose to project.
         road_id: The OpenDRIVE road ID to project onto.
 
     Returns:
         An :class:`OpenDrivePose` with ``road_id`` set to *road_id*.
+
+    Raises:
+        ValueError: If the road has fewer than two reference-line samples and
+            no ``<geometry>`` to place it by.
     """
     mm = MapManager.get_instance()
     road = mm.road_network.road_ids_to_object[road_id]
     ref_line: np.ndarray = road.reference_line
 
     od_heading = -math.radians(pose.yaw)
-    _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
-        ref_line,
-        np.array([pose.x, -pose.y]),
-        _road_arc_lengths(mm.road_network, road_id),
-    )
+    if len(ref_line) < 2:
+        # Too short for pyxodr to sample (#2545): measured along the line its
+        # <geometry> starts, as _opendrive_to_carla places it.
+        x0, y0, _z0, heading_ref = _unsampled_road_start(road, road_id)
+        dx = pose.x - x0
+        dy = -pose.y - y0
+        along = dx * math.cos(heading_ref) + dy * math.sin(heading_ref)
+        s = min(max(along, 0.0), _xml_length(road))
+        t = math.cos(heading_ref) * dy - math.sin(heading_ref) * dx
+    else:
+        _idx, _dist, s, heading_ref, t = _project_onto_ref_line(
+            ref_line,
+            np.array([pose.x, -pose.y]),
+            _road_arc_lengths(mm.road_network, road_id),
+        )
 
     return OpenDrivePose(
         road_id=road_id,
@@ -703,19 +722,36 @@ def _lanelet2_to_carla(pose: Lanelet2Pose) -> CarlaWorldPose:
 
 
 def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
-    """Convert an OpenDRIVE (s, t) pose to CARLA world coordinates."""
+    """Convert an OpenDRIVE (s, t) pose to CARLA world coordinates.
+
+    A road too short for its reference line to be sampled at two points
+    (pyxodr samples none for some of a junction's connecting roads, a few
+    centimetres long) is placed along the straight line its first
+    ``<geometry>`` starts: ``s`` along its ``hdg`` from its ``x``/``y``,
+    clamped to the road's length (:func:`_unsampled_road_start`).
+
+    Raises:
+        ValueError: If the road has fewer than two reference-line samples and
+            no ``<geometry>`` to place it by.
+    """
     mm = MapManager.get_instance()
     road = mm.road_network.road_ids_to_object[pose.road_id]
     ref_line: np.ndarray = road.reference_line  # shape (N, 2)
 
-    z_coords: np.ndarray = road.z_coordinates  # shape (N,)
-    arc_lengths = _road_arc_lengths(mm.road_network, pose.road_id)
+    if len(ref_line) < 2:
+        x0, y0, z_ref, heading_ref = _unsampled_road_start(road, pose.road_id)
+        along = min(max(pose.s, 0.0), _xml_length(road))
+        x_ref = x0 + along * math.cos(heading_ref)
+        y_ref = y0 + along * math.sin(heading_ref)
+    else:
+        z_coords: np.ndarray = road.z_coordinates  # shape (N,)
+        arc_lengths = _road_arc_lengths(mm.road_network, pose.road_id)
 
-    x_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 0]))
-    y_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 1]))
-    z_ref = float(np.interp(pose.s, arc_lengths, z_coords))
+        x_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 0]))
+        y_ref = float(np.interp(pose.s, arc_lengths, ref_line[:, 1]))
+        z_ref = float(np.interp(pose.s, arc_lengths, z_coords))
 
-    heading_ref = _heading_at_s(ref_line, arc_lengths, pose.s)
+        heading_ref = _heading_at_s(ref_line, arc_lengths, pose.s)
     total_heading = heading_ref + pose.heading
 
     # OpenDRIVE defines t as the offset perpendicular to the REFERENCE LINE,
@@ -737,6 +773,48 @@ def _opendrive_to_carla(pose: OpenDrivePose) -> CarlaWorldPose:
     # just flip y for CARLA's left-hand system (South=+y).
     carla_yaw_deg = -math.degrees(total_heading)
     return CarlaWorldPose(x=x, y=-y, z=z_ref, yaw=carla_yaw_deg)
+
+
+def _unsampled_road_start(
+    road: Road, road_id: str
+) -> tuple[float, float, float, float]:
+    """``(x, y, z, hdg)`` of *road* at ``s = 0``, from its XML, in the
+    OpenDRIVE frame: for a road whose reference line pyxodr sampled at fewer
+    than two points (#2545).
+
+    ``x``, ``y`` and ``hdg`` are its first ``<geometry>``'s; ``z`` is the
+    first height pyxodr sampled, else its first ``<elevation>`` record's
+    ``a``, else 0.
+
+    Raises:
+        ValueError: If the road has no ``<planView>/<geometry>``.
+    """
+    plan_view = road.road_xml.find("planView")
+    geometries = [] if plan_view is None else plan_view.findall("geometry")
+    if not geometries:
+        raise ValueError(
+            f"OpenDRIVE road {road_id!r} has fewer than two reference-line "
+            "samples and no <planView>/<geometry> to place it by"
+        )
+    first = geometries[0]
+    x0 = float(first.attrib["x"])
+    y0 = float(first.attrib["y"])
+    heading = float(first.attrib["hdg"])
+    zs: np.ndarray = road.z_coordinates
+    if len(zs) > 0:
+        return x0, y0, float(zs[0]), heading
+    z0 = 0.0
+    profile = road.road_xml.find("elevationProfile")
+    if profile is not None:
+        elevations = profile.findall("elevation")
+        if elevations:
+            z0 = float(elevations[0].attrib.get("a", "0.0"))
+    return x0, y0, z0, heading
+
+
+def _xml_length(road: Road) -> float:
+    """The road's ``length`` attribute (m), 0 where it has none."""
+    return float(road.road_xml.get("length", "0.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -1113,6 +1191,10 @@ def _interpolate_at_s(
 ) -> tuple[float, float, float, float]:
     """Interpolate position and heading at arc length s along a 3D polyline.
 
+    The heading is that of the segment *s* lies on, a vertex belonging to the
+    segment that starts there; at the end, that of the last segment of
+    non-zero length (:func:`_segment_heading`).
+
     Returns
     -------
     (x, y, z, heading)  where heading is the tangent direction in radians.
@@ -1128,12 +1210,8 @@ def _interpolate_at_s(
     y = float(np.interp(s_clamped, arc, ys))
     z = float(np.interp(s_clamped, arc, zs))
 
-    # Heading via finite difference of nearest segment
     idx = int(np.searchsorted(arc, s_clamped, side="right")) - 1
-    idx = max(0, min(idx, len(points) - 2))
-    heading = math.atan2(ys[idx + 1] - ys[idx], xs[idx + 1] - xs[idx])
-
-    return x, y, z, heading
+    return x, y, z, _segment_heading(xs, ys, idx)
 
 
 def _heading_at_s(
@@ -1141,13 +1219,47 @@ def _heading_at_s(
     arc_lengths: np.ndarray[tuple[int], np.dtype[np.float64]],
     s: float,
 ) -> float:
-    """Return the tangent heading (radians) at arc length s along a 2D polyline."""
+    """Return the tangent heading (radians) at arc length s along a 2D polyline.
+
+    The segment *s* lies on, as :func:`_interpolate_at_s` reads it
+    (:func:`_segment_heading`).
+    """
     s_clamped = float(np.clip(s, arc_lengths[0], arc_lengths[-1]))
     idx = int(np.searchsorted(arc_lengths, s_clamped, side="right")) - 1
-    idx = max(0, min(idx, len(ref_line) - 2))
-    dx = ref_line[idx + 1, 0] - ref_line[idx, 0]
-    dy = ref_line[idx + 1, 1] - ref_line[idx, 1]
-    return math.atan2(dy, dx)
+    return _segment_heading(ref_line[:, 0], ref_line[:, 1], idx)
+
+
+def _segment_heading(
+    xs: np.ndarray[tuple[int], np.dtype[np.float64]],
+    ys: np.ndarray[tuple[int], np.dtype[np.float64]],
+    idx: int,
+) -> float:
+    """The direction (rad) of segment *idx* of the polyline ``(xs, ys)``,
+    clamped to its segments.
+
+    A segment of zero length -- a repeated point, which a centreline often
+    ends on -- has no direction: the last one of non-zero length before it is
+    read instead, else the first after it (#2545, as
+    :func:`~autoware_carla_scenario.trajectory.relative_lane._heading_at` does
+    since #2367), else 0 (a polyline of one distinct point).  Read off the
+    repeated point itself, the heading was ``atan2(0, 0)``: East, whichever
+    way the polyline ran.
+    """
+    count = len(xs) - 1
+    if count < 1:
+        return 0.0
+    idx = max(0, min(idx, count - 1))
+    for i in range(idx, -1, -1):
+        dx = float(xs[i + 1] - xs[i])
+        dy = float(ys[i + 1] - ys[i])
+        if dx != 0.0 or dy != 0.0:
+            return math.atan2(dy, dx)
+    for i in range(idx + 1, count):
+        dx = float(xs[i + 1] - xs[i])
+        dy = float(ys[i + 1] - ys[i])
+        if dx != 0.0 or dy != 0.0:
+            return math.atan2(dy, dx)
+    return 0.0
 
 
 def _signed_perp_distance(

@@ -1047,3 +1047,21 @@ class TestCachesFollowTheLoadedNetwork:
     def test_the_same_network_reuses_its_link_graph(self, holder: MagicMock) -> None:
         holder.road_network = _XodrNetwork(_MAP_A)
         assert lane_distance._link_graph() is lane_distance._link_graph()
+
+
+class TestRoadLengthIsTheSampledLines:
+    """``s`` is measured along the sampled reference line, so a chain sums
+    that line's length, not the XML ``length`` (#2545)."""
+
+    def test_it_is_the_reference_lines_arc_length(self, loaded_map: MapManager) -> None:
+        from autoware_carla_scenario.coordinate.transform import _road_arc_lengths
+
+        for road in ("82", "144", "582"):
+            expected = float(_road_arc_lengths(loaded_map.road_network, road)[-1])
+            assert lane_distance._road_length(road) == pytest.approx(expected)
+
+    def test_a_road_too_short_to_sample_keeps_its_xml_length(
+        self, loaded_map: MapManager
+    ) -> None:
+        xml = float(loaded_map.road_network.road_ids_to_object["345"]["length"])
+        assert lane_distance._road_length("345") == pytest.approx(xml)

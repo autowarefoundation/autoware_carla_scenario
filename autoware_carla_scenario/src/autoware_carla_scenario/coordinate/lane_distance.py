@@ -61,7 +61,7 @@ from typing import TYPE_CHECKING, Optional
 
 from .map_manager import MapManager
 from .poses import CarlaWorldPose, OpenDrivePose
-from .transform import to_opendrive
+from .transform import _road_arc_lengths, to_opendrive
 
 if TYPE_CHECKING:
     from pyxodr.road_objects.network import RoadNetwork
@@ -421,7 +421,14 @@ class _Reach:
 
 
 def _road_length(road_id: str) -> Optional[float]:
-    """Return the length in metres of the loaded road with *road_id*, or ``None``."""
+    """Return the length in metres of the loaded road with *road_id*, or ``None``.
+
+    The length of its sampled reference line, the line every ``s`` here is
+    measured along (:func:`.transform.to_opendrive`): the XML ``length`` can
+    differ from it by centimetres, and a distance summed over several roads
+    mixed the two at every seam (#2545).  The XML ``length`` only for a road
+    sampled at fewer than two points.
+    """
     try:
         network = MapManager.get_instance().road_network
     except RuntimeError:
@@ -430,6 +437,8 @@ def _road_length(road_id: str) -> Optional[float]:
     key = str(road_id)
     if key not in roads:
         return None
+    if len(roads[key].reference_line) >= 2:
+        return float(_road_arc_lengths(network, key)[-1])
     try:
         return float(roads[key]["length"])
     # One clause each: Codon 0.19 does not take a tuple of exception types.

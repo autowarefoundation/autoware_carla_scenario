@@ -307,6 +307,9 @@ def _snap_opendrive_via_waypoint_xodr(
     so ``t`` and ``heading`` were dropped (#2221).  The waypoint still gives
     the height: CARLA resolves the road surface at ``s`` against its own
     OpenDRIVE geometry, and the ray cast onto the ground starts from it.
+    Where it returns ``None`` -- ``lane_id`` names no lane of the road at
+    ``s`` -- the ray starts from the OpenDRIVE map's own height at the pose
+    instead, so the pose is still put on the ground (#2545).
     """
     # Here rather than at the top, as below: map_manager imports pyxodr, whose
     # Codon model imports this package's coordinate back (scenario-check --library).
@@ -323,19 +326,24 @@ def _snap_opendrive_via_waypoint_xodr(
         pose.s,
     )
     if waypoint is None:
+        # lane_id is context only, and may name no lane at s (#2545): the
+        # pose is still placed, and still put on the ground, from the map's
+        # own height there.
         logger.warning(
             "get_waypoint_xodr(road=%s, lane=%d, s=%.2f) returned None; "
-            "falling back to coordinate transform",
+            "casting the ground ray from the OpenDRIVE map's height instead",
             pose.road_id,
             pose.lane_id,
             pose.s,
         )
-        return placed
+        z_estimate = placed.z
+    else:
+        z_estimate = waypoint.transform.location.z
 
     refined_z = refine_z_with_ground_projection(
         placed.x,
         placed.y,
-        waypoint.transform.location.z,
+        z_estimate,
         world,
         ground_projection=ground_projection,
     )

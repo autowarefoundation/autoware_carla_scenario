@@ -1531,3 +1531,121 @@ def test_the_reference_lines_kept_are_the_loaded_networks() -> None:
     _network, roads, stacked, starts, _arcs = transform._ref_lines(second)
     assert [road[0] for road in roads] == ["1"] and starts == [0]
     assert stacked.shape == (2, 2)
+
+
+# ---------------------------------------------------------------------------
+# #2545: end-of-line headings, roads too short to sample
+# ---------------------------------------------------------------------------
+
+
+class TestTheHeadingAtTheEndOfALine:
+    """A line ending on a repeated point reads its last real segment's
+    heading there, not ``atan2(0, 0)`` (#2545, as relative_lane since #2367)."""
+
+    def test_interpolate_at_the_end(self) -> None:
+        points = [(0.0, 0.0, 0.0), (0.0, 10.0, 0.0), (0.0, 10.0, 0.0)]
+        x, y, _z, heading = transform._interpolate_at_s(points, 10.0)
+        assert (x, y) == (0.0, 10.0)
+        assert heading == pytest.approx(math.pi / 2)
+
+    def test_a_reference_line_at_the_end(self) -> None:
+        import numpy as np
+
+        line = np.array([[0.0, 0.0], [0.0, 10.0], [0.0, 10.0]])
+        arcs = transform._compute_arc_lengths_2d(line)
+        assert transform._heading_at_s(line, arcs, 10.0) == pytest.approx(math.pi / 2)
+        assert transform._heading_at_s(line, arcs, 99.0) == pytest.approx(math.pi / 2)
+
+    def test_a_repeated_point_inside_is_read_as_before(self) -> None:
+        points = [
+            (0.0, 0.0, 0.0),
+            (0.0, 10.0, 0.0),
+            (0.0, 10.0, 0.0),
+            (10.0, 10.0, 0.0),
+        ]
+        assert transform._interpolate_at_s(points, 10.0)[3] == pytest.approx(0.0)
+        assert transform._interpolate_at_s(points, 5.0)[3] == pytest.approx(math.pi / 2)
+
+    def test_a_line_starting_on_a_repeated_point(self) -> None:
+        points = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (-3.0, 0.0, 0.0)]
+        assert transform._interpolate_at_s(points, 0.0)[3] == pytest.approx(math.pi)
+
+    def test_one_distinct_point_reads_east(self) -> None:
+        points = [(1.0, 1.0, 0.0), (1.0, 1.0, 0.0)]
+        assert transform._interpolate_at_s(points, 0.0)[3] == 0.0
+
+    def test_a_lanelet_pose_at_its_end_lies_beside_it(self) -> None:
+        """``t`` laid off the last real segment: (x=-0.5, y=-10) facing
+        North (CARLA yaw -90), not (x=0, y=-10.5) facing East."""
+
+        import autoware_lanelet2_extension_python.projection  # noqa: F401
+        from lanelet2.core import Lanelet, LaneletMap, LineString3d, Point3d, getId
+
+        def line(points):
+            return LineString3d(getId(), [Point3d(getId(), *p) for p in points])
+
+        lanelet = Lanelet(
+            getId(),
+            line([(-1, 0, 0), (-1, 10, 0), (-1, 10, 0)]),
+            line([(1, 0, 0), (1, 10, 0), (1, 10, 0)]),
+        )
+        lanelet.centerline = line([(0, 0, 0), (0, 10, 0), (0, 10, 0)])
+        lanelet_map = LaneletMap()
+        lanelet_map.add(lanelet)
+        saved = MapManager._instance
+        MapManager.reset()
+        mm = MapManager.get_instance()
+        mm._lanelet_map = lanelet_map
+        mm._mgrs_offset = (0.0, 0.0)
+        mm._z_offset = 0.0
+        try:
+            placed = to_carla_world(Lanelet2Pose(lanelet.id, s=10.0, t=0.5))
+        finally:
+            mm._lanelet_map = None
+            MapManager._instance = saved
+        assert (placed.x, placed.y) == pytest.approx((-0.5, -10.0))
+        assert placed.yaw == pytest.approx(-90.0)
+
+
+#: A junction connecting road of the fixture too short for pyxodr to sample
+#: (no reference-line points; 0.029 m), and where its <geometry> starts.
+_UNSAMPLED_ROAD = "345"
+_UNSAMPLED_START = (153.46350020698446, 236.1883000463058, 1.7064233457399152)
+
+
+class TestRoadsTooShortToSample:
+    """Read off the road's ``<geometry>`` rather than crashing (#2545)."""
+
+    def test_to_carla_world_places_it_at_its_geometry(self, map_manager) -> None:
+        x0, y0, hdg = _UNSAMPLED_START
+        placed = to_carla_world(OpenDrivePose(_UNSAMPLED_ROAD, 1, s=0.0, t=1.0))
+        assert placed.x == pytest.approx(x0 - math.sin(hdg))
+        assert placed.y == pytest.approx(-(y0 + math.cos(hdg)))
+        assert placed.yaw == pytest.approx(-math.degrees(hdg))
+        assert math.isfinite(placed.z)
+
+    def test_a_road_sampled_at_one_point_too(self, map_manager) -> None:
+        placed = to_carla_world(OpenDrivePose("348", 1, s=0.05))
+        assert math.isfinite(placed.x) and math.isfinite(placed.y)
+
+    def test_project_onto_road_inverts_it(self, map_manager) -> None:
+        from autoware_carla_scenario.coordinate.transform import project_onto_road
+
+        pose = OpenDrivePose(_UNSAMPLED_ROAD, 1, s=0.02, t=1.5, heading=0.2)
+        read = project_onto_road(to_carla_world(pose), _UNSAMPLED_ROAD)
+        assert read.road_id == _UNSAMPLED_ROAD
+        assert (read.s, read.t, read.heading) == pytest.approx((0.02, 1.5, 0.2))
+
+    def test_a_road_with_no_geometry_names_itself(self) -> None:
+        from types import SimpleNamespace
+
+        import lxml.etree
+        import numpy as np
+
+        road = SimpleNamespace(
+            reference_line=np.zeros((0, 2)),
+            z_coordinates=np.zeros(0),
+            road_xml=lxml.etree.fromstring('<road id="9" length="0.01"/>'),
+        )
+        with pytest.raises(ValueError, match="'9'"):
+            transform._unsampled_road_start(road, "9")
