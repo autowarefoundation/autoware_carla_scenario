@@ -6,7 +6,8 @@ process group of its own, so a case that crashes (a ``SIGSEGV`` in CARLA's
 client) or hangs takes only itself down.  This module is the process
 handling of that: the fork, the stop signals held off across it, the
 timeout, stopping a case (``SIGTERM``, then ``SIGKILL`` after
-:data:`_STOP_GRACE_SECONDS`) and waiting, after one that could not stop the
+:data:`_STOP_GRACE_SECONDS`), killing what is left of its group once it is
+reaped, and waiting, after one that could not stop the
 CARLA server it launched, until that server is gone
 (:func:`_wait_until_carla_gone`, #717).  What a case runs is the caller's
 (``run_case``); this module needs nothing of Hydra, so the library check
@@ -384,7 +385,9 @@ def _launch_isolated(
         run_case: Runs the case, in the child, and returns its exit status.
         timeout: Hard timeout in seconds (0 = no timeout).
 
-    Once the case is reaped, waits for any CARLA server it launched and left
+    Once the case is reaped, its process group is sent ``SIGKILL``
+    (:func:`_signal_job`), so nothing it started there outlives it, and this
+    waits for any CARLA server it launched and left
     running -- a case that timed out or died of a signal could not stop it --
     to exit (:func:`_wait_until_carla_gone`), so whatever runs next neither
     reuses that server nor races it for its port (#717).
@@ -449,6 +452,12 @@ def _launch_isolated(
         signal.signal(signal.SIGALRM, prev_handler)
         signal.pthread_sigmask(signal.SIG_SETMASK, signal_mask)
 
+    # Whatever the case started in its group and left behind -- it returned,
+    # raised or died of a signal without stopping it -- must not run on into
+    # the next case (#2539).  The CARLA servers it launched are not in it:
+    # each runs in a session of its own under its watchdog, which
+    # _wait_until_carla_gone waits for.  A group left empty is no error.
+    _signal_job(child_pid, signal.SIGKILL)
     _wait_until_carla_gone(child_pid)
 
     # One return of one `int | None`: Codon types a tuple by its values, and

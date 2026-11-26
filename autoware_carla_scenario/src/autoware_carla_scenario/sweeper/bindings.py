@@ -7,6 +7,7 @@ of the matched lanelet (e.g. "15 m before the stop line").
 
 from __future__ import annotations
 
+import heapq
 import logging
 import math
 from dataclasses import dataclass
@@ -185,8 +186,10 @@ class StopLineOffsetBinding:
     ) -> BindingResult:
         """Return the arc-length position *offset* metres before the stop line.
 
-        Walks the spawn lanelet and its following lanelets (BFS via routing
-        graph) searching for the nearest stop line.  The result is
+        Walks the spawn lanelet and its following lanelets (via the routing
+        graph, by distance from the spawn lanelet's start) searching for the
+        nearest stop line: at a fork, the one fewest metres ahead, however
+        many lanelets lie before it.  The result is
         ``accumulated + stop_s - offset``.
 
         If the offset cannot be satisfied within the spawn lanelet (i.e. the
@@ -210,74 +213,90 @@ class StopLineOffsetBinding:
 
             routing_graph = create_routing_graph(lanelet_map)
 
-        # BFS over the lanelet chain: spawn -> following -> following -> ...
-        # Each entry is (lanelet_object, arc_length_from_spawn_lanelet_start).
-        candidates: list[tuple[ConstLanelet, float]] = [(lanelet, 0.0)]
-        visited: set[int] = {lanelet_id}
+        # A search by distance (Dijkstra) over the lanelet chain: spawn ->
+        # following -> following -> ..., so the nearest stop line wins, not
+        # the first one in fewest lanelets (#2539).  The frontier holds
+        # (distance from the spawn lanelet's start, index into `reached`):
+        # a lanelet's start, or, once the lanelet has been read, its stop
+        # line.  A lanelet is read once, the first time it comes off the
+        # frontier, which is at its shortest distance.
+        reached: list[tuple[ConstLanelet, float]] = [(lanelet, 0.0)]
+        frontier: list[tuple[float, int]] = [(0.0, 0)]
+        stop_line_at: dict[int, float] = {}
+        visited: set[int] = set()
         seen_ids: set[int] = set()
 
-        while candidates:
-            next_candidates: list[tuple[ConstLanelet, float]] = []
-            for current, accumulated in candidates:
-                stop_lines = _collect_stop_lines_from_reg_elems(
-                    current.regulatoryElements, seen_ids
-                )
-                if stop_lines:
-                    stop_s = self._project_stop_line(stop_lines[0], current)
-                    total_arc = accumulated + stop_s
-                    raw_result = total_arc - self.offset
+        while frontier:
+            _, index = heapq.heappop(frontier)
+            current, accumulated = reached[index]
+            if index in stop_line_at:
+                # Nothing left on the frontier is nearer than this stop line.
+                stop_s = stop_line_at[index]
+                raw_result = accumulated + stop_s - self.offset
 
-                    if raw_result < 0:
-                        logger.info(
-                            "[%s] Stop line at %.2f m on lanelet %d "
-                            "(accumulated=%.2f m from spawn lanelet %d). "
-                            "%.2f m before stop line requires %.2f m "
-                            "beyond spawn lanelet start; "
-                            "walking back to predecessors.",
-                            self.target_key,
-                            stop_s,
-                            current.id,
-                            accumulated,
-                            lanelet_id,
-                            self.offset,
-                            -raw_result,
-                        )
-                        return self._walk_back_to_predecessor(
-                            shortfall=-raw_result,
-                            lanelet=lanelet,
-                            lanelet_map=lanelet_map,
-                            routing_graph=routing_graph,
-                            original_lanelet_id=lanelet_id,
-                        )
-
-                    result = min(raw_result, spawn_lanelet_length)
+                if raw_result < 0:
                     logger.info(
                         "[%s] Stop line at %.2f m on lanelet %d "
                         "(accumulated=%.2f m from spawn lanelet %d). "
-                        "%.2f m before stop line -> spawn_s=%.2f m "
-                        "on spawn lanelet.",
+                        "%.2f m before stop line requires %.2f m "
+                        "beyond spawn lanelet start; "
+                        "walking back to predecessors.",
                         self.target_key,
                         stop_s,
                         current.id,
                         accumulated,
                         lanelet_id,
                         self.offset,
-                        result,
+                        -raw_result,
                     )
-                    return BindingResult(value=result)
+                    return self._walk_back_to_predecessor(
+                        shortfall=-raw_result,
+                        lanelet=lanelet,
+                        lanelet_map=lanelet_map,
+                        routing_graph=routing_graph,
+                        original_lanelet_id=lanelet_id,
+                    )
 
-                new_accumulated = accumulated + lanelet2.geometry.length2d(current)
+                result = min(raw_result, spawn_lanelet_length)
+                logger.info(
+                    "[%s] Stop line at %.2f m on lanelet %d "
+                    "(accumulated=%.2f m from spawn lanelet %d). "
+                    "%.2f m before stop line -> spawn_s=%.2f m "
+                    "on spawn lanelet.",
+                    self.target_key,
+                    stop_s,
+                    current.id,
+                    accumulated,
+                    lanelet_id,
+                    self.offset,
+                    result,
+                )
+                return BindingResult(value=result)
 
-                # Stop expanding beyond offset from spawn lanelet end.
-                if new_accumulated - spawn_lanelet_length > self.offset:
-                    continue
+            if current.id in visited:
+                continue
+            visited.add(current.id)
 
-                for fll in routing_graph.following(current):
-                    if fll.id not in visited:
-                        visited.add(fll.id)
-                        next_candidates.append((fll, new_accumulated))
+            stop_lines = _collect_stop_lines_from_reg_elems(
+                current.regulatoryElements, seen_ids
+            )
+            if stop_lines:
+                # Not past it: any stop line beyond is further away.
+                stop_s = self._project_stop_line(stop_lines[0], current)
+                stop_line_at[index] = stop_s
+                heapq.heappush(frontier, (accumulated + stop_s, index))
+                continue
 
-            candidates = next_candidates
+            new_accumulated = accumulated + lanelet2.geometry.length2d(current)
+
+            # Stop expanding beyond offset from spawn lanelet end.
+            if new_accumulated - spawn_lanelet_length > self.offset:
+                continue
+
+            for fll in routing_graph.following(current):
+                if fll.id not in visited:
+                    reached.append((fll, new_accumulated))
+                    heapq.heappush(frontier, (new_accumulated, len(reached) - 1))
 
         raise ValueError(
             f"Lanelet {lanelet_id} and its following lanelets have no stop line; "

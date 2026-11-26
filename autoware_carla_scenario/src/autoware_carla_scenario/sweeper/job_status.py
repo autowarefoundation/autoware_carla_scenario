@@ -276,7 +276,7 @@ def _write_unfinished_marker(
     time): what the attempt writes is no older (#2416).  Logged, never
     raised, when it cannot be, and ``None``; ``None`` too when the job's
     directory is not known (the sweeper's
-    ``LaneletConstraintSweeper._job_output_dir`` logged why)."""
+    ``LaneletConstraintSweeper._job_paths`` logged why)."""
     if job_dir is None:
         return None
     try:

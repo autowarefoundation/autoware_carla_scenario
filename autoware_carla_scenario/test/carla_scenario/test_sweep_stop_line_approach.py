@@ -178,3 +178,78 @@ def test_a_walk_back_that_runs_out_of_road_is_refused(
     result = binding.resolve(551, lanelet_map, graph)
     assert result.lanelet_id_override == 2
     assert result.value == pytest.approx(8.58, abs=0.01)
+
+
+def test_at_a_fork_the_nearest_stop_line_wins_not_the_fewest_lanelets() -> None:
+    """A spawn lanelet forks: straight on, one 100 m lanelet whose stop line is
+    90 m in; to the right, a 5.7 m lanelet and then one whose stop line is
+    1 m in.  The right branch's line is two lanelets on but under 7 m ahead,
+    and the spawn is 15 m before it, not clamped to the spawn lanelet's end
+    by the straight branch's line one lanelet on (#2539)."""
+    from lanelet2.core import (
+        AttributeMap,
+        Lanelet,
+        LaneletMap,
+        LineString3d,
+        Point3d,
+        TrafficLight,
+        getId,
+    )
+
+    points: dict[tuple[float, float], Any] = {}
+
+    def point(x: float, y: float) -> Any:
+        if (x, y) not in points:
+            points[x, y] = Point3d(getId(), x, y, 0.0)
+        return points[x, y]
+
+    def line(*xys: tuple[float, float], kind: str = "line_thin") -> Any:
+        return LineString3d(
+            getId(), [point(x, y) for x, y in xys], AttributeMap({"type": kind})
+        )
+
+    def lanelet(left: Any, right: Any) -> Any:
+        return Lanelet(
+            getId(),
+            left,
+            right,
+            AttributeMap(
+                {
+                    "type": "lanelet",
+                    "subtype": "road",
+                    "location": "urban",
+                    "one_way": "yes",
+                }
+            ),
+        )
+
+    def traffic_light(on: Any, stop_line: Any, x: float, y: float) -> None:
+        light = LineString3d(
+            getId(),
+            [Point3d(getId(), x, y, 5.0), Point3d(getId(), x + 1.0, y, 5.0)],
+            AttributeMap({"type": "traffic_light"}),
+        )
+        on.addRegulatoryElement(
+            TrafficLight(getId(), AttributeMap(), [light], stop_line)
+        )
+
+    spawn = lanelet(line((0, 1.5), (20, 1.5)), line((0, -1.5), (20, -1.5)))
+    straight = lanelet(line((20, 1.5), (120, 1.5)), line((20, -1.5), (120, -1.5)))
+    traffic_light(straight, line((110, 1.5), (110, -1.5), kind="stop_line"), 115, 3)
+    right = lanelet(line((20, 1.5), (25, -2.0)), line((20, -1.5), (24, -5.0)))
+    after_right = lanelet(line((25, -2.0), (40, -12)), line((24, -5.0), (38, -15)))
+    traffic_light(
+        after_right, line((25.8, -2.6), (24.8, -5.7), kind="stop_line"), 30, -20
+    )
+    lanelet_map = LaneletMap()
+    for each in (spawn, straight, right, after_right):
+        lanelet_map.add(each)
+    graph = create_routing_graph(lanelet_map)
+    assert {each.id for each in graph.following(spawn)} == {straight.id, right.id}
+
+    result = StopLineOffsetBinding("ego.spawn_s", 15.0).resolve(
+        spawn.id, lanelet_map, graph
+    )
+    assert result.lanelet_id_override is None
+    # 20 m of spawn lanelet, 5.7 m of the right branch, the line ~1 m on.
+    assert result.value == pytest.approx(11.74, abs=0.05)

@@ -327,10 +327,15 @@ directly from Python:
 |--------|-------------|
 | `LaneletConstraintSweeper` | The Hydra `Sweeper` implementation (also re-exposed via `hydra_plugins.autoware_scenario_sweeper`). |
 | `Constraint` (ABC) | Base class of the constraints above, with an abstract `evaluate(lanelet)`. A constraint of your own may derive from it or only define `evaluate()`: the matching takes either. |
-| `EqualsConstraint`, `InSetConstraint`, `OnRouteConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. |
-| `AndConstraint`, `OrConstraint`, `NotConstraint` | Combinators. |
-| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `on_route`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `previous_of`, `following_of`. |
-| `Binding` (Protocol), `StopLineOffsetBinding`, `parse_binding` | Per-match parameter derivation (e.g. compute `ego.spawn_s` from a stop-line offset). |
+| `EqualsConstraint`, `InSetConstraint`, `OnRouteConstraint`, `LaneletLengthConstraint`, `HasStopLineConstraint`, `HasTrafficLightStopLineConstraint`, `HasAdjacentConstraint`, `IsJunctionConstraint`, `TurnDirectionConstraint`, `PreviousOfConstraint`, `FollowingOfConstraint` | Atomic constraints. `TurnDirectionConstraint` matches the junction lanelets whose `turn_direction` tag is the given `value` (`left`, `right`, `straight`). |
+| `AndConstraint`, `OrConstraint`, `NotConstraint` | Combinators. Their YAML `type:` keys are `and`, `or` (each with a `constraints` list) and `not` (with one `constraint`). |
+| `parse_constraint`, `find_matching_lanelets` | YAML-to-`Constraint` parsing and lanelet matching. The corresponding YAML `type:` keys for the atomics above are `equals`, `in_set`, `on_route`, `lanelet_length`, `has_stop_line`, `has_traffic_light_stop_line`, `has_adjacent`, `is_junction`, `turn_direction`, `previous_of`, `following_of`. |
+| `Binding` (Protocol), `parse_binding` | Per-match parameter derivation: a binding's `resolve()` derives one override of each matched lanelet; `parse_binding` reads one from YAML by its `type:`. |
+| `StopLineOffsetBinding` | `type: stop_line_offset`: the `s` `offset` metres (default 15) before the nearest stop line ahead (e.g. `ego.spawn_s`), walked back onto a predecessor lanelet where the line is nearer than that. |
+| `StopLineApproachBinding` | `type: stop_line_approach`: the ID of the lanelet a `stop_line_offset` spawn with the same `offset` is on (the pick, or the predecessor it walks back to). |
+| `RouteThroughBinding` | `type: route_through`: the pick and the `depth` lanelets after it (lowest ID at a fork), or only the last one's ID with `last_only: true`; `through_junction: true` walks on out of a junction. |
+| `AdjacentBinding` | `type: adjacent`: the ID of the lanelet beside the pick, on its `side` (`left` or `right`), that a vehicle may change into. |
+| `MatchedBinding` | `type: matched`: the ID of the picked lanelet itself, for a second slot that follows the pick. |
 | `load_lanelet2_map` | Lightweight Lanelet2 loader used outside of CARLA. |
 
 A scenario whose `sweep` holds a `route` search instead of `constraints` is
