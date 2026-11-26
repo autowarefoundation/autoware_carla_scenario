@@ -13,8 +13,9 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
 * ``"...".format(...)`` on a string literal becomes an f-string: auto-numbered,
   indexed and named fields, attribute and index lookups, ``!r`` / ``!s`` /
   ``!a`` and format specs.  Arguments that are plain names, constants or
-  attributes are written into the f-string; any other becomes the argument of
-  an immediately called lambda, so it is evaluated once.  A literal brace is a
+  attributes are written into the f-string; any other (or one over several
+  lines) becomes the argument of an immediately called lambda, so it is
+  evaluated once.  A literal brace is a
   separate string joined with ``+`` (Codon's f-strings have no ``{{``).  A
   template the rewrite cannot express (``*args`` / ``**kwargs``, a field
   inside a format spec, a missing argument) is refused.
@@ -54,8 +55,10 @@ so a rewrite has to keep the *types*, not the values, of what it replaces.
   'name' cannot be captured") but evaluates any other expression once, when
   the ``def`` runs, as Python does.  The parameter can still be passed.
 * ``filter(None, xs)`` becomes ``(_acs_v for _acs_v in xs if _acs_v)``
-  (#613): Codon's ``filter`` takes a function, not ``None``.
-* ``zip(..., strict=...)`` becomes ``zip(...)``.
+  (#613): Codon's ``filter`` takes a function, not ``None``.  Items holding a
+  walrus, which a comprehension's iterable cannot, are a lambda's argument.
+* ``zip(..., strict=...)`` becomes ``zip(...)``, unless the module binds ``zip``
+  itself.
 * ``open(p, encoding=..., errors=..., newline=...)`` loses those keywords
   (Codon's ``open`` has none, #562): they change the decoding, not the type.
 * ``isinstance(x, T)`` in a module that uses ``json`` becomes ``isinstance(x,
@@ -513,9 +516,10 @@ def _match_refusal(pattern: ast.AST) -> str | None:
 
 
 #: A format spec Codon's f-string parser takes, as Python's grammar has it
-#: without the sign: [[fill]align][#][0][width][,|_][.precision][type].
+#: without the sign: [[fill]align][#][0][width][,|_][.precision][type].  Not
+#: a lone surrogate fill, which is written escaped, as a spec expression.
 _CODON_SPEC = re.compile(
-    r"(?:[^\n{}\"'\\]?[<>^=])?#?0?\d*[,_]?(?:\.\d+)?[bcdeEfFgGnosxX%]?"
+    r"(?:[^\n{}\"'\\\ud800-\udfff]?[<>^=])?#?0?\d*[,_]?(?:\.\d+)?[bcdeEfFgGnosxX%]?"
 )
 
 
@@ -762,37 +766,17 @@ def _scope_names(node: ast.AST) -> Iterator[ast.Name]:
         elif isinstance(current, ast.Lambda):
             stack.extend(current.args.defaults)
             stack.extend(d for d in current.args.kw_defaults if d is not None)
-        elif isinstance(
-            current, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
-        ):
+        elif isinstance(current, _COMPREHENSIONS):
             stack.append(current.generators[0].iter)
         else:
             stack.extend(ast.iter_child_nodes(current))
 
 
 def _stores(stmt: ast.stmt) -> set[str]:
-    """Every name *stmt* binds in its own scope, nested statements included."""
-    names: set[str] = set()
-    stack: list[ast.AST] = [stmt]
-    while stack:
-        current = stack.pop()
-        if isinstance(current, ast.Name) and not isinstance(current.ctx, ast.Load):
-            names.add(current.id)
-        elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(current.name)
-            continue  # its body is a scope of its own
-        elif isinstance(current, (ast.Import, ast.ImportFrom)):
-            names.update(
-                (a.asname or a.name).partition(".")[0]
-                for a in current.names
-                if a.name != "*"
-            )
-        elif isinstance(current, ast.ExceptHandler) and current.name:
-            names.add(current.name)
-        elif isinstance(current, (ast.Lambda, ast.ListComp, ast.SetComp)):
-            continue
-        stack.extend(ast.iter_child_nodes(current))
-    return names
+    """Every name *stmt* binds in its own scope, nested statements included:
+    not the targets of a comprehension, a lambda's parameters or what a
+    nested ``def`` / ``class`` binds, but a ``match`` capture (``case A:``)."""
+    return _scope_bindings(ast.Module(body=[stmt], type_ignores=[]))
 
 
 def _assigned(stmt: ast.stmt) -> set[str] | None:
@@ -873,6 +857,10 @@ def _escaped(text: str) -> str:
             out.append("\\t")
         elif ord(char) < 32 or ord(char) == 127:
             out.append(f"\\x{ord(char):02x}")
+        elif 0xD800 <= ord(char) <= 0xDFFF:
+            # A lone surrogate (`"\\ud800"`) has no UTF-8 encoding: written
+            # as itself, the checked copy could not be encoded.
+            out.append(f"\\u{ord(char):04x}")
         else:
             out.append(char)
     return "".join(out)
@@ -1436,7 +1424,7 @@ class _Pass(ShadowScopes):
                 )
                 parts.append(text if simple else f"({text})")
             else:
-                shown.append(f"{self._text(key)}: {self._text(value)}")
+                shown.append(f"{self._grouped(key)}: {self._grouped(value)}")
         if shown:
             parts.append("{" + ", ".join(shown) + "}")
         if len(parts) == 1:
@@ -1511,7 +1499,11 @@ class _Pass(ShadowScopes):
         ):
             self._int_rounds.add(id(node.args[0]))
         if isinstance(node.func, ast.Name) and (
-            (node.func.id == "zip" and _kept_keywords(node, {"strict"}))
+            (
+                node.func.id == "zip"
+                and not self._shadowed("zip")
+                and _kept_keywords(node, {"strict"})
+            )
             or (
                 node.func.id == "open"
                 and not self._shadowed("open")
@@ -1661,7 +1653,12 @@ class _Pass(ShadowScopes):
         if branch is not None:
             subject = _dotted(_narrowed_subject(node.test))
             start, end = self.edits.node_span(branch)
-            if self._class_body or any(
+            # An `_acs_some(...)` branch was written by an earlier pass, whose
+            # edit of the test lost to one on the same span (a class constant
+            # `m` made `C.m`, #2517): only the test is left to rewrite.
+            if _some_wrapped(branch):
+                pass
+            elif self._class_body or any(
                 isinstance(n, _NOT_IN_A_LAMBDA) or _is_super(n)
                 for n in ast.walk(branch)
             ):
@@ -1710,7 +1707,7 @@ class _Pass(ShadowScopes):
             or any(isinstance(a, ast.Starred) for a in node.args)
         ):
             return None
-        subject, kinds = (self._text(a) for a in node.args)
+        subject, kinds = (self._grouped(a) for a in node.args)
         if (
             "\n" in subject
             or "\n" in kinds
@@ -1721,9 +1718,12 @@ class _Pass(ShadowScopes):
         reference = self._json_reference()
         if reference is None:
             return None
-        return (
-            f"(isinstance({subject}, {kinds}) or "
-            f"(isinstance({subject}, {reference}) and ({subject})._acs_isjson()))"
+        # The call's line breaks stay inside the brackets (`isinstance(\n x,
+        # T)` in an `if` test): after them, they would end the statement.
+        return self._wrapped(
+            node,
+            f"isinstance({subject}, {kinds}) or "
+            f"(isinstance({subject}, {reference}) and ({subject})._acs_isjson())",
         )
 
     # -- collections.namedtuple("P", "x y") (#510) ---------------------------
@@ -1815,10 +1815,10 @@ class _Pass(ShadowScopes):
             if func.id == "format" and plain_call and len(node.args) in (1, 2):
                 value = self._operand(node.args[0])
                 if len(node.args) == 1:
-                    return f"str({self._text(node.args[0])})"
-                return f"{value}.__format__({self._text(node.args[1])})"
+                    return f"str({self._grouped(node.args[0])})"
+                return f"{value}.__format__({self._grouped(node.args[1])})"
             if func.id == "ascii" and plain_call and len(node.args) == 1:
-                return f"repr({self._text(node.args[0])})"
+                return f"repr({self._grouped(node.args[0])})"
             if func.id == "round":
                 return self._round(node)
             if func.id == "getattr" and plain_call and len(node.args) == 3:
@@ -1832,7 +1832,16 @@ class _Pass(ShadowScopes):
             ):
                 # `filter(None, xs)` (#613): Codon's filter takes a function.
                 # The generator yields the truthy items, as filter does.
-                return f"(_acs_v for _acs_v in {self._text(node.args[1])} if _acs_v)"
+                items = node.args[1]
+                if any(isinstance(n, ast.NamedExpr) for n in ast.walk(items)):
+                    # A walrus cannot be in a comprehension's iterable: the
+                    # items are a lambda's argument, evaluated where they were.
+                    return (
+                        "(lambda _acs_xs: (_acs_v for _acs_v in _acs_xs if _acs_v))"
+                        f"({self._grouped(items)})"
+                    )
+                xs = self._grouped(items, _BELOW_DISJUNCTION)
+                return f"(_acs_v for _acs_v in {xs} if _acs_v)"
             return None
         if (
             isinstance(func, ast.Attribute)
@@ -1874,7 +1883,7 @@ class _Pass(ShadowScopes):
             return None
         helper = _SEQUENCE_HELPERS[func.attr]
         receiver = func.value
-        arguments = ", ".join(self._text(a) for a in node.args)
+        arguments = ", ".join(self._grouped(a) for a in node.args)
         if "\n" in arguments:
             return None
         if isinstance(receiver, ast.Tuple):
@@ -1930,7 +1939,7 @@ class _Pass(ShadowScopes):
             # set: so does a set of each operand.
             parts = []
             for operand in (node.left, node.right):
-                text = self._text(operand)
+                text = self._grouped(operand)
                 if not isinstance(operand, (ast.Set, ast.SetComp)):
                     text = f"set({text})"
                 parts.append(text)
@@ -1980,7 +1989,7 @@ class _Pass(ShadowScopes):
         if number is None:
             return None
         lost = self._text(node).count("\n")
-        text = self._text(number)
+        text = self._grouped(number)
         if ndigits is None or (
             isinstance(ndigits, ast.Constant) and ndigits.value is None
         ):
@@ -1990,12 +1999,12 @@ class _Pass(ShadowScopes):
             return f"int(round({text}{chr(10) * max(lost, 0)}))"
         if not node.keywords:
             return None
-        digits = self._text(ndigits)
+        digits = self._grouped(ndigits)
         lost -= text.count("\n") + digits.count("\n")
         return f"round({text}, {digits}{chr(10) * max(lost, 0)})"
 
     def _getattr_default(self, node: ast.Call) -> str | None:
-        """``(x.name if hasattr(x, "name") else default)`` for
+        """``((default), x.name if hasattr(x, "name") else (default))[1]`` for
         ``getattr(x, "name", default)`` (#590), which Codon's two-argument
         ``getattr`` refuses; ``None`` (left to Codon, and its hint) unless the
         name is a literal identifier and *x* a name or attribute chain on one
@@ -2030,6 +2039,15 @@ class _Pass(ShadowScopes):
         )
         return self._wrapped(node, f"({inner})[1]")
 
+    def _grouped(self, node: ast.expr, loose: tuple[type[ast.expr], ...] = ()) -> str:
+        """The text of *node*, parenthesised where a rewrite pastes it if it
+        is a walrus or a ``yield`` (or one of *loose*), which the source may
+        have held in parentheses that are not the node's (#2517)."""
+        text = self._text(node)
+        if isinstance(node, (ast.NamedExpr, ast.Yield, ast.YieldFrom, *loose)):
+            return f"({text})"
+        return text
+
     def _operand(self, node: ast.expr) -> str:
         """The text of *node*, parenthesised where a ``.attr`` needs it."""
         text = self._text(node)
@@ -2063,7 +2081,7 @@ class _Pass(ShadowScopes):
             for i in items
         )
         lambda_params = ", ".join(params[id(p)] for p in parts)
-        values = ", ".join(self._text(p) for p in parts)
+        values = ", ".join(self._grouped(p) for p in parts)
         return self._wrapped(node, f"(lambda {lambda_params}: {body})({values})")
 
     def _format(self, node: ast.Call, template: str) -> str | None:
@@ -2084,7 +2102,9 @@ class _Pass(ShadowScopes):
             params[f"_acs_f{index}"] = value
         for name, value in named.items():
             params[f"_acs_k_{name}"] = value
-        inline = all(_plain(v) for v in params.values())
+        # A value on more than one line goes through the lambda: a line break
+        # cannot be in a single-quoted f-string before Python 3.12 (#2517).
+        inline = all(_plain(v) and "\n" not in self._text(v) for v in params.values())
         parts: list[str] = []  # plain strings and f-string chunks, to join
         chunk = ""  # the f-string being built
         auto = 0
@@ -2161,6 +2181,13 @@ class _Pass(ShadowScopes):
                     "into the spec first, or write the pieces separately",
                 )
                 return None
+            if any(0xD800 <= ord(c) <= 0xDFFF for c in spec or ""):
+                self._refuse(
+                    node,
+                    "a format spec with a lone surrogate (`{:\\ud800<5}`) cannot "
+                    "be rewritten: format the value with format(x, spec)",
+                )
+                return None
             access = ""
             for is_attribute, name in accesses:
                 if isinstance(name, int):
@@ -2198,12 +2225,12 @@ class _Pass(ShadowScopes):
                 else:
                     access += f"['{name}']"
             value = params[key]
-            if inline:
-                expression = self._text(value)
-            else:
+            if not inline:
                 expression = key
-            if "\n" in expression:
-                expression = "(" + expression + ")"
+            elif isinstance(value, ast.Constant) and access:
+                expression = f"({self._text(value)})"  # `(1).real`, not `1.real`
+            else:
+                expression = self._text(value)
             body = expression + access
             if conversion:
                 # Codon has no ascii(): `!r` is the same type (#701).
@@ -2218,7 +2245,7 @@ class _Pass(ShadowScopes):
         if inline:
             return text
         names = list(params)
-        values = [self._text(v) for v in params.values()]
+        values = [self._grouped(v) for v in params.values()]
         return f"(lambda {', '.join(names)}: {text})({', '.join(values)})"
 
     # -- lambda x, k=k: ... -------------------------------------------------
@@ -2277,12 +2304,12 @@ class _Pass(ShadowScopes):
             self._lambdas.pop()
             return
         names = ", ".join(name for name, _ in moved)
-        values = ", ".join(self._text(default) for _, default in moved)
+        values = ", ".join(self._grouped(default) for _, default in moved)
         params = ast.unparse(inner)
         head = f"lambda {params}" if params else "lambda"
         self.edits.replace(
             *self.edits.node_span(node),
-            f"(lambda {names}: {head}: {self._text(node.body)})({values})",
+            f"(lambda {names}: {head}: {self._grouped(node.body)})({values})",
         )
 
 
@@ -2446,6 +2473,12 @@ def _ordering_blocks(
     return out
 
 
+#: What the iterable of a comprehension cannot be without parentheses, as
+#: well as a walrus or a ``yield`` (:meth:`_Pass._grouped`, #2517): below a
+#: disjunction (``a or b``) in Python's grammar.  (A tuple argument has
+#: parentheses of its own.)
+_BELOW_DISJUNCTION: tuple[type[ast.expr], ...] = (ast.IfExp, ast.Lambda)
+
 #: What a branch made a lambda cannot hold: a walrus would bind in the lambda,
 #: a ``yield`` / ``await`` would be the lambda's (#621).
 _NOT_IN_A_LAMBDA = (ast.NamedExpr, ast.Yield, ast.YieldFrom, ast.Await)
@@ -2499,12 +2532,6 @@ def _narrowed_branch(node: ast.IfExp) -> ast.expr | None:
     narrowed = _narrowed_name(node.test)
     if narrowed is None or isinstance(branch, ast.Constant):
         return None
-    if (
-        isinstance(branch, ast.Call)
-        and isinstance(branch.func, ast.Name)
-        and branch.func.id == "_acs_some"
-    ):
-        return None  # written by an earlier pass
     if not any(
         _dotted(sub) == narrowed
         for sub in ast.walk(branch)
@@ -2512,6 +2539,16 @@ def _narrowed_branch(node: ast.IfExp) -> ast.expr | None:
     ):
         return None
     return branch
+
+
+def _some_wrapped(branch: ast.expr) -> bool:
+    """Whether *branch* is the ``_acs_some(a)`` / ``_acs_some_if(lambda: a,
+    x)`` an earlier pass wrote (#597)."""
+    return (
+        isinstance(branch, ast.Call)
+        and isinstance(branch.func, ast.Name)
+        and branch.func.id in ("_acs_some", "_acs_some_if")
+    )
 
 
 def _run(source: str) -> tuple[str, list[tuple[str, str]], list[tuple[int, str]]]:
