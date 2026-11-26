@@ -210,13 +210,22 @@ class PedestrianEntity(WalkedEntity):
 
     Deliberately **not** a :class:`~autoware_carla_scenario.traffic.driven.BackendDriven`
     entity: inheriting the vehicles' manoeuvres would offer ``change_lane`` on
-    something that has no lane.  A pedestrian moves because a
-    :class:`~autoware_carla_scenario.actions.WalkStraightAction` tells it to,
-    and stands still otherwise.  The walk goes to the run's traffic backend
-    first (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.walk_straight`):
-    one that walks the scenario's pedestrians -- SUMO, with
-    ``scenario_pedestrians=sumo`` -- takes it, and the walker follows that
-    backend's pedestrian.  Otherwise the entity walks its walker itself.
+    something that has no lane.  A pedestrian moves because an action tells
+    it to, and stands still otherwise:
+
+    * a :class:`~autoware_carla_scenario.actions.WalkStraightAction` walks it
+      straight (:meth:`walk_straight`).  That walk goes to the run's traffic
+      backend first
+      (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.walk_straight`):
+      one that walks the scenario's pedestrians -- SUMO, with
+      ``scenario_pedestrians=sumo`` -- takes it, and the walker follows that
+      backend's pedestrian.  Otherwise the entity walks its walker itself;
+    * a :class:`~autoware_carla_scenario.actions.RoutingAction` in ``driver``
+      mode walks it along a route: a walk laid out on the walkable lanelets
+      (:meth:`route_to`) or given whole (:meth:`walk_along`, a recorded walk),
+      walked a tick at a time (:meth:`walk_on`);
+    * a ``RoutingAction`` in ``follow`` or ``position`` mode moves it along
+      the action's trajectory.
 
     A straight walk it walks itself is commanded with :class:`carla.WalkerControl`
     rather than through a ``controller.ai.walker``.  The AI controller exists
@@ -552,12 +561,14 @@ class PedestrianEntity(WalkedEntity):
 
     @property
     def walking(self) -> bool:
-        """Whether a walk :meth:`route_to` laid out is still being walked."""
+        """Whether a walk :meth:`route_to` laid out, or :meth:`walk_along`
+        gave, is still being walked."""
         return self._walk is not None
 
     @property
     def walk_path(self) -> "Optional[ResolvedTrajectory]":
-        """The walk :meth:`route_to` laid out, while it is being walked."""
+        """The walk :meth:`route_to` laid out, or :meth:`walk_along` gave,
+        while it is being walked."""
         return self._walk
 
     def walk_on(self, speed_mps: Optional[float] = None) -> None:

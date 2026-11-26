@@ -232,15 +232,20 @@ def spawn_vehicle_actor(
         for attempt in range(1, spawn_retry_max_count + 1):
             t_delta = spawn_retry_t_step * attempt
             z_delta = spawn_retry_z_step * attempt
+            # The offsets this attempt has tried, the base one included: with
+            # a step of 0 ("0 keeps that axis") the shifts along it coincide,
+            # and each transform is tried once per attempt, in order (#2534).
+            tried: list[tuple[float, float]] = [(0.0, 0.0)]
 
             for (t_sign, t_label), (z_sign, z_label) in itertools.product(
                 _SIGNS, _SIGNS
             ):
-                if t_sign == 0 and z_sign == 0:
-                    continue  # (0, 0) is the original position already tried
-
                 t_offset = t_sign * t_delta
                 z_offset = z_sign * z_delta
+                # (0, 0) is the original position already tried.
+                if (t_offset, z_offset) in tried:
+                    continue
+                tried.append((t_offset, z_offset))
                 retry_transform = carla.Transform(
                     carla.Location(
                         x=base_x + sin_yaw * t_offset,

@@ -365,3 +365,79 @@ class TestTheSpawnRetryNeedsNoOpenDrivePose:
                 spawn_retry_max_count=3,
             )
         assert len(tried) == 1
+
+
+class TestTheSpawnRetryTriesEachTransformOnce:
+    """A step of 0 keeps its axis, so the shifts along it coincide: each
+    attempt tries its distinct transforms once, in order (#2534)."""
+
+    @pytest.mark.parametrize(
+        ("t_step", "z_step", "calls"),
+        [
+            # The first spot, then 8 shifts per attempt.
+            (0.5, 0.5, 1 + 2 * 8),
+            # Up and down only, then across only.
+            (0.0, 0.5, 1 + 2 * 2),
+            (0.5, 0.0, 1 + 2 * 2),
+            # Nothing to shift: the first spot alone.
+            (0.0, 0.0, 1),
+        ],
+    )
+    def test_try_spawn_actor_is_called_once_per_distinct_transform(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        t_step: float,
+        z_step: float,
+        calls: int,
+    ) -> None:
+        from autoware_carla_scenario.entity import _spawn
+        from autoware_carla_scenario.entity._spawn import spawn_vehicle_actor
+
+        world, tried, _actor = TestTheSpawnRetryNeedsNoOpenDrivePose._world(
+            free_after=10**6
+        )
+        monkeypatch.setattr(_spawn, "run_carla_map", lambda w: w.get_map())
+        placed = carla.Transform(
+            carla.Location(x=100.0, y=200.0, z=1.0), carla.Rotation(yaw=0.0)
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to spawn vehicle 'npc'"):
+            spawn_vehicle_actor(
+                world,
+                "vehicle.mini.cooper",
+                "npc",
+                SpawnTransform(placed),
+                spawn_retry_max_count=2,
+                spawn_retry_t_step=t_step,
+                spawn_retry_z_step=z_step,
+            )
+
+        assert world.try_spawn_actor.call_count == calls
+        spots = [(t.location.x, t.location.y, t.location.z) for t in tried]
+        assert len(set(spots)) == len(spots)
+        assert spots[0] == pytest.approx((100.0, 200.0, 1.0))
+
+    def test_the_shifts_keep_their_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from autoware_carla_scenario.entity import _spawn
+        from autoware_carla_scenario.entity._spawn import spawn_vehicle_actor
+
+        world, tried, _actor = TestTheSpawnRetryNeedsNoOpenDrivePose._world(
+            free_after=10**6
+        )
+        monkeypatch.setattr(_spawn, "run_carla_map", lambda w: w.get_map())
+        placed = carla.Transform(
+            carla.Location(x=100.0, y=200.0, z=1.0), carla.Rotation(yaw=0.0)
+        )
+
+        with pytest.raises(RuntimeError):
+            spawn_vehicle_actor(
+                world,
+                "vehicle.mini.cooper",
+                "npc",
+                SpawnTransform(placed),
+                spawn_retry_max_count=2,
+                spawn_retry_t_step=0.0,
+                spawn_retry_z_step=0.5,
+            )
+
+        assert [t.location.z for t in tried] == pytest.approx([1.0, 0.5, 1.5, 0.0, 2.0])

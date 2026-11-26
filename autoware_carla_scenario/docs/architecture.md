@@ -1318,7 +1318,8 @@ classDiagram
     }
 
     class SpawnLocation {
-        <<interface>>
+        <<union>>
+        SpawnTransform | SpawnPointIndex
     }
 
     class SpawnTransform {
@@ -1372,6 +1373,8 @@ classDiagram
 
     class Ros2EgoEntity
 
+    class HilsEgoEntity
+
     class BridgedEgoEntity {
         +requires_goal = true
         +handshake: BridgeHandshake
@@ -1381,13 +1384,14 @@ classDiagram
     class AutowareEgoEntity
 
     VehicleEntityConfig <|-- EgoConfig
-    SpawnLocation <|.. SpawnTransform
-    SpawnLocation <|.. SpawnPointIndex
+    SpawnLocation .. SpawnTransform : one of
+    SpawnLocation .. SpawnPointIndex : one of
     VehicleEntityConfig --> SpawnLocation
     VehicleEntity --> VehicleEntityConfig
     EgoVehicle <|-- ExternallyDrivenEgo
     ExternallyDrivenEgo <|-- CarlaDriverEntity
     ExternallyDrivenEgo <|-- Ros2EgoEntity
+    ExternallyDrivenEgo <|-- HilsEgoEntity
     ExternallyDrivenEgo <|-- BridgedEgoEntity
     BridgedEgoEntity <|-- AutowareEgoEntity
     BridgedEgoEntity *-- BridgeHandshake
@@ -1423,8 +1427,10 @@ vehicle the backend drives, the ego or an NPC, becomes one of them:
 `BackendDriven.route_to` hands the backend the route from where the vehicle is,
 through any waypoints, to it. A pedestrian given one lays its walk out on the
 walkable lanelets (`PedestrianEntity.route_to`), and the `RoutingAction` walks
-it a tick at a time (`PedestrianEntity.walk_on`, steered as a `RoutingAction`
-steers a walker in `follow` mode) -- so on a pedestrian the action needs the
+it a tick at a time (`PedestrianEntity.walk_on`): by CARLA's walker controller
+(`controller.ai.walker`) where the map has a pedestrian navigation mesh, stepped
+along the walk where it has none (and over a road stretch), as
+[Trajectories](trajectory.md) describes -- so on a pedestrian the action needs the
 tick loop (`BaseAction.needs_tick_loop`). The walk is searched on
 `coordinate.walk_graph.WalkGraph`, not on Lanelet2's routing graph: a crosswalk
 is usually drawn across the walkways it joins, reaching onto them without
@@ -1440,7 +1446,8 @@ with a warning.
 ego actor to drive or told to keep its hands off it. `EgoVehicle` opts in (TrafficManager drives);
 every `ExternallyDrivenEgo` opts out: on its own it leaves the actor for something
 outside the scenario, `CarlaDriverEntity` drives it from an external policy's plan,
-`Ros2EgoEntity` from ROS 2 nodes' commands, and `BridgedEgoEntity` leaves it to the
+`Ros2EgoEntity` from ROS 2 nodes' commands, `HilsEgoEntity` from the commands of the
+ECUs under test that the HILS bridge forwards, and `BridgedEgoEntity` leaves it to the
 stack it handed the mission to.
 
 **Where the ego is going**: `requires_goal` says whether an entity can start without a
