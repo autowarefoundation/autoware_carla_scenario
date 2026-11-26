@@ -8,6 +8,7 @@ The subclasses that add state of their own compare and print it too (#2534).
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 
 import pytest
@@ -26,6 +27,10 @@ from autoware_carla_scenario import (
     VehicleEntityConfig,
 )
 from autoware_carla_scenario.coordinate import Lanelet2Pose
+from autoware_carla_scenario.entity.vehicle_entity import (
+    _same_vehicle_config,
+    _vehicle_config_repr_fields,
+)
 
 
 @pytest.mark.parametrize("role", [EntityRole.npc(3), "npc3"])
@@ -139,3 +144,25 @@ class TestASubclassComparesItsOwnState:
             hash(EgoConfig(SpawnPointIndex(0)))
         with pytest.raises(TypeError):
             hash(EmergencyVehicleEntityConfig("amb1", SpawnPointIndex(1)))
+
+    def test_the_helpers_cover_every_vehicle_config_field(self) -> None:
+        # The helpers name the fields one by one (Codon has no
+        # dataclasses.fields()), so a field added to VehicleEntityConfig must
+        # be added to them too: this fails until it is.
+        config = VehicleEntityConfig(
+            "npc1",
+            SpawnPointIndex(2),
+            vehicle_type="vehicle.tesla.model3",
+            initial_speed_kmh=12.5,
+            spawn_retry_max_count=3,
+            spawn_retry_t_step=0.25,
+            spawn_retry_z_step=0.75,
+        )
+        assert repr(config) == (
+            f"VehicleEntityConfig({_vehicle_config_repr_fields(config)})"
+        )
+        assert _same_vehicle_config(config, copy.copy(config))
+        for field in dataclasses.fields(VehicleEntityConfig):
+            changed = copy.copy(config)
+            setattr(changed, field.name, object())
+            assert not _same_vehicle_config(config, changed), field.name
