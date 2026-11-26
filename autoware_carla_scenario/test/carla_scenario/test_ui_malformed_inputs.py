@@ -390,10 +390,19 @@ def _run(base: Path, time: str, document: str) -> Path:
     return run
 
 
-def test_a_document_nested_too_deep_is_read_as_none(tmp_path: Path) -> None:
+def test_a_document_nested_deep_is_read_as_json_loads_reads_it(tmp_path: Path) -> None:
+    """A document json.loads() cannot read for its depth (a RecursionError,
+    which Python 3.14's parser no longer raises at this depth) is unreadable,
+    as any other; one it reads is read."""
+    text = "[" * 100_000 + "]" * 100_000
     path = tmp_path / "deep.json"
-    path.write_text("[" * 100_000 + "]" * 100_000)
-    assert cases._read_json(path) is None
+    path.write_text(text)
+    try:
+        expected = json.loads(text)
+    except RecursionError:
+        assert cases._read_json(path) is None
+    else:
+        assert cases._read_json(path) == expected
 
 
 def test_a_document_nested_too_deep_does_not_hide_the_sessions(
