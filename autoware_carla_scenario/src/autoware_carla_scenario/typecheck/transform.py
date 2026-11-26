@@ -21,7 +21,8 @@ which :func:`transform_source_lines` maps back onto the handler):
   ``field(default_factory=...)`` is replaced by its default.  The methods
   ``@dataclass`` generates besides ``__init__`` are appended after the module
   with ``@extend`` (:func:`_dataclass_dunders`): ``__eq__`` / ``__ne__``,
-  ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``).
+  ``__hash__`` (``frozen`` or ``unsafe_hash``), ordering (``order=True``)
+  and ``__repr__`` (where Codon has ``repr()`` of every field, #2536).
 * A plain class (no ``__eq__``, plain bases) is given identity ``__eq__`` /
   ``__ne__`` and ``__hash__`` with ``@extend`` right after it
   (:func:`_identity_dunders`, #596), as Python's ``object`` compares and
@@ -4191,7 +4192,8 @@ def transform_source_lines(
     # The model's enums too (#437), unless the module defines a class of that
     # name which is no enum.
     other = _module_level_bindings(tree) - own
-    enum_iteration(tree, edits, own | (model_enum_names() - other))
+    enums = own | (model_enum_names() - other)
+    enum_iteration(tree, edits, enums)
     repeated_imports(tree, edits)
     lower_replace_calls(tree, edits)
     mixin_super_inits(tree, edits, init_classes, mixins)
@@ -4212,7 +4214,7 @@ def transform_source_lines(
     #: line after which they go -> (their lines, the line they map to), the
     #: innermost class first.
     in_class: dict[int, list[tuple[int, str, int]]] = {}
-    for node, methods in nested_dataclass_methods(tree, exceptions):
+    for node, methods in nested_dataclass_methods(tree, exceptions, enums):
         first = node.body[0]
         indent = edits.lines[first.lineno - 1][: first.col_offset].decode()
         if first.lineno == node.lineno or indent.strip():
@@ -4252,7 +4254,7 @@ def transform_source_lines(
     appended = [
         *at_end,
         *_inherited_init_extensions(_inherited_bases(tree, init_classes, exceptions)),
-        *_dataclass_dunders(tree, exceptions),
+        *_dataclass_dunders(tree, exceptions, enums),
         *_dataclass_replacers(tree, exceptions),
         *copy_dunders(tree, exceptions),
         *ordering,
@@ -5051,7 +5053,13 @@ def _declares_no_field(annotation: ast.expr) -> bool:
 def _dataclass_options(node: ast.ClassDef) -> dict[str, bool] | None:
     """The flags of *node*'s ``@dataclass`` (Python's defaults where not
     written as a literal), or ``None`` for a class that is no dataclass."""
-    options = {"eq": True, "order": False, "frozen": False, "unsafe_hash": False}
+    options = {
+        "eq": True,
+        "order": False,
+        "frozen": False,
+        "unsafe_hash": False,
+        "repr": True,
+    }
     for decorator in node.decorator_list:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
         if _dotted(target) not in ("dataclass", "dataclasses.dataclass"):
@@ -5090,6 +5098,94 @@ def _compared_fields(node: ast.ClassDef) -> list[str]:
     return names
 
 
+def _repr_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]]:
+    """The fields *node* declares (not a ``ClassVar``, an ``InitVar`` or
+    ``KW_ONLY``), with their annotations and whether ``repr()`` shows them
+    (not ``field(repr=False)``)."""
+    out = []
+    for stmt in node.body:
+        if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
+            continue
+        annotation = _field_annotation(stmt.annotation)
+        if _declares_no_field(annotation):
+            continue
+        value = stmt.value
+        hidden = (
+            isinstance(value, ast.Call)
+            and _dotted(value.func) in _FIELD_FUNCTIONS
+            and any(
+                k.arg == "repr"
+                and isinstance(k.value, ast.Constant)
+                and k.value.value is False
+                for k in value.keywords
+            )
+        )
+        out.append((stmt.target.id, annotation, not hidden))
+    return out
+
+
+#: The types whose ``__repr__`` Codon has, with no type parameter to check.
+_REPR_SCALARS = {"int", "float", "str", "bool", "complex"}
+#: The containers whose ``__repr__`` (Codon's) calls each element's
+#: ``__repr__``: by the last part of their name (``typing.List``).
+_REPR_SEQUENCES = {
+    "list",
+    "List",
+    "Sequence",
+    "MutableSequence",
+    "set",
+    "Set",
+    "frozenset",
+    "FrozenSet",
+    "AbstractSet",
+    "MutableSet",
+}
+_REPR_MAPPINGS = {"dict", "Dict", "Mapping", "MutableMapping"}
+
+
+def _has_repr(annotation: ast.expr, displayed: Collection[str]) -> bool:
+    """Whether a value annotated *annotation* has a ``__repr__`` that Codon
+    compiles, all the way down: a scalar, a class of *displayed* (an enum,
+    a class with a ``__repr__``), or an ``Optional``, list, set, tuple or
+    dict of those.  Codon's ``Optional`` and containers call their
+    elements' ``__repr__``, which a class without one lacks (its
+    ``repr()`` is ``__repr_default__``); anything else (a ``Union``, an
+    imported class, an alias, ``Any``) is not known to have one (#2536)."""
+    annotation = _field_annotation(annotation)
+    members = _union_members(annotation)
+    if members is not None:
+        # `X | None` / `Optional[X]`: any other Union has no repr() in Codon.
+        kept = [m for m in members if not _is_none(m)]
+        return (
+            len(kept) == 1
+            and len(kept) < len(members)
+            and isinstance(kept[0], ast.expr)
+            and _has_repr(kept[0], displayed)
+        )
+    name = _dotted(annotation)
+    if name is not None:
+        return name in _REPR_SCALARS or name in displayed
+    if not isinstance(annotation, ast.Subscript):
+        return False
+    if _literal_type(annotation) is not None:  # checked as its values' type
+        return True
+    head = (_dotted(annotation.value) or "").rsplit(".", 1)[-1]
+    args = annotation.slice
+    items = list(args.elts) if isinstance(args, ast.Tuple) else [args]
+    if head == "Optional" and len(items) == 1:
+        return _has_repr(items[0], displayed)
+    if head in _REPR_SEQUENCES and len(items) == 1:
+        return _has_repr(items[0], displayed)
+    if head in _REPR_MAPPINGS and len(items) == 2:
+        return all(_has_repr(i, displayed) for i in items)
+    if head in ("tuple", "Tuple"):
+        if len(items) == 2 and isinstance(items[1], ast.Constant):
+            if items[1].value is Ellipsis:
+                return _has_repr(items[0], displayed)
+        return bool(items) and all(_has_repr(i, displayed) for i in items)
+    return False
+
+
 def _defined_methods(node: ast.ClassDef) -> set[str]:
     return {
         m.name
@@ -5098,18 +5194,23 @@ def _defined_methods(node: ast.ClassDef) -> set[str]:
     }
 
 
-def _dataclass_dunders(tree: ast.Module, exceptions: set[str]) -> list[tuple[str, str]]:
+def _dataclass_dunders(
+    tree: ast.Module, exceptions: set[str], enums: Collection[str] = ()
+) -> list[tuple[str, str]]:
     """The methods Python's ``@dataclass`` generates that Codon does not, per
     top-level class (:func:`_dataclass_dunder_methods`), each appended after
     the module with ``@extend``.  Each is (the class, the lines)."""
     return [
         (node.name, f"\n\n@extend\nclass {node.name}:\n" + lines)
-        for node, lines in _dataclass_dunder_methods(tree.body, exceptions)
+        for node, lines in _dataclass_dunder_methods(tree.body, exceptions, None, enums)
     ]
 
 
 def _dataclass_dunder_methods(
-    body: list[ast.stmt], exceptions: set[str], prefix: str | None = None
+    body: list[ast.stmt],
+    exceptions: set[str],
+    prefix: str | None = None,
+    enums: Collection[str] = (),
 ) -> list[tuple[ast.ClassDef, str]]:
     """The methods Python's ``@dataclass`` generates that Codon does not, per
     class of *body*.
@@ -5125,8 +5226,44 @@ def _dataclass_dunder_methods(
     class nested in a class (``Plans`` for ``Plans.Leg``; empty in a function,
     where the bare name is bound).  Each is (the class, its methods, indented
     as a class body's).
+
+    ``__repr__`` (``repr=True``, the default) is Python's
+    ``Name(a=1, b='x')`` (#2536), of the fields ``field(repr=False)`` does
+    not leave out, a base's first.  It is written only when Codon compiles
+    ``repr()`` of every field (:func:`_has_repr`): one whose type is a class
+    of *body* with no ``__repr__`` is shown by ``repr()``'s default, but an
+    ``Optional`` or a container of one, a ``Union``, an imported class or
+    an alias would make ``repr()`` and ``str()`` of the dataclass, which
+    compile on Codon's default without the method, fail; such a class gets
+    none.  *enums* names the enums of other modules and of the model.
     """
     fields: dict[str, list[str]] = {}
+    shown: dict[str, list[tuple[str, ast.expr, bool]]] = {}
+    #: A ``repr`` the module binds itself is not the builtin.
+    repr_bound = any(
+        (isinstance(n, ast.Name) and n.id == "repr" and isinstance(n.ctx, ast.Store))
+        or (
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and n.name == "repr"
+        )
+        or (isinstance(n, ast.alias) and (n.asname or n.name) == "repr")
+        for stmt in body
+        for n in ast.walk(stmt)
+    )
+    classes = {
+        n.name: n
+        for n in body
+        if isinstance(n, ast.ClassDef)
+        and n.name not in exceptions
+        and not _is_named_tuple(n)
+        and not any(_dotted(d) == "tuple" for d in n.decorator_list)
+    }
+    #: The classes whose repr() calls a __repr__: the enums, the classes
+    #: that define one and, as they get one, the dataclasses.
+    displayed = {*enums, *enum_class_names(classes)}
+    displayed |= {
+        name for name, n in classes.items() if "__repr__" in _class_level_names(n)
+    }
     out: list[tuple[ast.ClassDef, str]] = []
     for node in body:
         if not isinstance(node, ast.ClassDef):
@@ -5147,6 +5284,14 @@ def _dataclass_dunder_methods(
             continue
         names = [*inherited, *(n for n in _compared_fields(node) if n not in inherited)]
         fields[node.name] = names
+        # A field a subclass declares again keeps its base's place (Python's
+        # order), with the subclass's annotation and repr flag.
+        declared = {
+            f[0]: f for b in node.bases for f in shown.get(_dotted(b) or "", [])
+        }
+        declared.update((f[0], f) for f in _repr_fields(node))
+        shown[node.name] = list(declared.values())
+        repr_fields = [(n, a) for n, a, visible in declared.values() if visible]
         own = _defined_methods(node)
         lines: list[str] = []
 
@@ -5199,6 +5344,24 @@ def _dataclass_dunder_methods(
                 ("__ge__", ">="),
             ):
                 method(dunder, "bool", tuples(op))
+        if (
+            options["repr"]
+            and not repr_bound
+            and "__repr__" not in _class_level_names(node)
+            and all(
+                _has_repr(annotation, displayed | {node.name})
+                or _dotted(annotation) in classes
+                for _, annotation in repr_fields
+            )
+        ):
+            # "Pt(x=" + repr(self.x) + ", y=" + repr(self.y) + ")"
+            text, sep = f'"{qualified}(', ""
+            for n, _ in repr_fields:
+                text += f'{sep}{n}=" + repr(self.{n}) + "'
+                sep = ", "
+            text += ')"'
+            lines.append(f"    def __repr__(self) -> str:\n        return {text}\n")
+            displayed.add(node.name)
         if lines:
             out.append((node, "".join(lines)))
     return out
@@ -5742,7 +5905,7 @@ def _nested_class_bodies(
 
 
 def nested_dataclass_methods(
-    tree: ast.Module, exceptions: set[str]
+    tree: ast.Module, exceptions: set[str], enums: Collection[str] = ()
 ) -> list[tuple[ast.ClassDef, str]]:
     """The generated methods of each dataclass nested in a class or a function
     (#623): what :func:`_dataclass_dunders` and :func:`_dataclass_replacers`
@@ -5753,7 +5916,7 @@ def nested_dataclass_methods(
     out: dict[int, tuple[ast.ClassDef, str]] = {}
     for body, prefix in _nested_class_bodies(tree):
         for node, lines in [
-            *_dataclass_dunder_methods(body, exceptions, prefix),
+            *_dataclass_dunder_methods(body, exceptions, prefix, enums),
             *_dataclass_replacer_methods(body, exceptions, prefix),
         ]:
             done = out.get(id(node), (node, ""))[1]

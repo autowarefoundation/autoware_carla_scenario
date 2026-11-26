@@ -2933,7 +2933,7 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
         """,
         "Fz",
     )
-    assert _methods(block) == {"__eq__", "__ne__"}
+    assert _methods(block) == {"__eq__", "__ne__", "__repr__"}
     assert "return self.a == other.a and self.b == other.b" in block
     assert "return not (self == other)" in block
     ast.parse(block.replace("class Fz", "@extend\nclass Fz", 1))
@@ -2942,15 +2942,19 @@ def test_a_dataclass_gets_eq_and_ne_comparing_its_fields() -> None:
 @pytest.mark.parametrize(
     ("decorator", "methods"),
     [
-        ("@dataclass", {"__eq__", "__ne__"}),
+        ("@dataclass", {"__eq__", "__ne__", "__repr__"}),
+        ("@dataclass(repr=False)", {"__eq__", "__ne__"}),
         # eq=False: Python's identity == and hash (#596), right after the class.
-        ("@dataclass(eq=False)", {"__eq__", "__ne__", "__hash__"}),
-        ("@dataclass(frozen=True)", {"__eq__", "__ne__", "__hash__"}),
-        ("@dataclass(unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
-        ("@dataclass(eq=False, unsafe_hash=True)", {"__eq__", "__ne__", "__hash__"}),
+        ("@dataclass(eq=False)", {"__eq__", "__ne__", "__hash__", "__repr__"}),
+        ("@dataclass(frozen=True)", {"__eq__", "__ne__", "__hash__", "__repr__"}),
+        ("@dataclass(unsafe_hash=True)", {"__eq__", "__ne__", "__hash__", "__repr__"}),
+        (
+            "@dataclass(eq=False, unsafe_hash=True)",
+            {"__eq__", "__ne__", "__hash__", "__repr__"},
+        ),
         (
             "@dataclasses.dataclass(order=True)",
-            {"__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"},
+            {"__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__repr__"},
         ),
     ],
 )
@@ -7432,6 +7436,7 @@ def test_a_nested_dataclass_gets_its_methods_in_its_body() -> None:
         "__eq__",
         "__ne__",
         "__hash__",
+        "__repr__",
         "_acs_with__lanelet",
         "_acs_with__speed",
     }
