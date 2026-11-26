@@ -5987,6 +5987,49 @@ def test_collections_abc_it_cannot_read_is_refused_with_a_hint(
     ast.parse(out)
 
 
+@pytest.mark.parametrize(
+    ("source", "line", "spelled"),
+    [
+        (
+            "import collections\nclass A:\n    xs: collections.abc.Sequence[int]\n",
+            3,
+            "collections.abc.Sequence",
+        ),
+        (
+            "import collections\ndef f(x: collections.abc.Mapping[str, int]): ...\n",
+            2,
+            "collections.abc.Mapping",
+        ),
+        (
+            'import collections as c\nx: "c.abc.Iterable[int]" = []\n',
+            2,
+            "c.abc.Iterable",
+        ),
+        (
+            "import collections\nok = isinstance(1, collections.abc.Sized)\n",
+            2,
+            "collections.abc.Sized",
+        ),
+    ],
+)
+def test_collections_abc_through_import_collections_is_refused(
+    source: str, line: int, spelled: str
+) -> None:
+    # #2515: as `import collections.abc` is.
+    refused = typing_rewrite_refusals(source)
+    assert [r[0] for r in refused] == [line], refused
+    assert f"`{spelled}` is not supported by the check" in refused[0][1]
+    assert "`Sequence`" in refused[0][1] and "from typing" in refused[0][1]
+
+
+def test_collections_abc_of_another_name_is_left_alone() -> None:
+    source = (
+        "import collections as c\ncollections = object()\n"
+        "x = collections.abc.Sequence\ny = 'c.abc.Sequence'\n"
+    )
+    assert typing_rewrite_refusals(source) == []
+
+
 def test_collections_without_abc_is_left_alone() -> None:
     source = "import collections\nfrom collections import deque\n"
     assert typing_rewrites(source) == source
@@ -6165,6 +6208,39 @@ def test_the_exception_hint_fires_on_codons_message() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("message", "hinted"),
+    [
+        (
+            "'Optional[BaseCondition]' does not match expected type "
+            "'Optional[ElapsedTimeCondition]'",
+            True,
+        ),
+        (
+            "'Optional[BaseAction]' does not match expected type "
+            "'Optional[SetSpeedAction]'",
+            True,
+        ),
+        # #2515: unrelated framework types are a plain type error.
+        (
+            "'Optional[BaseCondition]' does not match expected type "
+            "'Optional[BaseAction]'",
+            False,
+        ),
+        (
+            "'Optional[SetSpeedAction]' does not match expected type "
+            "'Optional[MyScenario]'",
+            False,
+        ),
+    ],
+)
+def test_the_optional_subclass_hint_needs_one_family(
+    message: str, hinted: bool
+) -> None:
+    hints = [h for p, h in TYPING_HINTS if p.search(message)]
+    assert any("Optional of a subclass" in h for h in hints) is hinted, hints
+
+
 def test_copy_gets_the_dunders_of_the_declared_fields() -> None:
     source = textwrap.dedent(
         """
@@ -6199,6 +6275,30 @@ def test_copy_gets_the_dunders_of_the_declared_fields() -> None:
     own = out[out.index("class Own:", out.index("@extend")) :]
     assert "def __copy__" not in own and "def __deepcopy__" in own
     assert "class Framework:" not in out and "class Failure:" not in out
+
+
+def test_copy_leaves_out_a_class_var_however_it_is_spelled() -> None:
+    # #2515: an alias of typing, of ClassVar, a string, typing_extensions.
+    source = textwrap.dedent(
+        """
+        import copy
+        import typing as t
+        import typing_extensions
+        from typing import ClassVar as CV
+        class A:
+            a: int = 0
+            b: t.ClassVar[int] = 1
+            c: CV[int] = 2
+            d: "ClassVar[int]" = 3
+            e: typing_extensions.ClassVar[int] = 4
+            f: "CV[int]" = 5
+            g: ClassVar = 6
+        """
+    )
+    out = _without_identity(transform_source(source))
+    assert "r.a = self.a" in out
+    for name in "bcdefg":
+        assert f"r.{name} " not in out, name
 
 
 def test_copy_dunders_need_the_copy_module() -> None:

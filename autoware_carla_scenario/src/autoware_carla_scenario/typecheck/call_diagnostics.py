@@ -25,8 +25,9 @@ import types
 import typing
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Iterator
 from typing import Any, Callable
+
+from .local_bindings import _own_nodes
 
 #: ``no function 'X.__init__' with arguments (X, str, str)``
 _NO_FUNCTION = re.compile(
@@ -40,12 +41,14 @@ _MISMATCH = re.compile(
 )
 #: Codon prints a static string type inside the quotes the check adds.
 _LITERAL_TYPE = re.compile(r"(?<=[\s(,\[])''[^']*''(?=[\s),\]:]|$)")
-#: Frames of the model's own helpers (``_keyword_only``, ``_required_str``,
-#: ``_acs_list`` ...) and of a ``__init__`` that encodes keyword-only
-#: parameters as ``*_kw``: Codon realizing the model, not the author's code.
-_INTERNAL_FRAME = re.compile(
-    r"^(?:_keyword_only|_required_\w+|_acs_\w+)\(|\*_kw\b|\[[^\]\[]*\.codon:\d+\]$"
-)
+#: Frames located in the model (``_keyword_only``, ``_required_str`` ... at
+#: ``[conditions.codon:636]``), of a ``__init__`` that encodes keyword-only
+#: parameters as ``*_kw``, and of the check's own ``_acs_`` helpers, which
+#: the rewritten module calls from the author's file (``_acs_dict_into``,
+#: ``_acs_tuple``, ``_acs_with__lanes`` ... at ``[scenario.py:12]``): Codon
+#: realizing the model, not the author's code.  Any other name says nothing:
+#: the author's own ``_required_speed()`` at ``[scenario.py:30]`` is kept.
+_INTERNAL_FRAME = re.compile(r"^_acs_\w+\(|\*_kw\b|\[[^\]\[]*\.codon:\d+\]$")
 
 Resolver = Callable[[str], Any]
 
@@ -83,19 +86,24 @@ def codon_type(text: str) -> str:
     )
 
 
-def _union_members(node: ast.expr) -> tuple[list[ast.expr], bool]:
+def _flat_union(node: ast.expr) -> tuple[list[ast.expr], bool]:
     """The members of an annotation written ``X | Y``, ``Optional[X]`` or
-    ``Union[X, Y]`` (``typing.`` prefix or not), and whether ``None`` is one."""
+    ``Union[X, Y]`` (any module prefix, inside a string too), nested unions
+    flattened, and whether ``None`` is one.
+
+    Unlike :func:`.transform._union_members`, which splits one level of
+    ``X | Y`` / ``Union[...]`` of the author's annotations, this reads
+    ``Optional`` and Codon's types too."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         try:
-            return _union_members(ast.parse(node.value, mode="eval").body)
+            return _flat_union(ast.parse(node.value, mode="eval").body)
         except SyntaxError:
             return [node], False
     if isinstance(node, ast.Constant) and node.value is None:
         return [], True
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        left, left_none = _union_members(node.left)
-        right, right_none = _union_members(node.right)
+        left, left_none = _flat_union(node.left)
+        right, right_none = _flat_union(node.right)
         return left + right, left_none or right_none
     if isinstance(node, ast.Subscript):
         head = node.value.attr if isinstance(node.value, ast.Attribute) else None
@@ -108,7 +116,7 @@ def _union_members(node: ast.expr) -> tuple[list[ast.expr], bool]:
             members: list[ast.expr] = []
             has_none = head == "Optional"
             for arg in args:
-                inner, inner_none = _union_members(arg)
+                inner, inner_none = _flat_union(arg)
                 members += inner
                 has_none = has_none or inner_none
             return members, has_none
@@ -126,15 +134,40 @@ def canonical_annotation(annotation: ast.expr | str) -> str:
             return annotation.strip()
     else:
         node = annotation
-    members, has_none = _union_members(node)
+    members, has_none = _flat_union(node)
     texts = []
     for member in members:
-        text = re.sub(r"\b(?:\w+\.)+(\w+)", r"\1", ast.unparse(member))
-        text = codon_type(text.strip("'\""))
-        texts.append(re.sub(r",\s+", ",", text))
+        text = _canonical_member(member)
+        if text == "None":
+            has_none = True
+        elif text not in texts:
+            texts.append(text)
     if has_none:
         texts.append("None")
     return " | ".join(texts)
+
+
+#: Codon's capitalized names of the builtin generics.
+_BUILTIN_GENERICS = {"List", "Dict", "Tuple", "Set", "FrozenSet"}
+
+
+def _canonical_member(member: ast.expr) -> str:
+    """One member of a union in the spelling of :func:`canonical_annotation`,
+    the arguments of a generic (``dict[str, Optional[int]]``) included."""
+    if isinstance(member, ast.Subscript):
+        head = re.sub(r"\b(?:\w+\.)+(\w+)", r"\1", ast.unparse(member.value))
+        if head not in ("Literal", "Annotated"):
+            if head in _BUILTIN_GENERICS:
+                head = head.lower()
+            args = (
+                member.slice.elts
+                if isinstance(member.slice, ast.Tuple)
+                else [member.slice]
+            )
+            return f"{head}[{','.join(canonical_annotation(a) for a in args)}]"
+    text = re.sub(r"\b(?:\w+\.)+(\w+)", r"\1", ast.unparse(member))
+    text = codon_type(text.strip("'\""))
+    return re.sub(r",\s+", ",", text)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +187,10 @@ class _Files:
         if path not in self._trees:
             try:
                 text = Path(path).read_text(encoding="utf-8")
-                self._trees[path] = (ast.parse(text), text.splitlines())
+                # The lines ast counts: split at "\n" only, as
+                # `str.splitlines` would also split at a form feed or
+                # "\u2028" a line may hold (read_text made every newline "\n").
+                self._trees[path] = (ast.parse(text), text.split("\n"))
             except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
                 self._trees[path] = None
         return self._trees[path]
@@ -313,10 +349,11 @@ def _default_text(value: Any) -> str:
 
 
 def signature_text(sig: inspect.Signature, hints: dict[str, Any]) -> str:
-    """``a: int, b: str = 'x', *, label: str``."""
+    """``a: int, /, b: str = 'x', *, label: str``."""
     parts: list[str] = []
     star = False
-    for p in sig.parameters.values():
+    params = list(sig.parameters.values())
+    for index, p in enumerate(params):
         if p.kind is p.KEYWORD_ONLY and not star:
             parts.append("*")
             star = True
@@ -332,6 +369,10 @@ def signature_text(sig: inspect.Signature, hints: dict[str, Any]) -> str:
         if p.default is not p.empty:
             text += f" = {_default_text(p.default)}"
         parts.append(text)
+        if p.kind is p.POSITIONAL_ONLY and (
+            index + 1 == len(params) or params[index + 1].kind is not p.POSITIONAL_ONLY
+        ):
+            parts.append("/")
     return ", ".join(parts)
 
 
@@ -434,6 +475,16 @@ def _bind(
             bound[name] = keyword.value
             if got is not None:
                 types_of[name] = got[len(call.args) + offset]
+        elif (
+            param is not None
+            and param.kind is param.POSITIONAL_ONLY
+            and not var_keyword
+        ):
+            return _Problem(
+                f"{label}: '{name}' is positional-only: pass it by position, "
+                f"not as `{name}=...`; {shown}",
+                keyword,
+            )
         elif not var_keyword:
             free = [
                 p.name
@@ -480,7 +531,6 @@ def _bind(
 def _target(
     name: str,
     call: ast.Call,
-    tree: ast.Module,
     resolve_class: Resolver,
     resolve_callable: Resolver,
 ) -> tuple[str, inspect.Signature, dict[str, Any]] | None:
@@ -596,7 +646,7 @@ def call_message(
             name = short
     resolved = None
     try:
-        resolved = _target(name, call, tree, resolve_class, resolve_callable)
+        resolved = _target(name, call, resolve_class, resolve_callable)
     except Exception:  # noqa: BLE001 - only a hint: the callee may not inspect
         pass
     if resolved is None:
@@ -756,10 +806,8 @@ def _own_callee(
         if any(_binds(f, func.id) for f in _enclosing_functions(tree, call.lineno)):
             return None  # a local of that name shadows the callable
         if isinstance(resolve_class(func.id), type):
-            return _target(
-                f"{func.id}.__init__", call, tree, resolve_class, resolve_callable
-            )
-        return _target(func.id, call, tree, resolve_class, resolve_callable)
+            return _target(f"{func.id}.__init__", call, resolve_class, resolve_callable)
+        return _target(func.id, call, resolve_class, resolve_callable)
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
         owner: str | None = None
         if func.value.id == "self":
@@ -768,7 +816,7 @@ def _own_callee(
             owner = func.value.id
         if owner is not None:
             return _target(
-                f"{owner}.{func.attr}", call, tree, resolve_class, resolve_callable
+                f"{owner}.{func.attr}", call, resolve_class, resolve_callable
             )
     return None
 
@@ -936,23 +984,9 @@ def _returning_function(
     if hit is None or hit[0] is None or hit[0].returns is None:
         return None
     function = hit[0]
-    if any(
-        isinstance(n, (ast.Yield, ast.YieldFrom))
-        for stmt in function.body
-        for n in _own_nodes(stmt)
-    ):
+    if any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in _own_nodes(function)):
         return None
     return function, hit[1]
-
-
-def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
-    """*node* and its descendants outside nested functions and lambdas."""
-    yield node
-    for child in ast.iter_child_nodes(node):
-        if not isinstance(
-            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
-        ):
-            yield from _own_nodes(child)
 
 
 def qualified_name(tree: ast.Module, function: ast.AST) -> str:
@@ -1274,7 +1308,8 @@ def slip_hint(
     wrong (#599), or ``None``.  Each is given only when both Codon's message
     and the author's source at the line say it is that slip:
 
-    * ``range(len(xs) / 2)``: ``__new__() cannot be called with ()``;
+    * ``range(len(xs) / 2)``: ``no function 'range.__new__' with arguments
+      (float)`` (``range() cannot be called with (float)`` once refined);
     * ``xs[len(xs) / 2]``: ``__getitem__() cannot be called with (float)``;
     * ``",".join(ints)``: ``'Generator[int]' does not match ... 'Generator[str]'``;
     * ``register_pre_tick(lambda: ...)``: ``... takes 0 arguments (1 given)``
