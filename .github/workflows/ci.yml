@@ -516,10 +516,12 @@ jobs:
         push: "false"
 
     - name: Report the image size
+      env:
+        IMAGE_REF: ${{ steps.pack.outputs.image-ref }}
       run: |
         docker image ls --format \
           '### Scenario image `{{ .Repository }}:{{ .Tag }}` — {{ .Size }}' \
-          "${{ steps.pack.outputs.image-ref }}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          "${IMAGE_REF}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
     # The image is split into four layers so that a second scenario built on
     # the same client and framework re-downloads only its own. Prove it on a
