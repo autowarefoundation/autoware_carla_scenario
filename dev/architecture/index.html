@@ -4611,7 +4611,8 @@ registered a timeout of its own, as a pass or a fail condition.</p>
     }
 
     class SpawnLocation {
-        &lt;&lt;interface&gt;&gt;
+        &lt;&lt;union&gt;&gt;
+        SpawnTransform | SpawnPointIndex
     }
 
     class SpawnTransform {
@@ -4665,6 +4666,8 @@ registered a timeout of its own, as a pass or a fail condition.</p>
 
     class Ros2EgoEntity
 
+    class HilsEgoEntity
+
     class BridgedEgoEntity {
         +requires_goal = true
         +handshake: BridgeHandshake
@@ -4674,13 +4677,14 @@ registered a timeout of its own, as a pass or a fail condition.</p>
     class AutowareEgoEntity
 
     VehicleEntityConfig &lt;|-- EgoConfig
-    SpawnLocation &lt;|.. SpawnTransform
-    SpawnLocation &lt;|.. SpawnPointIndex
+    SpawnLocation .. SpawnTransform : one of
+    SpawnLocation .. SpawnPointIndex : one of
     VehicleEntityConfig --&gt; SpawnLocation
     VehicleEntity --&gt; VehicleEntityConfig
     EgoVehicle &lt;|-- ExternallyDrivenEgo
     ExternallyDrivenEgo &lt;|-- CarlaDriverEntity
     ExternallyDrivenEgo &lt;|-- Ros2EgoEntity
+    ExternallyDrivenEgo &lt;|-- HilsEgoEntity
     ExternallyDrivenEgo &lt;|-- BridgedEgoEntity
     BridgedEgoEntity &lt;|-- AutowareEgoEntity
     BridgedEgoEntity *-- BridgeHandshake
@@ -4712,8 +4716,10 @@ vehicle the backend drives, the ego or an NPC, becomes one of them:
 <code>BackendDriven.route_to</code> hands the backend the route from where the vehicle is,
 through any waypoints, to it. A pedestrian given one lays its walk out on the
 walkable lanelets (<code>PedestrianEntity.route_to</code>), and the <code>RoutingAction</code> walks
-it a tick at a time (<code>PedestrianEntity.walk_on</code>, steered as a <code>RoutingAction</code>
-steers a walker in <code>follow</code> mode) -- so on a pedestrian the action needs the
+it a tick at a time (<code>PedestrianEntity.walk_on</code>): by CARLA's walker controller
+(<code>controller.ai.walker</code>) where the map has a pedestrian navigation mesh, stepped
+along the walk where it has none (and over a road stretch), as
+<a href="../trajectory/">Trajectories</a> describes -- so on a pedestrian the action needs the
 tick loop (<code>BaseAction.needs_tick_loop</code>). The walk is searched on
 <code>coordinate.walk_graph.WalkGraph</code>, not on Lanelet2's routing graph: a crosswalk
 is usually drawn across the walkways it joins, reaching onto them without
@@ -4728,7 +4734,8 @@ with a warning.</p>
 ego actor to drive or told to keep its hands off it. <code>EgoVehicle</code> opts in (TrafficManager drives);
 every <code>ExternallyDrivenEgo</code> opts out: on its own it leaves the actor for something
 outside the scenario, <code>CarlaDriverEntity</code> drives it from an external policy's plan,
-<code>Ros2EgoEntity</code> from ROS 2 nodes' commands, and <code>BridgedEgoEntity</code> leaves it to the
+<code>Ros2EgoEntity</code> from ROS 2 nodes' commands, <code>HilsEgoEntity</code> from the commands of the
+ECUs under test that the HILS bridge forwards, and <code>BridgedEgoEntity</code> leaves it to the
 stack it handed the mission to.</p>
 <p><strong>Where the ego is going</strong>: <code>requires_goal</code> says whether an entity can start without a
 destination. A <code>BridgedEgoEntity</code> (<code>AutowareEgoEntity</code>) cannot — the goal is what makes it move at all — and
@@ -4993,7 +5000,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 06:49:11 UTC"><span class="timeago" datetime="2026-11-25T06:49:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 06:49:11 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 10:43:00 UTC"><span class="timeago" datetime="2026-11-26T10:43:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 10:43:00 UTC">2026-11-26</span>
   </span>
 
     

@@ -3653,8 +3653,20 @@ asked of the ones it did. See <a href="../traffic_backends/">Traffic Backends</a
 <td>Drives the ego from an external policy's plan over the <code>egodriver</code> gRPC contract; given a <code>bridge</code>, starts the policy once a stack serving its world is ready. See <a href="../driver_interface/">External Driver Interface</a>.</td>
 </tr>
 <tr>
-<td><code>SpawnLocation</code> (Protocol)</td>
-<td>Tag interface implemented by spawn-point providers.</td>
+<td><code>Ros2EgoEntity</code> (<code>entity.ros2_entity</code>)</td>
+<td>The ego driven by ROS 2 nodes over DDS (<code>ego.entity=ros2</code>): every tick it publishes the ego's state and applies the command of the highest-priority source among the fresh ones -- a planned trajectory it tracks itself, or a steering/acceleration pair or an Autoware control command it hands to CARLA's Ackermann controller. See <a href="../ros2/">ROS 2 over DDS</a>.</td>
+</tr>
+<tr>
+<td><code>HilsEgoEntity</code> (<code>entity.hils_entity</code>)</td>
+<td>The ego driven by ECUs under test through the resident HILS bridge (<code>ego.entity=hils</code>): tells the bridge the scenario starts and waits for its <code>ready</code>, applies the ECUs' latest command every tick (braking, or holding the last one, when it is stale), and tells the bridge the scenario ends. See <a href="../hils/">HILS</a>.</td>
+</tr>
+<tr>
+<td><code>PedestrianEntity</code>, <code>PedestrianEntityConfig</code></td>
+<td>A pedestrian (a <code>walker.*</code> blueprint, spawned at a <code>SpawnTransform</code>), registered with <code>BaseScenario.register_pedestrian</code>. Not driven by the traffic backend: it moves when an action tells it to -- a <code>WalkStraightAction</code> walks it straight (handed to a backend that walks the scenario's pedestrians, such as SUMO, if there is one), a <code>RoutingAction</code> in <code>driver</code> mode along a route on the walkable lanelets (<code>route_to</code>) or a recorded walk (<code>walk_along</code>), walked a tick at a time (<code>walk_on</code>), in <code>follow</code> or <code>position</code> mode along its trajectory -- and stands still otherwise (see <a href="../architecture/">Architecture</a>, "Who drives the traffic").</td>
+</tr>
+<tr>
+<td><code>SpawnLocation</code></td>
+<td>Where a vehicle spawns: the type alias <code>Union[SpawnTransform, SpawnPointIndex]</code>, one of the two.</td>
 </tr>
 <tr>
 <td><code>SpawnTransform</code></td>
@@ -4163,7 +4175,7 @@ packages, in <code>autoware_carla_scenario.examples.run</code> unless noted:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 07:36:04 UTC"><span class="timeago" datetime="2026-11-26T07:36:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 07:36:04 UTC">2026-11-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 10:43:00 UTC"><span class="timeago" datetime="2026-11-26T10:43:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 10:43:00 UTC">2026-11-26</span>
   </span>
 
     
