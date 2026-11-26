@@ -3088,6 +3088,14 @@ and composite conditions reset their children.</p>
 <td>Time-based triggers.</td>
 </tr>
 <tr>
+<td><code>ActionStateCondition(action_id, state, actions, *, label)</code></td>
+<td>Holds while the action <code>action_id</code> (looked up in <code>actions</code>, a mapping of id to action, on every check, so it may name an action built later) is in <code>state</code>, an <code>ActionState</code> or its OpenSCENARIO name (<code>"completeState"</code>, ...) -- OpenSCENARIO's <code>StoryboardElementStateCondition</code> for an action. The two transition states hold for one tick each.</td>
+</tr>
+<tr>
+<td><code>LaneChangeSettledCondition(entity_name, *, label)</code></td>
+<td>Holds once the vehicle <code>entity_name</code> reports the lane change it was sent on settled (centred on its new lane, for a TrafficManager-driven vehicle); the end of a <code>LaneChangeAction</code>'s run. A change that never happens never settles.</td>
+</tr>
+<tr>
 <td><code>MetricCondition(metric, rule, value, tolerance, *, max_ng_seconds, label)</code></td>
 <td>A fail condition judged once the run is over: the run fails when a built-in metric -- how the ego drove -- met the rule for more than <code>max_ng_seconds</code> in all. Composes with no other condition. See <a href="../metrics/#judging-a-run-on-a-metric">Metrics</a>.</td>
 </tr>
@@ -3096,8 +3104,16 @@ and composite conditions reset their children.</p>
 <td>Relative conditions between two entities: separation, and time to collision along the line joining them. An entity parked under the map (spawned hidden, not yet brought in) is absent as either entity, so these -- and <code>TimeHeadwayCondition</code>, <code>RelativeSpeedCondition</code> and the reference of an entity-frame <code>SpeedCondition</code> -- do not hold for it whichever way round the two are named; for "the ego is near where a hidden entity will appear", use <code>EntityPositionDistanceCondition</code> on that place.</td>
 </tr>
 <tr>
-<td><code>CollisionCondition</code>, <code>EntityExistenceCondition</code></td>
-<td>Safety checks.</td>
+<td><code>CollisionCondition(min_impulse=0.0, target=None, target_type=CollisionTargetType.ANY, *, label)</code></td>
+<td>Fails once the ego collides, through a <code>sensor.other.collision</code> sensor attached to it on the first check, with an impulse of at least <code>min_impulse</code> N·s (non-negative and finite). By default any collision counts, map geometry (a wall, a kerb: no actor) included; <code>target</code> (an entity's <code>role_name</code>) or <code>target_type</code> narrows it to that entity or that class of object, and a targeted one ignores a collision with something that is not an actor. Give <code>target</code> or a <code>target_type</code> other than <code>ANY</code>, not both.</td>
+</tr>
+<tr>
+<td><code>CollisionTargetType</code></td>
+<td>The class of object a <code>CollisionCondition</code> must hit (OpenSCENARIO's <code>ByObjectType</code>), matched by blueprint id prefix: <code>ANY</code> (no restriction, the default), <code>VEHICLE</code> (<code>vehicle.</code>), <code>PEDESTRIAN</code> (<code>walker.</code>), <code>STATIC</code> (<code>static.</code>: street furniture, barriers, props).</td>
+</tr>
+<tr>
+<td><code>EntityExistenceCondition</code></td>
+<td>Safety check.</td>
 </tr>
 <tr>
 <td><code>EntityFilter(names=(), kind=RoadUserKind.ANY, reference="Ego", min_distance_m=None, max_distance_m=None, min_ahead_m=None, max_ahead_m=None, min_left_m=None, max_left_m=None, lanelet_ids=(), include_reference=False)</code></td>
@@ -4147,7 +4163,7 @@ packages, in <code>autoware_carla_scenario.examples.run</code> unless noted:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 05:46:33 UTC"><span class="timeago" datetime="2026-11-26T05:46:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 05:46:33 UTC">2026-11-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 07:36:04 UTC"><span class="timeago" datetime="2026-11-26T07:36:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 07:36:04 UTC">2026-11-26</span>
   </span>
 
     
