@@ -6759,8 +6759,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>208 functions and methods of those modules are <code>UNCALLED</code>
-(67 of them protected helpers, see <em>What is
+<p>205 functions and methods of those modules are <code>UNCALLED</code>
+(66 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6772,7 +6772,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 208 UNCALLED functions and methods, and why</summary>
+<summary>The 205 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6834,11 +6834,8 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>driver.control.ControlConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (<code>dataclasses.fields(cls)</code>) and builds the config with <code>**</code> of a dict</li>
 <li><code>driver.control._config_number</code>: takes a config value of any type (<code>Any</code>: a Hydra node's, a bool, a string or an integer too large for a float among them), which Codon cannot express; only ControlConfig.from_mapping, itself uncalled, calls it</li>
 <li><code>driver.observation.encode_frame_jpeg</code>: encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled</li>
-<li><code>entity.ego.EgoConfig.__repr__</code>: writes the config's fields with <code>repr()</code>, which Codon has neither for a union (the spawn location, <code>Union[SpawnTransform, SpawnPointIndex]</code>) nor for the poses (no <code>__repr__</code>); nothing in the framework calls it, and the <code>__eq__</code> beside it, which compares the same fields, is checked</li>
 <li><code>entity.registry.find_entity_by_role_name</code>: returns the entity of any kind registered under a role (<code>Optional[Any]</code>), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups</li>
 <li><code>entity.registry.register_entity</code>: takes an entity of any kind (<code>Any</code>: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base and scenario_runner call</li>
-<li><code>entity.vehicle_entity.EmergencyVehicleEntityConfig.__repr__</code>: writes the config's fields with <code>repr()</code>, which Codon has neither for a union (the spawn location, <code>Union[SpawnTransform, SpawnPointIndex]</code>) nor for the poses (no <code>__repr__</code>); nothing in the framework calls it, and the <code>__eq__</code> beside it, which compares the same fields, is checked</li>
-<li><code>entity.vehicle_entity._vehicle_config_repr_fields</code>: writes the config's fields with <code>repr()</code>, which Codon has neither for a union (the spawn location, <code>Union[SpawnTransform, SpawnPointIndex]</code>) nor for the poses (no <code>__repr__</code>); nothing in the framework calls it, and the <code>__eq__</code> beside it, which compares the same fields, is checked</li>
 <li><code>environment.RunEnvironment.__init__</code>: takes the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express; what Python and the platform are is the checked _interpreter()'s</li>
 <li><code>environment.RunEnvironment.id</code>: reads the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express through pins; the hash is the checked _environment_id()'s; the checked scenario_runner reads it through environment.codon (MODELLED_IMPORTS)</li>
 <li><code>environment.RunEnvironment.lock</code>: takes a scenario of any class (<code>Any</code>) and reads the installed distributions as RunEnvironment holds and the environment file writes them, <code>dict[str, Any]</code> records of mixed value types (a name, a version or None, and a source whose values direct_url.json gives of any JSON type), which Codon cannot express with _package_pin(); the lock's text is the checked _lock_text()'s</li>
