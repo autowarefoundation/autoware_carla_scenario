@@ -298,7 +298,9 @@ within 4 m running within 60 degrees of its heading, joined on the routing
 graph by following on, a lane change or a short path, the closest sequence
 chosen (`traffic.route_match`) -- and the route goes through where it leaves
 each one. A track that cannot be matched falls back to its waypoints one by
-one, leaving out those no lane route reaches, with a warning. The
+one, leaving out those no lane route reaches, with a warning; a waypoint
+left out takes its time or condition with it (it is neither waited at nor
+paced to, and no arrival is logged for it). The
 TrafficManager is given the route with its own lane changes off (given back
 by `end_route` when a run that watches the route ends), and a route
 ending in a junction is carried on along the lane after it until it is clear
@@ -309,9 +311,11 @@ nothing to time ends as soon as the vehicle has it (as an ego's initial goal
 always has), unless `stop_at_goal` asks for the vehicle to stop there: then
 it runs until the vehicle arrives, its last metres driven by the backend
 itself where it can (`finish_at`); a route written out as waypoints, timed or not, runs until the
-vehicle is within 1 m of its end along the planned path (a timed one then sets
-its driver's speed back to the cruise speed); a pedestrian's ends when it
-arrives.
+vehicle is within 1 m of its end along the planned path (a timed one, or one
+given a `speed`, is then sent the cruise speed -- the speed limit where it
+arrives, or `speed` if that is lower -- as its desired speed, which a
+TrafficManager keeps as a fixed target through later speed zones rather than
+going back to its own); a pedestrian's ends when it arrives.
 
 ### Who drives in follow and position modes, and when it ends
 

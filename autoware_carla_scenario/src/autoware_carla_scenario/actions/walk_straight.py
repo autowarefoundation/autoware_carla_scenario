@@ -13,7 +13,11 @@ from ..constants import tick_seconds_or_fixed
 from ..conditions.base import BaseCondition, ScenarioResult
 from ..coordinate.map_manager import run_carla_map
 from ..entity._walker_ai import BACK_STALL_S, back_progress
-from ..entity.pedestrian_entity import PedestrianEntity, walker_held_speed
+from ..entity.pedestrian_entity import (
+    DEFAULT_WALKING_SPEED_MPS,
+    PedestrianEntity,
+    walker_held_speed,
+)
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..metrics import _driving_lane_at
@@ -28,8 +32,10 @@ __all__ = ["WalkStraightAction"]
 #: A brisk but ordinary walking pace.  `scenario_simulator_v2`'s own
 #: `WalkStraightAction` takes no speed at all, so a scenario transpiled from it
 #: needs a defensible default rather than a zero that would leave the
-#: pedestrian standing in the road.
-DEFAULT_WALKING_SPEED_MS = 1.4
+#: pedestrian standing in the road.  The same constant as the pace a route is
+#: walked at unless told one (``pedestrian_entity.DEFAULT_WALKING_SPEED_MPS``),
+#: kept under this name.
+DEFAULT_WALKING_SPEED_MS: float = DEFAULT_WALKING_SPEED_MPS
 
 # Where a walk that may turn back is (``_phase``).
 _WALKING = "walking"
@@ -105,7 +111,7 @@ class WalkStraightAction(BaseAction):
     Raises:
         ValueError: If *speed_ms*, a turn-back threshold or
             *turn_back_within_m* is negative or not finite (``None`` turns a
-            threshold off).  A negative speed would be read
+            threshold off), or *speed_ms* is a boolean.  A negative speed would be read
             by CARLA as a direction rather than refused, and a pedestrian
             walking backwards through a crossing is not what anyone wrote.
     """
@@ -146,9 +152,11 @@ class WalkStraightAction(BaseAction):
     ) -> None:
         # NaN passes `< 0`: a NaN speed would reach WalkerControl, and a NaN
         # threshold would never trigger.  ``None`` is how a threshold is off.
-        if not math.isfinite(speed_ms) or speed_ms < 0:
+        # A boolean is refused too: True would be read as 1 m/s (#2532).
+        if isinstance(speed_ms, bool) or not math.isfinite(speed_ms) or speed_ms < 0:
             raise ValueError(
-                f"speed_ms must be finite and not negative, not {speed_ms!r}"
+                "speed_ms must be finite and not negative (a number), "
+                f"not {speed_ms!r}"
             )
         if turn_back_ttc_s is not None and (
             not math.isfinite(turn_back_ttc_s) or turn_back_ttc_s < 0

@@ -360,7 +360,11 @@ class RoutingAction(TrajectoryRun):
             ``position`` run ends (default).
         stop_at_goal: In ``driver`` mode, stop a vehicle where its route ends
             and hold it there (its driver asked for no speed) rather than let
-            its driver drive on at its own speed (the default): a road user
+            its driver drive on (the default) at its own speed or at the
+            speed it was last sent: *speed* for an untimed route to a goal,
+            sent as the run starts; for a route followed to its end, paced
+            or given *speed*, the cruise speed sent on arrival (the speed
+            limit there, or *speed* if lower).  With it, a road user
             replayed from a recording waits where it was last seen going.
             A route to a goal is then followed to its end, as a timed one is:
             the run goes on until the vehicle arrives.
@@ -369,7 +373,7 @@ class RoutingAction(TrajectoryRun):
         ValueError: Without a goal or a trajectory, with both, with
             waypoints beside a trajectory, a goal with a mode other than
             ``driver`` or a positive *initial_distance_offset*, a walking
-            speed that is not finite and positive, a *speed* or turn-back
+            speed that is a boolean or not finite and positive, a *speed* or turn-back
             threshold that is negative or not finite, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
@@ -431,8 +435,13 @@ class RoutingAction(TrajectoryRun):
         stop_at_goal: bool = False,
     ) -> None:
         # NaN passes `< 0.0` and would never trigger a turn back; ``None`` is
-        # how a threshold is off.
-        if not math.isfinite(walking_speed) or walking_speed <= 0.0:
+        # how a threshold is off.  A boolean speed is refused too: True would
+        # be read as 1 m/s (#2532).
+        if (
+            isinstance(walking_speed, bool)
+            or not math.isfinite(walking_speed)
+            or walking_speed <= 0.0
+        ):
             raise ValueError(
                 f"walking_speed must be finite and positive, not {walking_speed!r}"
             )
@@ -1014,7 +1023,10 @@ class RoutingAction(TrajectoryRun):
                 # Stopped where it arrived, and held there.
                 entity.set_desired_speed(world, 0.0)
             elif paced.paced or self._given_speed is not None:
-                # Arrived: the driver's own speed again from here on.
+                # Arrived: sent the cruise speed (the speed limit here, or
+                # *speed* if lower) in place of the last paced one.  Not the
+                # driver's own speed: a TrafficManager keeps this target as
+                # it is through later speed zones.
                 entity.set_desired_speed(world, cruise * 3.6)
             self._end_route(world)
             self._finished = True
@@ -1371,7 +1383,10 @@ class RoutingAction(TrajectoryRun):
         is placed on the lanelet under it, which may be one the route cannot
         drive to next -- the opposite lane, a crossing branch.  Such a
         waypoint is left out, with :attr:`_stop_vertices`, rather than lose
-        the whole route; its time or condition goes with it.
+        the whole route; its time or condition goes with it: it is dropped
+        from the pace marks too (:attr:`_mark_points`, :attr:`_mark_lanes`),
+        so it is neither waited at nor paced to, and no arrival at it is
+        logged.
         """
         from ..coordinate.map_manager import MapManager  # noqa: PLC0415
         from ..trajectory.relative_lane import reference_lane_pose_of  # noqa: PLC0415
@@ -1408,6 +1423,11 @@ class RoutingAction(TrajectoryRun):
                 str(self._entity_name),
             )
         self._stop_vertices = indices
+        # The pace marks (and so the gates waited at, the times paced to and
+        # the arrivals logged) are by vertex: only the kept ones (#2532).
+        held = set(indices)
+        self._mark_points = [p for p in self._mark_points if p[0] in held]
+        self._mark_lanes = [m for m in self._mark_lanes if m[0] in held]
         return kept
 
     def _start_pacing(
