@@ -1631,7 +1631,8 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     appends `==` and `!=` (`eq=True`, the default), `<`, `<=`, `>` and `>=`
     (`order=True`) and `hash()` (`frozen=True`, or `unsafe_hash=True`) after
     the module, comparing the fields in order (a dataclass base's first;
-    `field(compare=False)` and `ClassVar` are left out; `InitVar` and
+    `field(compare=False)` and `ClassVar`, however `typing` is imported
+    (`t.ClassVar`), are left out; `InitVar` and
     `KW_ONLY` cannot be imported in the check, see "Standard library names
     Codon lacks"). A method
     the class defines itself is kept. This holds for a dataclass whose bases
@@ -2265,7 +2266,10 @@ nested function or lambda that declares a parameter of the same name, and a
 `type` the module or function binds.
 
 Iteration yields the members in definition order. A member whose value repeats
-an earlier one is an alias, and is skipped, as in Python. A `Flag` or `IntFlag`
+an earlier one is an alias, and is skipped, as in Python: the values are
+compared, not their spelling (`"x"` and `'x'`, `1` and `0x1` are one value).
+An `auto()` member of a `class M(str, Enum)` is Enum's next number as a string
+(`'1'`, as in Python); of a `StrEnum`, its name in lower case. A `Flag` or `IntFlag`
 yields its single-bit members only, as Python 3.11 and later do: a composite
 (`RW = R | W`, `BOTH = 3`), a zero member and an alias are skipped, though
 `Perm["RW"]` finds them. Only the name of the class (and the spellings above) is rewritten, so a
@@ -4137,8 +4141,12 @@ What Codon 0.19 needs that Python does not, beyond
 - **Codon does not run `__post_init__`**: its constructor of a class with
   declared fields only assigns them. The check calls `__post_init__` itself,
   as a dunder method, so its body is checked. A `field(init=False)` set there
-  is given an empty value of its type (`list[float]()`) by the check, so the
-  constructor leaves it out as Python's does.
+  is given an empty value of its type (`list[float]()`, `dict[str, Any]()`
+  for one whose annotation names `Any`, as its `default_factory=dict` is) by
+  the check, so the constructor leaves it out as Python's does. One of a type
+  with no empty value the check can build (`Union[int, str]`) and no default
+  is refused: give it a default (`field(init=False, default=None)` of an
+  `Optional[...]`).
 - **A dataclass field may hold a union or a free-form mapping**: the library
   check constructs a dataclass once per member of a union field
   (`ScenarioRunConfig.scenario`, one of seven scenario configs), as it calls a
@@ -4150,7 +4158,10 @@ What Codon 0.19 needs that Python does not, beyond
   `List[int]` field is built as a `List[int]` as on a `list[int]` one, and a
   `list`, `dict` or `set` factory of an abstract collection as the one the
   `typing` shim maps it onto (`env: Mapping[str, str] =
-  field(default_factory=dict)` as a `Dict[str, str]`, #188).
+  field(default_factory=dict)` as a `Dict[str, str]`, #188). A `tuple`
+  factory of a `Sequence[X]` is built as the `List[X]` a `()` default is
+  (#614), and a lambda of an empty display (`default_factory=lambda: []`) as
+  the factory of its type.
 - **`object.__setattr__(self, "name", value)`**, as a frozen dataclass sets
   its fields, is checked as `self.name = value`: Codon 0.19 has no
   `object.__setattr__`.

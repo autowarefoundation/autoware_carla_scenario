@@ -329,7 +329,8 @@ _DICT_ANNOTATIONS = {
 _NDARRAY_NAMES = {"np.ndarray", "numpy.ndarray"}
 _DTYPE_NAMES = {"np.dtype", "numpy.dtype"}
 _LIST_ANNOTATIONS = {"list", "List", "typing.List"}
-#: Bases that make a class no framework condition or action.
+#: Bases that make a class no framework condition or action, and those of a
+#: dataclass that add no field and no generated method.
 _PLAIN_BASES = {"object", "ABC", "abc.ABC"}
 #: Types Codon displays on its own: a ``list[float]`` is not rewritten.
 _SCALAR_NAMES = {"int", "float", "str", "bool", "bytes", "complex"}
@@ -549,6 +550,59 @@ class _Edits:
                     pass
         return self._fstring_spans
 
+    def code_find(self, start: int, end: int, chars: bytes) -> int:
+        """The offset of the first of *chars* in ``start:end`` outside a
+        comment, or -1.  For a span that holds no string literal (the
+        punctuation between two nodes): a comment there may hold any
+        character (``*,  # keyword-only below *``)."""
+        i = start
+        while i < end:
+            char = self.data[i : i + 1]
+            if char == b"#":
+                i = self.data.find(b"\n", i, end)
+                if i < 0:
+                    return -1
+            elif char in chars:
+                return i
+            i += 1
+        return -1
+
+    def code_rfind(self, start: int, end: int, chars: bytes) -> int:
+        """The offset of the last of *chars* in ``start:end`` outside a
+        comment, or -1: :meth:`code_find` from the end, a line at a time."""
+        line = bisect.bisect_right(self.starts, end) - 1
+        while line >= 0:
+            first = max(self.starts[line], start)
+            code = self.data[first:end]
+            hash_ = code.find(b"#")
+            if hash_ >= 0:
+                code = code[:hash_]
+            found = max(code.rfind(bytes([c])) for c in chars)
+            if found >= 0:
+                return first + found
+            if first <= start:
+                break
+            end = self.starts[line]
+            line -= 1
+        return -1
+
+    def closing_parens(self, after: int, start: int, end: int) -> int:
+        """*end* moved past the ``)`` of each ``(`` between *after* and
+        *start*: the end of the node at ``start:end`` with the parentheses
+        written around it (``-> (`` / ``dict[str, Any]`` / ``)``), which its
+        span leaves out.  ``after:start`` holds no string literal."""
+        opened = 0
+        at = self.code_find(after, start, b"(")
+        while at >= 0:
+            opened += 1
+            at = self.code_find(at + 1, start, b"(")
+        for _ in range(opened):
+            at = self.code_find(end, len(self.data), b")")
+            if at < 0:
+                break
+            end = at + 1
+        return end
+
     def supersede(self, start: int, end: int, text: str) -> None:
         """Like :meth:`replace`, but the edit wins over those already made on
         exactly this span (the first one made on a span otherwise wins)."""
@@ -562,6 +616,25 @@ class _Edits:
         is on another line (``@(`` / ``deco`` / ``)``, ``@`` and a
         backslash).
         """
+        ats, ends = self._decorator_tokens()
+        # Only brackets, blanks and line continuations come between a
+        # decorator's `@` and its expression: the last `@` before it is its.
+        at = bisect.bisect_left(ats, (decorator.lineno, decorator.col_offset))
+        first = ats[at - 1][0] if at else decorator.lineno
+        last = decorator.end_lineno or decorator.lineno
+        end = bisect.bisect_left(ends, last)
+        return range(first, (ends[end] if end < len(ends) else last) + 1)
+
+    def at(self, decorator: ast.expr) -> int:
+        """The offset of *decorator*'s ``@`` (``@ dataclass`` / ``@(`` too)."""
+        ats, _ = self._decorator_tokens()
+        at = bisect.bisect_left(ats, (decorator.lineno, decorator.col_offset))
+        if not at:
+            return self.node_span(decorator)[0] - 1
+        return self.offset(*ats[at - 1])
+
+    def _decorator_tokens(self) -> tuple[list[tuple[int, int]], list[int]]:
+        """:attr:`_tokens`, tokenized on first use."""
         if self._tokens is None:
             ats: list[tuple[int, int]] = []
             ends: list[int] = []
@@ -571,19 +644,14 @@ class _Edits:
                 elif token.type == tokenize.NEWLINE:
                     ends.append(token.start[0])
             self._tokens = (ats, ends)
-        ats, ends = self._tokens
-        # Only brackets, blanks and line continuations come between a
-        # decorator's `@` and its expression: the last `@` before it is its.
-        at = bisect.bisect_left(ats, (decorator.lineno, decorator.col_offset))
-        first = ats[at - 1][0] if at else decorator.lineno
-        last = decorator.end_lineno or decorator.lineno
-        end = bisect.bisect_left(ends, last)
-        return range(first, (ends[end] if end < len(ends) else last) + 1)
+        return self._tokens
 
     def drop_decorators(
         self,
-        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
         dropped: Collection[ast.expr],
+        *,
+        whole_lines: bool = True,
     ) -> None:
         """Remove the *dropped* ones of *node*'s decorators (#595).
 
@@ -597,6 +665,10 @@ class _Edits:
         with the ``def``, and the ``def`` and every line after it stay on
         their lines.  :attr:`moves` records the moved lines, for the
         origin of each line (:meth:`line_origin`).
+
+        *whole_lines* false blanks a dropped decorator above every kept one
+        from its ``@`` to its end only, as a class's are (what precedes and
+        follows it on its lines is kept).
         """
         ids = {id(d) for d in dropped}
         kept = [d for d in node.decorator_list if id(d) not in ids]
@@ -606,9 +678,12 @@ class _Edits:
         for decorator in node.decorator_list:
             lines = self.decorator_lines(decorator)
             if id(decorator) in ids and lines[0] < first:
-                # Up to the line break of its last line: blank lines.
-                start = self.starts[lines[0] - 1]
-                self.replace(start, self.starts[lines[-1]] - 1, "")
+                if whole_lines:
+                    # Up to the line break of its last line: blank lines.
+                    start = self.starts[lines[0] - 1]
+                    self.replace(start, self.starts[lines[-1]] - 1, "")
+                else:
+                    self.replace(self.at(decorator), self.node_span(decorator)[1], "")
         if not kept:
             return
         keep: set[int] = set()
@@ -791,6 +866,16 @@ def _literal_type(node: ast.AST) -> str | None:
         return None
     inner = node.slice
     values = list(inner.elts) if isinstance(inner, ast.Tuple) else [inner]
+    # A negative number (`Literal[-1]`) is the operator on its constant.
+    values = [
+        v.operand
+        if isinstance(v, ast.UnaryOp)
+        and isinstance(v.op, ast.USub)
+        and isinstance(v.operand, ast.Constant)
+        and type(v.operand.value) is int
+        else v
+        for v in values
+    ]
     kinds = {type(v.value) if isinstance(v, ast.Constant) else None for v in values}
     if len(kinds) != 1:
         return None
@@ -861,7 +946,9 @@ def codon_annotation(
         )
         if inner_text is None:
             return None
-        return f"Optional[{inner_text}]" if len(rest) < len(members) else inner_text
+        if len(rest) == len(members):
+            return inner_text
+        return _optional(inner_text)
     subscript = isinstance(node, ast.Subscript)
     base_name = _dotted(node.value if subscript else node)  # type: ignore[attr-defined]
     if base_name is None:
@@ -873,7 +960,7 @@ def codon_annotation(
             class_level=class_level,
             variadic_tuples=variadic_tuples,
         )
-        return None if inner_text is None else f"Optional[{inner_text}]"
+        return None if inner_text is None else _optional(inner_text)
     if subscript and base in _WRAPPERS:
         wrapped = node.slice  # type: ignore[attr-defined]
         if isinstance(wrapped, ast.Tuple):
@@ -907,6 +994,8 @@ def codon_annotation(
         args = (
             list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
         )
+        if not args:
+            return None  # `tuple[()]`: `tuple[]` is no annotation at all
         if base_name not in _CONCRETE_GENERICS and base not in _ABSTRACT_GENERICS:
             return None  # a generic Codon has no model of (NDArray, ...)
         if any(isinstance(a, ast.Constant) and a.value is Ellipsis for a in args):
@@ -935,6 +1024,12 @@ def codon_annotation(
             return None
         return f"{base_name}[{', '.join(c for c in converted if c is not None)}]"
     return None
+
+
+def _optional(text: str) -> str:
+    """``Optional[text]``; *text* itself when it is one already
+    (``Optional[Optional[int]]``, ``Optional[int] | None``)."""
+    return text if text.startswith("Optional[") else f"Optional[{text}]"
 
 
 def callable_annotation(node: ast.AST) -> str | None:
@@ -1126,10 +1221,7 @@ def stored_parameters(
 
 def _members_or_self(node: ast.AST) -> list[ast.AST]:
     """The members of a union or an ``Optional`` (``None`` included), or *node*."""
-    if isinstance(node, ast.Subscript) and _dotted(node.value) in (
-        "Optional",
-        "typing.Optional",
-    ):
+    if isinstance(node, ast.Subscript) and _dotted(node.value) in _OPTIONAL_NAMES:
         return [*_members_or_self(node.slice), ast.Constant(None)]
     members = _union_members(node)
     if members is None:
@@ -1207,9 +1299,15 @@ def _field_default(
             return edits.text(*edits.node_span(kw.value))
         if kw.arg == "default_factory":
             factory = kw.value
-            if isinstance(factory, ast.Lambda):
+            name = (
+                _empty_display(factory.body)
+                if isinstance(factory, ast.Lambda)
+                else None
+            )
+            if isinstance(factory, ast.Lambda) and name is None:
                 return "(" + edits.text(*edits.node_span(factory.body)) + ")"
-            name = _dotted(factory)
+            if name is None:
+                name = _dotted(factory)
             if name in _FACTORY_LITERALS:
                 typed = (
                     codon_annotation(annotation, class_level=True)
@@ -1217,13 +1315,15 @@ def _field_default(
                     and _builtin_generic(annotation.value) == name
                     else None
                 )
+                if typed is None and annotation is not None and name == "tuple":
+                    # As `= ()` is (#614): a `List[X]` of a `Sequence[X]`.
+                    typed = _sequence_list(annotation)
                 if typed is None and annotation is not None:
                     typed = _abstract_factory_type(annotation, name)
                 if (
                     typed is None
-                    and isinstance(annotation, ast.Subscript)
-                    and _builtin_generic(annotation.value) == name
-                    and _names_any(annotation)
+                    and annotation is not None
+                    and _any_collection(annotation) == name
                 ):
                     typed = edits.text(*edits.node_span(annotation))
                 return f"{typed}()" if typed is not None else _FACTORY_LITERALS[name]
@@ -1238,8 +1338,38 @@ def _field_default(
         # every field, so the field gets an empty value of its type to leave
         # it out of the call.
         typed = codon_annotation(annotation, class_level=True)
+        if typed is None and _any_collection(annotation) in ("list", "dict", "set"):
+            # `dict[str, Any]`, as its `default_factory=dict` is built.
+            typed = edits.text(*edits.node_span(annotation))
         if typed is not None:
             return f"{typed}()"
+    return None
+
+
+def _any_collection(annotation: ast.expr | None) -> str | None:
+    """``dict`` for a ``dict[str, Any]`` / ``Dict[str, Any]`` annotation: the
+    builtin a generic that names ``Any`` is of, whose empty value is built as
+    the annotation is written (:func:`_field_default`); else ``None``."""
+    if not (isinstance(annotation, ast.Subscript) and _names_any(annotation)):
+        return None
+    return _builtin_generic(annotation.value)
+
+
+def _empty_display(node: ast.expr) -> str | None:
+    """The factory an empty display stands for (``[]``: ``list``), as the
+    body of ``field(default_factory=lambda: [])``; ``None`` for anything
+    else."""
+    if isinstance(node, (ast.List, ast.Tuple, ast.Dict)) and not (
+        node.keys if isinstance(node, ast.Dict) else node.elts
+    ):
+        return {ast.List: "list", ast.Tuple: "tuple", ast.Dict: "dict"}[type(node)]
+    if (
+        isinstance(node, ast.Call)
+        and not node.args
+        and not node.keywords
+        and _dotted(node.func) in _FACTORY_LITERALS
+    ):
+        return _dotted(node.func)
     return None
 
 
@@ -1273,8 +1403,9 @@ def _abstract_factory_type(annotation: ast.AST, factory: str) -> str | None:
     return concrete + typed[len(base_name) :]
 
 
-#: The abstract collections an empty tuple is a value of, checked as a list.
-_SEQUENCE_NAMES = {"Sequence", "MutableSequence", "Iterable", "Collection"}
+#: The abstract collections an empty tuple is a value of, checked as a list
+#: (those a ``list`` factory builds a value of).
+_SEQUENCE_NAMES = _ABSTRACT_FACTORIES["list"][0]
 
 
 def _sequence_list(annotation: ast.AST) -> str | None:
@@ -1916,11 +2047,15 @@ class _Rewriter(ShadowScopes):
         if self.edits.text(start, end) != converted:
             # An annotation broken over lines keeps its line breaks inside
             # its brackets: the rest of its statement may follow it
-            # (`x: Optional[\n    T\n] = None`).
+            # (`x: Optional[\n    T\n] = None`).  A spelling with no closing
+            # bracket (`str` of a `Literal[...]`) is put in parentheses,
+            # which Codon reads as the type they hold.
             lost = self.edits.text(start, end).count("\n")
             text = converted
             if lost and text.endswith("]"):
                 text = text[:-1] + "\n" * lost + "]"
+            elif lost:
+                text = "(" + text + "\n" * lost + ")"
             self.edits.replace(start, end, text)
 
     def _list_return(self, node: ast.AST) -> str | None:
@@ -2135,12 +2270,10 @@ class _Rewriter(ShadowScopes):
             )
             start = max(last_end, defaults_end)
         else:
-            start = end - 1
-            while start > 0 and self.edits.text(start, start + 1) != "(":
-                start -= 1
-        star = self.edits.text(start, end).rfind("*")
-        if star >= 0:
-            pos = start + len(self.edits.text(start, end)[:star].encode())
+            start = 0  # the `*` is the first one before the keyword's
+        # Not a `*` in a comment after it (`*,  # keyword-only below *`).
+        pos = self.edits.code_rfind(start, end, b"*")
+        if pos >= 0:
             message = _keyword_only_message(args, name, self._class_name)
             self.edits.replace(pos, pos + 1, f'*_acs_kw: _acs_KeywordOnly["{message}"]')
 
@@ -2162,6 +2295,8 @@ class _Rewriter(ShadowScopes):
             if arrow >= 0:
                 before = head[:arrow].rstrip(" ")
                 start = self.edits.offset(node.lineno, 0) + len(before.encode())
+                # With the parentheses around it (`-> (` / `T` / `)`).
+                ann_end = self.edits.closing_parens(start, ann_start, ann_end)
                 breaks = self.edits.text(start, ann_end).count("\n")
                 if breaks and before.endswith(")"):
                     # An annotation over several lines: its line breaks go
@@ -2301,13 +2436,17 @@ class _Rewriter(ShadowScopes):
             self.edits.replace(*self.edits.node_span(name), class_name)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        dropped: list[ast.expr] = []
         for decorator in node.decorator_list:
             target = decorator.func if isinstance(decorator, ast.Call) else decorator
             if _dotted(target) in _DROPPED_CLASS_DECORATORS:
-                start, end = self.edits.node_span(decorator)
-                self.edits.replace(start - 1, end, "")  # with its "@"
+                dropped.append(decorator)
             else:
                 self.visit(decorator)
+        # With its `@`; the kept ones stay contiguous with the `class`, as a
+        # function's do (#595).
+        if dropped:
+            self.edits.drop_decorators(node, dropped, whole_lines=False)
         members = self._rewrite_enum(node)
         if _is_named_tuple(node):
             # `@tuple` is on the line above (tuple_named_tuples).
@@ -2354,14 +2493,15 @@ class _Rewriter(ShadowScopes):
             return None
         kind = enum_base.rsplit(".", 1)[-1]
         members = _enum_members(node)
-        is_auto = _is_auto
 
         value_type = _enum_value_type(node, members)
         if value_type is None:
             return None
         flag = kind in {"Flag", "IntFlag"}
         last = 0
-        seen_values: set[str] = set()
+        #: The values so far, as Python compares them: `"x"` and `'x'`, `1`
+        #: and `0x1` are one value, and a member that repeats it an alias.
+        seen_values: set[object] = set()
         listed: list[str] = []
         #: A flag's value of each member so far, for a composite
         #: (``RW = R | W``) to be worked out, and the bits of the listed ones.
@@ -2371,9 +2511,13 @@ class _Rewriter(ShadowScopes):
         every = 0  # the bits of all the members, composites too
         for stmt, name, value in members:
             number: int | None = None
-            if is_auto(value):
-                if value_type == "str":
+            if _is_auto(value):
+                if value_type == "str" and kind == "StrEnum":
                     text = repr(name.lower())
+                elif value_type == "str":
+                    # A `(str, Enum)`: Enum's next number, made a str ('1').
+                    last += 1
+                    text = repr(str(last))
                 elif flag:
                     number = numbers[name]
                     text = str(number)
@@ -2387,8 +2531,9 @@ class _Rewriter(ShadowScopes):
                     text = str(number)
                 else:
                     text = self.edits.text(*self.edits.node_span(value))
-                if _enum_literal_type(value) == "int" and not is_auto(value):
+                if _enum_literal_type(value) == "int" and not _is_auto(value):
                     last = ast.literal_eval(value)
+            seen = _literal_value(text)
             if number is not None:
                 known[name] = number
                 every |= max(number, 0)
@@ -2397,15 +2542,15 @@ class _Rewriter(ShadowScopes):
                 # definition order: not an alias of one, not a composite
                 # (``RW = R | W``), not zero.
                 single = number > 0 and number & (number - 1) == 0
-                if single and text not in seen_values:
+                if single and seen not in seen_values:
                     listed.append(name)
                     assert mask is not None
                     mask |= number
-            elif text not in seen_values or is_auto(value):
+            elif seen not in seen_values or _is_auto(value):
                 # A member whose value repeats an earlier one is an alias,
                 # which iterating over the enum skips.
                 listed.append(name)
-            seen_values.add(text)
+            seen_values.add(seen)
             self.edits.replace(
                 *self.edits.node_span(stmt),
                 f"{name}: ClassVar[{node.name}] = {node.name}({name!r}, {text})",
@@ -2692,16 +2837,35 @@ class _Rewriter(ShadowScopes):
                 or (_dotted(node.annotation) or "").removeprefix("typing.") == "Final"
             )
         ):
-            self.edits.replace(
-                self.edits.node_span(node.target)[1],
-                self.edits.node_span(node.value)[0],
-                " = ",
-            )
+            self._drop_annotation(node)
         self.visit(node.target)
         if value is not None:
             self.visit(value)
         if listed is not None:
             self.visit(listed)
+
+    def _drop_annotation(self, node: ast.AnnAssign) -> None:
+        """``x: T = value`` becomes ``x = value``.
+
+        Up to the ``=``, so what is between it and the value (a ``(`` around
+        the value, its line breaks) stays.  An annotation broken over lines
+        puts its line breaks inside parentheses around the value, so that no
+        line moves and none ends the statement early (`w: Union[` /
+        `int, str` / `] = x` gives `w = (` / `` / `x)`).
+        """
+        assert node.value is not None
+        start = self.edits.node_span(node.target)[1]
+        value_start, value_end = self.edits.node_span(node.value)
+        equals = self.edits.code_find(
+            self.edits.node_span(node.annotation)[1], value_start, b"="
+        )
+        if equals < 0:
+            return
+        if self.edits.text(start, equals).count("\n"):
+            self.edits.replace(start, equals + 1, " = (")
+            self.edits.replace(value_end, value_end, ")")
+        else:
+            self.edits.replace(start, equals + 1, " =")
 
     def visit_Raise(self, node: ast.Raise) -> None:
         if node.exc is not None and node.cause is not None and _is_none(node.cause):
@@ -3398,6 +3562,17 @@ def _is_auto(value: ast.expr) -> bool:
     return isinstance(value, ast.Call) and _dotted(value.func) in _AUTO
 
 
+def _literal_value(text: str) -> object:
+    """The value of a member's literal *text* (``0x1``: ``1``), or the text
+    when it is no hashable literal."""
+    try:
+        value = ast.literal_eval(text)
+        hash(value)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return text
+    return value
+
+
 def _enum_members(node: ast.ClassDef) -> list[tuple[ast.Assign, str, ast.expr]]:
     """The members of an Enum class body: (the assignment, the name, the value)."""
     members: list[tuple[ast.Assign, str, ast.expr]] = []
@@ -3558,6 +3733,7 @@ def class_body_refusals(source: str) -> list[tuple[int, str]]:
         *builtin_base_refusals(tree),
         *replace_refusals(tree),
         *enum_value_refusals(tree),
+        *init_false_refusals(source),
     ]
 
 
@@ -4835,10 +5011,41 @@ def _enum_lookups(enums: list[_EnumInfo]) -> list[tuple[str, str]]:
     return out
 
 
-#: Bases of a dataclass that add no field and no generated method.
-_PLAIN_BASES = {"object", "ABC", "abc.ABC"}
-_NOT_FIELDS = {"ClassVar", "typing.ClassVar", "InitVar", "dataclasses.InitVar"}
-_NOT_FIELDS |= {"KW_ONLY", "dataclasses.KW_ONLY"}
+#: Annotations of a dataclass's class body that declare no field (besides
+#: a ``ClassVar`` however ``typing`` is imported, :func:`_names_class_var`).
+_NOT_FIELDS = {"InitVar", "dataclasses.InitVar", "KW_ONLY", "dataclasses.KW_ONLY"}
+
+
+def _names_class_var(annotation: ast.expr) -> bool:
+    """Whether *annotation* is a ``ClassVar``, by whatever module it is read.
+
+    ``ClassVar[T]`` / ``ClassVar``, and also ``t.ClassVar[T]`` /
+    ``t.ClassVar`` of a ``typing`` (or ``typing_extensions``) imported under
+    another name: a dataclass has no field of either, so its constructor
+    takes none (#2511), and its ``==`` and ``replace`` neither.
+    """
+    if isinstance(annotation, ast.Subscript):
+        annotation = annotation.value
+    name = _dotted(annotation) or ""
+    return name == "ClassVar" or name.endswith(".ClassVar")
+
+
+def _field_annotation(annotation: ast.expr) -> ast.expr:
+    """*annotation* parsed out of its string (``x: "Plan"``); one that does
+    not parse (``x: "a b"``) as written, typed as no field is."""
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            return ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return annotation
+    return annotation
+
+
+def _declares_no_field(annotation: ast.expr) -> bool:
+    """Whether a class-body *annotation* is a ``ClassVar``, an ``InitVar`` or
+    ``KW_ONLY``, which declare no field of a dataclass."""
+    head = annotation.value if isinstance(annotation, ast.Subscript) else annotation
+    return _dotted(head) in _NOT_FIELDS or _names_class_var(head)
 
 
 def _dataclass_options(node: ast.ClassDef) -> dict[str, bool] | None:
@@ -4868,12 +5075,7 @@ def _compared_fields(node: ast.ClassDef) -> list[str]:
     for stmt in node.body:
         if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
             continue
-        annotation = stmt.annotation
-        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-            annotation = ast.parse(annotation.value, mode="eval").body
-        if isinstance(annotation, ast.Subscript):
-            annotation = annotation.value
-        if _dotted(annotation) in _NOT_FIELDS:
+        if _declares_no_field(_field_annotation(stmt.annotation)):
             continue
         value = stmt.value
         if isinstance(value, ast.Call) and _dotted(value.func) in _FIELD_FUNCTIONS:
@@ -5170,6 +5372,50 @@ def _replace_problem(call: ast.Call) -> str | None:
     return None
 
 
+def init_false_refusals(source: str) -> list[tuple[int, str]]:
+    """The ``field(init=False)`` fields of a dataclass with no default whose
+    type the check cannot build an empty value of (``Union[int, str]``), as
+    (line, message).
+
+    Codon's constructor takes every field: the check gives such a field the
+    empty value of its type (:func:`_field_default`), and without one, the
+    constructor would require the field Python's leaves out.
+    """
+    tree = ast.parse(source)
+    edits = _Edits(source.encode().splitlines(keepends=True))
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or _dataclass_options(node) is None:
+            continue
+        for stmt in node.body:
+            if (
+                isinstance(stmt, ast.AnnAssign)
+                and isinstance(stmt.target, ast.Name)
+                and isinstance(stmt.value, ast.Call)
+                and _dotted(stmt.value.func) in _FIELD_FUNCTIONS
+                and any(
+                    k.arg == "init"
+                    and isinstance(k.value, ast.Constant)
+                    and k.value.value is False
+                    for k in stmt.value.keywords
+                )
+                and _field_default(stmt.value, edits, stmt.annotation) is None
+            ):
+                annotation = ast.get_source_segment(source, stmt.annotation)
+                out.append(
+                    (
+                        stmt.lineno,
+                        f"{node.name}.{stmt.target.id} is a field(init=False) of "
+                        f"`{annotation}`, which the check cannot build an empty "
+                        "value of: Codon's constructor takes every field, so it "
+                        "would require this one. Give it a default "
+                        "(`field(init=False, default=None)` of an `Optional[...]`), "
+                        "or annotate it with a type Codon can check",
+                    )
+                )
+    return out
+
+
 def replace_refusals(tree: ast.Module) -> list[tuple[int, str]]:
     """The ``dataclasses.replace`` calls :func:`lower_replace_calls` cannot
     lower, as (line, message)."""
@@ -5197,21 +5443,27 @@ def lower_replace_calls(tree: ast.Module, edits: _Edits) -> None:
     thunk ("'a' is an invalid keyword argument for class_thunk_dispatch()",
     #494).
 
-    Only the text between the arguments is edited, so the values keep the
-    rewrites made inside them and every call stays on its lines.
+    Only the text from each comma to the keyword's ``=`` is edited, so the
+    values keep the rewrites made inside them and the parentheses around
+    them (``a=(k * 2.0)``), and every call stays on its lines.
     """
     for call in _replace_calls(tree):
         if _replace_problem(call) is not None or not call.keywords:
             continue
-        previous = call.args[0]
+        previous: ast.AST = call.args[0]
         for keyword in call.keywords:
             start = edits.node_span(previous)[1]
-            end = edits.node_span(keyword.value)[0]
-            comma = edits.text(start, end).find(",")
-            if comma < 0:
+            keyword_start = edits.offset(keyword.lineno, keyword.col_offset)
+            comma = edits.code_find(start, keyword_start, b",")
+            equals = edits.code_find(
+                keyword_start + len(str(keyword.arg)),
+                edits.node_span(keyword.value)[0],
+                b"=",
+            )
+            if comma < 0 or equals < 0:
                 break
-            edits.replace(start + comma, end, f").{replace_method(str(keyword.arg))}(")
-            previous = keyword.value
+            edits.replace(comma, equals + 1, f").{replace_method(str(keyword.arg))}(")
+            previous = keyword
 
 
 #: Bases a class of no ``__init__`` may have and stay a plain mixin (#626).
@@ -5349,15 +5601,11 @@ def _replaceable_fields(node: ast.ClassDef) -> list[tuple[str, ast.expr, bool]] 
     for stmt in node.body:
         if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
             continue
-        annotation = stmt.annotation
-        text = annotation.value if isinstance(annotation, ast.Constant) else None
-        if isinstance(text, str):
-            annotation = ast.parse(text, mode="eval").body
+        annotation = _field_annotation(stmt.annotation)
         head = annotation.value if isinstance(annotation, ast.Subscript) else annotation
-        kind = _dotted(head)
-        if kind in ("InitVar", "dataclasses.InitVar"):
+        if _dotted(head) in ("InitVar", "dataclasses.InitVar"):
             return None
-        if kind in _NOT_FIELDS:
+        if _declares_no_field(annotation):
             continue
         init = True
         value = stmt.value
