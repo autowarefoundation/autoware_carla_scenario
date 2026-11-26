@@ -2641,8 +2641,9 @@ stopped, <code>cancel</code> says so on one line and exits 1. The same 120 s lim
 <code>sbatch</code>, and the kept record, as above hold for <code>resubmit</code>; should the
 collect job's <code>sbatch</code> time out, the array runs all the same and <code>scenario</code>
 says how to collect it by hand.</p>
-<p><code>status</code>, <code>collect</code> and <code>cancel</code> take nothing but the batch directory. The
-options of the others (<code>scenario-slurm &lt;command&gt; --help</code> says the same):</p>
+<p><code>status</code>, <code>collect</code> and <code>cancel</code> take nothing but the batch directory (and
+<code>--own-files</code>, below). The options of the others (<code>scenario-slurm &lt;command&gt;
+--help</code> says the same):</p>
 <table>
 <thead>
 <tr>
@@ -2699,6 +2700,13 @@ options of the others (<code>scenario-slurm &lt;command&gt; --help</code> says t
 </tr>
 </tbody>
 </table>
+<p>Before the command, <code>--own-files</code> (<code>scenario-slurm --own-files collect
+outputs/...</code>) reads none of the batch's records -- its manifest, submission
+records, task statuses and case outcomes -- through a symbolic link, the
+record's own or a directory's between it and the batch directory
+(<code>slurm/results/</code>, say): one reached through a link is taken as missing. The
+results viewer runs <code>resubmit</code>, <code>collect</code> and <code>cancel</code> with it, as its SLURM
+panel shows no such record; without it, links are followed.</p>
 <p>A task that raised, every failed attempt of a case and a native crash in a
 task leave a <a href="../crash_reports/">crash report</a> in the batch's <code>crash_reports/</code>,
 as a local batch's do. A case's report runs the case again on its own, with
@@ -3291,7 +3299,7 @@ another's <code>auto</code> build uses it rather than build again.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 09:02:20 UTC"><span class="timeago" datetime="2026-11-25T09:02:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 09:02:20 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 18:34:37 UTC"><span class="timeago" datetime="2026-11-26T18:34:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 18:34:37 UTC">2026-11-26</span>
   </span>
 
     
