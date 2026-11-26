@@ -455,6 +455,9 @@ def test_an_ambiguous_frame_of_one_error_leaves_another_error_alone(
         "Aborted (core dumped)\n",
         "partial output\nAborted\n",
         "Segmentation fault (core dumped)\n",
+        # bash's report, after the wrapper script's line and the process id.
+        "codon.sh: line 3:  4242 Segmentation fault      (core dumped) codon build\n",
+        "/opt/codon.sh: line 12: 77 Aborted                 codon build -llvm\n",
     ],
 )
 def test_a_crash_codon_reports_is_one(output: str) -> None:

@@ -187,13 +187,16 @@ _ERROR = re.compile(r"error: ?(?P<message>.*)$")
 #: escapes stripped) that is no error of Codon's: its own failed assertion
 #: (``seqassert``: ``Assert failed:\t<message>``, then ``Expression:`` and
 #: ``Source:`` lines, then ``abort()``), or a shell's report of a signal, as
-#: a wrapper script around Codon prints it alone on a line (``Aborted (core
-#: dumped)``, ``Segmentation fault``).  Never a substring: an error's text
-#: may name a class ``Aborted`` (#2519).  A signal Codon dies of without a
-#: shell is its negative return code.
+#: a wrapper script around Codon prints it: alone on a line from ``dash``
+#: (``Aborted (core dumped)``, ``Segmentation fault``), after the script's
+#: line and the process id from ``bash`` (``codon.sh: line 3:  4242
+#: Segmentation fault      (core dumped) codon build ...``).  Never a
+#: substring: an error's text may name a class ``Aborted`` (#2519).  A signal
+#: Codon dies of without a shell is its negative return code.
 _CRASH_LINE = re.compile(
     r"^(?:Assert failed:"
-    r"|(?:Aborted|Segmentation fault)(?: \(core dumped\))?[ \t]*$)"
+    r"|(?:Aborted|Segmentation fault)(?: \(core dumped\))?[ \t]*$"
+    r"|\S.*: line \d+: +\d+ (?:Aborted|Segmentation fault)(?:\s|$))"
 )
 #: Codon's error on ``t.count(x)`` / ``t.index(x)`` of a tuple left as
 #: written, as in a compile without the rewrite (#609).
