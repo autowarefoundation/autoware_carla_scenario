@@ -888,6 +888,10 @@ class HilsBridge:
                 if self._started:
                     self._run_steps("shutdown", strict=False)
         finally:
+            # A scenario whose end failed is over all the same: a second
+            # close() does not end it again on closed devices.
+            self._active = False
+            self._ego = None
             self._started = False
             self._close_all()
 

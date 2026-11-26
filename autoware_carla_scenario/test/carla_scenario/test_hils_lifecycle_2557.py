@@ -281,6 +281,11 @@ def test_close_closes_everything_when_ending_the_scenario_fails() -> None:
     assert ("send", "can://vcan1") in log
     assert ("close", "can://vcan0") in log and ("close", "can://vcan1") in log
     assert bridge.link_address is None
+    # The scenario is over: a second close() neither ends it again nor sends.
+    assert not bridge.active
+    sent = len(log)
+    bridge.close()
+    assert len(log) == sent
 
 
 # -- a CARLA server that goes down ---------------------------------------------------
@@ -294,23 +299,26 @@ def test_the_bridge_waits_for_a_carla_that_goes_down_and_comes_back() -> None:
         carla_module=carla,
         open_channel=_opener([], "", RuntimeError()),
     )
-    timers = [
-        threading.Timer(0.3, down.set),
-        threading.Timer(0.9, down.clear),
-        threading.Timer(1.5, bridge.stop),
-    ]
-    for timer in timers:
-        timer.start()
-    try:
-        bridge.run()  # returns at the stop, not with CARLA's RuntimeError
-    finally:
-        for timer in timers:
-            timer.cancel()
-        bridge.close()
-    assert carla.refused >= 1
+    bridge.connect()
+    first = bridge._world
+
+    def quiet_step() -> bool:
+        # A quiet period has passed: the next missed tick refreshes the world.
+        bridge._last_tick = time.monotonic() - 1.0
+        return bridge.step(0.0)
+
+    down.set()
+    # Not CARLA's RuntimeError: the world held is kept, and waited on.
+    assert quiet_step() is False
+    assert quiet_step() is False
+    assert carla.refused == 2
+    assert bridge._world is first
+    down.clear()
+    assert quiet_step() is False
     # Once back, the world was taken anew.
-    assert len(carla.worlds) >= 2
+    assert len(carla.worlds) == 2
     assert bridge._world is carla.worlds[-1]
+    bridge.close()
 
 
 def test_the_scan_for_an_ego_waits_for_a_carla_that_is_down() -> None:
