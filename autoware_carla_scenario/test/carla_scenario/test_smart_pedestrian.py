@@ -603,6 +603,27 @@ class TestSmartPedestrianControllerAction:
         action = SmartPedestrianControllerAction("walker1", keyframes=str(good))
         assert action.label == "smart_pedestrian"
 
+    @pytest.mark.parametrize(
+        "given, absent, entry", [("x", "y", '"x": 1'), ("y", "x", '"y": -2.5')]
+    )
+    def test_a_keyframe_with_one_of_x_and_y_is_refused(
+        self, tmp_path: Path, given: str, absent: str, entry: str
+    ) -> None:
+        # #2553: its root was dropped, the pose left where the motion began.
+        bad = tmp_path / "bad.json"
+        bad.write_text(
+            '{"keyframes": [{"time_s": 1.0, %s, "joints": {"pelvis": [0, 0, 1]}}]}'
+            % entry
+        )
+        with pytest.raises(
+            ValueError,
+            match=(
+                f"not a keyframes file \\(the keyframe at 1.0 s gives {given} "
+                f"without {absent}: give both or neither\\)"
+            ),
+        ):
+            SmartPedestrianControllerAction("walker1", keyframes=str(bad))
+
     def test_a_malformed_keyframes_file_is_refused(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text('{"keyframes": [{"joints": {}}]}')

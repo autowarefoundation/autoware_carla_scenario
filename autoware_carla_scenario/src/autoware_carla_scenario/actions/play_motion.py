@@ -18,7 +18,7 @@ from ..entity_role import EntityRole
 from ..kinematics.vector import Vector3
 from ..kinematics.walker_motion import WalkerVelocities, world_seconds
 from ..utils.clearance import HIDDEN_BELOW_M
-from ..pedestrian.poser import WalkerPoser
+from ..pedestrian.poser import WalkerPoser, motion_frame
 from ..pedestrian.soma import SomaMotion, load_soma_motion
 from .base import BaseAction, TickTiming
 
@@ -215,12 +215,10 @@ class PlayMotionAction(BaseAction):
         if not self._playing:
             return
         elapsed = world_seconds(world) - self._started_at
-        # The tolerance absorbs the clock's summing error: 20 ticks of 0.05 s
-        # can read 0.9999999999999998 s (ElapsedTimeCondition).
-        if self._duration_s is not None and elapsed >= self._duration_s - 1e-9:
+        frame = motion_frame(elapsed, self._motion.fps, self._duration_s)
+        if frame is None:
             self._stop()
             return
-        frame = int(math.floor(elapsed * self._motion.fps + 1e-9))
         count = self._motion.frame_count
         if frame >= count:
             if not self._loop:

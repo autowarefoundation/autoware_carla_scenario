@@ -41,6 +41,7 @@ from autoware_carla_scenario.pedestrian.skeleton import (
     rotator,
     swing,
 )
+from autoware_carla_scenario.pedestrian.poser import motion_frame
 from autoware_carla_scenario.pedestrian.soma import SOMA_JOINTS, load_soma_motion
 from autoware_carla_scenario.entity.registry import register_entity, unregister_entity
 
@@ -847,3 +848,16 @@ class TestStanding:
         assert standing.check(scene.world, 3 * DT) is None
         scene.walker.x = 1.4 * DT
         assert standing.check(scene.world, 4 * DT) is None
+
+
+def test_the_motion_clock_turns_into_frames() -> None:
+    # 10 ticks of 0.1 s read 0.9999999999999999 s: it is frame 30 of a
+    # 30 fps motion, and the end of a 1 s one.
+    clock = 0.0
+    for _ in range(10):
+        clock += 0.1
+    assert clock < 1.0
+    assert motion_frame(clock, 30.0, None) == 30
+    assert motion_frame(clock, 30.0, 1.0) is None
+    assert motion_frame(0.5, 30.0, 1.0) == 15
+    assert motion_frame(0.0, 30.0, None) == 0
