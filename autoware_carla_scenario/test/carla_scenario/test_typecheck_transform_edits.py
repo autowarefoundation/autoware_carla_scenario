@@ -334,6 +334,20 @@ def test_an_init_false_field_with_no_empty_value_is_refused() -> None:
     )
 
 
+def test_an_init_false_field_of_a_dataclass_with_its_own_init_is_kept() -> None:
+    # Its own `__init__` constructs it and sets the field, as Codon's does:
+    # the check compiled these before (#2521).
+    source = _INIT_FALSE.replace("b: int = 0", "u: Union[int, str] = field(init=False)")
+    own = source + (
+        "\n    def __init__(self, a: int) -> None:\n"
+        "        self.a = a\n"
+        "        self.u = 1\n"
+    )
+    assert init_false_refusals(own) == []
+    no_init = source.replace("@dataclass\n", "@dataclass(init=False)\n")
+    assert init_false_refusals(no_init) == []
+
+
 # F. Empty defaults typed like their siblings.
 
 

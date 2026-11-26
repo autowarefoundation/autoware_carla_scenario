@@ -5379,13 +5379,17 @@ def init_false_refusals(source: str) -> list[tuple[int, str]]:
 
     Codon's constructor takes every field: the check gives such a field the
     empty value of its type (:func:`_field_default`), and without one, the
-    constructor would require the field Python's leaves out.
+    constructor would require the field Python's leaves out.  A dataclass
+    with an ``__init__`` of its own (``@dataclass(init=False)``, or one its
+    body defines) is constructed by that one, which sets the field.
     """
     tree = ast.parse(source)
     edits = _Edits(source.encode().splitlines(keepends=True))
     out = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef) or _dataclass_options(node) is None:
+            continue
+        if _defines_own_init(node):
             continue
         for stmt in node.body:
             if (
@@ -5414,6 +5418,29 @@ def init_false_refusals(source: str) -> list[tuple[int, str]]:
                     )
                 )
     return out
+
+
+def _defines_own_init(node: ast.ClassDef) -> bool:
+    """Whether the dataclass *node* is constructed by an ``__init__`` of its
+    own: its body defines one, or its ``@dataclass(init=False)`` generates
+    none."""
+    if any(
+        isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and stmt.name == "__init__"
+        for stmt in node.body
+    ):
+        return True
+    return any(
+        isinstance(decorator, ast.Call)
+        and _dotted(decorator.func) in ("dataclass", "dataclasses.dataclass")
+        and any(
+            kw.arg == "init"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is False
+            for kw in decorator.keywords
+        )
+        for decorator in node.decorator_list
+    )
 
 
 def replace_refusals(tree: ast.Module) -> list[tuple[int, str]]:

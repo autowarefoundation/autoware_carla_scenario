@@ -4146,7 +4146,9 @@ What Codon 0.19 needs that Python does not, beyond
   the check, so the constructor leaves it out as Python's does. One of a type
   with no empty value the check can build (`Union[int, str]`) and no default
   is refused: give it a default (`field(init=False, default=None)` of an
-  `Optional[...]`).
+  `Optional[...]`). A dataclass with an `__init__` of its own (one its body
+  defines, or `@dataclass(init=False)`) is constructed by that one, and is
+  not refused.
 - **A dataclass field may hold a union or a free-form mapping**: the library
   check constructs a dataclass once per member of a union field
   (`ScenarioRunConfig.scenario`, one of seven scenario configs), as it calls a
