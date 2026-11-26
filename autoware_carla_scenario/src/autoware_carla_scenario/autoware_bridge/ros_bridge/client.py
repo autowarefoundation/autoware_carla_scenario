@@ -7,8 +7,8 @@ turn-indicator command (``ReportTurnIndicators``).  The scenario framework
 hosts the server
 (:class:`~autoware_carla_scenario.autoware_bridge.grpc_server.GrpcAutowareBridgeServer`);
 the ``scenario_bridge`` node (:mod:`.node`) is the client and dials it,
-opening an ``insecure_channel`` to its address.  Kept free of ``rclpy`` so it can be unit tested against an
-in-process server.
+opening an ``insecure_channel`` to its address.  Kept free of ``rclpy`` so it
+can be unit tested against an in-process server.
 """
 
 from __future__ import annotations

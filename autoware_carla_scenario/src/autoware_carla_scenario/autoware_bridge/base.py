@@ -492,7 +492,7 @@ class AutowareBridge(ABC):
 
     @property
     def client_address(self) -> Optional[str]:
-        """``host:port`` for the interface node to dial, once :meth:`start` ran.
+        """``host:port`` for the ``scenario_bridge`` node to dial, after :meth:`start`.
 
         ``None`` for a bridge with no address of its own.
         """

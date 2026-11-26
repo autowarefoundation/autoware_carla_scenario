@@ -59,7 +59,7 @@ message Vector3 {
 
 message Quaternion {
   // wxyz convention (matching the splatsim / gsplat and alpasim common.Quat
-  // convention). The interface node converts to/from ROS geometry_msgs
+  // convention). The scenario_bridge node converts to/from ROS geometry_msgs
   // (xyzw) internally.
   double w = 1;
   double x = 2;
