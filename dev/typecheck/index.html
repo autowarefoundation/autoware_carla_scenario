@@ -3995,7 +3995,8 @@ value whose members are <code>int</code>, not as a type: it becomes <code>int</c
     appends <code>==</code> and <code>!=</code> (<code>eq=True</code>, the default), <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code>
     (<code>order=True</code>) and <code>hash()</code> (<code>frozen=True</code>, or <code>unsafe_hash=True</code>) after
     the module, comparing the fields in order (a dataclass base's first;
-    <code>field(compare=False)</code> and <code>ClassVar</code> are left out; <code>InitVar</code> and
+    <code>field(compare=False)</code> and <code>ClassVar</code>, however <code>typing</code> is imported
+    (<code>t.ClassVar</code>), are left out; <code>InitVar</code> and
     <code>KW_ONLY</code> cannot be imported in the check, see "Standard library names
     Codon lacks"). A method
     the class defines itself is kept. This holds for a dataclass whose bases
@@ -4890,7 +4891,10 @@ assignment, a loop or comprehension variable, an import, a nested <code>def</cod
 nested function or lambda that declares a parameter of the same name, and a
 <code>type</code> the module or function binds.</p>
 <p>Iteration yields the members in definition order. A member whose value repeats
-an earlier one is an alias, and is skipped, as in Python. A <code>Flag</code> or <code>IntFlag</code>
+an earlier one is an alias, and is skipped, as in Python: the values are
+compared, not their spelling (<code>"x"</code> and <code>'x'</code>, <code>1</code> and <code>0x1</code> are one value).
+An <code>auto()</code> member of a <code>class M(str, Enum)</code> is Enum's next number as a string
+(<code>'1'</code>, as in Python); of a <code>StrEnum</code>, its name in lower case. A <code>Flag</code> or <code>IntFlag</code>
 yields its single-bit members only, as Python 3.11 and later do: a composite
 (<code>RW = R | W</code>, <code>BOTH = 3</code>), a zero member and an alias are skipped, though
 <code>Perm["RW"]</code> finds them. Only the name of the class (and the spellings above) is rewritten, so a
@@ -8486,8 +8490,14 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>Codon does not run <code>__post_init__</code></strong>: its constructor of a class with
   declared fields only assigns them. The check calls <code>__post_init__</code> itself,
   as a dunder method, so its body is checked. A <code>field(init=False)</code> set there
-  is given an empty value of its type (<code>list[float]()</code>) by the check, so the
-  constructor leaves it out as Python's does.
+  is given an empty value of its type (<code>list[float]()</code>, <code>dict[str, Any]()</code>
+  for one whose annotation names <code>Any</code>, as its <code>default_factory=dict</code> is) by
+  the check, so the constructor leaves it out as Python's does. One of a type
+  with no empty value the check can build (<code>Union[int, str]</code>) and no default
+  is refused: give it a default (<code>field(init=False, default=None)</code> of an
+  <code>Optional[...]</code>). A dataclass with an <code>__init__</code> of its own (one its body
+  defines, or <code>@dataclass(init=False)</code>) is constructed by that one, and is
+  not refused.
 - <strong>A dataclass field may hold a union or a free-form mapping</strong>: the library
   check constructs a dataclass once per member of a union field
   (<code>ScenarioRunConfig.scenario</code>, one of seven scenario configs), as it calls a
@@ -8499,7 +8509,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>List[int]</code> field is built as a <code>List[int]</code> as on a <code>list[int]</code> one, and a
   <code>list</code>, <code>dict</code> or <code>set</code> factory of an abstract collection as the one the
   <code>typing</code> shim maps it onto (<code>env: Mapping[str, str] =
-  field(default_factory=dict)</code> as a <code>Dict[str, str]</code>, #188).
+  field(default_factory=dict)</code> as a <code>Dict[str, str]</code>, #188). A <code>tuple</code>
+  factory of a <code>Sequence[X]</code> is built as the <code>List[X]</code> a <code>()</code> default is
+  (#614), and a lambda of an empty display (<code>default_factory=lambda: []</code>) as
+  the factory of its type.
 - <strong><code>object.__setattr__(self, "name", value)</code></strong>, as a frozen dataclass sets
   its fields, is checked as <code>self.name = value</code>: Codon 0.19 has no
   <code>object.__setattr__</code>.
@@ -9273,7 +9286,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 02:05:55 UTC"><span class="timeago" datetime="2026-11-26T02:05:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 02:05:55 UTC">2026-11-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 03:59:26 UTC"><span class="timeago" datetime="2026-11-26T03:59:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 03:59:26 UTC">2026-11-26</span>
   </span>
 
     
