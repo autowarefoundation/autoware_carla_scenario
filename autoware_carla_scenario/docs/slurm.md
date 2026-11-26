@@ -128,8 +128,9 @@ stopped, `cancel` says so on one line and exits 1. The same 120 s limit on
 collect job's `sbatch` time out, the array runs all the same and `scenario`
 says how to collect it by hand.
 
-`status`, `collect` and `cancel` take nothing but the batch directory. The
-options of the others (`scenario-slurm <command> --help` says the same):
+`status`, `collect` and `cancel` take nothing but the batch directory (and
+`--own-files`, below). The options of the others (`scenario-slurm <command>
+--help` says the same):
 
 | Command | Option | |
 |---|---|---|
@@ -142,6 +143,14 @@ options of the others (`scenario-slurm <command> --help` says the same):
 | `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With nothing to resubmit, it collects at once, but only with an explicit `--wait` (and not with `--dry-run`) |
 | `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight or its sbatch timed out less than 600 s after its record was made |
 | `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option, and on an error reading the batch |
+
+Before the command, `--own-files` (`scenario-slurm --own-files collect
+outputs/...`) reads none of the batch's records -- its manifest, submission
+records, task statuses and case outcomes -- through a symbolic link, the
+record's own or a directory's between it and the batch directory
+(`slurm/results/`, say): one reached through a link is taken as missing. The
+results viewer runs `resubmit`, `collect` and `cancel` with it, as its SLURM
+panel shows no such record; without it, links are followed.
 
 A task that raised, every failed attempt of a case and a native crash in a
 task leave a [crash report](crash_reports.md) in the batch's `crash_reports/`,

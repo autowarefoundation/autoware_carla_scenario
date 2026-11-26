@@ -93,9 +93,18 @@ class BatchPaths:
     The paths, and which submissions the batch holds:
     :class:`~autoware_carla_scenario.slurm.manifest.BatchLayout` derives from
     it, and reads the files.
+
+    With *own_files* (the results viewer's, #2549), the batch's records are
+    read only when they are its own: neither the file nor a directory
+    between it and *batch_dir* (``slurm``, ``slurm/results``, ...) is a
+    symbolic link, which may name a file outside the viewer's base
+    (:meth:`own`).  One that is not is taken as missing.  The
+    ``scenario-slurm`` commands follow links, as they always have, unless
+    given ``--own-files`` (as the viewer runs them).
     """
 
     batch_dir: Path
+    own_files: bool = False
 
     @property
     def root(self) -> Path:
@@ -130,10 +139,24 @@ class BatchPaths:
     def logs(self) -> Path:
         return self.root / "logs"
 
+    def own(self, path: Path) -> bool:
+        """Whether the batch's file *path* may be read: always, unless
+        *own_files*; then only when neither *path* nor a directory between
+        it and *batch_dir* is a symbolic link."""
+        if not self.own_files:
+            return True
+        probe = path
+        while probe != self.batch_dir and probe != probe.parent:
+            if probe.is_symlink():
+                return False
+            probe = probe.parent
+        return True
+
     def submissions(self) -> list[int]:
-        """The indices of the batch's submissions, in order."""
+        """The indices of the batch's submissions, in order (none under a
+        ``slurm/submissions`` that is not the batch's own: :meth:`own`)."""
         directory = self.root / "submissions"
-        if not directory.is_dir():
+        if not directory.is_dir() or not self.own(directory):
             return []
         return sorted(
             int(p.stem)
