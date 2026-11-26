@@ -173,7 +173,9 @@ PCs), run the playbooks with the variables `--setup-vars` prints.
 ### Keeping it resident
 
 The bridge waits for a CARLA server that is not up yet, and for runs, for as
-long as it runs; Ctrl-C or SIGTERM end a running scenario (its `scenario_end`
+long as it runs -- a server that goes down or restarts meanwhile is waited for
+again, and a run that starts while it cannot be reached gets an `error` (its
+run fails) rather than no answer; Ctrl-C or SIGTERM end a running scenario (its `scenario_end`
 steps), run the `shutdown` steps and close the devices. A step that waits (a
 `wait` or a `sleep`) in any phase but `shutdown` ends at once on SIGTERM rather
 than wait out its timeout: a stop during `startup` ends the startup steps (the
@@ -183,7 +185,9 @@ still go. The `shutdown` steps always run whole.
 The bridge takes the `runner.listen` address before the `startup` steps: one
 it cannot listen at (a port in use) ends `scenario-hils` with status 1 and a
 one-line error before anything reaches the ECUs, and no `shutdown` step is sent
-either. A systemd unit keeps it
+either. So does a device that cannot be opened (a `vcan` interface that is not
+there, a missing DBC file, an option its codec does not take): the devices
+opened before it are closed again. A systemd unit keeps it
 up across reboots:
 
 ```ini

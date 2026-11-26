@@ -454,10 +454,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         for key, value in message.items():
             if key not in fields or not isinstance(value, (int, float)):
                 continue
-            try:
-                number = command_value(float(value))
-            except OverflowError:  # an integer too large for a float
-                number = None
+            number = command_value(value)
             if number is not None:
                 values[key] = number
                 continue

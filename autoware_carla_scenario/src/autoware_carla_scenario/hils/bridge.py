@@ -105,6 +105,7 @@ __all__ = [
     "INSTALL_HINT",
     "HilsBridge",
     "HilsListenError",
+    "HilsOpenError",
     "HilsStepError",
     "HilsUnavailableError",
 ]
@@ -162,6 +163,13 @@ class HilsListenError(RuntimeError):
     """The bridge could not listen for runs at ``runner.listen`` (the port is
     taken, or the address is not the machine's); raised before any startup
     step is sent."""
+
+
+class HilsOpenError(RuntimeError):
+    """A device's channel could not be opened (a ``vcan`` interface that is
+    not there, a codec file that is missing, an option its codec does not
+    take); raised before any startup step is sent, the devices opened
+    before it closed again."""
 
 
 class _Stopping(HilsStepError):
@@ -489,14 +497,10 @@ class _SensorDevice:
             )
         actor, self._actor = self._actor, None
         if actor is not None:
-            try:
-                actor.stop()
-                if actor.is_alive:
-                    actor.destroy()
-            except Exception:  # noqa: BLE001 - the ego (and its sensors) may be gone
-                logger.debug(
-                    "%s: the sensor was gone already", self.spec.name, exc_info=True
-                )
+            # The ego (and its sensors) may be gone: not worth a warning.
+            _discard(
+                actor, self.spec.name, logging.DEBUG, "the sensor was gone already"
+            )
         # Not needed for correctness (the generation is): what is stale need
         # not wait in memory for the next flush.
         _drain_queue(self._received)
@@ -662,14 +666,20 @@ class _SensorDevice:
             self._thread.join(timeout=5.0)
 
 
-def _discard(actor: Any, name: str) -> None:
-    """Stop and destroy a sensor *actor* that never became a device's."""
+def _discard(
+    actor: Any,
+    name: str,
+    level: int = logging.WARNING,
+    failure: str = "failed to destroy the sensor",
+) -> None:
+    """Stop and destroy a sensor *actor* (by default one that never became a
+    device's); a failure is logged at *level*, as *failure*."""
     try:
         actor.stop()
         if actor.is_alive:
             actor.destroy()
     except Exception:  # noqa: BLE001 - the failure being raised matters more
-        logger.warning("%s: failed to destroy the sensor", name, exc_info=True)
+        logger.log(level, "%s: %s", name, failure, exc_info=True)
 
 
 def _drain_queue(items: "queue.Queue[Any]") -> None:
@@ -776,7 +786,14 @@ class HilsBridge:
     # -- set-up and shut-down ------------------------------------------------
 
     def open_devices(self) -> None:
-        """Open every device's channel, and receive on those that need it."""
+        """Open every device's channel, and receive on those that need it.
+
+        Raises:
+            HilsOpenError: A device's channel could not be opened (hilspy's
+                error; an ``OSError``: a missing interface or file; a
+                ``TypeError`` or ``ValueError``: an option hilspy refuses);
+                the devices opened before it stay open, for :meth:`close`.
+        """
         waited: Dict[str, List[Tuple[str, Mapping[str, Any]]]] = {}
         for phase in self.config.lifecycle.values():
             for step in phase:
@@ -786,7 +803,10 @@ class HilsBridge:
             options: Dict[str, Any] = dict(spec.options)
             if self.clock is not None:
                 options["clock"] = self.clock
-            channel = self._open(spec.url, spec.codec, **options)
+            try:
+                channel = self._open(spec.url, spec.codec, **options)
+            except (self._hilspy.Error, OSError, TypeError, ValueError) as exc:
+                raise HilsOpenError(f"{spec.name}: {spec.url}: {exc}") from exc
             self._channels[spec.name] = channel
             logger.info("%s: %s (%s)", spec.name, spec.url, spec.codec)
             if spec.sensor is not None:
@@ -809,10 +829,13 @@ class HilsBridge:
 
         The link's address is taken first, so that one the bridge cannot
         listen at fails before anything reaches the ECUs (nor do the
-        ``shutdown`` steps run then: no startup step did, #2277).
+        ``shutdown`` steps run then: no startup step did, #2277).  So does a
+        device that cannot be opened: the devices opened before it are closed
+        again, and the bridge is not started (#2557).
 
         Raises:
             HilsListenError: The bridge cannot listen at ``runner.listen``.
+            HilsOpenError: A device's channel could not be opened.
             HilsStepError: A startup step failed.
         """
         if self._started:
@@ -825,8 +848,13 @@ class HilsBridge:
                 raise HilsListenError(
                     f"runner.listen {address}: {exc.strerror or exc}"
                 ) from exc
+        try:
+            self.open_devices()
+        except BaseException:
+            # Nothing was sent: what opened closes again, no shutdown step.
+            self._close_all()
+            raise
         self._started = True
-        self.open_devices()
         self._run_steps("startup", strict=True)
         if self._link is not None:
             self._link.start()
@@ -847,33 +875,52 @@ class HilsBridge:
             self._wait_for_ego()
 
     def close(self) -> None:
-        """End a running scenario, run the ``shutdown`` steps, close everything."""
-        if self._active:
-            self._finish()
-        if self._started:
-            self._run_steps("shutdown", strict=False)
-        if self._link is not None:
-            self._link.close()
-            self._link = None
-        for receiver in self._receivers.values():
-            receiver.close()
-        for sensor_device in self._sensors:
-            sensor_device.close()
-        for message_device in self._messages:
-            message_device.stop()
-        for channel in self._channels.values():
-            channel.close()
+        """End a running scenario, run the ``shutdown`` steps (once started),
+        close everything.
+
+        Everything is closed even when ending the scenario or a step fails
+        (#2557); such a failure is raised after."""
+        try:
+            try:
+                if self._active:
+                    self._finish()
+            finally:
+                if self._started:
+                    self._run_steps("shutdown", strict=False)
+        finally:
+            # A scenario whose end failed is over all the same: a second
+            # close() does not end it again on closed devices.
+            self._active = False
+            self._ego = None
+            self._started = False
+            self._close_all()
+
+    def _close_all(self) -> None:
+        """Close the link, the receivers, the sensors, the periodic messages and
+        the channels -- each, even when one before it fails (logged)."""
+        link, self._link = self._link, None
+        closers: List[Tuple[str, Callable[[], None]]] = []
+        if link is not None:
+            closers.append(("the run link", link.close))
+        closers += [(name, r.close) for name, r in self._receivers.items()]
+        closers += [(s.spec.name, s.close) for s in self._sensors]
+        closers += [(m.spec.name, m.stop) for m in self._messages]
+        closers += [(name, c.close) for name, c in self._channels.items()]
         self._receivers.clear()
         self._sensors.clear()
         self._messages.clear()
         self._channels.clear()
-        self._started = False
+        for name, close in closers:
+            try:
+                close()
+            except Exception:  # noqa: BLE001 - the others must still close
+                logger.exception("%s: failed to close", name)
 
     # -- lifecycle steps -----------------------------------------------------
 
     def _run_steps(self, phase: str, strict: bool) -> None:
         """Run *phase*'s steps; the first failure raises when *strict*, else
-        each is logged and the rest still run.  The ``warmup`` steps follow
+        each is logged -- an unexpected error too -- and the rest still run.  The ``warmup`` steps follow
         the world while they wait (:meth:`_pump`).
 
         Once the bridge is stopping (:meth:`stop`), a step that waits (a
@@ -899,6 +946,11 @@ class HilsBridge:
                     if strict:
                         raise HilsStepError(f"{phase}: {exc}") from exc
                     logger.warning("%s: %s", phase, exc)
+                except Exception:
+                    if strict:
+                        raise
+                    # Not a step's own failure: the other steps still run.
+                    logger.exception("%s: %s failed", phase, step.describe())
         finally:
             if not live:
                 # The clock followed the wall clock meanwhile: the next tick
@@ -917,7 +969,9 @@ class HilsBridge:
             self._pump(lambda: False, step.seconds, live, stoppable)
             return
         if step.kind == "wait":
-            receiver = self._receivers[step.device]
+            receiver = self._receivers.get(step.device)
+            if receiver is None:
+                raise HilsStepError(f"{step.describe()}: {step.device} is not open")
             assert step.name is not None
             name: str = step.name
             if not self._pump(
@@ -931,7 +985,9 @@ class HilsBridge:
                     f"{step.device} sent no {step.name}{expected} within {step.seconds} s"
                 )
             return
-        channel = self._channels[step.device]
+        channel = self._channels.get(step.device)
+        if channel is None:
+            raise HilsStepError(f"{step.describe()}: {step.device} is not open")
         try:
             if step.name is None:
                 channel.send(self._hilspy.Message(data=step.data, id=step.frame_id))
@@ -1013,9 +1069,11 @@ class HilsBridge:
         those an earlier end failed to restore included (#2444).
 
         Raises:
-            HilsStepError: A channel still stops data (the scenario does not
-                start), or a scenario_start or warmup step failed (the
-                scenario is still running, and ends as any other).
+            HilsStepError: A channel still stops data, or CARLA cannot be
+                read (its map, its snapshot: the server is down or
+                restarting, #2557) -- the scenario does not start -- or a
+                scenario_start or warmup step failed (the scenario is still
+                running, and ends as any other).
         """
         assert self._world is not None
         try:
@@ -1026,11 +1084,19 @@ class HilsBridge:
                 f"({', '.join(self._still_cut())}: {exc}); the scenario does "
                 "not start"
             ) from exc
-        self._ego = ego
+        # Read before the scenario is active: a CARLA that fails here leaves
+        # no scenario the run (or the bridge) waits on.
+        try:
+            self._map = self._world.get_map()
+            snapshot = self._world.get_snapshot()
+            self._ego = ego
+            state = self._state(snapshot)
+        except RuntimeError as exc:
+            self._ego = None
+            raise HilsStepError(
+                f"CARLA cannot be read ({exc}); the scenario does not start"
+            ) from exc
         self._active = True
-        self._map = self._world.get_map()
-        snapshot = self._world.get_snapshot()
-        state = self._state(snapshot)
         if state is None:
             state = EgoState(
                 time=float(snapshot.timestamp.elapsed_seconds),
@@ -1327,13 +1393,20 @@ class HilsBridge:
         # start
         if self._active:
             self._finish()
-        if self._client is not None:
-            # The run may have loaded another map: a new world.
-            self._world = self._client.get_world()
-        assert self._world is not None
         ego_id = message.get("ego_id")
         self._run_ego = ego_id if isinstance(ego_id, int) else None
-        ego = self._world.get_actor(int(ego_id)) if isinstance(ego_id, int) else None
+        try:
+            if self._client is not None:
+                # The run may have loaded another map: a new world.
+                self._world = self._client.get_world()
+            assert self._world is not None
+            ego = (
+                self._world.get_actor(int(ego_id)) if isinstance(ego_id, int) else None
+            )
+        except RuntimeError as exc:  # the server is down or restarting (#2557)
+            logger.error("CARLA cannot be read: %s", exc)
+            link.send({"type": "error", "message": f"CARLA cannot be read: {exc}"})
+            return
         if ego is None:
             link.send({"type": "error", "message": f"no ego with actor id {ego_id}"})
             return
@@ -1361,7 +1434,11 @@ class HilsBridge:
             return
         self._next_scan = now + _EGO_SCAN_INTERVAL_S
         assert self._world is not None
-        ego = find_actor_in_world(self._world, self.config.role_name)
+        try:
+            ego = find_actor_in_world(self._world, self.config.role_name)
+        except RuntimeError as exc:  # the server is down or restarting (#2557)
+            logger.debug("no actors to look for the ego in: %s", exc)
+            return
         if ego is None or ego.id == self._run_ego:
             return
         try:
@@ -1434,9 +1511,7 @@ class HilsBridge:
                 # map (a new episode, whose world object is a new one).
                 logger.debug("no tick: %s", exc)
                 self._last_tick = time.monotonic()
-                if self._client is not None:
-                    self._world = self._client.get_world()
-                if self._ego is not None and not self._ego.is_alive:
+                if self._refresh_world():
                     logger.info("the ego is gone")
                     self._finish()
             self._check_ego_wait()
@@ -1466,6 +1541,21 @@ class HilsBridge:
         self._check_ego_wait()
         return True
 
+    def _refresh_world(self) -> bool:
+        """After a quiet period, take the server's world anew (the runner may
+        have loaded another map); whether the scenario's ego is gone.
+
+        A server that cannot be reached (down, or restarting) is still waited
+        for (#2557): the world held is kept, the ego taken to be there, and
+        the next quiet period tries again."""
+        try:
+            if self._client is not None:
+                self._world = self._client.get_world()
+            return self._ego is not None and not self._ego.is_alive
+        except RuntimeError as exc:
+            logger.debug("CARLA cannot be reached: %s; still waiting", exc)
+            return False
+
     def _advance(self, snapshot: "carla.WorldSnapshot") -> None:
         """Advance the clock by the simulated time since the last tick."""
         elapsed = float(snapshot.timestamp.elapsed_seconds)
@@ -1488,8 +1578,13 @@ class HilsBridge:
         the bridge returns without reaching CARLA; :meth:`close` still runs
         the ``shutdown`` steps.
 
+        Once it is up, a CARLA server that goes down or restarts is waited
+        for again (#2557): the quiet period's refresh of the world, and the
+        scans for an ego, try again later.
+
         Raises:
             HilsListenError: The bridge cannot listen at ``runner.listen``.
+            HilsOpenError: A device's channel could not be opened.
             HilsStepError: A startup step failed.
         """
         try:

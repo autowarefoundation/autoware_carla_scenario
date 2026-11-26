@@ -169,19 +169,13 @@ class InputSource:
     scale: float = 1.0
     offset: float = 0.0
 
-    def resolve(self, fields: Mapping[str, Any]) -> Optional[float]:
-        """The command field's value from a decoded message's *fields*;
-        ``None`` when the message lacks the field, it is not a number, or it
-        (scaled) is not finite (NaN, an infinity: a decoded IEEE-float signal,
-        an overflowing scale) or too large for CARLA's 32-bit floats
-        (:func:`~.wire.command_value`), which CARLA must not get."""
-        value = self.scaled(fields)
-        return None if value is None else command_value(value)
-
     def scaled(self, fields: Mapping[str, Any]) -> Optional[float]:
-        """:meth:`resolve`, but a non-finite or out-of-range value is returned
-        (not ``None``), for the caller to report; a number too large for a
-        float is ``inf``."""
+        """The command field's value from a decoded message's *fields*, scaled;
+        ``None`` when the message lacks the field or it is not a number.  It
+        may not be finite (NaN, an infinity: a decoded IEEE-float signal, an
+        overflowing scale; a number too large for a float is ``inf``) or may
+        be too large for CARLA's 32-bit floats: :meth:`InputSpec.values`
+        drops and reports those (:func:`~.wire.command_value`)."""
         if self.field is None:
             return self.constant
         value = fields.get(self.field)

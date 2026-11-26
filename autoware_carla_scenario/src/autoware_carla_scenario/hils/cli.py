@@ -217,6 +217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     from .bridge import (  # noqa: PLC0415
         HilsBridge,
         HilsListenError,
+        HilsOpenError,
         HilsStepError,
         HilsUnavailableError,
     )
@@ -241,8 +242,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         bridge.run()
     except KeyboardInterrupt:
         logger.info("interrupted")
-    except HilsListenError as exc:
-        # Before any startup step: close() sends the ECUs nothing (#2277).
+    except (HilsListenError, HilsOpenError) as exc:
+        # Before any startup step: close() sends the ECUs nothing (#2277,
+        # #2557).
         print(f"scenario-hils: {exc}", file=sys.stderr)
         status = 1
     except HilsStepError as exc:
