@@ -874,7 +874,8 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
     (some ten thousand levels on Python 3.12, a thousand on 3.10, which
     counts the calls on the stack with them), and raises what it raises
     where it does not: a RecursionError, which reading the outcome as a
-    ``dict`` let through too."""
+    ``dict`` let through too -- but for the viewer's session reader, which
+    skips it as unreadable (#2543)."""
     from autoware_carla_scenario.gate.evaluate import _slurm_unrecorded
     from autoware_carla_scenario.ui import slurm_launch
     from autoware_carla_scenario.ui.cases import _slurm_entries
@@ -886,15 +887,18 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
     except RecursionError:
         with pytest.raises(RecursionError):
             layout.read_result(1)
-        for read in (
+        for stopping in (
             lambda: cli._status(layout),
             lambda: unfinished_cases(layout),
             lambda: _slurm_unrecorded(layout.batch_dir),
             lambda: slurm_launch.batch_status(layout.batch_dir),
-            lambda: _slurm_entries(layout.batch_dir),
         ):
             with pytest.raises(RecursionError):
-                read()
+                stopping()
+        # The viewer's session reader skips a document too deep to read,
+        # as any unreadable one, rather than failing the page (#2543).
+        entries = _slurm_entries(layout.batch_dir)
+        assert entries is None or entries[1].get("passed") is not True
         return
     try:
         _written_back(old)
