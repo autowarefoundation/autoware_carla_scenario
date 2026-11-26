@@ -9,14 +9,20 @@
 #                      made the default, so the site is never a 404.
 #   workflow_dispatch  With a `version`, publish the selected ref's docs as that
 #                      version -- for a version whose release never deployed
-#                      its docs (3.1.2, the last release before the move to
-#                      autowarefoundation, is one). The ref's package version
-#                      must match. As in the release workflow, `latest` (and
-#                      the site root) moves to it only when it is the version
-#                      master is at; an older version is published beside the
-#                      others and `latest` stays. Without a `version`, the same
-#                      as a push, and dispatched from master only: from any
-#                      other ref it fails rather than publish that ref as `dev`.
+#                      its docs. The ref's package version must match, and the
+#                      ref must contain this workflow file: GitHub runs a
+#                      dispatched workflow from the selected ref, so a release
+#                      older than this file (3.1.2, the last release before
+#                      the move to autowarefoundation, is one) cannot be
+#                      dispatched here -- finish it with the Release
+#                      workflow's manual run instead, which is dispatched from
+#                      master and checks the release commit out. As in the
+#                      release workflow, `latest` (and the site root) moves to
+#                      it only when it is the version master is at; an older
+#                      version is published beside the others and `latest`
+#                      stays. Without a `version`, the same as a push, and
+#                      dispatched from master only: from any other ref it
+#                      fails rather than publish that ref as `dev`.
 #
 # Pages must be set, once, to deploy from the `gh-pages` branch (Settings ->
 # Pages -> Build and deployment -> Deploy from a branch). This workflow creates
@@ -44,7 +50,7 @@ on:
     inputs:
       version:
         description: >
-          Publish the selected ref's docs as this version (e.g. 3.1.2); it
+          Publish the selected ref's docs as this version (e.g. 3.2.0); it
           becomes `latest` only if it is the version master is at. Leave empty
           to deploy master's docs as `dev` (run from master only).
         required: false

@@ -14,6 +14,7 @@ only be definable *inside* `autoware_carla_scenario`. They no longer have to be.
 ```
 scenario_package_template/
 ├── pyproject.toml                     # declares the entry point (see below)
+├── tests/test_typecheck.py            # runs the static check on the scenario
 └── src/my_scenario_package/
     ├── __init__.py                    # register() — the entry point target
     ├── reach_goal.py                  # the scenario class (BaseScenario)
@@ -21,8 +22,6 @@ scenario_package_template/
     └── conf/scenario/reach_goal/
         └── default.yaml               # a concrete scenario (YAML)
 ```
-
-`tests/test_typecheck.py` (next to `src/`) runs the static check on the scenario.
 
 ## How it plugs in
 

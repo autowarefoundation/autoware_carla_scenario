@@ -111,7 +111,7 @@ jobs:
           BUMP_TYPE: ${{ steps.pr-labels.outputs.bump_type }}
         run: |
           set -euo pipefail
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
           for attempt in 1 2 3 4 5; do
@@ -189,7 +189,11 @@ jobs:
               echo "ERROR: ${sha} does not carry version ${version}"
               exit 1
             fi
-            # Build the docs from the release commit, not from master.
+            # Build the docs from the release commit, not from master. The
+            # local actions used below (setup-env, build-docs) then resolve
+            # from that commit's tree too, so an old release builds with the
+            # actions it shipped with; only publish-docs.sh is read from this
+            # run's commit (see "Deploy to GitHub Pages with mike").
             git checkout --quiet --detach "${sha}"
           elif [ "${BUMP_TYPE}" != "none" ]; then
             version="${BUMPED}"
@@ -325,7 +329,7 @@ jobs:
           LATEST: ${{ steps.version.outputs.latest }}
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           # Retries a push the Docs workflow raced, and prunes the release
           # docs that no longer fit on Pages (see the script). An older

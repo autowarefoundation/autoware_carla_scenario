@@ -277,7 +277,7 @@ explaining further:
 | `framework-path` | uv workspace root supplying the framework. Defaults to the action's own checkout, which is what makes the pinned ref the framework version. Its members are read from `[tool.uv.workspace] members`, globs included. |
 | `slim` | Strips the virtualenv (see above). On by default. |
 | `platforms` | Target platforms. Empty (the default) builds for the runner's own: `linux/amd64` on an x86_64 runner, `linux/arm64` on an arm64 one such as `ubuntu-24.04-arm` — see [Architectures](#architectures). |
-| `cache-scope` | Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other — give two images the same scope to [share it](#sharing-the-build-cache) instead. A given scope is used as is, so give each platform its own. |
+| `cache-scope` | Cache key namespace. Defaults to one scope per image and platform, so images built in the same workflow do not evict each other (a multi-platform `platforms` list shares one scope) — give two images the same scope to [share it](#sharing-the-build-cache) instead. A given scope is used as is, so give each platform its own. |
 
 Outputs: `image-ref`, `tags`, `digest` (pushed images only), `cache-scope`.
 
