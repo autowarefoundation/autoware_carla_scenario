@@ -343,3 +343,56 @@ def test_repr_bound_by_module() -> None:
         """
     )
     assert "Pt" not in _reprs(text)
+
+
+def test_repr_bound_by_module_seen_by_nested_dataclass() -> None:
+    """A nested dataclass's method sees the module's ``repr`` too."""
+    text, _ = _transform(
+        """\
+        from dataclasses import dataclass
+
+
+        def repr(x: int) -> str:
+            return "x"
+
+
+        class Plans:
+            @dataclass
+            class Leg:
+                n: float = 0.0
+        """
+    )
+    assert '"Plans.Leg(' not in text
+
+
+def test_enum_name_shadowed_by_a_plain_class() -> None:
+    """Another module's enum, or a model enum, of the name of a plain class
+    of this module is not the class an annotation here names."""
+    text, _ = transform_source_lines(
+        textwrap.dedent(
+            """\
+            from dataclasses import dataclass
+            from typing import Optional
+
+
+            class Phase:
+                pass
+
+
+            @dataclass
+            class D:
+                p: Optional[Phase] = None
+
+
+            def f() -> None:
+                class FailureCategory:
+                    pass
+
+                @dataclass
+                class E:
+                    c: Optional[FailureCategory] = None
+            """
+        ),
+        enum_classes=["Phase"],
+    )
+    assert _reprs(text) == {}

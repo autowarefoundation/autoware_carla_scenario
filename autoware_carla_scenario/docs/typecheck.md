@@ -1653,7 +1653,8 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     assigns) is kept, and `@dataclass(repr=False)` gets none. It is written
     only where Codon compiles `repr()` of every field shown: `int`, `float`,
     `str`, `bool`, `complex`, a `Literal`, an enum (of the module, another
-    checked module or the model, by its bare name), a class of the module
+    checked module or the model, by its bare name, which no class of the
+    module that is no enum shadows), a class of the module
     that has a `__repr__` (its own or this one, the class itself too), and
     an `Optional`, `list`, `set`, `tuple` or `dict` of those; a field of a
     class of the module without one (shown by the default repr) as it is,
@@ -1662,7 +1663,7 @@ Two things Python does that Codon 0.19 does not are filled in for you:
     as `Path` or `Lanelet2Pose`, a NumPy type) leaves the class with Codon's
     default, as a generated method calling the missing `__repr__` would
     make `repr()` and `str()` of the class, which compile on the default,
-    fail. The same holds for the bases and nesting as `==` (above): a base
+    fail; so does a module that binds a `repr` of its own. The same holds for the bases and nesting as `==` (above): a base
     dataclass's fields come first, a field declared again keeping its
     place, and a nested dataclass gets it at the end of its body (named
     `Plans.Leg`). The check does not run it, so only its type matters.

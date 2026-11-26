@@ -5200,10 +5200,45 @@ def _dataclass_dunders(
     """The methods Python's ``@dataclass`` generates that Codon does not, per
     top-level class (:func:`_dataclass_dunder_methods`), each appended after
     the module with ``@extend``.  Each is (the class, the lines)."""
+    enums, repr_bound = _repr_scope(tree, enums)
     return [
         (node.name, f"\n\n@extend\nclass {node.name}:\n" + lines)
-        for node, lines in _dataclass_dunder_methods(tree.body, exceptions, None, enums)
+        for node, lines in _dataclass_dunder_methods(
+            tree.body, exceptions, None, enums, repr_bound
+        )
     ]
+
+
+def _repr_scope(tree: ast.Module, enums: Collection[str]) -> tuple[set[str], bool]:
+    """What a generated ``__repr__`` may rely on in *tree* (#2536): the names
+    of *enums* no class of the module that is no enum shadows (another
+    module's enum ``Phase`` is not this module's plain ``Phase``, nor is a
+    model enum a local class of its name), and whether the module binds a
+    ``repr`` of its own anywhere (a nested dataclass's method sees the
+    module's)."""
+    shadowing = {
+        n.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ClassDef)
+        and not any(
+            (_dotted(b) or "").rsplit(".", 1)[-1] in _ENUM_BASES for b in n.bases
+        )
+    }
+    return set(enums) - shadowing, _binds_repr(tree.body)
+
+
+def _binds_repr(body: list[ast.stmt]) -> bool:
+    """Whether *body* binds a ``repr`` itself, which is not the builtin."""
+    return any(
+        (isinstance(n, ast.Name) and n.id == "repr" and isinstance(n.ctx, ast.Store))
+        or (
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and n.name == "repr"
+        )
+        or (isinstance(n, ast.alias) and (n.asname or n.name) == "repr")
+        for stmt in body
+        for n in ast.walk(stmt)
+    )
 
 
 def _dataclass_dunder_methods(
@@ -5211,6 +5246,7 @@ def _dataclass_dunder_methods(
     exceptions: set[str],
     prefix: str | None = None,
     enums: Collection[str] = (),
+    repr_bound: bool = False,
 ) -> list[tuple[ast.ClassDef, str]]:
     """The methods Python's ``@dataclass`` generates that Codon does not, per
     class of *body*.
@@ -5235,21 +5271,15 @@ def _dataclass_dunder_methods(
     ``Optional`` or a container of one, a ``Union``, an imported class or
     an alias would make ``repr()`` and ``str()`` of the dataclass, which
     compile on Codon's default without the method, fail; such a class gets
-    none.  *enums* names the enums of other modules and of the model.
+    none.  *enums* names the enums of other modules and of the model that
+    the module does not shadow, and *repr_bound* says the module binds a
+    ``repr`` of its own (:func:`_repr_scope`).
     """
     fields: dict[str, list[str]] = {}
     shown: dict[str, list[tuple[str, ast.expr, bool]]] = {}
-    #: A ``repr`` the module binds itself is not the builtin.
-    repr_bound = any(
-        (isinstance(n, ast.Name) and n.id == "repr" and isinstance(n.ctx, ast.Store))
-        or (
-            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            and n.name == "repr"
-        )
-        or (isinstance(n, ast.alias) and (n.asname or n.name) == "repr")
-        for stmt in body
-        for n in ast.walk(stmt)
-    )
+    #: A ``repr`` the module (*repr_bound*) or *body* binds itself is not
+    #: the builtin.
+    repr_bound = repr_bound or _binds_repr(body)
     classes = {
         n.name: n
         for n in body
@@ -5914,9 +5944,10 @@ def nested_dataclass_methods(
     instead (:func:`transform_source_lines`).  Each is (the class, its
     methods, indented as a class body's by four spaces)."""
     out: dict[int, tuple[ast.ClassDef, str]] = {}
+    enums, repr_bound = _repr_scope(tree, enums)
     for body, prefix in _nested_class_bodies(tree):
         for node, lines in [
-            *_dataclass_dunder_methods(body, exceptions, prefix, enums),
+            *_dataclass_dunder_methods(body, exceptions, prefix, enums, repr_bound),
             *_dataclass_replacer_methods(body, exceptions, prefix),
         ]:
             done = out.get(id(node), (node, ""))[1]
