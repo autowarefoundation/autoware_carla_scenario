@@ -70,7 +70,7 @@ class DockerSettings:
         container_port: The port the service listens on inside.
         gpus: ``"auto"`` (the GPU the preparer placed it on), ``"all"``,
             ``"none"``, or what ``docker run --gpus`` takes (``device=1``,
-            ``"device=0,1"``, a count).  The preparer places on a GPU only a
+            ``"device=0,1"`` in its quotes, a count).  The preparer places on a GPU only a
             backend that asks for GPU memory (``resources.gpu_memory_mb``
             above 0, and the host checked): ``"auto"`` with none
             (``gpu_memory_mb: 0``) passes ``--gpus all``, every GPU, as
@@ -206,9 +206,10 @@ def read_docker_settings(
     a count (``docker run --gpus 2``), neither blank; an absent or null one
     is its default, while ``false`` or a number of the wrong kind is refused
     rather than handed to ``docker`` as ``"False"`` (#2143).  A ``gpus``
-    count is 1 or more (``gpus: 0`` is ``none``), and a backend that takes
-    GPU memory has a ``gpus`` that says which GPUs docker gives it, since the
-    memory is checked on each of them (#2233).  Every key
+    count is 1 or more (``gpus: 0`` is ``none``), a list of devices is in
+    quotes (``'"device=0,1"'``: docker refuses ``device=0,1``, #2539), and a
+    backend that takes GPU memory has a ``gpus`` that says which GPUs docker
+    gives it, since the memory is checked on each of them (#2233).  Every key
     absent or null is its default (#2158): ``pull: null`` is ``missing``,
     not refused.
 
@@ -241,6 +242,8 @@ def read_docker_settings(
             f"{setting_key(backend, 'gpus')} must be a count of 1 or more, "
             f"got {gpus_value!r}; none is gpus: none"
         )
+    if _gpu_request(gpus_value)[0] == _UNQUOTED_LIST:
+        raise ValueError(_unquoted_gpus(backend, gpus_value))
     pull = settings.get("pull")
     if pull is None:
         pull = "missing"
@@ -331,7 +334,8 @@ class DockerBackend:
         on for ``auto``.
 
         Raises:
-            ValueError: If ``gpus`` is a count below 1, or names GPUs that
+            ValueError: If ``gpus`` is a count below 1, lists devices outside
+                quotes (``device=0,1``, which docker refuses), or names GPUs that
                 cannot be told (a UUID, other ``--gpus`` options) for a
                 backend that takes GPU memory.
         """
@@ -344,6 +348,8 @@ class DockerBackend:
                 f"{setting_key(self.name, 'gpus')} must be a count of 1 or more, "
                 f"got {settings.gpus!r}; none is gpus: none"
             )
+        if kind == _UNQUOTED_LIST:
+            raise ValueError(_unquoted_gpus(self.name, settings.gpus))
         if kind == _DEVICES:
             if len(devices) == 1:
                 return replace(settings.resources, gpu=devices[0])
@@ -696,6 +702,7 @@ _AUTO = "auto"
 _ALL = "all"
 _DEVICES = "devices"
 _BAD_COUNT = "bad count"
+_UNQUOTED_LIST = "unquoted list"
 _UNCHECKED = "unchecked"
 
 
@@ -708,20 +715,25 @@ def _whole(text: str) -> bool:
 def _gpu_request(gpus: str) -> tuple[str, list[int]]:
     """Which GPUs a ``gpus`` setting gives the container, and their indices.
 
-    ``none``, ``auto`` and ``all`` are themselves; ``device=N[,M...]``
-    (quoted or not, as ``docker run --gpus '"device=0,1"'`` takes it) is
-    those indices; a count *N* (``N`` or ``count=N``) the first *N*, as
-    docker hands ``--gpus N`` the GPUs ``0`` to ``N-1``, and ``count=all``
-    every one.  A count below 1 is :data:`_BAD_COUNT`; anything else (a
-    UUID, other ``--gpus`` options) is :data:`_UNCHECKED`: the GPUs it
-    gives cannot be told here.  An index named twice (``device=0,0``) is one
-    GPU, listed once, so its memory is not booked twice (#2263).
+    ``none``, ``auto`` and ``all`` are themselves; ``device=N`` (quoted or
+    not) and ``"device=N,M..."`` (quoted, as ``docker run --gpus
+    '"device=0,1"'`` takes it) are those indices; a count *N* (``N`` or
+    ``count=N``) the first *N*, as docker hands ``--gpus N`` the GPUs ``0``
+    to ``N-1``, and ``count=all`` every one.  A count below 1 is
+    :data:`_BAD_COUNT`; a list of devices not in quotes (``device=0,1``) is
+    :data:`_UNQUOTED_LIST`: docker reads its comma as the end of an option,
+    takes ``device=0`` and a count ``1``, and refuses the two together
+    (#2539).  Anything else (a UUID, other ``--gpus`` options) is
+    :data:`_UNCHECKED`: the GPUs it gives cannot be told here.  An index
+    named twice (``"device=0,0"``) is one GPU, listed once, so its memory is
+    not booked twice (#2263).
     """
     text = gpus.strip()
     devices: list[int] = []
     if text == _NONE or text == _AUTO or text == _ALL:
         return text, devices
-    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+    quoted = len(text) >= 2 and text.startswith('"') and text.endswith('"')
+    if quoted:
         text = text[1:-1].strip()
     if text.startswith("count="):
         text = text[len("count=") :].strip()
@@ -735,6 +747,8 @@ def _gpu_request(gpus: str) -> tuple[str, list[int]]:
             devices.append(index)
         return _DEVICES, devices
     if text.startswith("device="):
+        if not quoted and "," in text:
+            return _UNQUOTED_LIST, []
         for item in text[len("device=") :].split(","):
             item = item.strip()
             if not (item != "" and item.isascii() and item.isdigit()):
@@ -745,6 +759,16 @@ def _gpu_request(gpus: str) -> tuple[str, list[int]]:
         if devices:
             return _DEVICES, devices
     return _UNCHECKED, []
+
+
+def _unquoted_gpus(backend: str, gpus: str) -> str:
+    """The error for a ``gpus`` that lists devices outside quotes."""
+    return (
+        f"{setting_key(backend, 'gpus')} {gpus!r} lists its devices outside "
+        "quotes: docker run --gpus reads the comma as the end of an option, "
+        "takes a device and a count, and refuses them together. Quote the "
+        f"list, as docker takes it: gpus: '\"{gpus}\"'"
+    )
 
 
 def _unchecked_gpus(backend: str, gpus: str) -> str:

@@ -75,7 +75,9 @@ The GPU memory is checked on the GPUs `docker run` gives the container:
   fits them all; the message then names the ones the first placement left out;
 - `gpus: device=N`: GPU `N`;
 - `gpus: '"device=N,M"'` (quoted, as `docker run --gpus` takes a list): each
-  GPU listed;
+  GPU listed. Without the quotes (`gpus: device=N,M`) it is refused before
+  anything starts: docker reads the comma as the end of an option, takes
+  `device=N` and a count `M`, and refuses the two together;
 - a count, `gpus: N`: GPUs `0` to `N-1`, the ones `docker run --gpus N`
   gives;
 - `gpus: all`: every GPU this process may use.

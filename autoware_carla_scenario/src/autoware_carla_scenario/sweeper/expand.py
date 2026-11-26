@@ -692,12 +692,6 @@ def _shape(value: Any) -> str:
     return shown(value)
 
 
-def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[str]]:
-    """One override list per lanelet the constraints match, bindings applied
-    (:func:`_lanelet_cases`, without the picks)."""
-    return _lanelet_cases(sweep, lanelet_map)[0]
-
-
 def _lanelet_cases(
     sweep: Mapping[Any, Any], lanelet_map: Any
 ) -> tuple[list[list[str]], list[int]]:
@@ -744,6 +738,9 @@ def _lanelet_cases(
     case_picks: list[int] = []
     # Each distinct case, by its overrides, and the picks that end as it.
     picks_of: dict[tuple[str, ...], list[int]] = {}
+    # Why picks were skipped, for the warning when every one was.
+    binding_failures = 0
+    excluded_picks = 0
     for lid in matched_ids:
         # Key -> (value, who wrote it).  The pick is only the target key's
         # default: a walk-back of the target's own spawn moves it.  Every other
@@ -763,6 +760,7 @@ def _lanelet_cases(
                     lid,
                     exc_info=True,
                 )
+                binding_failures += 1
                 break
             _write_override(
                 values,
@@ -794,6 +792,7 @@ def _lanelet_cases(
                     hit,
                     values[hit][0],
                 )
+                excluded_picks += 1
                 continue
             case = [f"{key}={value}" for key, (value, _) in values.items()]
             # A walk-back can move the target key off the pick, so picks that
@@ -805,7 +804,13 @@ def _lanelet_cases(
                 case_picks.append(lid)
             picks.append(lid)
     if not cases:
-        logger.warning("All lanelets were skipped due to binding failures.")
+        logger.warning(
+            "All %d matched lanelets were skipped: a binding failed for %d, "
+            "and sweep.exclude names the case of %d.",
+            len(matched_ids),
+            binding_failures,
+            excluded_picks,
+        )
     for case_key, picks in picks_of.items():
         if len(picks) > 1:
             logger.info(

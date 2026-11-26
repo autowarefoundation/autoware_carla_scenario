@@ -545,7 +545,7 @@ class TestDockerBackend:
                 Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(0, 2)),
             ),
             (
-                "device=1,3",
+                '"device=1,3"',
                 Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(1, 3)),
             ),
             # An index named twice is one GPU (#2263).
@@ -554,7 +554,7 @@ class TestDockerBackend:
                 Resources(gpu_memory_mb=24000, memory_mb=16000, gpu=0),
             ),
             (
-                "device=1,2,1",
+                '"device=1,2,1"',
                 Resources(gpu_memory_mb=24000, memory_mb=16000, gpus=(1, 2)),
             ),
             # Read around surrounding spaces (#2263).
@@ -575,6 +575,23 @@ class TestDockerBackend:
             ArdyBackend.from_settings({"gpus": gpus})
         with pytest.raises(ValueError, match=r"backends\.ardy\.gpus must be a count"):
             ArdyBackend.from_settings({"gpus": gpus, "gpu_memory_mb": 0})
+
+    @pytest.mark.parametrize("gpus", ["device=0,1", " device=1,2,1 ", "device=0,"])
+    def test_a_device_list_outside_quotes_is_refused(self, gpus: str) -> None:
+        """Docker reads ``device=0,1`` as ``device=0`` and a count ``1``, and
+        refuses them together at ``docker run`` (#2539): it is refused with
+        the settings, GPU memory or not, and the quoted form is named."""
+        for settings in ({"gpus": gpus}, {"gpus": gpus, "gpu_memory_mb": 0}):
+            with pytest.raises(ValueError) as raised:
+                ArdyBackend.from_settings(settings)
+            message = str(raised.value)
+            assert message.startswith(
+                f"backends.ardy.gpus {gpus.strip()!r} lists its devices outside quotes"
+            )
+            assert f"""gpus: '"{gpus.strip()}"'""" in message
+        assert docker_module._gpu_request(f'"{gpus.strip()}"')[0] != (
+            docker_module._UNQUOTED_LIST
+        )
 
     @pytest.mark.parametrize("gpus", ["device=GPU-1234", "driver=nvidia,count=2"])
     def test_gpus_that_cannot_be_checked_are_refused_with_gpu_memory(

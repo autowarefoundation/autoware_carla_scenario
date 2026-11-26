@@ -81,7 +81,6 @@ from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..gate.errored import written_since
 from ..gate.sweep_plan import write_sweep_plan
 from ..rerun import RerunUnavailableError
-from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
 from ..run_outputs import run_output_stems as _run_output_stems
 from ..ui.case_paths import last_result_path
 from ..value_text import shown
@@ -542,26 +541,20 @@ class LaneletConstraintSweeper(Sweeper):
             config=config,
         )
 
-    def _job_output_dir(
+    def _job_paths(
         self, batch: tuple[str, ...], idx: int
-    ) -> tuple[Path, str | None] | None:
-        """Where job *idx* runs *batch*, and the file name of its Hydra job log.
+    ) -> tuple[Path, Path, str | None] | None:
+        """Where job *idx* runs *batch*: the sweep directory
+        (``hydra.sweep.dir``, absolute), where the sweep's plan goes, the
+        job's directory and the file name of its Hydra job log.
 
-        The directory is the one Hydra's launcher gives the job
+        The job's directory is the one Hydra's launcher gives the job
         (``hydra.sweep.dir``/``hydra.sweep.subdir`` of its config, with
         ``hydra.job.num`` = *idx*), computed as ``BasicLauncher.launch`` and
         ``run_job`` compute it.  ``None``, logged, when it cannot be: the
         retry then runs beside what the failed attempt left, and a job given
         up leaves no error marker (``case_errored.json``).
         """
-        paths = self._job_paths(batch, idx)
-        return None if paths is None else (paths[1], paths[2])
-
-    def _job_paths(
-        self, batch: tuple[str, ...], idx: int
-    ) -> tuple[Path, Path, str | None] | None:
-        """:meth:`_job_output_dir`, with the sweep directory
-        (``hydra.sweep.dir``, absolute) first: where the sweep's plan goes."""
         assert self.config is not None
         try:
             if self.hydra_context is None:
@@ -605,7 +598,7 @@ class LaneletConstraintSweeper(Sweeper):
         self, batches: list[tuple[str, ...]], idx_offset: int
     ) -> list[tuple[Path, str | None] | None]:
         """The directory and job log of each of *batches* (job
-        ``idx_offset + i``), as :meth:`_job_output_dir` gives them, after
+        ``idx_offset + i``), as :meth:`_job_paths` gives them, after
         writing the sweep's plan of them (``sweep_plan.json``,
         :mod:`..gate.sweep_plan`) into its sweep directory, merged into any
         plan an earlier sweep left there (a ``--resume-from`` rerun into the

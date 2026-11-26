@@ -1,8 +1,11 @@
 """Hydra Sweeper plugin for lanelet-constraint-based scenario sweeping."""
 
 from .bindings import (
+    AdjacentBinding,
     Binding,
+    MatchedBinding,
     RouteThroughBinding,
+    StopLineApproachBinding,
     StopLineOffsetBinding,
     parse_binding,
 )
@@ -30,6 +33,7 @@ from .lanelet_constraint_sweeper import LaneletConstraintSweeper
 from .map_loader import load_lanelet2_map
 
 __all__ = [
+    "AdjacentBinding",
     "AndConstraint",
     "Binding",
     "Constraint",
@@ -42,11 +46,13 @@ __all__ = [
     "IsJunctionConstraint",
     "LaneletConstraintSweeper",
     "LaneletLengthConstraint",
+    "MatchedBinding",
     "NotConstraint",
     "OnRouteConstraint",
     "OrConstraint",
     "PreviousOfConstraint",
     "RouteThroughBinding",
+    "StopLineApproachBinding",
     "StopLineOffsetBinding",
     "TurnDirectionConstraint",
     "expand_config",

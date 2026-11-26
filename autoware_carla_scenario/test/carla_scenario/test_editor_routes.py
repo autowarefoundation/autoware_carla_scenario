@@ -3251,7 +3251,7 @@ class TestScenarioMap:
             swept_slot,
         )
         from autoware_carla_scenario.editor import map_preview, scenario_map
-        from autoware_carla_scenario.sweeper.expand import _expand_lanelets
+        from autoware_carla_scenario.sweeper.expand import _lanelet_cases
 
         self._offset_from_the_stop_line(store, draft_id)
         document = _document(store, draft_id)
@@ -3264,7 +3264,7 @@ class TestScenarioMap:
         loaded = map_preview._load(document, map_preview.map_paths(document))
         cases = [
             dict(item.split("=", 1) for item in case)
-            for case in _expand_lanelets(sweep, loaded.lanelet_map)
+            for case in _lanelet_cases(sweep, loaded.lanelet_map)[0]
         ]
 
         count = scenario_map.build_map_view(document, load_map=True).pattern_count
