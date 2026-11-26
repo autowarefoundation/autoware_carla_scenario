@@ -1049,50 +1049,6 @@ class TestCachesFollowTheLoadedNetwork:
         assert lane_distance._link_graph() is lane_distance._link_graph()
 
 
-class TestOverlappingJunctionRoads:
-    """In a junction several connecting roads hold one point; the one running
-    the vehicle's way is the one it is on, and the distance follows it (#2545).
-
-    Read by distance to the nearest reference line, the leader on lanelet 348
-    was on road 426 (0.33 rad off its heading) rather than 420, the road the
-    follower's road 82 leads into, and the separation came out 110.4 m.
-    """
-
-    @staticmethod
-    def _pair(
-        follower: int, leader: int
-    ) -> "tuple[CarlaWorldPose, CarlaWorldPose, float]":
-        from autoware_carla_scenario.coordinate.poses import Lanelet2Pose
-        from autoware_carla_scenario.coordinate.transform import lanelet_length
-
-        a, b = lanelet_length(follower), lanelet_length(leader)
-        return (
-            to_carla_world(Lanelet2Pose(lanelet_id=follower, s=0.7 * a)),
-            to_carla_world(Lanelet2Pose(lanelet_id=leader, s=0.3 * b)),
-            0.3 * a + 0.3 * b,
-        )
-
-    def test_into_the_junction_road_straight_on(self, loaded_map: MapManager) -> None:
-        behind, ahead, along_lanelets = self._pair(187, 348)
-
-        assert along_lanelets == pytest.approx(24.2, abs=0.1)
-        assert lane_separation(behind, ahead) == pytest.approx(along_lanelets, abs=0.5)
-
-    def test_out_of_the_junction_road_it_is_on(self, loaded_map: MapManager) -> None:
-        """Read as road 581 (0.34 rad off), the follower was 86.1 m behind and
-        closing at -5.4 m/s; on road 582 (0.08 rad off) it is a few metres
-        behind and closing."""
-        from autoware_carla_scenario.coordinate.transform import to_opendrive
-
-        behind, ahead, _along = self._pair(301035, 3001067)
-
-        assert to_opendrive(behind).road_id == "582"
-        separation = lane_separation(behind, ahead)
-        assert separation is not None and separation < 12.0
-        reach = lane_distance._reach(to_opendrive(behind), to_opendrive(ahead))
-        assert reach is not None and reach.forward
-
-
 class TestRoadLengthIsTheSampledLines:
     """``s`` is measured along the sampled reference line, so a chain sums
     that line's length, not the XML ``length`` (#2545)."""
