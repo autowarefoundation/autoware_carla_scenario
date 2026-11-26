@@ -133,6 +133,36 @@ def test_camera_topics_must_be_unique() -> None:
         Ros2EgoConfig(cameras=(camera, camera))
 
 
+@pytest.mark.parametrize(
+    ("first", "second"), [("/cam/image", "cam/image"), ("cam/image", "/cam/image")]
+)
+def test_a_relative_and_an_absolute_camera_topic_are_the_same_topic(
+    first: str, second: str
+) -> None:
+    """#2561: both are the DDS topic ``rt/cam/image``, which the two cameras'
+    frames would interleave on."""
+    cameras = (
+        Ros2CameraConfig(topic=first, logical_id="a"),
+        Ros2CameraConfig(topic=second, logical_id="b"),
+    )
+    with pytest.raises(
+        ValueError,
+        match=rf"^camera topics must be unique, .*: {first!r} and {second!r} "
+        "are the same topic$",
+    ):
+        Ros2EgoConfig(cameras=cameras)
+
+
+def test_camera_topics_that_differ_once_absolute_are_accepted() -> None:
+    config = Ros2EgoConfig(
+        cameras=(
+            Ros2CameraConfig(topic="/cam/image", logical_id="a"),
+            Ros2CameraConfig(topic="cam/image_b", logical_id="b"),
+        )
+    )
+    assert [camera.topic for camera in config.cameras] == ["/cam/image", "cam/image_b"]
+
+
 def test_from_mapping_builds_the_cameras() -> None:
     config = Ros2EgoConfig.from_mapping(
         {

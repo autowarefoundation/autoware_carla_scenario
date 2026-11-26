@@ -29,12 +29,14 @@ from autoware_carla_scenario.autoware_stack.bridge_node import (
     DOUBLE_PARAMETERS,
     INTEGER_PARAMETERS,
     POSITIVE_PARAMETERS,
+    bridge_command,
     bridge_package_dir,
     bridge_ros_args,
     host_python_root,
     launcher_bridge_parameters,
     liveness_timeout_problem,
     min_liveness_timeout_s,
+    yaml_quoted,
 )
 from autoware_carla_scenario.autoware_stack import (
     DEPENDENCY_IMAGE_REPOSITORY,
@@ -467,6 +469,102 @@ def test_process_group_logs_output(tmp_path: Path) -> None:
     assert log.read_text().strip() == "hello"
 
 
+def _refuse_to_signal(pgid: int, sig: int) -> bool:
+    """``signal_group`` on a group only another user's processes are left in."""
+    raise PermissionError(errno.EPERM, "Operation not permitted")
+
+
+def test_process_group_stop_does_not_raise_when_the_group_cannot_be_signalled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#2561: EPERM (a ``sudo`` child left in the group) escaped stop(),
+    which skipped closing the log."""
+    import autoware_carla_scenario.autoware_stack.launcher as launcher_module
+
+    group = ProcessGroup(["true"], log_path=tmp_path / "out.log")
+    _wait_for(lambda: group.poll() is not None)
+    log = group._log
+    assert log is not None
+    monkeypatch.setattr(launcher_module, "signal_group", _refuse_to_signal)
+    with caplog.at_level(logging.WARNING):
+        assert group.stop() == 0
+    assert log.closed
+    assert group._log is None
+    assert "Could not send SIGKILL to process group" in caplog.text
+    assert "Operation not permitted" in caplog.text
+
+
+def test_process_group_stop_goes_on_through_every_signal_it_cannot_send(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import autoware_carla_scenario.autoware_stack.launcher as launcher_module
+
+    group = ProcessGroup(["sleep", "30"], stop_timeout_s=0.1)
+    sent: list[int] = []
+
+    def refuse(pgid: int, sig: int) -> bool:
+        sent.append(sig)
+        return _refuse_to_signal(pgid, sig)
+
+    monkeypatch.setattr(launcher_module, "signal_group", refuse)
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert group.stop() is None  # still running: nothing reached it
+        assert sent == [
+            int(signal.SIGINT),
+            int(signal.SIGTERM),
+            int(signal.SIGKILL),
+            int(signal.SIGKILL),
+        ]
+    finally:
+        monkeypatch.undo()
+        group.stop()
+
+
+def test_a_command_launcher_whose_stop_cannot_signal_can_start_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2561: the failed stop() left ``_process`` set, and every later start()
+    raised "An Autoware stack is already running"."""
+    import autoware_carla_scenario.autoware_stack.launcher as launcher_module
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    launcher = CommandAutowareLauncher(["true"], log_dir=tmp_path, stop_timeout_s=1)
+    launcher.prepare()
+    launcher.start(name="a", bridge_address="localhost:1")
+    _wait_for(lambda: launcher.poll() is not None)
+    with monkeypatch.context() as patched:
+        patched.setattr(launcher_module, "signal_group", _refuse_to_signal)
+        launcher.stop()
+    assert launcher._process is None
+    launcher.start(name="b", bridge_address="localhost:1")
+    _wait_for(lambda: launcher.poll() is not None)
+    launcher.stop()
+
+
+def test_a_command_launcher_forgets_its_stack_even_if_stopping_it_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2561: ``_process`` is cleared in a ``finally``."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    launcher = CommandAutowareLauncher(["true"], log_dir=tmp_path, stop_timeout_s=1)
+    launcher.prepare()
+    launcher.start(name="a", bridge_address="localhost:1")
+    process = launcher._process
+    assert process is not None
+    _wait_for(lambda: launcher.poll() is not None)
+
+    def interrupted(*, escalate: bool = True) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(process, "stop", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        launcher.stop()
+    assert launcher._process is None
+    monkeypatch.undo()
+    process.stop()
+
+
 @pytest.mark.parametrize(
     "env", [{"A=B": "1"}, {"A": "x\0y"}, {"A\0": "1"}], ids=["equals", "nul", "nul-key"]
 )
@@ -830,6 +928,22 @@ def test_build_output_that_is_not_utf8_is_streamed_with_replacements(
     log = (tmp_path / "out" / "autoware-build.log").read_text(encoding="utf-8")
     assert log == "warning: \ufffd in a source line\nafter\n"
     assert "warning: \ufffd in a source line" in capsys.readouterr().out
+
+
+def test_a_streamed_command_leaves_no_pipe_open(tmp_path: Path) -> None:
+    """#2561: the success path left ``process.stdout`` to the garbage
+    collector, a ResourceWarning for every pull, install and build."""
+    import gc
+    import warnings
+
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        assert launcher._stream(["echo", "hi"], "autoware-pull.log") == 0
+        gc.collect()
+    assert [w for w in caught if issubclass(w.category, ResourceWarning)] == []
+    assert (tmp_path / "out" / "autoware-pull.log").read_text() == "hi\n"
 
 
 class _FailingOutput:
@@ -1532,7 +1646,7 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
             "source /home/aw/autoware/install/setup.bash && "
             '(PYTHONPATH=/opt/autoware_carla_scenario/python"${PYTHONPATH:+:$PYTHONPATH}" '
             "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge --ros-args "
-            "-p bridge_address:=localhost:50052 -p use_sim_time:=true "
+            "-p 'bridge_address:=\"localhost:50052\"' -p use_sim_time:=true "
             "-p parent_pid:=$$ &) && "
             "exec ros2 launch autoware_launch e2e_simulator.launch.xml "
             "bridge_address:=localhost:50052"
@@ -1632,6 +1746,36 @@ def test_a_docker_rm_that_hangs_does_not_hang_stop(
     assert any(c[:2] == ["rm", "--force"] for c in calls())
     assert "did not finish within 1 s" in caplog.text
     assert launcher._container_name is None
+
+
+def test_a_docker_launcher_whose_stop_fails_removes_the_container_and_forgets_it(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2561: as CommandAutowareLauncher, ``_process`` is cleared in a
+    ``finally``; the container is removed all the same."""
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    launcher.start(name="x", bridge_address="localhost:1")
+    try:
+        _wait_for(lambda: len(_stack_runs(calls())) == 1)
+        process = launcher._process
+        assert process is not None
+        container = launcher._container_name
+
+        def interrupted(*, escalate: bool = True) -> int:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(process, "stop", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            launcher.stop()
+        assert launcher._process is None
+        assert launcher._container_name is None
+        assert ["rm", "--force", container] in calls()
+        monkeypatch.undo()
+        process.stop()
+    finally:
+        launcher.close()
 
 
 def test_a_docker_ps_that_hangs_warns_instead_of_hanging_prepare(
@@ -2523,7 +2667,7 @@ def test_command_launcher_fills_in_the_scenario_bridge(
 
     written = out.read_text()
     assert "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge" in written
-    assert "-p bridge_address:=localhost:7" in written
+    assert '-p bridge_address:="localhost:7"' in written
     assert "-p use_sim_time:=true -p auto_engage:=false" in written
 
 
@@ -2893,7 +3037,7 @@ def test_a_null_bridge_parameter_is_the_nodes_default() -> None:
     assert args == [
         "--ros-args",
         "-p",
-        "bridge_address:=h:1",
+        'bridge_address:="h:1"',
         "-p",
         "use_sim_time:=true",
     ]
@@ -2918,7 +3062,104 @@ def test_a_whole_number_for_a_double_parameter_is_passed_as_a_float() -> None:
         "-p",
         "reroute_max_attempts:=3",
         "-p",
-        "map_frame:=map",
+        'map_frame:="map"',
+    ]
+
+
+#: Strings rcl's YAML read of a bare ``-p`` value would refuse, drop or retype.
+_YAML_STRINGS = [
+    "[::1]:50052",  # a bracketed IPv6 address: a YAML syntax error bare
+    "",  # empty: no value at all bare (turn_indicators_topic: "")
+    "123",
+    "1.5",
+    "true",
+    "null",
+    "~",
+    "# not a comment",
+    "- not a list",
+    "a: b",
+    " spaces around ",
+    'a "quoted" \\back\\slash',
+    "caf\u00e9 \u65e5\u672c \U0001f600",
+    "\t\n\r\x00\x1b\x7f\x85\x9f\u2028\u2029\ufffe",
+]
+
+
+@pytest.mark.parametrize("value", _YAML_STRINGS)
+def test_a_string_reads_back_as_itself_from_its_yaml_quoted_form(value: str) -> None:
+    """#2561: rcl reads each ``-p`` value as YAML (libyaml, as yaml's C loader)."""
+    import yaml
+
+    quoted = yaml_quoted(value)
+    assert yaml.safe_load(quoted) == value
+    if hasattr(yaml, "CSafeLoader"):
+        assert yaml.load(quoted, Loader=yaml.CSafeLoader) == value
+
+
+@pytest.mark.parametrize("value", _YAML_STRINGS)
+def test_the_bridge_address_and_string_parameters_reach_rcl_as_strings(
+    value: str,
+) -> None:
+    """#2561: ``bridge_address:=[::1]:50052`` killed the node on its
+    parameter override, and the run waited out boot_timeout_s."""
+    import yaml
+
+    args = bridge_ros_args(value, {"turn_indicators_topic": value})
+    assert args[0] == "--ros-args"
+    assert args[1::2] == ["-p", "-p"]
+    read = {}
+    for override in args[2::2]:
+        name, _, text = override.partition(":=")
+        read[name] = yaml.safe_load(text)
+    assert read == {"bridge_address": value, "turn_indicators_topic": value}
+
+
+def test_the_bridge_command_keeps_the_quotes_through_the_shell(
+    tmp_path: Path,
+) -> None:
+    """#2561: the command is a shell's, which must hand rcl the quoted form."""
+    import yaml
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    out = tmp_path / "args.json"
+    python3 = bin_dir / "python3"
+    python3.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        f"open({str(out)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+    )
+    python3.chmod(0o755)
+    command = bridge_command(
+        "/opt/x", "[::1]:50052", {"turn_indicators_topic": "", "map_frame": "1"}
+    )
+    subprocess.run(  # noqa: S603 - a fixed argv
+        ["bash", "-c", command],
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        check=True,
+    )
+    argv = json.loads(out.read_text())
+    overrides = dict(arg.partition(":=")[::2] for arg in argv if ":=" in arg)
+    assert {name: yaml.safe_load(text) for name, text in overrides.items()} == {
+        "bridge_address": "[::1]:50052",
+        "turn_indicators_topic": "",
+        "map_frame": "1",
+        "parent_pid": int(overrides["parent_pid"]),
+    }
+
+
+def test_a_boolean_and_numbers_stay_unquoted() -> None:
+    args = bridge_ros_args(
+        "h:1",
+        {"use_sim_time": False, "reroute_max_attempts": 2, "rpc_timeout_s": 5},
+    )
+    assert args[3:] == [
+        "-p",
+        "use_sim_time:=false",
+        "-p",
+        "reroute_max_attempts:=2",
+        "-p",
+        "rpc_timeout_s:=5.0",
     ]
 
 

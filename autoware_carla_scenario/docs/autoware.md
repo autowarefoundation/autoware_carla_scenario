@@ -570,6 +570,11 @@ PYTHONPATH=$(uv run python -c "from autoware_carla_scenario.autoware_stack.bridg
 ros2 launch autoware_launch e2e_simulator.launch.xml simulator_type:=carla scenario_mode:=true ...
 ```
 
+rcl reads each `-p` value as YAML, so quote a string parameter that YAML
+would not read as that string -- a bracketed IPv6 address, an empty topic, a
+name that looks like a number -- as a launcher does for every string:
+`-p 'bridge_address:="[::1]:50052"'`, `-p 'turn_indicators_topic:=""'`.
+
 One node and one stack serve every scenario that follows, and every attempt
 of one: nothing removes them between scenarios, as a launcher does. Each
 scenario's bridge -- and each attempt's, when a scenario is retried -- is a

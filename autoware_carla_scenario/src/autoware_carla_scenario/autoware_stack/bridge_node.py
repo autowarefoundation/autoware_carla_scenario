@@ -40,6 +40,7 @@ __all__ = [
     "launcher_bridge_parameters",
     "liveness_timeout_problem",
     "min_liveness_timeout_s",
+    "yaml_quoted",
 ]
 
 #: What ``python3 -m`` runs.
@@ -113,6 +114,56 @@ def bridge_package_dir() -> Path:
     return Path(bridge_file).resolve().parent
 
 
+#: The digits of a hexadecimal escape (:func:`yaml_quoted`).
+_HEX_DIGITS: str = "0123456789abcdef"
+
+
+def _hex(code: int, width: int) -> str:
+    """*code* as *width* lowercase hexadecimal digits."""
+    digits = ""
+    for _ in range(width):
+        digits = _HEX_DIGITS[code % 16] + digits
+        code //= 16
+    return digits
+
+
+def yaml_quoted(text: str) -> str:
+    """*text* as a YAML double-quoted scalar, which reads back as the same string.
+
+    rcl reads the value of a ``-p name:=value`` override as YAML, so a string
+    passed bare is parsed: ``[::1]:50052`` is a syntax error, an empty string
+    no value at all, and ``123`` or ``true`` another type.  Quoted, each is
+    the string it was.  ``"`` and ``\\`` are escaped, and so is every
+    character YAML would not read back as itself: a control character (NEL
+    and the line and paragraph separators, which YAML folds as line breaks,
+    among them), U+FFFE and U+FFFF.  (A lone surrogate is no character of
+    any command line's UTF-8, quoted or not.)
+    """
+    quoted = '"'
+    for character in text:
+        code = ord(character)
+        if character == '"' or character == "\\":
+            quoted += "\\" + character
+        elif code == 9:
+            quoted += "\\t"
+        elif code == 10:
+            quoted += "\\n"
+        elif code == 13:
+            quoted += "\\r"
+        elif code < 32 or 127 <= code < 160:
+            quoted += "\\x" + _hex(code, 2)
+        elif (
+            code == 0x2028  # LINE SEPARATOR and PARAGRAPH SEPARATOR: YAML
+            or code == 0x2029  # line breaks, which a quoted scalar folds
+            or code == 0xFFFE
+            or code == 0xFFFF
+        ):
+            quoted += "\\u" + _hex(code, 4)
+        else:
+            quoted += character
+    return quoted + '"'
+
+
 def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[str]:
     """The node's ``--ros-args``: the bridge's address, then *parameters*.
 
@@ -121,6 +172,10 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
     declares as a double (:data:`DOUBLE_PARAMETERS`) is passed as a float,
     which rclpy takes where it refuses the integer; a whole float for one it
     declares as an integer (:data:`INTEGER_PARAMETERS`) is passed as the int.
+    The address and every string are passed as YAML double-quoted scalars
+    (:func:`yaml_quoted`): rcl reads each ``-p`` value as YAML, so a bare
+    ``[::1]:50052`` would not parse, an empty string would be no value, and
+    ``123`` or ``true`` would reach the node as another type (#2561).
 
     Raises:
         ValueError: naming the parameter and the value, for a value the node
@@ -132,7 +187,7 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
             number for an integer parameter; any :data:`PARENT_PID_PARAMETER`,
             which :func:`bridge_command` sets.
     """
-    args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
+    args = ["--ros-args", "-p", "bridge_address:=" + yaml_quoted(bridge_address)]
     for name, value in parameters.items():
         if value is None:
             continue
@@ -165,6 +220,8 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
                     f"node declares it an integer, got {value!r}"
                 )
             value = int(value)
+        elif isinstance(value, str):
+            value = yaml_quoted(value)
         args += ["-p", f"{name}:={value}"]
     return args
 
