@@ -360,9 +360,11 @@ class RoutingAction(TrajectoryRun):
             ``position`` run ends (default).
         stop_at_goal: In ``driver`` mode, stop a vehicle where its route ends
             and hold it there (its driver asked for no speed) rather than let
-            its driver drive on (the default: at its own speed, or, when
-            paced or given *speed*, at the cruise speed it is sent on
-            arrival, the speed limit there or *speed* if lower): a road user
+            its driver drive on (the default) at its own speed or at the
+            speed it was last sent: *speed* for an untimed route to a goal,
+            sent as the run starts; for a route followed to its end, paced
+            or given *speed*, the cruise speed sent on arrival (the speed
+            limit there, or *speed* if lower).  With it, a road user
             replayed from a recording waits where it was last seen going.
             A route to a goal is then followed to its end, as a timed one is:
             the run goes on until the vehicle arrives.
