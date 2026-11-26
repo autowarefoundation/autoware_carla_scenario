@@ -174,7 +174,7 @@ lanelet with a `turn_direction` tag):
 
 | Key | Values | Meaning |
 |-----|--------|---------|
-| `length` | `{min, max}` metres | Its length along the route. No `max`: grown to at most **300 m**. |
+| `length` | `{min, max}` metres | Its length along the route. No `max`: grown to at most **300 m**, so a `min` above 300 m needs a `max` (refused otherwise). |
 | `lanes_left`, `lanes_right` | `{min, max}` counts | How many same-direction lanes lie on that side (routing-graph neighbours, lane-changeable or not, counted outwards), on **every** lanelet of the segment. `{min: 1}` reads "at least one". |
 | `opposite_lane` | `any` / `yes` / `no` | Whether an opposite-direction lane runs beside the road, on every lanelet of the segment (`yes`) or on none (`no`). |
 | `shape` | `any` / `straight` / `curved_left` / `curved_right` | By the **net heading change** from the segment's start point to its end point: within +-15 deg is `straight`, above +15 deg (anticlockwise) `curved_left`, below -15 deg `curved_right`. An S-bend with no net change reads straight. |
@@ -515,7 +515,7 @@ abreast of its middle.
 
 | Cap | Value |
 |-----|-------|
-| Lane segment without `length.max` | grown to 300 m |
+| Lane segment without `length.max` | grown to 300 m (a larger `length.min` needs a `max`) |
 | Lanelets per lane segment | 50 |
 | Lanelets per junction segment | 4 |
 | DFS steps per search | 200 000 (then the matches found so far are returned and a warning is logged) |

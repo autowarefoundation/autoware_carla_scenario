@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..kinematics.angle import normalize_angle_rad
 from ..trajectory.relative_lane import _centreline, _heading_at
-from .geometry import MapFeatures, paths_from_left
+from .geometry import MapFeatures, junction_turn, paths_from_left
 from .model import (
     MAX_EXPANSIONS,
     MAX_JUNCTION_LANELETS,
@@ -61,13 +61,10 @@ if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet, LaneletMap
     from lanelet2.routing import RoutingGraph
 
-__all__ = ["RouteSearchError", "find_route_matches", "junction_turn", "lane_shape"]
+# junction_turn is route.geometry's, re-exported where it used to be defined.
+__all__ = ["find_route_matches", "junction_turn", "lane_shape"]
 
 logger = logging.getLogger(__name__)
-
-
-class RouteSearchError(ValueError):
-    """A route search that cannot be run (its map lacks what it needs)."""
 
 
 class _Exhausted(Exception):
@@ -80,18 +77,6 @@ class _Exhausted(Exception):
             super().__init__("")
         else:
             super().__init__()
-
-
-def junction_turn(features: MapFeatures, way: list[ConstLanelet]) -> str:
-    """The turn a run of junction lanelets makes.
-
-    ``straight`` when every one is tagged straight, else the one non-straight
-    tag they carry; ``mixed`` when they turn both ways (matches only ``any``).
-    """
-    turns = {features.turn(ll) for ll in way} - {"straight", ""}
-    if not turns:
-        return "straight"
-    return turns.pop() if len(turns) == 1 else "mixed"
 
 
 def lane_shape(heading_change_rad: float) -> str:

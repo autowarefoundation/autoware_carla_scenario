@@ -82,6 +82,7 @@ __all__ = [
     "OPPOSITE_MIN_TURN_DEG",
     "OPPOSITE_SEARCH_M",
     "approach_of",
+    "junction_turn",
     "paths_from_left",
 ]
 
@@ -197,6 +198,24 @@ def _segment_intersection(
     if -1e-9 <= a <= 1.0 + 1e-9 and -1e-9 <= b <= 1.0 + 1e-9:
         return a, b
     return None
+
+
+def _project_on_segment(
+    x0: float, y0: float, x1: float, y1: float, x: float, y: float
+) -> tuple[float, float, float, float]:
+    """``(f, px, py, gap)`` of ``(x, y)`` projected on the segment from
+    ``(x0, y0)`` to ``(x1, y1)``.
+
+    *f* is the fraction along it, clamped to ``[0, 1]`` (``0`` on a segment
+    of no length), ``(px, py)`` the point there and *gap* the distance (m)
+    from ``(x, y)`` to it.
+    """
+    dx, dy = x1 - x0, y1 - y0
+    squared = dx * dx + dy * dy
+    f = 0.0 if squared < 1e-12 else ((x - x0) * dx + (y - y0) * dy) / squared
+    f = min(max(f, 0.0), 1.0)
+    px, py = x0 + f * dx, y0 + f * dy
+    return f, px, py, math.hypot(px - x, py - y)
 
 
 @dataclass(frozen=True)
@@ -455,19 +474,22 @@ class MapFeatures:
         known = self._lanes.get(key)
         if known is not None:
             return known
-        found, current, seen = 0, lanelet, {int(lanelet.id)}
-        while found < _MAX_LANES:
-            beside = self.neighbour(current, side)
-            if beside is None or int(beside.id) in seen:
-                break
-            seen.add(int(beside.id))
-            found += 1
-            current = beside
+        found, _outer = self._walk_beside(lanelet, side)
         self._lanes[key] = found
         return found
 
     def outermost(self, lanelet: ConstLanelet, side: str) -> ConstLanelet:
         """The last same-direction lane on its *side* (itself if none)."""
+        _found, outer = self._walk_beside(lanelet, side)
+        return outer
+
+    def _walk_beside(
+        self, lanelet: ConstLanelet, side: str
+    ) -> tuple[int, ConstLanelet]:
+        """``(count, last)`` of the same-direction lanes on its *side*:
+        how many there are (at most :data:`_MAX_LANES`) and the outermost
+        (itself if none)."""
+        found = 0
         current: ConstLanelet = lanelet
         seen = {int(lanelet.id)}
         for _step in range(_MAX_LANES):
@@ -475,8 +497,9 @@ class MapFeatures:
             if beside is None or int(beside.id) in seen:
                 break
             seen.add(int(beside.id))
+            found += 1
             current = beside
-        return current
+        return found, current
 
     def _ends_into(self, lanelet: ConstLanelet, side: str) -> bool:
         """Whether it ends, or runs into what follows it, beside a lane on
@@ -575,11 +598,8 @@ class MapFeatures:
         points = _centreline(lanelet)
         best = math.inf
         for (x0, y0), (x1, y1) in zip(points, points[1:]):
-            dx, dy = x1 - x0, y1 - y0
-            squared = dx * dx + dy * dy
-            f = 0.0 if squared < 1e-12 else ((x - x0) * dx + (y - y0) * dy) / squared
-            f = min(max(f, 0.0), 1.0)
-            best = min(best, math.hypot(x0 + f * dx - x, y0 + f * dy - y))
+            _f, _px, _py, gap = _project_on_segment(x0, y0, x1, y1, x, y)
+            best = min(best, gap)
         return best
 
     def abreast(self, lanelet: ConstLanelet, x: float, y: float) -> ConstLanelet:
@@ -667,12 +687,7 @@ class MapFeatures:
         best = points[0]
         best_gap = math.inf
         for (x0, y0), (x1, y1) in zip(points, points[1:]):
-            dx, dy = x1 - x0, y1 - y0
-            squared = dx * dx + dy * dy
-            f = 0.0 if squared < 1e-12 else ((x - x0) * dx + (y - y0) * dy) / squared
-            f = min(max(f, 0.0), 1.0)
-            px, py = x0 + f * dx, y0 + f * dy
-            gap = math.hypot(px - x, py - y)
+            _f, px, py, gap = _project_on_segment(x0, y0, x1, y1, x, y)
             if gap < best_gap:
                 best, best_gap = (px, py), gap
         return best
@@ -829,12 +844,7 @@ class MapFeatures:
             if int(first.id) in own:
                 continue  # a branch off the ego's own way
             approach = approach_of(entry_heading, _start_heading(first))
-            turns = {self.turn(ll) for ll in path} - {"straight", ""}
-            turn = (
-                "straight"
-                if not turns
-                else (turns.pop() if len(turns) == 1 else "mixed")
-            )
+            turn = junction_turn(self, path)
             key = (int(first.id), turn)
             conflicts = any(int(ll.id) in direct for ll in path)
             known = paths.get(key)
@@ -954,6 +964,20 @@ class MapFeatures:
                     if cid not in found:
                         found[cid] = Crosswalk(crosswalk, leg, u, point, heading)
         return sorted(found.values(), key=lambda c: (c.u, int(c.lanelet.id)))
+
+
+def junction_turn(features: MapFeatures, way: list[ConstLanelet]) -> str:
+    """The turn a run of junction lanelets makes.
+
+    ``straight`` when every one is tagged straight, else the one non-straight
+    tag they carry; ``mixed`` when they turn both ways (matches only ``any``).
+    The ego's way through a junction (route.search) and the other paths
+    through it (:meth:`MapFeatures.junction_members`) are told apart by it.
+    """
+    turns = {features.turn(ll) for ll in way} - {"straight", ""}
+    if not turns:
+        return "straight"
+    return turns.pop() if len(turns) == 1 else "mixed"
 
 
 def _slice(

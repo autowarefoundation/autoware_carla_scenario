@@ -23,7 +23,7 @@ from ..trajectory.relative_lane import (
     _point_at,
     advance_along_lane,
 )
-from .geometry import MapFeatures
+from .geometry import MapFeatures, _project_on_segment
 from .model import RouteMatch
 
 if TYPE_CHECKING:
@@ -203,12 +203,9 @@ class RouteFrame:
             first = max(bisect.bisect_left(arc, near - PROJECT_WINDOW_M) - 1, 0)
             stop = min(bisect.bisect_right(arc, near + PROJECT_WINDOW_M), stop)
         for i in range(first, stop):
-            x0, y0 = self._xs[i], self._ys[i]
-            dx, dy = self._xs[i + 1] - x0, self._ys[i + 1] - y0
-            squared = dx * dx + dy * dy
-            f = 0.0 if squared < 1e-12 else ((x - x0) * dx + (y - y0) * dy) / squared
-            f = min(max(f, 0.0), 1.0)
-            gap = math.hypot(x0 + f * dx - x, y0 + f * dy - y)
+            f, _px, _py, gap = _project_on_segment(
+                self._xs[i], self._ys[i], self._xs[i + 1], self._ys[i + 1], x, y
+            )
             if gap < best[0]:
                 best = (gap, arc[i] + f * (arc[i + 1] - arc[i]))
         return best
