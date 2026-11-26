@@ -4289,7 +4289,7 @@ running controller is found by.</p>
     end
 
     subgraph External["External Process (uv run scenario)"]
-        subprocess["subprocess.run()"]
+        subprocess["subprocess.Popen()"]
         ext_main["main()&lt;br/&gt;(examples/run.py)"]
         ext_queue["ScenarioQueue"]
         ext_runner["ScenarioRunner"]
@@ -4337,7 +4337,7 @@ running controller is found by.</p>
 <tr>
 <td><strong><code>runner.py</code></strong></td>
 <td><code>ui/runner.py</code></td>
-<td>Execute <code>uv run scenario</code> as subprocesses in a background thread. Track progress with thread-safe global state.</td>
+<td>Execute <code>uv run scenario</code> as subprocesses in a background thread (<code>subprocess.Popen</code>, each job in a session of its own, its output written to a file). Track progress with thread-safe global state.</td>
 </tr>
 <tr>
 <td><strong><code>sweep_resolver.py</code></strong></td>
@@ -4352,7 +4352,7 @@ running controller is found by.</p>
 <tr>
 <td><strong><code>cases.py</code></strong></td>
 <td><code>ui/cases.py</code></td>
-<td>Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against <code>batch_results.json</code>). Its <code>session_dir</code> is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under <code>multirun/</code> or <code>outputs/</code>; else 404).</td>
+<td>Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against <code>batch_results.json</code>). Its <code>session_dir</code> is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under <code>multirun/</code> or <code>outputs/</code>; else 404), and its <code>session_type_matches</code> keeps a <code>single</code> and a <code>batch</code> URL, which share <code>outputs/</code>, to their own directories (a batch is a directory <code>batch_entries</code> finds one in; else 404). Metadata (<code>.hydra/overrides.yaml</code>, <code>multirun.yaml</code>, <code>batch_results.json</code>, the SLURM manifest and case outcomes) is read only when neither it nor a directory between is a symbolic link, as a case's own files are; a batch whose manifest is one, or is under a <code>slurm/</code> that is one, is no SLURM batch to the SLURM panel's API either (404).</td>
 </tr>
 <tr>
 <td><strong><code>results.py</code></strong></td>
@@ -4362,7 +4362,7 @@ running controller is found by.</p>
 <tr>
 <td><strong><code>slurm_launch.py</code></strong></td>
 <td><code>ui/slurm_launch.py</code></td>
-<td>Submit a batch through SLURM (<code>launcher=slurm --no-wait</code>) and follow it from its directory and <code>squeue</code>; resubmit, collect, cancel with <code>scenario-slurm</code>.</td>
+<td>Submit a batch through SLURM (<code>launcher=slurm --no-wait</code>, in a session of its own, its output written to a temporary file rather than a pipe, so a viewer stopped meanwhile does not break the submission) and follow it from its directory and <code>squeue</code>; resubmit, collect, cancel with <code>scenario-slurm</code>.</td>
 </tr>
 <tr>
 <td><strong><code>slurm_options.py</code></strong></td>
@@ -4841,7 +4841,7 @@ through <code>BaseScenario.derive_goal_from_route()</code>.</p>
 </table>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>The CARLA RPC port and TrafficManager port are used within the <strong>scenario subprocess</strong>, not the viewer process. The viewer communicates with CARLA only indirectly through <code>subprocess.run(["uv", "run", "scenario", ...])</code>.</p>
+<p>The CARLA RPC port and TrafficManager port are used within the <strong>scenario subprocess</strong>, not the viewer process. The viewer communicates with CARLA only indirectly, through the <code>uv run scenario</code> jobs its runner starts (<code>subprocess.Popen(["uv", "run", "scenario", ...])</code>, each in a session of its own, its output written to a file).</p>
 </div>
 <h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h3>
 <table>
@@ -5000,7 +5000,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 10:43:00 UTC"><span class="timeago" datetime="2026-11-26T10:43:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 10:43:00 UTC">2026-11-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 16:34:22 UTC"><span class="timeago" datetime="2026-11-26T16:34:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 16:34:22 UTC">2026-11-26</span>
   </span>
 
     
