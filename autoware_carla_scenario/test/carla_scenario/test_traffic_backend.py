@@ -654,6 +654,62 @@ class TestTrafficManagerVisibility:
         assert tm.target_kmh(highway) == pytest.approx(120.0)
         backend.close()
 
+    def test_an_entity_override_turns_it_on_for_its_vehicle_alone(self) -> None:
+        """The run's ``follow_visibility`` unset, one entity's override of it
+        holds that vehicle, and only it (#2547)."""
+        from autoware_carla_scenario.traffic.parameters import VehicleParameters
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        followed, other = _Actor(2, speed_limit=120.0), _Actor(3, speed_limit=120.0)
+        world = _World([followed, other])
+        world.id = 4  # type: ignore[attr-defined]
+        client = _Client()
+        backend = TrafficManagerBackend(client=client)
+        backend.prepare(_context(client, world))
+        backend.start(world)
+        entity: Any = SimpleNamespace(actor=followed, role_name="npc")
+        backend.override_entity_parameters(
+            world, VehicleParameters(follow_visibility=True), entity
+        )
+        set_world_visibility(4, 30.0)
+        backend.tick(world, 0.05)
+        limit = _kept_kmh(backend, 30.0, 2)
+        assert client.tm.target_kmh(followed) == pytest.approx(limit)
+        assert 3 not in backend._held
+        assert 3 not in client.tm.speed_differences
+        assert client.tm.target_kmh(other) == pytest.approx(120.0)
+        backend.close()
+
+    def test_an_entity_override_turns_it_off_for_its_vehicle_alone(self) -> None:
+        """The run's ``follow_visibility: true``, one entity's override of it
+        to ``False`` gives that vehicle its own speed back at once, and the
+        others stay held (#2547)."""
+        from autoware_carla_scenario.traffic.parameters import VehicleParameters
+        from autoware_carla_scenario.traffic.traffic_manager import (
+            TM_DEFAULT_SPEED_DIFFERENCE_PCT,
+        )
+        from autoware_carla_scenario.visibility import set_world_visibility
+
+        freed, other = _Actor(2, speed_limit=120.0), _Actor(3, speed_limit=120.0)
+        backend, world, tm = self._following(freed, other)
+        set_world_visibility(4, 30.0)
+        backend.tick(world, 0.05)
+        assert 2 in backend._held and 3 in backend._held
+        entity: Any = SimpleNamespace(actor=freed, role_name="npc")
+        backend.override_entity_parameters(
+            world, VehicleParameters(follow_visibility=False), entity
+        )
+        backend.tick(world, 0.10)  # not due for the others: at once all the same
+        assert 2 not in backend._held
+        assert tm.speed_differences[2][-1] == TM_DEFAULT_SPEED_DIFFERENCE_PCT
+        assert tm.target_kmh(freed) == pytest.approx(120.0)
+        assert tm.target_kmh(other) == pytest.approx(_kept_kmh(backend, 30.0, 3))
+        # A later update leaves it its own.
+        backend.tick(world, 5.0)
+        assert 2 not in backend._held
+        assert tm.target_kmh(freed) == pytest.approx(120.0)
+        backend.close()
+
     def test_a_sight_speed_just_under_the_limit_holds(self) -> None:
         """About 53 km/h on an 80 road: held, and given the limit back."""
         from autoware_carla_scenario.visibility import (
@@ -999,6 +1055,108 @@ class TestTrafficManagerBackground:
         assert backend.background_vehicles(world) == {}
         assert backend._background == {}
         assert actor.id not in backend._exact_kmh
+
+
+class _CappedActor(_Actor):
+    """A background vehicle the fake world spawns on a 50 km/h road."""
+
+    def set_target_velocity(self, velocity: Any) -> None:
+        pass
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
+class _SpawningWorld(_World):
+    """A world background vehicles are spawned into, listed as its vehicles."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.id = 4
+
+    def get_blueprint_library(self) -> Any:
+        return SimpleNamespace(filter=lambda pattern: [_Blueprint()])
+
+    def try_spawn_actor(self, blueprint: Any, transform: Any) -> _CappedActor:
+        actor = _CappedActor(100 + len(self._actors._actors), speed_limit=50.0)
+        self._actors._actors.append(actor)
+        return actor
+
+    def get_map(self) -> Any:
+        return _BackgroundWorld([]).get_map()
+
+
+class TestTrafficManagerBackgroundCaps:
+    """A background vehicle's cap is exactly its spawn speed on every
+    backend (``TrafficBackend.spawn_background``), whatever ``speed_factor``
+    is drawn after it, as SUMO's ``setMaxSpeed`` keeps it (#2547)."""
+
+    @pytest.mark.parametrize("before_start", [True, False])
+    def test_a_speed_factor_override_never_lifts_the_cap(
+        self, before_start: bool
+    ) -> None:
+        from autoware_carla_scenario.traffic.parameters import VehicleParameters
+
+        world = _SpawningWorld()
+        client = _Client()
+        backend = TrafficManagerBackend(client=client)
+        backend.prepare(_context(client, world))
+        if not before_start:
+            backend.start(world)
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.get_actors().filter("vehicle.*")[0]
+        if before_start:
+            # Given before its first draw: the one given last wins, but the
+            # cap is no speed of the scenario's to give way.
+            backend.override_vehicle_parameters(
+                world, VehicleParameters(speed_factor=1.2)
+            )
+            backend.start(world)
+        assert client.tm.target_kmh(actor) == pytest.approx(30.0)
+        backend.override_vehicle_parameters(world, VehicleParameters(speed_factor=1.2))
+        assert client.tm.target_kmh(actor) == pytest.approx(30.0)
+        assert backend._exact_kmh[actor.id] == pytest.approx(30.0)
+        assert actor.id not in backend._speed_differences
+        backend.close()
+
+    def test_a_scenario_vehicle_still_takes_the_new_draw(self) -> None:
+        """Only the background cap stays: a scenario vehicle given a speed
+        takes a later draw of its speed factor (the one given last wins)."""
+        from autoware_carla_scenario.traffic.parameters import VehicleParameters
+
+        car = _Actor(2, speed_limit=50.0)
+        world = _World([car])
+        client = _Client()
+        backend = TrafficManagerBackend(client=client)
+        backend.prepare(_context(client, world))
+        backend.start(world)
+        entity: Any = SimpleNamespace(actor=car, role_name="car")
+        backend.set_desired_speed(entity, world, 30.0)
+        backend.override_vehicle_parameters(world, VehicleParameters(speed_factor=1.2))
+        assert client.tm.target_kmh(car) == pytest.approx(60.0)
+        backend.close()
+
+    def test_a_removed_vehicle_leaves_nothing_behind(self) -> None:
+        world = _SpawningWorld()
+        client = _Client()
+        backend = TrafficManagerBackend(client=client)
+        backend.prepare(_context(client, world))
+        backend.start(world)
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.get_actors().filter("vehicle.*")[0]
+        backend.release_actor(world, actor)  # type: ignore[arg-type]
+        backend._given[actor.id] = []
+        backend._desired_mps[actor.id] = 1.0
+        backend._crossing_locked.add(actor.id)
+        backend.remove_background(world, handle)
+        assert actor.id not in backend._capped
+        assert actor.id not in backend._released
+        assert actor.id not in backend._given
+        assert actor.id not in backend._desired_mps
+        assert actor.id not in backend._crossing_locked
+        backend.close()
 
 
 # ---------------------------------------------------------------------------

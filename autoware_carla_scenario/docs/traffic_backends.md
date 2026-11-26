@@ -250,8 +250,13 @@ departs (SUMO), and keeps its draws.
       LibCarla's own): the limit. The TrafficManager keeps a percentage or a
       speed for a vehicle, not both, the one given last: a speed set on it
       (a background vehicle's spawn speed, a `SetSpeedAction`) drops its
-      percentage, and a new draw (`TrafficParametersAction`) drops its speed.
-    - `sumo`: the vehicle's speed factor (`setSpeedFactor`). Unset, SUMO's own
+      percentage, and a new draw (`TrafficParametersAction`) drops a speed a
+      scenario set. A background vehicle's spawn speed is its cap, exactly,
+      on every backend ([Background traffic](#background-traffic)): no draw
+      lifts it, so it keeps that speed whatever `speed_factor` is drawn,
+      at its spawn or during the run.
+    - `sumo`: the vehicle's speed factor (`setSpeedFactor`), under a
+      background vehicle's cap (`setMaxSpeed`). Unset, SUMO's own
       draw around 1.0 (spread 0.1).
 
 - `min_gap_m` — spread, metres, mean `>= 0`
@@ -488,7 +493,9 @@ scenario.register_post_tick(
   background vehicle's spawn speed) wins over its `speed_factor`, and a route
   it follows keeps its own lane changes off whatever `lane_changes` says,
   unless an override of that field, with or without `entity_name`, came after
-  them: the one given last wins.
+  them: the one given last wins. A background vehicle's spawn speed is the
+  exception: it is its cap, which no `speed_factor`, first drawn or drawn
+  again, lifts.
 - **The last one wins.** An action without `entity_name` fired after one with
   it replaces that vehicle's override on the fields both set, as it does for a
   vehicle that drew already: every vehicle draws those fields from the new
@@ -976,7 +983,11 @@ both, and either drops the other (LibCarla's `Parameters.cpp`). When the
 weather lifts, or the field is turned off during the run
 (`TrafficParametersAction`), each gets its own back: its speed, or its
 percentage. Off by default, so a scenario's vehicles drive as they always
-did; unset, the backend logs the speed it would hold traffic to.
+did; unset, the backend logs the speed it would hold traffic to. A
+`TrafficParametersAction` with `entity_name` turns it on or off for that
+vehicle alone, whatever the run's, from the next tick: held, or given its own
+back. A lane change stretched over a distance that slows the vehicle for what
+is in its way never lifts it above the speed it is held to.
 
 The road's grip is CARLA's vehicle physics alone (`EnvironmentAction`'s tire
 friction scales every vehicle's wheels, the TrafficManager's as well); the

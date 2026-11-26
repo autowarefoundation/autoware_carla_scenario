@@ -582,6 +582,23 @@ class TestWayAhead:
         run.drive_to(2.0)
         assert run.tm.speeds[-1] == 30.0
 
+    @pytest.mark.parametrize("exact", [True, False], ids=["speed", "percentage"])
+    def test_it_is_never_sped_up_past_its_hold_to_sight(self, exact: bool) -> None:
+        """Held to 20 km/h by what its driver sees (a speed of 50 held to
+        20, or 60 % under a 50 km/h road), a car standing 27 m ahead, which
+        it could pass the lane at about 39 km/h for, slows it no further and
+        never lifts it to that (#2547)."""
+        run = _Run(other=_Actor(2, 28.0, 0.0))
+        if exact:
+            run.backend._exact_kmh[1] = 50.0
+            run.backend._held[1] = 20.0
+        else:
+            run.backend._held[1] = 60.0
+        run.ask(0.0, 40.0)
+        run.drive_to(1.0)
+        assert run.tm.speeds == []
+        assert run.backend._own_speed_kmh(run.actor) == pytest.approx(20.0)
+
 
 class TestAction:
     @pytest.mark.parametrize(
