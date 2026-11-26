@@ -16,12 +16,13 @@
 #                      the move to autowarefoundation, is one) cannot be
 #                      dispatched here -- finish it with the Release
 #                      workflow's manual run instead, which is dispatched from
-#                      master and checks the release commit out. As in the release workflow, `latest` (and
-#                      the site root) moves to it only when it is the version
-#                      master is at; an older version is published beside the
-#                      others and `latest` stays. Without a `version`, the same
-#                      as a push, and dispatched from master only: from any
-#                      other ref it fails rather than publish that ref as `dev`.
+#                      master and checks the release commit out. As in the
+#                      release workflow, `latest` (and the site root) moves to
+#                      it only when it is the version master is at; an older
+#                      version is published beside the others and `latest`
+#                      stays. Without a `version`, the same as a push, and
+#                      dispatched from master only: from any other ref it
+#                      fails rather than publish that ref as `dev`.
 #
 # Pages must be set, once, to deploy from the `gh-pages` branch (Settings ->
 # Pages -> Build and deployment -> Deploy from a branch). This workflow creates
