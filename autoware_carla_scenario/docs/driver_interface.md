@@ -162,9 +162,9 @@ driver:
   control:
     lookahead_gain_s: 0.6
     wheelbase_m: 2.8
-    max_steer_angle_deg: null   # null: 56 deg (CARLA 0.10: angle = 56 deg * steer**2)
+    max_steer_angle_deg: null   # null: the server's, 53 deg on CARLA 1.0, 56 on 0.10
     max_steer_angle_rad: null   # ... or the same in radians; set one of the two
-    steer_exponent: 2.0
+    steer_exponent: null        # null: the server's, 1 (53 deg * steer) on CARLA 1.0, 2 (56 deg * steer**2) on 0.10
     yaw_rate_ki: 3.0            # integral trim on the measured yaw rate
     longitudinal_controller: pid  # Autoware's autoware_pid_longitudinal_controller
     delay_compensation_time: 0.17 # ... and any of its parameters, by name

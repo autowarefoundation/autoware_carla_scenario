@@ -703,3 +703,145 @@ def test_a_carla_driver_interface_policy_sees_the_configured_mount() -> None:
     expected = body_to_optical(camera_extrinsics_to_rig(1.5, 0.0, 1.6, 0.0, -5.0, 15.0))
     assert np.allclose(policy.seen.position, expected.position, atol=1e-5)
     assert (policy.seen.rotation * expected.rotation.inv()).magnitude() < 1e-6
+
+
+def test_a_start_session_that_times_out_leaves_no_session_on_the_policy() -> None:
+    """A start whose deadline passes while the policy's ``on_session_start`` runs
+    still opened the session on the server: the failure path closes it, so the
+    same uuid starts again (#2575)."""
+    import threading
+    import time
+
+    from carla_driver_interface.driver import BaseDriver, DriveResult
+    from carla_driver_interface.server import serving
+
+    started = threading.Event()
+
+    class _Slow(BaseDriver):
+        name = "slow"
+
+        def __init__(self) -> None:
+            self.slow = True
+
+        def on_session_start(self, session) -> None:  # noqa: ANN001
+            if self.slow:
+                time.sleep(1.0)
+                started.set()
+
+        def drive(self, ctx) -> DriveResult:  # noqa: ANN001
+            return DriveResult(trajectory_in_rig=Trajectory.empty())
+
+    policy = _Slow()
+    with serving(policy, port=0, host="127.0.0.1") as port:
+        address = f"127.0.0.1:{port}"
+        client = EgoDriverGrpcClient(
+            DriverClientConfig(address=address, timeout_s=0.3, random_seed=1)
+        )
+        with pytest.raises(grpc.RpcError) as raised:
+            client.start_session("uuid-1", "scene")
+        assert raised.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+        assert client.session_uuid is None
+        assert started.wait(timeout=10.0)
+
+        policy.slow = False
+        again = EgoDriverGrpcClient(
+            DriverClientConfig(address=address, timeout_s=10.0, random_seed=1)
+        )
+        try:
+            again.start_session("uuid-1", "scene")  # ALREADY_EXISTS if it leaked
+            assert again.session_uuid == "uuid-1"
+        finally:
+            again.close_session()
+
+
+def test_a_start_refused_as_a_duplicate_uuid_does_not_close_that_session() -> None:
+    """ALREADY_EXISTS: the uuid is another client's open session, which the
+    refused client's failure path must not close (#2575)."""
+    from carla_driver_interface.driver import BaseDriver, DriveResult
+    from carla_driver_interface.server import serving
+
+    class _Quiet(BaseDriver):
+        name = "quiet"
+
+        def drive(self, ctx) -> DriveResult:  # noqa: ANN001
+            return DriveResult(trajectory_in_rig=Trajectory.empty())
+
+    with serving(_Quiet(), port=0, host="127.0.0.1") as port:
+        config = DriverClientConfig(
+            address=f"127.0.0.1:{port}", timeout_s=10.0, random_seed=1
+        )
+        owner = EgoDriverGrpcClient(config)
+        owner.start_session("uuid-1", "scene")
+        try:
+            for _ in range(2):  # the second proves the first left it open
+                other = EgoDriverGrpcClient(config)
+                with pytest.raises(grpc.RpcError) as raised:
+                    other.start_session("uuid-1", "scene")
+                assert raised.value.code() == grpc.StatusCode.ALREADY_EXISTS
+                assert other.session_uuid is None
+        finally:
+            owner.close_session()
+
+
+def test_drive_decodes_a_carla_drive_debug_info() -> None:
+    from carla_driver_interface.protocol import carla_driver_pb2
+
+    from autoware_carla_scenario.driver.base import DriveOutcome
+    from autoware_carla_scenario.driver.egodriver_client import _decode_debug_info
+
+    raw = carla_driver_pb2.CarlaDriveDebugInfo(
+        policy_name="p", inference_seconds=0.25, scalars={"a": 1.5}
+    ).SerializeToString()
+    outcome = DriveOutcome(trajectory=Trajectory.empty())
+    _decode_debug_info(raw, outcome)
+
+    assert outcome.policy_name == "p"
+    assert outcome.inference_seconds == 0.25
+    assert outcome.debug_scalars == {"a": 1.5}
+
+
+#: A ``policy_name`` (field 1) of one byte that is not UTF-8: upb refuses it
+#: with a DecodeError, the pure-Python protobuf with a UnicodeDecodeError.
+_NOT_UTF8_DEBUG_INFO = b"\x0a\x01\xff"
+
+_DECODE_NOT_UTF8 = f"""
+from autoware_carla_scenario.driver.base import DriveOutcome
+from autoware_carla_scenario.driver.egodriver_client import _decode_debug_info
+from autoware_carla_scenario.driver.geometry import Trajectory
+from google.protobuf.internal import api_implementation
+
+assert api_implementation.Type() == "python", api_implementation.Type()
+outcome = DriveOutcome(trajectory=Trajectory.empty())
+_decode_debug_info({_NOT_UTF8_DEBUG_INFO!r}, outcome)
+assert outcome.policy_name == "" and outcome.debug_scalars == {{}}
+"""
+
+
+def test_debug_info_that_is_not_utf8_is_left_alone() -> None:
+    """A payload that does not parse is not the drive's failure, whichever
+    protobuf backend refuses it (#2575)."""
+    from autoware_carla_scenario.driver.base import DriveOutcome
+    from autoware_carla_scenario.driver.egodriver_client import _decode_debug_info
+
+    outcome = DriveOutcome(trajectory=Trajectory.empty())
+    _decode_debug_info(_NOT_UTF8_DEBUG_INFO, outcome)
+
+    assert outcome.policy_name == ""
+    assert outcome.debug_scalars == {}
+
+
+def test_debug_info_that_is_not_utf8_is_left_alone_by_pure_python_protobuf() -> None:
+    """The pure-Python protobuf raises UnicodeDecodeError, not DecodeError (#2575)."""
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION="python")
+    result = subprocess.run(
+        [sys.executable, "-c", _DECODE_NOT_UTF8],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
