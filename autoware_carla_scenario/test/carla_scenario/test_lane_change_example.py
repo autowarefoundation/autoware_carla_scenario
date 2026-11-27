@@ -268,6 +268,9 @@ class TestLaneChangeConditions:
         assert kept.check(ego.on(SPAWN, 5.0), timeout - 0.05) is None
         result = kept.check(ego.on(SPAWN, 6.0), timeout)
         assert result is not None
+        # A pass, said as one: not the "Timeout after ..." of a failure.
+        assert result.passed
+        assert not result.message.startswith("Timeout")
         # A lanelet that continues the spawn lanelet is its own lane too.
         mm = MapManager.get_instance()
         following = int(

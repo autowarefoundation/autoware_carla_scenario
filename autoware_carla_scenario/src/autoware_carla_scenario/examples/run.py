@@ -2916,7 +2916,7 @@ def map_lanelet_ids(lanelet2_path: object) -> frozenset[int] | None:
     """The ids of the lanelets of the Lanelet2 file *lanelet2_path*, or ``None``.
 
     Read off the ``.osm`` as XML -- each ``relation`` tagged ``type=lanelet``
-    -- not loaded with Lanelet2: no projection, no routing graph, nothing the
+    that is not marked ``action=delete``, as Lanelet2 reads them -- not loaded with Lanelet2: no projection, no routing graph, nothing the
     run loads again, so the check costs a scan of the file, once a file
     (:data:`_MAP_LANELET_IDS`).  ``None`` when *lanelet2_path* is not a path
     (``None``: the config names no Lanelet2 map), there is no such file, it
@@ -2943,7 +2943,8 @@ def map_lanelet_ids(lanelet2_path: object) -> frozenset[int] | None:
     ids: set[int] = set()
     try:
         for _event, element in ElementTree.iterparse(str(path), events=("end",)):
-            if element.tag == "relation":
+            # Lanelet2 skips an element JOSM marked deleted (action=delete).
+            if element.tag == "relation" and element.get("action") != "delete":
                 for tag in element.iter("tag"):
                     if tag.get("k") == "type" and tag.get("v") == "lanelet":
                         try:
@@ -2952,7 +2953,7 @@ def map_lanelet_ids(lanelet2_path: object) -> frozenset[int] | None:
                             pass
                         break
                 element.clear()
-            elif element.tag in ("node", "way"):
+            elif element.tag in ("node", "way", "relation"):
                 element.clear()
     except (OSError, ElementTree.ParseError):
         logger.debug("could not scan %s for its lanelets", path, exc_info=True)

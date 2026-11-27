@@ -43,6 +43,7 @@ from autoware_carla_scenario import (
     BaseCondition,
     BaseScenario,
     EgoConfig,
+    ElapsedTimeCondition,
     EntityLanePositionCondition,
     GroundProjectionConfig,
     LaneChangeAction,
@@ -244,11 +245,14 @@ class LaneChangeScenario(BaseScenario):
             # its own lane (#2253).
             # The timeout runs out with the ego on its own lanes → pass.  Pass
             # conditions are checked first on a tick, so the timeout below
-            # fails the run only when the ego is not on them then.
+            # fails the run only when the ego is not on them then.  An
+            # ElapsedTimeCondition, which fires on the same tick as the
+            # timeout: a TimeoutCondition's failure would be the AND's result,
+            # and the passed run would read "Timeout after ...".
             self.register_pass_condition(
                 AndCondition(
                     [
-                        TimeoutCondition(
+                        ElapsedTimeCondition(
                             cfg.timeout_seconds, label="lane_change_window"
                         ),
                         on_own_lanes(spawn_pose.lanelet_id, OWN_LANES_AHEAD_M),

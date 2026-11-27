@@ -129,6 +129,22 @@ class TestConfigLanelets:
         broken.write_text("<osm><relation")
         assert run.map_lanelet_ids(broken) is None
 
+    def test_lanelets_are_the_relations_lanelet2_loads(self, tmp_path: Path) -> None:
+        """Every ``type=lanelet`` relation, a JOSM one with a negative id too,
+        but none marked ``action=delete`` (Lanelet2 skips those) and no other
+        relation (an area, a regulatory element)."""
+        osm = tmp_path / "map.osm"
+        osm.write_text(
+            "<osm>"
+            "<relation id='5'><tag k='type' v='lanelet'/></relation>"
+            "<relation id='-6' action='modify'><tag k='type' v='lanelet'/></relation>"
+            "<relation id='7' action='delete'><tag k='type' v='lanelet'/></relation>"
+            "<relation id='8'><tag k='type' v='multipolygon'/></relation>"
+            "<relation id='9'><tag k='type' v='regulatory_element'/></relation>"
+            "</osm>"
+        )
+        assert run.map_lanelet_ids(osm) == frozenset({5, -6})
+
     def test_the_ego_s_and_the_npc_s_lanelets_are_named(self) -> None:
         cfg = run._compose_config(
             "adversity/traffic_rule",
