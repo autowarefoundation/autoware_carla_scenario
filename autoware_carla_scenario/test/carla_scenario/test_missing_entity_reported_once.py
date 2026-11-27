@@ -18,8 +18,11 @@ from autoware_carla_scenario import (
     TurnIndicatorAction,
     TurnIndicatorState,
 )
+from autoware_carla_scenario.actions._trajectory_run import TrajectoryRun
 from autoware_carla_scenario.actions.base import BaseAction
+from autoware_carla_scenario.coordinate.poses import CarlaWorldPose
 from autoware_carla_scenario.traffic import LaneChangeDirection
+from autoware_carla_scenario.trajectory.model import Trajectory, TrajectoryVertex
 
 
 def _world() -> MagicMock:
@@ -49,6 +52,18 @@ _ACTIONS: dict[str, Callable[[], BaseAction]] = {
     # Repeating, on a trigger of its own; its run waits on the vehicle.
     "lane_change": lambda: LaneChangeAction(
         "gone", LaneChangeDirection.LEFT, once=False
+    ),
+    # Moved every tick of its run, through BaseAction's once-a-run flag
+    # rather than one of its own (#2597).
+    "trajectory_run": lambda: TrajectoryRun(
+        "gone",
+        Trajectory(
+            "line",
+            [
+                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0, yaw=0.0)),
+                TrajectoryVertex(CarlaWorldPose(20.0, 0.0, 0.0, yaw=0.0)),
+            ],
+        ),
     ),
 }
 

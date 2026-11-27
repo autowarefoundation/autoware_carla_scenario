@@ -740,6 +740,33 @@ class TestActionsStartEveryRunAsBuilt:
         action.reset()
         assert action._speed == 8.0
 
+    def test_a_repeating_spawn_enters_at_its_given_speed_on_each_fire(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Slowed behind a road user on one fire, a ``once=False`` spawn
+        enters at the speed it was given on its next fire of the same run,
+        not at the slowed one (#2597)."""
+        from autoware_carla_scenario.actions import _trajectory_run
+        from autoware_carla_scenario.actions.spawn import SpawnAction
+
+        action = SpawnAction(entity_name="npc1", speed=8.0, label="spawn", once=False)
+        monkeypatch.setattr(_trajectory_run, "_entity_actor", lambda name: MagicMock())
+        placed_at: list[float] = []
+
+        def place(world: Any, actor_id: int, length: float, width: float) -> None:
+            placed_at.append(action._speed)
+            action._speed = 3.0  # what _enter_behind does behind a slower one
+            return None
+
+        monkeypatch.setattr(action, "_place", place)
+        # Not brought in, so the fire stops there: no declared spawn to use.
+        action._declared_given = True
+        action._declared = None
+        world = MagicMock()
+        action.execute(world)
+        action.execute(world)
+        assert placed_at == [8.0, 8.0]
+
     def test_nade_samples_each_run_from_a_weight_of_one(self) -> None:
         from autoware_carla_scenario.actions.adversarial_traffic import (
             AdversarialTrafficAction,

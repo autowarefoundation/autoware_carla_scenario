@@ -547,6 +547,46 @@ class TestOverriddenAction:
         assert action.state is ActionState.COMPLETE
 
 
+class _Flag(BaseCondition):
+    """Holds while :attr:`on` is set."""
+
+    def __init__(self) -> None:
+        super().__init__(label="flag")
+        self.on = False
+
+    def check(self, world: object, elapsed: float) -> Optional[ScenarioResult]:
+        if not self.on:
+            return None
+        return ScenarioResult(passed=True, message="on", elapsed_seconds=elapsed)
+
+
+class TestUntilEndsTheRunEarly:
+    """A lane change whose *until* ends its run before the vehicle settled
+    does not happen later, as an overridden one does not (#2597)."""
+
+    def test_its_request_is_cancelled(self) -> None:
+        run = _Run()
+        entity = _Driven(run.actor, run.backend)
+        register_entity("npc", entity)
+        try:
+            until = _Flag()
+            action = LaneChangeAction(
+                "npc", LaneChangeDirection.LEFT, start_after_m=40.0, until=until
+            )
+            action.tick(run.world, 0.0)
+            action.tick(run.world, 0.05)
+            assert action.state is ActionState.RUNNING
+            assert len(run.backend._lane_change_requests) == 1
+            until.on = True
+            action.tick(run.world, 0.1)
+            assert action.state is ActionState.END_TRANSITION
+            assert run.backend._lane_change_requests == []
+            run.drive_to(60.0)
+            assert run.tm.forced == []
+        finally:
+            unregister_entity("npc")
+
+
 class TestWayAhead:
     def test_it_slows_for_one_ahead_in_the_lane_it_leaves(self) -> None:
         run = _Run(other=_Actor(2, 15.0, 0.0))

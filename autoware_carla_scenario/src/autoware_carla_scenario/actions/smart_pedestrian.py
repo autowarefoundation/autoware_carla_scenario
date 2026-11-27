@@ -123,7 +123,7 @@ class SmartPedestrianControllerAction(BaseAction):
     Raises:
         FileNotFoundError: If there is no file at *keyframes*.
         ValueError: If *speed_ms* or *duration_s* is not finite and
-            positive, a prompt's time is not finite or is negative, a
+            positive or is a boolean, a prompt's time is not finite or is negative, a
             waypoint is not finite, or the keyframes file is malformed (a
             keyframe's ``time_s``, joints, ``x``, ``y`` or ``yaw_deg`` not
             finite included), or *seed* is not a whole number (``2`` or
@@ -169,10 +169,13 @@ class SmartPedestrianControllerAction(BaseAction):
     ) -> None:
         # NaN passes `<= 0` and `< 0`: it would fail int() at start, or never
         # reach the end of the run; infinity would put every waypoint at 0.
-        if not math.isfinite(speed_ms) or speed_ms <= 0:
+        # A boolean would read as 0 or 1 (#2273, #2597).
+        if isinstance(speed_ms, bool) or not math.isfinite(speed_ms) or speed_ms <= 0:
             raise ValueError(f"speed_ms must be finite and positive, not {speed_ms!r}")
         if duration_s is not None and (
-            not math.isfinite(duration_s) or duration_s <= 0
+            isinstance(duration_s, bool)
+            or not math.isfinite(duration_s)
+            or duration_s <= 0
         ):
             raise ValueError(
                 f"duration_s must be finite and positive, not {duration_s!r}"
