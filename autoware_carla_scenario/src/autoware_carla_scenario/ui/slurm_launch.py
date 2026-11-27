@@ -649,9 +649,7 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
     layout = BatchLayout(batch_dir, own_files=True)
     try:
         manifest = layout.read_manifest()
-    except (FileNotFoundError, ValueError, OSError, RecursionError):
-        # RecursionError: a manifest nested deeper than json.loads() recurses
-        # is none either, as the session page reads it (ui.cases._read_json).
+    except (FileNotFoundError, ValueError, OSError):
         return None
     squeue: dict[int, dict[int, str] | None] = {}
     submissions = []

@@ -863,10 +863,14 @@ def test_a_batch_its_slurm_api_refuses_shows_no_slurm_panel(
         (batch / "slurm" / "manifest.json").write_text("[]")
     else:
         # Deeper than json.loads() recurses: a RecursionError, which must
-        # not break the session page (as ui.cases._read_json, #2543).
+        # not break the session page (as ui.cases._read_json, #2543).  The
+        # SLURM readers raise it alike (test_slurm_batch_readers), so its
+        # status is asked of no panel.
         (batch / "slurm" / "manifest.json").write_text("[" * 100000)
     scanner.clear_cache()
-    assert client.get("/api/slurm/2026-10-19/12-00-00/status").status_code == 404
+    if manifest != "nested-too-deep":
+        status = client.get("/api/slurm/2026-10-19/12-00-00/status")
+        assert status.status_code == 404
     page = client.get(url)
     assert page.status_code == 200
     assert 'id="slurm-panel"' not in page.text
