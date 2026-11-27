@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from autoware_carla_scenario.autoware_stack.bridge_node import (
+    BOOLEAN_PARAMETERS,
     BRIDGE_PROTOBUF_REQUIREMENT,
     MISSION_POLL_TIMEOUT_S,
     ROUTE_WATCH_PERIOD_S,
@@ -3146,6 +3147,18 @@ def test_the_bridge_command_keeps_the_quotes_through_the_shell(
         "map_frame": "1",
         "parent_pid": int(overrides["parent_pid"]),
     }
+
+
+@pytest.mark.parametrize("name", BOOLEAN_PARAMETERS)
+@pytest.mark.parametrize("value", ["false", "true", 1, 0.0])
+def test_anything_but_a_boolean_for_a_boolean_parameter_is_refused(
+    name: str, value: object
+) -> None:
+    """#2561: a string is now passed quoted, so ``'false'`` would reach rclpy
+    as a string, which it refuses for a boolean declaration as the node
+    starts; it is refused before then, naming the parameter."""
+    with pytest.raises(ValueError, match=rf"^{name} must be a boolean, .*{value!r}$"):
+        bridge_ros_args("h:1", {name: value})
 
 
 def test_a_boolean_and_numbers_stay_unquoted() -> None:

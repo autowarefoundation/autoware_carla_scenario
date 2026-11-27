@@ -26,6 +26,7 @@ from ..utils.cache_dir import user_cache_dir
 __all__ = [
     "BRIDGE_APT_PACKAGES",
     "BRIDGE_MODULE",
+    "BOOLEAN_PARAMETERS",
     "BRIDGE_PROTOBUF_REQUIREMENT",
     "DOUBLE_PARAMETERS",
     "INTEGER_PARAMETERS",
@@ -86,6 +87,19 @@ DOUBLE_PARAMETERS: tuple[str, ...] = (
 #: declaration, and YAML or Hydra may well read ``10.0`` for one: a whole
 #: float is passed as the int (``10``), and any other float refused (#2217).
 INTEGER_PARAMETERS: tuple[str, ...] = ("reroute_max_attempts",)
+
+#: The node's parameters declared as booleans (``ros_bridge/node.py``,
+#: ``_declare_parameters()``), and rclpy's own ``use_sim_time``.  Strings are
+#: passed quoted (:func:`yaml_quoted`), so a string for one of these
+#: (``'false'``, which a bare ``:=false`` once turned into the boolean) would
+#: reach rclpy as a string, which it refuses for a boolean declaration: it is
+#: refused here instead, before the node starts (#2561).
+BOOLEAN_PARAMETERS: tuple[str, ...] = (
+    "auto_engage",
+    "initialize_localization",
+    "require_localization_initialized",
+    "use_sim_time",
+)
 
 #: The node's parameter :func:`bridge_command` sets, to the pid of the shell
 #: that starts the stack (``$$``): the node shuts down once that process is
@@ -181,7 +195,9 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
         ValueError: naming the parameter and the value, for a value the node
             would refuse, or misbehave with, as it starts, after the scenario
             has: a boolean or a string (``'5'``, which reaches ROS as an
-            integer or a string) for a number; a NaN or an infinity for a
+            integer or a string) for a number; anything but a boolean for a
+            :data:`BOOLEAN_PARAMETERS` one (``'false'``, which reaches ROS as
+            a string); a NaN or an infinity for a
             double; one that is not positive for a
             :data:`POSITIVE_PARAMETERS` one; a float that is not a whole
             number for an integer parameter; any :data:`PARENT_PID_PARAMETER`,
@@ -195,6 +211,11 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
             raise ValueError(
                 f"{name} is not a bridge parameter to set: the launcher sets it "
                 f"to the pid of the shell that starts the stack, got {value!r}"
+            )
+        if name in BOOLEAN_PARAMETERS and not isinstance(value, bool):
+            raise ValueError(
+                f"{name} must be a boolean, as the scenario_bridge node "
+                f"declares it, got {value!r}"
             )
         number = name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS
         if number and (isinstance(value, bool) or not isinstance(value, (int, float))):
