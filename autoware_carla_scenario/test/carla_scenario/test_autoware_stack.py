@@ -3150,15 +3150,29 @@ def test_the_bridge_command_keeps_the_quotes_through_the_shell(
 
 
 @pytest.mark.parametrize("name", BOOLEAN_PARAMETERS)
-@pytest.mark.parametrize("value", ["false", "true", 1, 0.0])
+@pytest.mark.parametrize("value", ["maybe", "", "1", 1, 0.0])
 def test_anything_but_a_boolean_for_a_boolean_parameter_is_refused(
     name: str, value: object
 ) -> None:
-    """#2561: a string is now passed quoted, so ``'false'`` would reach rclpy
-    as a string, which it refuses for a boolean declaration as the node
-    starts; it is refused before then, naming the parameter."""
+    """#2561: a string is now passed quoted, so one rcl does not read as a
+    boolean would reach rclpy as a string, which it refuses for a boolean
+    declaration as the node starts; it is refused before then, naming the
+    parameter."""
     with pytest.raises(ValueError, match=rf"^{name} must be a boolean, .*{value!r}$"):
         bridge_ros_args("h:1", {name: value})
+
+
+@pytest.mark.parametrize("name", BOOLEAN_PARAMETERS)
+@pytest.mark.parametrize(
+    ("value", "passed"),
+    [("false", "false"), ("True", "true"), (" off ", "false"), ("yes", "true")],
+)
+def test_a_boolean_word_for_a_boolean_parameter_is_that_boolean(
+    name: str, value: str, passed: str
+) -> None:
+    """#2561: ``'false'`` (an ``oc.env`` interpolation gives a string) reached
+    the node as the boolean while strings were passed bare, and still does."""
+    assert bridge_ros_args("h:1", {name: value})[3:] == ["-p", f"{name}:={passed}"]
 
 
 def test_a_boolean_and_numbers_stay_unquoted() -> None:

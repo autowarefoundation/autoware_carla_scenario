@@ -90,16 +90,32 @@ INTEGER_PARAMETERS: tuple[str, ...] = ("reroute_max_attempts",)
 
 #: The node's parameters declared as booleans (``ros_bridge/node.py``,
 #: ``_declare_parameters()``), and rclpy's own ``use_sim_time``.  Strings are
-#: passed quoted (:func:`yaml_quoted`), so a string for one of these
-#: (``'false'``, which a bare ``:=false`` once turned into the boolean) would
-#: reach rclpy as a string, which it refuses for a boolean declaration: it is
-#: refused here instead, before the node starts (#2561).
+#: passed quoted (:func:`yaml_quoted`), so a string for one of these would
+#: reach rclpy as a string, which it refuses for a boolean declaration.  A
+#: string rcl reads as a boolean (``'false'``, as an ``oc.env`` interpolation
+#: gives, :data:`BOOLEAN_WORDS`) is passed as that boolean, as a bare
+#: ``:=false`` always did; any other is refused here, before the node starts
+#: (#2561).
 BOOLEAN_PARAMETERS: tuple[str, ...] = (
     "auto_engage",
     "initialize_localization",
     "require_localization_initialized",
     "use_sim_time",
 )
+
+#: The words rcl's parameter parser reads as a boolean, and the one each
+#: means (``rcl_yaml_param_parser``): a string for a
+#: :data:`BOOLEAN_PARAMETERS` one is passed as that boolean.
+BOOLEAN_WORDS: dict[str, bool] = {
+    "y": True,
+    "yes": True,
+    "true": True,
+    "on": True,
+    "n": False,
+    "no": False,
+    "false": False,
+    "off": False,
+}
 
 #: The node's parameter :func:`bridge_command` sets, to the pid of the shell
 #: that starts the stack (``$$``): the node shuts down once that process is
@@ -196,8 +212,8 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
             would refuse, or misbehave with, as it starts, after the scenario
             has: a boolean or a string (``'5'``, which reaches ROS as an
             integer or a string) for a number; anything but a boolean for a
-            :data:`BOOLEAN_PARAMETERS` one (``'false'``, which reaches ROS as
-            a string); a NaN or an infinity for a
+            :data:`BOOLEAN_PARAMETERS` one but a string of
+            :data:`BOOLEAN_WORDS`; a NaN or an infinity for a
             double; one that is not positive for a
             :data:`POSITIVE_PARAMETERS` one; a float that is not a whole
             number for an integer parameter; any :data:`PARENT_PID_PARAMETER`,
@@ -212,6 +228,10 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
                 f"{name} is not a bridge parameter to set: the launcher sets it "
                 f"to the pid of the shell that starts the stack, got {value!r}"
             )
+        if name in BOOLEAN_PARAMETERS and isinstance(value, str):
+            word = value.strip().lower()
+            if word in BOOLEAN_WORDS:
+                value = BOOLEAN_WORDS[word]
         if name in BOOLEAN_PARAMETERS and not isinstance(value, bool):
             raise ValueError(
                 f"{name} must be a boolean, as the scenario_bridge node "
