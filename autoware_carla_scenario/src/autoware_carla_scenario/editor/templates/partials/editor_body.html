@@ -18,8 +18,10 @@
     {% include "partials/validation.html" %}
   </div>
 
+  {# `data-edit-refused`: how `editor.js` tells a refused edit from a saved
+     one in an answer it does not swap in. #}
   {% if error %}
-    <div class="ed-notice ed-notice-bad" style="margin-top:12px">
+    <div class="ed-notice ed-notice-bad" style="margin-top:12px" data-edit-refused>
       {{ ic.icon('alert', 15) }}
       <div><div class="ed-notice-title">That edit was not applied</div>{{ error }}</div>
     </div>

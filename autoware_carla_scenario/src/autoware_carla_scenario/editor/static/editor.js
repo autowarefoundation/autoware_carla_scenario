@@ -828,8 +828,13 @@
   // The URL a field's value is posted to: its form's, or the nearest element
   // that posts on its own (a radio group with its own hx-post).
   function postOf(el) {
-    var owner = el.form && el.form.getAttribute('hx-post') ? el.form : el.closest('[hx-post]');
+    var owner = ownerOf(el);
     return owner ? owner.getAttribute('hx-post') : '';
+  }
+
+  // The element that posts a field's value: its form, or a radio group.
+  function ownerOf(el) {
+    return el.form && el.form.getAttribute('hx-post') ? el.form : el.closest('[hx-post]');
   }
 
   function fieldsLike(key) {
@@ -1033,6 +1038,11 @@
   // Fields changed since their form last posted; see `htmx:configRequest`.
   var unsent = [];
 
+  // The hidden field every inspector form names its draft revision in, and
+  // what this page's own flushes moved each revision it has seen on to.
+  var REVISION = 'draft_revision';
+  var revisionNow = {};
+
   document.addEventListener('change', function (event) {
     var el = event.target;
     if (isPosted(el) && postOf(el) && unsent.indexOf(el) < 0) unsent.push(el);
@@ -1041,6 +1051,14 @@
   document.body.addEventListener('htmx:configRequest', function (event) {
     var detail = event.detail || {};
     if (detail.headers) detail.headers['X-Editor-Client'] = CLIENT_ID;
+    // A form rendered before this page saved a pending change on its own
+    // (see "Saving a pending change before navigating") names the revision
+    // that save made instead.
+    var data = detail.formData;
+    if (data && data.has && data.has(REVISION) && data.get) {
+      var given = String(data.get(REVISION));
+      if (revisionNow[given]) data.set(REVISION, revisionNow[given]);
+    }
     // What the request posts is on its way, as it stands now.
     var from = detail.elt;
     unsent = unsent.filter(function (el) {
@@ -1052,6 +1070,8 @@
 
   document.body.addEventListener('htmx:beforeSwap', function (event) {
     var detail = event.detail || {};
+    // A flush (below) swaps nothing, and leaves a carry in progress alone.
+    if (detail.swapOverride === 'none') return;
     carried = null;
     if (!detail.target || detail.target.id !== 'editor-body' || !detail.shouldSwap) return;
     var config = detail.requestConfig || {};
@@ -1095,6 +1115,198 @@
     if (!carried || carried.request !== detail.requestConfig) return;
     if (event.target !== detail.target) return;  // an out-of-band swap
     carryAcross(false);
+  });
+
+  /* ---------------------------------------------------------------------
+   * Saving a pending change before navigating (#2348)
+   *
+   * A change is posted 200 ms after it is made. A click in that window that
+   * replaces the inspector -- another card, "+ Actor", a place on the map --
+   * took the form away before its post was sent, and only a body swap carried
+   * the change across (above): an inspector swap dropped it.
+   *
+   * So a request that replaces `#inspector` or `#editor-body` first posts
+   * every other form holding a change not posted yet, one at a time, and is
+   * sent once they have been answered: the server takes them in that order.
+   * Those posts are what the forms would have sent, answered with
+   * `swap: 'none'` -- the page shows the navigation's answer, and behind an
+   * inspector swap the canvas shows the document as it was until the next
+   * edit re-renders it. The form's own debounced post is then dropped, so
+   * nothing is posted twice.
+   *
+   * Each flush moves the draft on a revision while the page's forms still
+   * name the one before. The lenient check passes them -- the saves since are
+   * this page's -- but a row button is checked strictly, and would be refused
+   * by the very flush its click caused. So when the answer is the revision
+   * after the one the flush sent, which means no other save came between,
+   * and every row the page shows is where the answer puts it, requests name
+   * that revision in place of the one their form shows. A flush can move
+   * rows -- a waypoint condition put on another vertex re-sorts them all --
+   * and a row button rendered before it would then act on whatever row came
+   * to its index; it is refused instead, as the strict check would.
+   *
+   * A flush that fails stops the navigation, its failure shown as any other's,
+   * and the field keeps what was typed, still a change not posted: the next
+   * navigation tries it again. One the server refuses (a value it cannot
+   * take) is posted again as an ordinary edit, so its reason is shown where
+   * an edit's always is.
+   * ------------------------------------------------------------------- */
+
+  var inFlight = [];     // elements whose request is on its way
+  var flushing = null;   // the flushes a navigation waits for
+
+  document.body.addEventListener('htmx:beforeSend', function (event) {
+    var elt = event.detail && event.detail.elt;
+    if (elt) inFlight.push(elt);
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function (event) {
+    var at = inFlight.indexOf(event.detail && event.detail.elt);
+    if (at >= 0) inFlight.splice(at, 1);
+  });
+
+  function navigates(detail) {
+    var target = detail.target;
+    return !!target && (target.id === 'inspector' || target.id === 'editor-body');
+  }
+
+  function hasUnsent(owner) {
+    return unsent.some(function (el) { return el.isConnected && ownerOf(el) === owner; });
+  }
+
+  // The posting elements holding a change not posted yet, but not *elt*,
+  // whose request posts its own fields, nor one whose post is on its way:
+  // the swap its answer makes carries the change across.
+  function pendingOwners(elt) {
+    inFlight = inFlight.filter(function (el) { return el.isConnected; });
+    var owners = [];
+    unsent.forEach(function (el) {
+      var owner = el.isConnected ? ownerOf(el) : null;
+      if (!owner || owner === elt || owners.indexOf(owner) >= 0) return;
+      if (inFlight.indexOf(owner) < 0) owners.push(owner);
+    });
+    return owners;
+  }
+
+  function parsed(text) {
+    return window.DOMParser
+      ? new window.DOMParser().parseFromString(String(text || ''), 'text/html')
+      : null;
+  }
+
+  // The `data-row` inputs of the row-addressed forms under *root*, by the
+  // URL of their form and their name.
+  function rowMap(root) {
+    var map = {};
+    Array.prototype.forEach.call(root.querySelectorAll('form[hx-post]'), function (form) {
+      var url = form.getAttribute('hx-post');
+      rowInputs(form).forEach(function (input) {
+        (map[url] = map[url] || {})[input.name] = input;
+      });
+    });
+    return map;
+  }
+
+  // Whether every row this page shows sits, in the answer *page* to the
+  // flush *config*, at the URL it sits at here, under its name or the one
+  // the flush renamed it to: then no index a row button posts has moved.
+  function rowsStay(page, config) {
+    var before = rowMap(document);
+    var after = rowMap(page);
+    var urls = Object.keys(before);
+    if (urls.length !== Object.keys(after).length) return false;
+    return urls.every(function (url) {
+      var now = after[url];
+      return !!now && Object.keys(before[url]).every(function (name) {
+        return !!now[name] && rowNames(before[url][name], config).indexOf(now[name].value) >= 0;
+      });
+    });
+  }
+
+  // Remember the revision a flush made, when it made the only save since the
+  // one it sent and moved no row: see `htmx:configRequest`.
+  function noteRevision(answer, page) {
+    var config = answer.requestConfig;
+    var data = config && config.formData;
+    var made = page && page.querySelector('input[name="' + REVISION + '"]');
+    if (!made || !data || !data.get || !data.has || !data.has(REVISION)) return;
+    var sent = String(data.get(REVISION));
+    if (!/^\d+$/.test(sent) || made.value !== String(Number(sent) + 1)) return;
+    if (!rowsStay(page, config)) return;
+    Object.keys(revisionNow).forEach(function (shown) {
+      if (revisionNow[shown] === sent) revisionNow[shown] = made.value;
+    });
+    revisionNow[sent] = made.value;
+  }
+
+  // Whether the navigation may go on after *owner*'s flush, which posted
+  // the changes *held*, was *answer*ed.
+  function flushed(owner, answer, held) {
+    if (!answer) return true;               // not sent: its form had left
+    if (!answer.successful) {               // shown by showRequestError
+      held.forEach(function (el) {
+        if (el.isConnected && unsent.indexOf(el) < 0) unsent.push(el);
+      });
+      return false;
+    }
+    var page = parsed(answer.xhr && answer.xhr.responseText);
+    if (page && page.querySelector('[data-edit-refused]')) {
+      window.htmx.ajax('POST', owner.getAttribute('hx-post'), { source: owner });
+      return false;
+    }
+    noteRevision(answer, page);
+    return true;
+  }
+
+  function flush(owner) {
+    return new Promise(function (resolve) {
+      var answer = null;
+      var held = unsent.filter(function (el) { return ownerOf(el) === owner; });
+      function heard(event) {
+        // Its own debounced post targets `#editor-body`; the flush, itself.
+        if (event.detail && event.detail.target === owner) answer = event.detail;
+      }
+      function done() {
+        owner.removeEventListener('htmx:afterRequest', heard);
+        resolve(flushed(owner, answer, held));
+      }
+      owner.addEventListener('htmx:afterRequest', heard);
+      window.htmx.ajax('POST', owner.getAttribute('hx-post'),
+        { source: owner, target: owner, swap: 'none' }).then(done, done);
+      // After the call, which runs the flush's own `htmx:confirm`.
+      owner.__flushed = true;
+    });
+  }
+
+  document.body.addEventListener('htmx:confirm', function (event) {
+    var detail = event.detail || {};
+    var elt = detail.elt;
+    var cause = detail.triggeringEvent;
+    if (elt && elt.__flushed && cause && cause.type === 'change') {
+      elt.__flushed = false;
+      // The debounced post of a change its flush has saved.
+      if (!hasUnsent(elt)) {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (!window.htmx || !navigates(detail) || !detail.issueRequest) return;
+    var owners = pendingOwners(elt);
+    if (!owners.length && !flushing) return;
+    event.preventDefault();
+    var run = (flushing || Promise.resolve()).then(function () {
+      return owners.reduce(function (chain, owner) {
+        return chain.then(function (go) {
+          return go && owner.isConnected ? flush(owner) : go;
+        });
+      }, Promise.resolve(true));
+    });
+    flushing = run;
+    run.then(function (go) {
+      if (flushing === run) flushing = null;
+      // `false`: not confirmed, so an `hx-confirm` question is still asked.
+      if (go) detail.issueRequest(false);
+    });
   });
 
   /* ---------------------------------------------------------------------
