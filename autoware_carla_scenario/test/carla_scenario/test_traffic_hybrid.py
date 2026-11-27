@@ -470,6 +470,32 @@ def test_a_far_vehicle_leaves_carla_and_comes_back_near(make: Any, engine: str) 
 
 
 @needs_sumo
+def test_a_released_vehicle_stays_in_carla_and_keeps_its_neighbours_there(
+    make: Any,
+) -> None:
+    """A background vehicle released to an adversity is driven by the
+    scenario: never sent out of CARLA (destroyed under the adversity), and a
+    focus point that keeps the background traffic near it in CARLA, as the
+    ``sumo`` backend's CARLA-driven vehicles are (#2592)."""
+    run = make(engine="queue", micro_radius_m=60.0, meso_radius_m=80.0)
+    backend, world = run.backend, run.world
+    ego = world.place(0.0, 1.6, _EAST)
+    backend.start(world, skip_actor_ids={ego.id})
+    released = run.spawn(150.0, 1.6, _EAST, speed_kmh=5.0)
+    neighbour = run.spawn(170.0, 1.6, _EAST, speed_kmh=5.0)
+    far = run.spawn(150.0, -400.0, _EAST, speed_kmh=5.0)
+    actor = backend.background_actors(world)[released]
+    backend.release_actor(world, actor)
+    run.run(1.0)
+    actors = backend.background_actors(world)
+    assert actors[released] is actor and actor.is_alive
+    assert neighbour in actors
+    # Nothing near the ego or the released vehicle: still out of CARLA.
+    assert far not in actors and far in backend._parked
+    assert backend._level_changes == [1, 0]
+
+
+@needs_sumo
 def test_out_of_carla_it_drives_on_along_the_roads(make: Any, engine: str) -> None:
     run = make(engine=engine, micro_radius_m=30.0, meso_radius_m=40.0)
     backend, world = run.backend, run.world

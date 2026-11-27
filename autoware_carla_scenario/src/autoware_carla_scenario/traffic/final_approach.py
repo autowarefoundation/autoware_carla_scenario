@@ -249,6 +249,13 @@ class FinalApproach:
         ):
             vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
             self._blocked_s += dt
+            # Held, it makes no way of its own accord: neither stuck nor
+            # wedged, timed afresh once it pulls away (#2592).
+            self._stuck_s = 0.0
+            self._progress_at = self._here
+            self._wedged_s = 0.0
+            self._wedged_at = self._here
+            self._climbing = False
             wait = LEAD_OUT_WALKER_WAIT_S if walker else LEAD_OUT_WAIT_S
             if not self._stop and self._blocked_s >= wait:
                 self.done = True  # the TrafficManager takes it on as it is
@@ -414,7 +421,8 @@ class FinalApproach:
         return False
 
     def _plan(self, elapsed: float) -> "_Plan":
-        """The path ahead, at :data:`APPROACH_SPEED_MPS`, slowing onto its end."""
+        """The path ahead, at the speed it drives at (``speed``, or
+        :meth:`set_speed`'s), slowing onto its end where it stops there."""
         from carla_driver_interface.geometry import Pose  # noqa: PLC0415
         from carla_driver_interface.geometry import Trajectory as Plan  # noqa: PLC0415
 

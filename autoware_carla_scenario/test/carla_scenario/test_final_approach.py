@@ -216,6 +216,41 @@ def test_a_vehicle_driven_out_of_its_junction_waits_for_one_in_its_way(
             assert elapsed == pytest.approx(fa.LEAD_OUT_WAIT_S, abs=2 * _DT)
 
 
+def test_a_wait_for_one_in_its_way_starts_the_stuck_and_wedged_timers_afresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Time making no way before a wait does not count after it: kept, it
+    tripped the wedged and stuck timers right after pulling away (#2592)."""
+    from autoware_carla_scenario.traffic import final_approach as fa
+
+    blocked = [False]
+    monkeypatch.setattr(
+        fa.FinalApproach, "_in_way", lambda self, kind, reach, hw: blocked[0]
+    )
+    vehicle = _Vehicle(speed=0.0)
+    path = [carla.Location(float(x), 0.0, 0.0) for x in (5, 10, 15, 20)]
+    approach = FinalApproach(vehicle, carla.Location(0.0, 0.0, 0.0), path, stop=False)  # type: ignore[arg-type]
+    elapsed = 0.0
+
+    def stand(seconds: float) -> None:
+        nonlocal elapsed
+        end = elapsed + seconds
+        while elapsed < end - 1e-9:
+            approach.step(_DT, elapsed)  # the vehicle does not move
+            elapsed += _DT
+
+    # Short of both limits, full throttle already.
+    stand(fa.LEAD_OUT_STUCK_S - 1.0)
+    assert not approach.done and approach._climbing
+    blocked[0] = True
+    stand(2.0)
+    blocked[0] = False
+    stand(1.0)
+    assert not approach.done
+    assert approach._stuck_s == pytest.approx(1.0, abs=2 * _DT)
+    assert approach._wedged_s <= 1.0 + 2 * _DT and not approach._climbing
+
+
 def test_a_vehicle_led_out_watches_the_path_it_turns_along(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
