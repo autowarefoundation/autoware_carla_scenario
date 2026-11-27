@@ -2492,10 +2492,16 @@ what others are about to take:</p>
 <li><code>CUDA_VISIBLE_DEVICES</code> is read as <code>nvidia-smi</code>'s indices or UUIDs. Where
   SLURM renumbers a job's GPUs from 0, set <code>gpus: device=N</code> to the host's index
   instead.</li>
-<li><code>CUDA_VISIBLE_DEVICES</code> does not limit what docker gives a container: with
-  <code>gpus: all</code> it still gets every GPU of the host, while only the visible ones
-  are checked. A GPU that <code>device=</code> or a count names and that is not visible
-  is refused. Under SLURM, prefer <code>auto</code> or <code>device=N</code>.</li>
+<li>With <code>CUDA_VISIBLE_DEVICES</code> set, <code>gpus: all</code> (and <code>auto</code> with
+  <code>gpu_memory_mb: 0</code>) gives the container the visible GPUs alone, by the
+  UUIDs <code>nvidia-smi</code> gives them (<code>--gpus device=GPU-...</code>, or
+  <code>--gpus '"device=GPU-a,GPU-b"'</code> for several), not <code>--gpus all</code>, so a SLURM
+  job's container stays within the job's GPUs (#2584) even where the job
+  renumbers them. A MIG instance (<code>MIG-...</code>) is passed on as given; an entry
+  that names no GPU (<code>-1</code>, <code>NoDevFiles</code>) is left out, and with none visible
+  the container gets no GPU. Without <code>CUDA_VISIBLE_DEVICES</code>, they pass
+  <code>--gpus all</code>. A GPU that <code>device=</code> or a count names and that is not visible
+  is refused.</li>
 </ul>
 <h2 id="containers">Containers<a class="headerlink" href="#containers" title="Permanent link">&para;</a></h2>
 <p><code>prepare.docker.DockerBackend</code> runs a backend as a container on this host. It:</p>
@@ -2548,7 +2554,8 @@ The settings every container backend shares:</p>
   refused, use <code>none</code>). <code>auto</code> is the GPU the preparer placed the backend on,
   and it places one only when it asks for GPU memory: with <code>gpu_memory_mb: 0</code>
   there is no placement, and <code>auto</code> passes <code>--gpus all</code>, every GPU, as <code>all</code>
-  does (<code>none</code> gives it none). With <code>gpu_memory_mb</code> above 0, <code>gpus</code> must say
+  does -- every visible one, under <code>CUDA_VISIBLE_DEVICES</code>
+  (<a href="#resources">Resources</a>) -- (<code>none</code> gives it none). With <code>gpu_memory_mb</code> above 0, <code>gpus</code> must say
   which GPUs docker gives the container (<a href="#resources">Resources</a>);</li>
 <li><code>pull</code> is <code>missing</code>, <code>always</code> or <code>never</code>;</li>
 <li><code>startup_timeout_s</code> (and ARDY's <code>timeout_s</code>) is a finite number of seconds
@@ -2603,7 +2610,7 @@ checks the shared keys above (check your own keys with its helpers, such as
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 26, 2026 13:33:38 UTC"><span class="timeago" datetime="2026-11-26T13:33:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 26, 2026 13:33:38 UTC">2026-11-26</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 17:14:01 UTC"><span class="timeago" datetime="2026-11-27T17:14:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 17:14:01 UTC">2026-11-27</span>
   </span>
 
     
