@@ -24,7 +24,6 @@ from typing import Any, Optional, Sequence
 
 import grpc
 import numpy as np
-from google.protobuf.message import DecodeError
 from numpy.typing import NDArray
 
 from carla_driver_interface.contract import (
@@ -50,6 +49,7 @@ from carla_driver_interface.protocol import (
     egodriver_pb2,
     egodriver_pb2_grpc,
     sensorsim_pb2,
+    unpack_debug_info,
 )
 
 from .base import (
@@ -250,12 +250,22 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
                 )
             ),
         )
-        stub.start_session(
-            request,
-            timeout=self._config.timeout_s,
-            metadata=contract_metadata(revision),
-        )
+        # Recorded before the call: a call that fails on this side (its
+        # deadline passing while the policy's on_session_start runs, say) may
+        # still have opened the session on the server, and start_session's
+        # failure path closes only a session it knows of (#2575).
         self._session_uuid = session_uuid
+        try:
+            stub.start_session(
+                request,
+                timeout=self._config.timeout_s,
+                metadata=contract_metadata(revision),
+            )
+        except grpc.RpcError as error:
+            if error.code() == grpc.StatusCode.ALREADY_EXISTS:
+                # The uuid is another session's: closing it would end that one.
+                self._session_uuid = None
+            raise
         logger.info("Driver session started: uuid=%s scene=%s", session_uuid, scene_id)
 
     def submit_route(
@@ -445,13 +455,8 @@ def _decode_debug_info(raw: bytes, outcome: DriveOutcome) -> None:
     that fails to parse is left alone rather than treated as an error -- a policy
     is free to put its own encoding there.
     """
-    if not raw:
-        return
-    message = carla_driver_pb2.CarlaDriveDebugInfo()
-    try:
-        message.ParseFromString(raw)
-    except DecodeError:
-        logger.debug("Driver debug info is not a CarlaDriveDebugInfo", exc_info=True)
+    message = unpack_debug_info(raw)
+    if message is None:
         return
     outcome.policy_name = str(message.policy_name)
     outcome.inference_seconds = float(message.inference_seconds)

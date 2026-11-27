@@ -3,8 +3,8 @@
 The scenario framework plays the *runtime* role of the alpasim contract: it owns the
 world, renders the observations, and asks a driver policy what to do next.  The policy
 runs elsewhere -- typically as a gRPC server built on ``carla-driver-interface``, the
-policy-side package in this workspace -- and this module defines the seam between the
-two.
+policy-side package (a dependency from PyPI, not part of this repository) -- and this
+module defines the seam between the two.
 
 :class:`BaseEgoDriverClient` is deliberately transport-agnostic so tests can substitute a
 fake, mirroring how :class:`~autoware_carla_scenario.sensor.base.CameraSensorBase`
@@ -115,7 +115,7 @@ class DriverCameraLens:
     polynomials' coefficients go up from the constant term; pixels are OpenCV's
     (the centre of the top-left pixel is (0, 0)).
 
-    The policy is sent the lens as it is (:class:`~.egodriver_client.EgodriverClient`);
+    The policy is sent the lens as it is (:class:`~.egodriver_client.EgoDriverGrpcClient`);
     a T4 dataset, whose cameras are OpenCV's, gets the OpenCV rational model fitted
     to it (:mod:`autoware_carla_scenario.t4`).
 
@@ -413,16 +413,21 @@ class DriverClientConfig:
     """Connection and cadence settings for an external driver policy."""
 
     address: str = "localhost:50051"
-    """``host:port`` of the driver's gRPC server."""
+    """Where the driver's gRPC server is: ``host:port``, or a Unix socket
+    (``unix:///path/policy.sock``, ``unix-abstract:name``) -- the one
+    :attr:`transport` ``unix`` takes when :attr:`policy` is unset.  Unused when
+    the run serves :attr:`policy` itself."""
 
     policy: Optional[str] = None
     """A policy to serve from this process instead of dialling :attr:`address`.
 
     A name the reference policies are registered under (``route_follower``) or
-    ``package.module:Class``. Set, the run serves it itself, once, on a free local
-    port -- one command starts everything; unset, the policy is a separate process
-    already serving at :attr:`address` (``carla-driver-interface serve``, an
-    alpasim driver, ...).
+    ``package.module:Class``. Set, the run serves it itself, once -- one command
+    starts everything -- where :attr:`transport` says: on a free local port
+    (``tcp``), on a Unix socket of its own (``unix``), or behind no socket at all,
+    its servicer called directly (``direct``). Unset, the policy is a separate
+    process already serving at :attr:`address` (``carla-driver-interface serve``,
+    an alpasim driver, ...).
     """
 
     transport: str = "tcp"
