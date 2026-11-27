@@ -50,10 +50,11 @@ CONTROL_TARGETS = ("setting", "measure")
 MAPPING_FIELDS = ("scale", "offset", "integer", "values")
 
 #: The fields of ``sweep.odd_sample``: ``tire_friction`` and ``visibility``
-#: (default true) say whether each case draws where its grip
-#: (:func:`~.sampler.with_tire_friction`) and its visibility
-#: (:func:`~.sampler.with_visibility`) are in the ranges its weather leaves;
-#: the rest are :func:`~.sampler.search_from_config`'s.
+#: (default true) say whether each case draws where its grip and its
+#: visibility are in the ranges its weather leaves (the quantiles of
+#: :data:`~.sampler.QUANTILE_DRAWS`, drawn as nodes of the rules by
+#: :func:`~.sampler.search_from_config`); the rest are
+#: :func:`~.sampler.search_from_config`'s.
 SAMPLE_FIELDS = {
     "count",
     "seed",

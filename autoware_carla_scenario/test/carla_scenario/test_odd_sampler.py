@@ -982,19 +982,6 @@ def test_a_sweep_keeps_the_draws_with_a_true_spelling(value: Any) -> None:
         assert any(o.startswith("environment.visibility_quantile=") for o in case)
 
 
-def test_a_case_that_names_its_grip_keeps_it() -> None:
-    from autoware_carla_scenario.odd.sampler import OddSample, with_tire_friction
-
-    named = OddSample(0, ["environment.tire_friction_quantile=0.9"], {}, {})
-    drawn = OddSample(1, ["environment.rain=80"], {}, {})
-
-    kept, added = with_tire_friction([named, drawn], seed=0)
-
-    assert kept == named
-    assert added.overrides[0] == "environment.rain=80"
-    assert added.overrides[1].startswith("environment.tire_friction_quantile=")
-
-
 def test_each_case_draws_its_visibility_the_same_way_every_time() -> None:
     cfg = OmegaConf.create(
         {"odd": "default", "sweep": {"odd_sample": {"count": 8, "seed": 3}}}
@@ -1033,49 +1020,6 @@ def test_a_sweep_can_leave_the_visibility_at_the_middle() -> None:
 
     for case in expand_config(cfg):
         assert not any(o.startswith("environment.visibility") for o in case)
-
-
-def test_a_case_that_names_its_visibility_keeps_it() -> None:
-    from autoware_carla_scenario.odd.sampler import OddSample, with_visibility
-
-    quantile = OddSample(0, ["environment.visibility_quantile=0.9"], {}, {})
-    metres = OddSample(1, ["environment.visibility_m=30"], {}, {})
-    drawn = OddSample(2, ["environment.fog_density=80"], {}, {})
-
-    kept, fixed, added = with_visibility([quantile, metres, drawn], seed=0)
-
-    assert kept == quantile and fixed == metres
-    assert added.overrides[1].startswith("environment.visibility_quantile=")
-
-
-def test_a_case_that_names_its_grip_draws_no_quantile_for_it() -> None:
-    from autoware_carla_scenario.odd.sampler import OddSample, with_tire_friction
-
-    fixed = OddSample(0, ["environment.tire_friction=0.4"], {}, {})
-    drawn = OddSample(1, ["environment.rain=80"], {}, {})
-
-    kept, added = with_tire_friction([fixed, drawn], seed=0)
-
-    assert kept == fixed
-    assert added.overrides[1].startswith("environment.tire_friction_quantile=")
-
-
-def test_an_int_seed_draws_the_grip_and_visibility_it_always_has() -> None:
-    # Pinned: a sweep with an int seed reproduces the quantiles it drew before
-    # the seed was read as a whole number (#1442).
-    from autoware_carla_scenario.odd.sampler import (
-        OddSample,
-        with_tire_friction,
-        with_visibility,
-    )
-
-    drawn = [OddSample(0, ["environment.rain=80"], {}, {})]
-
-    (grip,) = with_tire_friction(drawn, seed=4)
-    (sight,) = with_visibility(drawn, seed=4)
-
-    assert grip.overrides[-1] == "environment.tire_friction_quantile=0.185"
-    assert sight.overrides[-1] == "environment.visibility_quantile=0.04"
 
 
 @pytest.mark.parametrize("seed", [4.0, "4", " 4 "])
@@ -2829,6 +2773,12 @@ _KNOBS = "sweep.odd_sample.knobs"
         ("limits", "x", "limits: expected [low, high]"),
         ("scale", "2", "scale: expected a number"),
         ("offset", True, "offset: expected a number"),
+        # #2577: a NaN or infinite scale or offset was taken, and the sampler
+        # then found no case inside the ODD.
+        ("scale", math.nan, "scale: expected a finite number, got nan"),
+        ("scale", -math.inf, "scale: expected a finite number, got -inf"),
+        ("offset", math.inf, "offset: expected a finite number, got inf"),
+        ("offset", math.nan, "offset: expected a finite number, got nan"),
     ],
 )
 def test_a_sweep_knob_is_checked_with_its_full_path(
@@ -2844,6 +2794,31 @@ def test_a_sweep_knob_is_checked_with_its_full_path(
         check_sample_settings({"knobs": {"a": spec}})
     with pytest.raises(ValueError, match=re.escape(f"controls.a.{message}")):
         controls_from_mapping({"a": spec})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scale", math.nan),
+        ("scale", math.inf),
+        ("offset", -math.inf),
+        ("offset", math.nan),
+    ],
+)
+def test_a_control_with_a_non_finite_scale_or_offset_is_refused(
+    field: str, value: float
+) -> None:
+    # #2577: validate_controls returned [] for `scale: nan`.
+    from autoware_carla_scenario.odd.controls import control_errors, validate_controls
+
+    spec = {"key": "a.b", field: value}
+    message = f"expected a finite number, got {value!r}"
+    found = validate_controls({"vehicle_ahead_gap_m": spec})
+    assert [(d.path, d.message, d.severity) for d in found] == [
+        (f"controls.vehicle_ahead_gap_m.{field}", message, "error")
+    ]
+    errors = control_errors({"a": spec}, _KNOBS)
+    assert [(d.path, d.message) for d in errors] == [(f"{_KNOBS}.a.{field}", message)]
 
 
 @pytest.mark.parametrize(

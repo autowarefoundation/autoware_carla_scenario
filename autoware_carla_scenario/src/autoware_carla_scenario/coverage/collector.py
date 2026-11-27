@@ -35,7 +35,6 @@ from typing import Any, Optional
 from openodd import Backend
 from openodd.collector import COVERAGE_SCHEMA, CROSS_SEPARATOR, ODD_ARCHIVE_SUFFIX
 from openodd.collector import CoverageCollector as _CoverageCollector
-from openodd.collector import generator as _generator
 
 # Re-exported: these were defined here before coverage.item_names (#824).
 from .item_names import VERSION_MARK as VERSION_MARK
@@ -48,7 +47,6 @@ __all__ = [
     "ODD_ARCHIVE_SUFFIX",
     "CoverageCollector",
     "current_measure_coverage",
-    "generator",
     "prepare_measures",
     "versioned_item_name",
 ]
@@ -63,12 +61,6 @@ def _framework() -> dict[str, Optional[str]]:
     except metadata.PackageNotFoundError:
         version = None
     return {"framework": f"{FRAMEWORK_DISTRIBUTION}=={version}" if version else None}
-
-
-def generator() -> dict[str, Optional[str]]:
-    """What writes the coverage files: openodd's and this framework's versions
-    (``None`` when one cannot be told)."""
-    return _generator(_framework())
 
 
 class _Renamed:

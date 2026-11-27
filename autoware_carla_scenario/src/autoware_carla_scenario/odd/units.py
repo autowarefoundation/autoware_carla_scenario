@@ -4,7 +4,4 @@ from __future__ import annotations
 
 from openodd import UnitError, Units, convert, normalize_unit
 
-__all__ = ["UNITS", "UnitError", "Units", "convert", "normalize_unit"]
-
-#: The built-in units.
-UNITS = Units()
+__all__ = ["UnitError", "Units", "convert", "normalize_unit"]

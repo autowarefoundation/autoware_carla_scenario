@@ -32,11 +32,18 @@ from autoware_carla_scenario.odd import (
     plan_route_coverage,
     probes,
     register_odd,
+    resolve_odd,
 )
 import openodd
 from autoware_carla_scenario.odd.cli import main as odd_main
 from autoware_carla_scenario.odd.openodd import _missing
-from autoware_carla_scenario.odd.route import MISSING_BUCKET, UNDECIDED_BUCKET
+from autoware_carla_scenario.odd.route import (
+    MISSING_BUCKET,
+    UNDECIDED_BUCKET,
+    RouteCoverage,
+    RouteLanelet,
+    lanelet_readings,
+)
 from autoware_carla_scenario.scenario_runner import ScenarioRunner
 from autoware_carla_scenario.sweeper.constraints import create_routing_graph
 from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
@@ -681,6 +688,70 @@ class TestVerdict:
         assert "road_class" in coverage.map_attributes
         assert "wet" not in coverage.map_attributes
 
+    def test_an_attribute_derived_by_expressions_is_decided_by_the_map(
+        self, nishishinjuku: tuple[Any, Any], tmp_path: Path
+    ) -> None:
+        # #2577: openodd leaves derived_from empty for an attribute defined
+        # by expressions, which was never counted as decided by the map.
+        odd = _expression_derived_odd(tmp_path)
+        assert _attribute(odd, "road.speed_class").derived_from == []
+        coverage = _cover(odd, LEFT_TURN, nishishinjuku)
+        assert coverage.map_attributes == ["road.speed_limit", "road.speed_class"]
+        assert [ll.values["road.speed_class"] for ll in coverage.lanelets] == [
+            "slow_road"
+        ] * 3
+        assert coverage.expected_m["road.speed_class"] == {
+            "slow_road": pytest.approx(coverage.length_m)
+        }
+        summary = combine_route_coverage(odd, [coverage])
+        assert summary.unreached["road.speed_class"] == ["fast_road"]
+        lanelet_map, graph = nishishinjuku
+        readings = lanelet_readings(
+            odd, lanelet_map.laneletLayer[203], lanelet_map, graph
+        )
+        assert readings["road.speed_class"] == ("slow_road", "slow_road")
+
+    def test_an_attribute_derived_by_expressions_from_the_run_is_not(
+        self, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        rain = next(
+            a
+            for a in default_odd().attributes
+            if a.derived and not a.derived_from and "rain" in a.name
+        )
+        coverage = _cover(default_odd(), LEFT_TURN, nishishinjuku)
+        assert all(ll.values[rain.name] is UNDECIDED for ll in coverage.lanelets)
+        assert rain.name not in coverage.map_attributes
+        summary = combine_route_coverage(default_odd(), [coverage])
+        assert rain.name not in summary.unreached
+        assert rain.name not in summary.undetermined
+
+    def test_an_attribute_derived_by_expressions_open_on_a_lanelet_is_undetermined(
+        self,
+        nishishinjuku: tuple[Any, Any],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        odd = _expression_derived_odd(tmp_path)
+        lanelet_map, graph = nishishinjuku
+        # Without a speed_limit tag the run reads CARLA's limit: the class is
+        # open there.
+        assert lanelet_readings(odd, _fake_lanelet(), lanelet_map, graph) == {}
+        # 203 read as 70 km/h, 411 as untagged.
+        probe = _attribute(odd, "road.speed_limit").probe
+        monkeypatch.setattr(
+            probe, "on_lanelet", lambda ll, m, g: 70.0 if ll.id == 203 else UNDECIDED
+        )
+        coverage = _cover(odd, [203, 411], nishishinjuku)
+        assert [ll.values["road.speed_class"] for ll in coverage.lanelets] == [
+            "fast_road",
+            UNDECIDED,
+        ]
+        assert "road.speed_class" in coverage.map_attributes
+        summary = combine_route_coverage(odd, [coverage])
+        assert "road.speed_class" in summary.undetermined
+        assert "road.speed_class" not in summary.unreached
+
     def test_a_goal_at_the_start_of_an_outside_lanelet_does_not_leave(
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
@@ -718,12 +789,53 @@ class TestVerdict:
         }
 
 
+def _expression_derived_odd(tmp_path: Path) -> OddDefinition:
+    """A speed class derived by expressions from the lanelet's speed limit."""
+    (tmp_path / "odd.yaml").write_text(
+        "TAXONOMY:\n"
+        "  road:\n"
+        "    speed_limit: float speed_km_per_h\n"
+        "    speed_class:\n"
+        "      slow_road:\n"
+        '        speed_limit: "< 65 km/h"\n'
+        "      fast_road:\n"
+        '        speed_limit: ">= 65 km/h"\n'
+    )
+    binding = tmp_path / "binding.yaml"
+    binding.write_text(
+        "openodd: [odd.yaml]\n"
+        "name: derived\n"
+        "probes:\n"
+        "  road.speed_limit:\n"
+        "    probe: speed_limit_kph\n"
+        "    buckets: [0, 65, 130]\n"
+    )
+    return resolve_odd(str(binding))
+
+
 # ---------------------------------------------------------------------------
 # Expected coverage
 # ---------------------------------------------------------------------------
 
 
 class TestExpectedCoverage:
+    def test_a_lanelet_only_touched_is_not_undecided(self) -> None:
+        # #2577: outside() dropped a lanelet the route only touches (a goal
+        # at s=0), undecided() did not.
+        coverage = RouteCoverage(
+            odd="t",
+            name="r",
+            lanelets=[
+                RouteLanelet(1, 5.0, "undecided"),
+                RouteLanelet(2, 0.0, "undecided"),
+                RouteLanelet(3, 0.0, "outside"),
+            ],
+            expected_m={},
+            map_attributes=[],
+        )
+        assert [ll.lanelet_id for ll in coverage.undecided()] == [1]
+        assert coverage.outside() == []
+
     def test_metres_per_bucket(self, nishishinjuku: tuple[Any, Any]) -> None:
         coverage = _cover(default_odd(), LEFT_TURN, nishishinjuku)
         metres = dict(plan_route(LEFT_TURN, *nishishinjuku))

@@ -1678,6 +1678,27 @@ def test_an_odd_installed_in_site_packages_still_names_its_line(
     assert "helper.py:2: 'k'" in out
 
 
+def test_a_library_in_dist_packages_is_not_named_as_the_authors_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    # #2577: Debian's and the system Python's packages are in dist-packages,
+    # which only site-packages was skipped for.
+    library = tmp_path / "dist-packages" / "thirdparty_lib_2577"
+    library.mkdir(parents=True)
+    (library / "__init__.py").write_text("def boom():\n    return {}['k']\n")
+    (tmp_path / "dist_user_odd_2577.py").write_text(
+        "import thirdparty_lib_2577\n\n\ndef build():\n"
+        "    thirdparty_lib_2577.boom()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / "dist-packages"))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "dist_user_odd_2577:build"]) == 1
+    out = capsys.readouterr().out
+    assert "dist_user_odd_2577.py:5: 'k'" in out
+    assert "__init__.py" not in out
+
+
 def test_the_innermost_frame_of_the_authors_files_is_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:

@@ -118,7 +118,9 @@ class RouteCoverage:
     #: buckets.  :data:`UNDECIDED_BUCKET` and :data:`MISSING_BUCKET` hold the
     #: metres where the map does not decide the value or has none.
     expected_m: dict[str, dict[str, float]]
-    #: The attributes the map decides (their probe reads a lanelet).
+    #: The attributes the map decides (their probe reads a lanelet, or, for
+    #: one derived by expressions, the map works its value out on a lanelet
+    #: the route drives on).
     map_attributes: list[str]
 
     def _metres(self, verdict: str) -> float:
@@ -160,8 +162,14 @@ class RouteCoverage:
         ]
 
     def undecided(self) -> list[RouteLanelet]:
-        """The lanelets inside the ODD only if the run's values allow it."""
-        return [ll for ll in self.lanelets if ll.verdict == UNDECIDED]
+        """The lanelets the route drives on that are inside the ODD only if the run's values allow it.
+
+        A lanelet the route only touches is not driven on, as in
+        :meth:`outside`.
+        """
+        return [
+            ll for ll in self.lanelets if ll.verdict == UNDECIDED and ll.length_m > 0.0
+        ]
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -232,17 +240,28 @@ def _on_lanelet(attribute: OddAttribute) -> Any:
     return getattr(attribute.probe, "on_lanelet", None)
 
 
-def _map_attributes(odd: OddDefinition) -> list[str]:
+def _map_attributes(
+    odd: OddDefinition, lanelet_values: Iterable[dict[str, Any]] = ()
+) -> list[str]:
     """The attributes the map decides: their probe reads a lanelet.
 
-    A derived attribute is one when every attribute it derives from is.
+    A derived attribute is one when every attribute it derives from is.  One
+    derived by expressions names no attributes it derives from (openodd
+    leaves its ``derived_from`` empty): it is one when the map works its
+    value out on a lanelet of *lanelet_values* (each lanelet's values, as
+    :func:`_lanelet_values` reads them), that is, when it is not open there.
     """
+    seen = list(lanelet_values)
     decided = {a.name for a in odd.attributes if callable(_on_lanelet(a))}
     for attribute in odd.attributes:
+        if not attribute.derived:
+            continue
         sources = attribute.derived_from
-        if attribute.derived and sources:
+        if sources:
             if all(s in decided for s in sources):
                 decided.add(attribute.name)
+        elif any(v.get(attribute.name, _OPEN) is not _OPEN for v in seen):
+            decided.add(attribute.name)
     return [a.name for a in odd.attributes if a.name in decided]
 
 
@@ -306,8 +325,8 @@ def lanelet_readings(
     says nothing of (:data:`MISSING_BUCKET`), is left out, as is one that is
     not covered (no buckets).
     """
-    decided = set(_map_attributes(odd))
     values = _lanelet_values(odd, lanelet, lanelet_map, routing_graph)
+    decided = set(_map_attributes(odd, [values]))
     found: dict[str, tuple[str, Any]] = {}
     for attribute in odd.attributes:
         if attribute.name not in decided:
@@ -402,13 +421,13 @@ def plan_route_coverage(
             for i in route
         ]
 
-    map_attributes = _map_attributes(odd)
     # Situations are what to drive: one that fails is no reason to be outside.
     situations = {m.name for m in odd.situations()}
     expected: dict[str, dict[str, float]] = {
         a.name: {} for a in odd.attributes if a.item is not None
     }
     lanelets: list[RouteLanelet] = []
+    driven: list[dict[str, Any]] = []
     for lanelet_id, metres in planned:
         lanelet = lanelet_map.laneletLayer[lanelet_id]
         values = _lanelet_values(odd, lanelet, lanelet_map, routing_graph)
@@ -434,6 +453,7 @@ def plan_route_coverage(
         )
         if metres <= 0.0:
             continue  # touched, not driven on: no coverage
+        driven.append(values)
         for attribute in odd.attributes:
             label = _bucket(attribute, values[attribute.name])
             if label is not None:
@@ -444,7 +464,7 @@ def plan_route_coverage(
         name=name or "route",
         lanelets=lanelets,
         expected_m=_in_bucket_order(odd, expected),
-        map_attributes=map_attributes,
+        map_attributes=_map_attributes(odd, driven),
     )
 
 
@@ -466,6 +486,22 @@ def _in_bucket_order(
     for name, buckets in expected.items():
         out.setdefault(name, buckets)
     return out
+
+
+def _route_map_attributes(
+    odd: Union[OddDefinition, str, None], routes: Sequence[RouteCoverage]
+) -> list[str]:
+    """The attributes the map decides on any of *routes*, in the ODD's order.
+
+    An attribute derived by expressions is decided on a route where the map
+    works its value out (:attr:`RouteCoverage.map_attributes`), so routes
+    may differ in what they decide.
+    """
+    odd = resolve_odd(odd)
+    names = set(_map_attributes(odd))
+    for route in routes:
+        names.update(route.map_attributes)
+    return [a.name for a in odd.attributes if a.name in names]
 
 
 def combine_route_coverage(
@@ -490,7 +526,7 @@ def combine_route_coverage(
             for label, metres in buckets.items():
                 total[label] = total.get(label, 0.0) + metres
     expected = _in_bucket_order(odd, expected)
-    map_attributes = set(_map_attributes(odd))
+    map_attributes = set(_route_map_attributes(odd, routes))
     unreached: dict[str, list[str]] = {}
     undetermined: list[str] = []
     for attribute in odd.attributes:

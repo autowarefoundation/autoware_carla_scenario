@@ -44,7 +44,9 @@ def _old_scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
             names += matched
         else:
             names.append(pattern)
-    return names, overrides
+    # Since #2577, a config named twice (overlapping patterns) is kept once,
+    # where it is first named.
+    return list(dict.fromkeys(names)), overrides
 
 
 def _old_format_buckets(buckets: dict[str, float]) -> str:
@@ -100,6 +102,22 @@ def test_scenario_configs_split_as_before() -> None:
     assert odd_cli._scenario_configs(tuple(_ITEMS)) == _old_scenario_configs(_ITEMS)
     from_iterator = odd_cli._scenario_configs(iter(_ITEMS))  # type: ignore[arg-type]
     assert from_iterator == _old_scenario_configs(_ITEMS)
+
+
+def test_overlapping_patterns_name_each_config_once() -> None:
+    # #2577: left_turn matched both patterns and was planned twice.
+    names, overrides = odd_cli._scenario_configs(
+        [
+            "intersection_passing/left*",
+            "map=nishishinjuku_map",
+            "intersection_passing/*turn",
+            "intersection_passing/left_turn",
+        ]
+    )
+    assert overrides == ["map=nishishinjuku_map"]
+    assert len(names) == len(set(names))
+    assert names[0] == "intersection_passing/left_turn"
+    assert "intersection_passing/right_turn" in names
 
 
 def test_format_buckets_is_as_before() -> None:

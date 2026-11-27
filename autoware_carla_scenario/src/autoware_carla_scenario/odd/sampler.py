@@ -41,8 +41,10 @@ Each case is given where in that range its grip is,
 (``quantile(tire_friction_quantile)``, :data:`QUANTILE_DRAWS`): a root node
 of the rules, uniform on [0, 1], written by an effect as the weather fields
 are, so the same sweep draws the same grip and the flaky search moves it
-(#1995); ``tire_friction: false`` in the sweep leaves it at the middle.
-(:func:`with_tire_friction` draws one for cases no sampler drew.)
+(#1995); ``tire_friction: false`` in the sweep leaves it at the middle,
+and so does a sweep whose sampler sets nothing of the ODD, or a case whose
+overrides set the quantile or the grip (``environment.tire_friction``)
+itself.
 
 How far drivers see follows the conditions the same way (the weather rules'
 ``visibility``): night, rain and fog shorten it.  Each case is given where in that range its visibility
@@ -69,8 +71,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
-import random
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -100,7 +101,6 @@ from .control_fields import (
     SAMPLE_FIELDS,
     TIRE_FRICTION_KEY,
     VISIBILITY_KEY,
-    sets_any,
 )
 from .model import OddDefinition
 
@@ -136,8 +136,6 @@ __all__ = [
     "weights_from_config",
     "VISIBILITY_KEY",
     "whole_number_setting",
-    "with_tire_friction",
-    "with_visibility",
 ]
 
 #: A case drawn from the ODD and the space it was drawn in: what a run records.
@@ -476,7 +474,8 @@ def sample_count(raw: Mapping[str, Any]) -> Optional[int]:
 
 
 #: The switches of ``sweep.odd_sample`` that say whether each case draws its
-#: grip (:func:`with_tire_friction`) and its visibility (:func:`with_visibility`).
+#: grip and its visibility: the quantiles of :data:`QUANTILE_DRAWS`, which
+#: :func:`search_from_config` adds to the rules as root nodes.
 SAMPLE_DRAWS = ("tire_friction", "visibility")
 
 
@@ -862,68 +861,6 @@ def _rules_with_quantiles(
         }
     doc["quantities"] = quantities
     return doc
-
-
-def with_tire_friction(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:
-    """*samples*, each with where its grip is in the range its weather leaves.
-
-    Each case gets ``environment.tire_friction_quantile=<q>``, *q* uniform in
-    [0, 1] and drawn from *seed* and the case itself (its index and settings),
-    so the same sweep draws the same grip.  The range is the run's: the
-    ``EnvironmentAction`` reads it off the weather it leaves
-    (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`),
-    a dry road's around its own grip, a flooded one's about half.  A case that
-    names its quantile, or a grip (``environment.tire_friction``), already
-    keeps it.
-    """
-    return _with_quantile(
-        samples, seed, TIRE_FRICTION_KEY, "tire_friction", "environment.tire_friction"
-    )
-
-
-def with_visibility(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:
-    """*samples*, each with where its visibility is in the range its weather leaves.
-
-    Each case gets ``environment.visibility_quantile=<q>``, *q* uniform in
-    [0, 1] and drawn from *seed* and the case itself, as
-    :func:`with_tire_friction` draws the grip.  The range is the run's: the
-    runner works it out from the conditions the case names
-    (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`), a
-    clear day's 250-400 m, a night's 50-150 m, thick fog's 12-18 m.  A case that
-    names its quantile, or a visibility (``environment.visibility_m``),
-    already keeps it.
-    """
-    return _with_quantile(
-        samples, seed, VISIBILITY_KEY, "visibility", "environment.visibility_m"
-    )
-
-
-def _with_quantile(
-    samples: Iterable[OddSample],
-    seed: int,
-    key: str,
-    name: str,
-    *fixed: str,
-) -> list[OddSample]:
-    """*samples*, each with ``key=<q>`` drawn from *seed*, *name* and the case,
-    unless it sets *key* or one of the *fixed* keys already."""
-    out: list[OddSample] = []
-    prefix = f"{key}="
-    given = (key, *fixed)
-    for sample in samples:
-        if sets_any(sample.overrides, given):
-            out.append(sample)
-            continue
-        rng = random.Random(
-            f"{seed}/{name}/{sample.index}/{','.join(sample.overrides)}"
-        )
-        quantile = round(rng.random(), 3)
-        out.append(
-            dataclasses.replace(
-                sample, overrides=[*sample.overrides, f"{prefix}{quantile}"]
-            )
-        )
-    return out
 
 
 def encode_case(case: OddSample, space: ParameterSpace) -> str:
