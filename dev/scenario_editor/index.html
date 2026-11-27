@@ -3170,7 +3170,7 @@ other; integrating the two is a later phase.</p>
 <p>The editor never edits Python. Its canonical representation is the <strong>Scenario
 IR</strong> -- a <code>ScenarioDocument</code> stored as YAML -- which the framework compiles into
 the <em>existing</em> runtime primitives:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ScenarioDocument -&gt; ScenarioCompiler -&gt; BaseAction / BaseCondition -&gt; BaseScenario
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ScenarioDocument -&gt; compile_document -&gt; BaseAction / BaseCondition -&gt; BaseScenario
 </code></pre></div>
 <p>There is no editor-only runtime. Every action a document names is built by
 <code>autoware_carla_scenario.actions</code>, every condition by
@@ -4459,7 +4459,7 @@ not needing to know which Python the target runs before exporting.</p>
 </tr>
 <tr>
 <td><code>typesafe-carla</code></td>
-<td>the framework's own requirement (<code>&gt;=0.8.1,&lt;0.9</code>), locked in <code>uv.lock</code> like everything else</td>
+<td>the framework's own requirement (<code>&gt;=0.8.7,&lt;0.9</code>), locked in <code>uv.lock</code> like everything else</td>
 </tr>
 <tr>
 <td>Python</td>
@@ -4514,6 +4514,11 @@ install fails too, since there is no checkout to depend on by path.</p>
 <strong>If locking, verification or the wheelhouse fails, nothing is written</strong> -- a
 package whose dependencies never resolved, or that no environment can install,
 is not a successful export.</p>
+<p>A forced re-export (<code>force</code>) replaces an earlier one only once it has
+succeeded: the earlier package and wheelhouse are moved aside, the new ones
+moved in and their lock checked, and the earlier ones removed last. If the
+check fails, or a move does, the new ones are removed and the earlier ones
+moved back as they were.</p>
 <p>The manifest records only values that were actually observed:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">format_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
 <a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">my_cut_in</span><span class="p p-Indicator">,</span><span class="nt"> title</span><span class="p">:</span><span class="w"> </span><span class="nv">Cut in</span><span class="p p-Indicator">,</span><span class="nt"> document_version</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> package</span><span class="p">:</span><span class="w"> </span><span class="nv">my-cut-in-scenario</span><span class="p p-Indicator">}</span>
@@ -4766,7 +4771,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 09:33:32 UTC"><span class="timeago" datetime="2026-11-27T09:33:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 09:33:32 UTC">2026-11-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 15:06:41 UTC"><span class="timeago" datetime="2026-11-27T15:06:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 15:06:41 UTC">2026-11-27</span>
   </span>
 
     
