@@ -4234,6 +4234,29 @@ same way, as its scenario list does.</p>
   configured. A batch whose cases differ in any of them is refused, naming the
   key and the cases (<code>map.no_3d_model_lanelet_ids</code> may differ: only a sweep's
   constraints read it)</li>
+<li>A scenario the glob picked that does not fit the map -- its
+  <code>scenario.required_map</code> names another <code>map.name</code> (the <code>adversity</code> cases,
+  written for Town10HD_Opt), or a lanelet id it names (<code>ego.spawn_lanelet_id</code>,
+  <code>ego.goal_lanelet_id</code>, <code>ego.waypoint_lanelet_ids</code>, an adversity's
+  <code>scenario.npc_lanelet_id</code>) is no lanelet of the Lanelet2 map it resolved --
+  is skipped with a warning naming it and why
+  (<code>WARNING ...: Skipping adversity/cut_in (picked by scenario=*/*): it does
+  not fit the map: ...</code>, then one line listing every scenario skipped), and
+  the rest run: a glob over every scenario cannot fit every map, so
+  <code>scenario='*/*'</code> on the default map runs every scenario but <code>adversity/*</code>,
+  and <code>scenario='*/*' map=town10hd_opt</code> the ones written for Town10HD_Opt
+  (#2253). With <code>--multirun</code> the lanelets a scenario's sweep picks
+  (<code>sweep.constraints</code> keys, the lanelet keys <code>sweep.bindings</code> derives from
+  each pick, such as a <code>route_through</code> goal, and a <code>sweep.route</code>'s spawn and
+  goal) are not checked here: the sweep picks them on the map. A skipped scenario is not a
+  case of the batch: <code>batch_results.json</code> does not list it. When every
+  scenario the glob picked is skipped, the batch exits 1 with
+  <code>Error: no scenario that scenario=&lt;glob&gt; matches fits map '&lt;map.name&gt;': ...</code>.
+  A scenario named alone (no glob characters: <code>scenario=adversity/cut_in</code>) is
+  refused for it rather than skipped, as is a case of a sweep (<code>--multirun</code>,
+  <code>hydra/sweeper=lanelet_constraint</code>, <code>map=a,b</code>); a SLURM batch, the
+  viewer's Run form and <code>scenario-expand</code> skip a glob's scenarios as a local
+  batch does</li>
 <li>A config value a case would refuse -- an unknown <code>server.world_reset</code>, a
   <code>scenario.timeout_seconds</code> that is not positive, a <code>server.port</code> out of
   range, a NaN or negative <code>server.cooldown_seconds</code>, a
@@ -5930,13 +5953,13 @@ finite and at least 0, got nan</code>).</p>
 <td><code>lane_change_fail/left</code></td>
 <td>left</td>
 <td>fail (no lane a change is allowed into)</td>
-<td><code>1.5</code></td>
+<td><code>10.0</code></td>
 </tr>
 <tr>
 <td><code>lane_change_fail/right</code></td>
 <td>right</td>
 <td>fail (no lane a change is allowed into)</td>
-<td><code>1.5</code></td>
+<td><code>10.0</code></td>
 </tr>
 </tbody>
 </table>
@@ -5985,7 +6008,7 @@ crossing into it fails the run
 - Sets all traffic lights to GREEN
 - Immediately registers a LaneChangeAction
 - Derives the target lane from the current spawn position and direction
-- Pass condition: <code>expect=success</code> passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's <code>left</code> / <code>right</code>, failing that its <code>adjacentLeft</code> / <code>adjacentRight</code>), or one of the lanelets ahead of it before the next junction; <code>expect=fail</code> passes when the timeout is reached without the ego getting there
+- Pass condition: <code>expect=success</code> passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's <code>left</code> / <code>right</code>, failing that its <code>adjacentLeft</code> / <code>adjacentRight</code>), or one of the lanelets ahead of it before the next junction; <code>expect=fail</code> passes when the timeout is reached without the ego getting there and with the ego still in its own lane (the spawn lanelet or one that continues it, through junctions), and fails once the ego has been off its own lane for 0.2 s (#2253)
 - Checks via an EntityLanePositionCondition per target lanelet, any of them, latched (not by OpenDRIVE road and lane IDs)</p>
 <h4 id="traffic-light-compliance">Traffic Light Compliance<a class="headerlink" href="#traffic-light-compliance" title="Permanent link">&para;</a></h4>
 <p>Tests that the ego vehicle correctly stops at a red light and proceeds after green.</p>
@@ -6431,7 +6454,11 @@ by <code>scenario.kind</code>. Each case and its full parameter table are in
 <p>Unlike the other examples these are concrete cases on Town10HD_Opt: run them
 with <code>map=town10hd_opt</code> (<code>uv run scenario scenario=adversity/brake_check
 map=town10hd_opt</code>). On the default map their lanelet ids name other lanelets
-or none.</p>
+or none, so each names its map, <code>scenario.required_map: Town10HD_Opt</code>, and is
+refused before anything starts on any other <code>map.name</code> (#2253) -- or, picked
+by a glob (<code>scenario='*/*'</code>), skipped with a warning while the rest of the
+batch runs (<a href="#batch-execution-with-glob-patterns">Batch Execution with Glob
+Patterns</a>).</p>
 <table>
 <thead>
 <tr>
@@ -7799,7 +7826,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 11:49:42 UTC"><span class="timeago" datetime="2026-11-27T11:49:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 11:49:42 UTC">2026-11-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 11:56:04 UTC"><span class="timeago" datetime="2026-11-27T11:56:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 11:56:04 UTC">2026-11-27</span>
   </span>
 
     

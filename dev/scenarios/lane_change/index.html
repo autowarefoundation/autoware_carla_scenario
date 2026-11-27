@@ -2384,7 +2384,7 @@ where it is.</p>
 <tbody>
 <tr>
 <td><strong>Ego</strong></td>
-<td>Constraint search: a lane that is not in a junction and is long enough, excluding the map's lanelets with no 3D model -- with a lane on that side to change into, or, for the refused change, without one. 1 km/h. Goal <em>from the search</em>: the lanelet after the matched one, or the first one past the junction it leads into (along the junction lanelet with the lowest ID where the way forks); a match with no lanelet ahead along that way is skipped.</td>
+<td>Constraint search: a lane that is not in a junction and is long enough, excluding the map's lanelets with no 3D model -- with a lane on that side to change into, or, for the refused change, without one. 1 km/h; 20 km/h for the refused change. Goal <em>from the search</em>: the lanelet after the matched one, or the first one past the junction it leads into (along the junction lanelet with the lowest ID where the way forks); a match with no lanelet ahead along that way is skipped.</td>
 </tr>
 <tr>
 <td><strong>Initialization</strong></td>
@@ -2396,11 +2396,11 @@ where it is.</p>
 </tr>
 <tr>
 <td><strong>Pass</strong></td>
-<td>Changing: the ego has been on the lane beside the one it started on (<em>lane of a position</em>: the lanelet to the matched lanelet's left or right, or one ahead of it before the next junction). Refusing: the timeout passes.</td>
+<td>Changing: the ego has been on the lane beside the one it started on (<em>lane of a position</em>: the lanelet to the matched lanelet's left or right, or one ahead of it before the next junction). Refusing: the timeout passes with the ego still in its own lane -- the lanelet it started on, or one that continues it, through junctions.</td>
 </tr>
 <tr>
 <td><strong>Fail</strong></td>
-<td>Changing: the timeout. Refusing: the ego reaches that lane.</td>
+<td>Changing: the timeout. Refusing: the ego reaches that lane, or is off its own lane for 0.2 s (a lane beside across a line, off the road), or the timeout passes with it off its own lane.</td>
 </tr>
 </tbody>
 </table>
@@ -2415,8 +2415,12 @@ that, its <code>adjacentLeft</code> / <code>adjacentRight</code>: a lane beside 
 direction behind a line a lane change may not cross. So a refused change
 whose search found no <code>left</code> / <code>right</code> can still have a lane beside: there,
 the ego crossing into it fails the run. Only where there is no lanelet beside
-on that side at all -- neither kind -- does the check never hold, and the
-refused change passes on its timeout whatever the ego does.</p>
+on that side at all -- neither kind -- does that check never hold; the
+refused change then still has to keep the ego in its own lane: it fails once
+the ego has been off the lanelets that continue its spawn lanelet for 0.2 s,
+and passes only if the ego is on one of them when the timeout runs out
+(#2253). It used to pass on a 1.5 s timeout at 1 km/h, which no lane change
+could have beaten, whatever the ego did.</p>
 <h2 id="variants">Variants<a class="headerlink" href="#variants" title="Permanent link">&para;</a></h2>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:4"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Left</label><label for="__tabbed_1_2">Right</label><label for="__tabbed_1_3">Refused, left</label><label for="__tabbed_1_4">Refused, right</label></div>
 <div class="tabbed-content">
@@ -2437,16 +2441,16 @@ refused change passes on its timeout whatever the ego does.</p>
 <div class="tabbed-block">
 <p><img alt="Refused lane change left in the Scenario Editor" src="../media/lane_change_fail_left.png" /></p>
 <p><code>scenario=lane_change_fail/left</code> -- no lane on the left, at least 15 m
-long; passes after 1.5 s in the lane it started in.</p>
+long; passes after 10 s in the lane it started in.</p>
 <p><video controls muted playsinline width="100%" src="../media/lane_change_fail_left.mp4"></video></p>
-<p><em>Town10HD_Opt, the first case: the search matched lanelet 446, where the ego starts. Result: PASSED. The timeout is 8 s here rather than 1.5 s, so there is something to see.</em></p>
+<p><em>Town10HD_Opt, the first case: the search matched lanelet 446, where the ego starts. Result: PASSED. Recorded with an 8 s timeout, before the 10 s one and the stay-in-lane check.</em></p>
 </div>
 <div class="tabbed-block">
 <p><img alt="Refused lane change right in the Scenario Editor" src="../media/lane_change_fail_right.png" /></p>
 <p><code>scenario=lane_change_fail/right</code> -- no lane on the right, at least 10 m
-long; passes after 1.5 s in the lane it started in.</p>
+long; passes after 10 s in the lane it started in.</p>
 <p><video controls muted playsinline width="100%" src="../media/lane_change_fail_right.mp4"></video></p>
-<p><em>Town10HD_Opt, the first case: the search matched lanelet 31, where the ego starts. Result: PASSED. The timeout is 8 s here rather than 1.5 s, so there is something to see.</em></p>
+<p><em>Town10HD_Opt, the first case: the search matched lanelet 31, where the ego starts. Result: PASSED. Recorded with an 8 s timeout, before the 10 s one and the stay-in-lane check.</em></p>
 </div>
 </div>
 </div>
@@ -2480,22 +2484,22 @@ long; passes after 1.5 s in the lane it started in.</p>
 <td>Spawn</td>
 <td>5 m along it</td>
 <td>5 m</td>
-<td>0 m</td>
-<td>0 m</td>
+<td>5 m</td>
+<td>5 m</td>
 </tr>
 <tr>
 <td>Ego initial speed</td>
 <td>1 km/h</td>
 <td>1 km/h</td>
-<td>1 km/h</td>
-<td>1 km/h</td>
+<td>20 km/h</td>
+<td>20 km/h</td>
 </tr>
 <tr>
 <td>Timeout</td>
 <td>10 s (fail)</td>
 <td>10 s (fail)</td>
-<td>1.5 s (pass)</td>
-<td>1.5 s (pass)</td>
+<td>10 s (pass in its own lane)</td>
+<td>10 s (pass in its own lane)</td>
 </tr>
 </tbody>
 </table>
@@ -2521,7 +2525,7 @@ long; passes after 1.5 s in the lane it started in.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 21:21:38 UTC"><span class="timeago" datetime="2026-11-20T21:21:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 21:21:38 UTC">2026-11-20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 11:56:04 UTC"><span class="timeago" datetime="2026-11-27T11:56:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 11:56:04 UTC">2026-11-27</span>
   </span>
 
     
