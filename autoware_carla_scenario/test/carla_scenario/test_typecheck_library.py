@@ -1970,6 +1970,10 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
         # The run starts at coordinate.frames, which the model's _poses.codon
         # re-exports: the driver must read the model first.
         "coordinate.poses",
+        # The first module to import the checked measures, and the first to
+        # derive from BaseScenario, which it does after that import: measures
+        # must hold the running scenario without an Optional None (#263).
+        "examples.traffic_light_compliance",
     ],
 )
 def test_a_module_importing_a_checked_only_name_compiles_alone(module: str) -> None:

@@ -3179,7 +3179,7 @@ read as a variable, not a type, through the module: annotate it `TypeAlias`.
 Two checked modules that import each other can each need the other's types
 the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
 Measure]` at class level, and `measures` declares the running scenario
-(`_MEASURED: dict[str, Optional[BaseScenario]]`) as a global, so neither can
+(`_MEASURED: list[BaseScenario]`) as a global, so neither can
 be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
 cycle: the module it names (`measures`, `odd.route_plan`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
