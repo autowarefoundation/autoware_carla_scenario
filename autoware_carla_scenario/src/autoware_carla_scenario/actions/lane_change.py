@@ -82,7 +82,9 @@ class LaneChangeAction(BaseAction):
         overrides: Take over a control domain of the entity another action
             holds (:attr:`~BaseAction.overrides`).
         until: Overrides what counts as the manoeuvre having settled.  Defaults
-            to :class:`LaneChangeSettledCondition` on *entity_name*.
+            to :class:`LaneChangeSettledCondition` on *entity_name*.  One that
+            ends the run before the vehicle has settled stops the lane change
+            still to be carried out, as an override does (:meth:`tick`).
         start_after_m: How far to drive after the trigger before starting to
             cross, m.  ``0.0`` (default): at once.
         lane_change_length_m: How far to drive while crossing, m.  ``0.0``
@@ -199,8 +201,9 @@ class LaneChangeAction(BaseAction):
         )
 
     def _stopped(self, world: "carla.World") -> None:
-        """Overridden mid-run (:meth:`BaseAction._stop_overridden`): the lane
-        change the backend is still to carry out -- one waiting for its
+        """Overridden mid-run (:meth:`BaseAction._stop_overridden`), or the
+        run ended by its *until* before the vehicle settled (:meth:`tick`):
+        the lane change the backend is still to carry out -- one waiting for its
         *start_after_m*, or being stretched over its *lane_change_length_m* --
         is dropped, so it does not happen on top of what took the lane over
         (#2430).  One that is done is left as it is
