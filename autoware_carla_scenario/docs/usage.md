@@ -137,8 +137,9 @@ same way, as its scenario list does.
   `scenario='*/*'` on the default map runs every scenario but `adversity/*`,
   and `scenario='*/*' map=town10hd_opt` the ones written for Town10HD_Opt
   (#2253). With `--multirun` the lanelets a scenario's sweep picks
-  (`sweep.constraints` keys, a `sweep.route`'s spawn and goal) are not
-  checked here: the sweep picks them on the map. A skipped scenario is not a
+  (`sweep.constraints` keys, the lanelet keys `sweep.bindings` derives from
+  each pick, such as a `route_through` goal, and a `sweep.route`'s spawn and
+  goal) are not checked here: the sweep picks them on the map. A skipped scenario is not a
   case of the batch: `batch_results.json` does not list it. When every
   scenario the glob picked is skipped, the batch exits 1 with
   `Error: no scenario that scenario=<glob> matches fits map '<map.name>': ...`.

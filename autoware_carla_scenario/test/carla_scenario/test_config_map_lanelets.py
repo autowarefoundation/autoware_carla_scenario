@@ -352,6 +352,41 @@ class TestGlobSelection:
         cfg.sweep = {"route": {"type": "x"}}
         assert map_fit.map_fit_refusal(cfg, resolve, expanding=True) is None
 
+    def test_the_lanelets_a_sweep_s_bindings_derive_are_not_checked(
+        self,
+    ) -> None:
+        # lane_change_fail, traffic_light_compliance: the goal is bound to the
+        # pick (route_through), so the goal the config writes is never run.
+        cfg = OmegaConf.create(
+            {
+                "scenario": {"name": "lane_change"},
+                "map": {"name": "NishishinjukuMap"},
+                "ego": {
+                    "spawn_lanelet_id": 999999998,
+                    "goal_lanelet_id": 999999999,
+                    "waypoint_lanelet_ids": [999999997],
+                },
+                "sweep": {
+                    "constraints": {"ego.spawn_lanelet_id": [{}]},
+                    "bindings": {
+                        "ego.goal_lanelet_id": {"type": "route_through"},
+                    },
+                },
+            }
+        )
+        resolve = lambda _map: _nishishinjuku()  # noqa: E731
+        swept = map_fit.map_fit_refusal(cfg, resolve, expanding=True)
+        assert swept is not None
+        assert "ego.goal_lanelet_id" not in swept
+        assert "ego.waypoint_lanelet_ids[0]=999999997" in swept
+        # A list key covers its items; a bound spawn's s, the lanelet key the
+        # binding walks back.
+        cfg.sweep.bindings = {
+            "ego.waypoint_lanelet_ids": {"type": "x"},
+            "ego.goal_s": {"type": "stop_line_offset"},
+        }
+        assert map_fit.map_fit_refusal(cfg, resolve, expanding=True) is None
+
 
 class TestExpandSelection:
     def test_a_glob_s_scenario_off_the_map_is_skipped(

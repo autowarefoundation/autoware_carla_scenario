@@ -213,7 +213,10 @@ def lanelet_refusal(
     missing = [
         (key, lanelet_id)
         for key, lanelet_id in config_lanelet_ids(cfg)
-        if lanelet_id not in known and key not in ignore
+        if lanelet_id not in known
+        # ``ego.waypoint_lanelet_ids[<i>]`` is set by its list's key.
+        and key not in ignore
+        and key.partition("[")[0] not in ignore
     ]
     if not missing:
         return None
@@ -226,13 +229,27 @@ def lanelet_refusal(
     )
 
 
+#: The lanelet key beside a spawn's ``s`` key, which a ``stop_line_offset``
+#: binding that walks back off its pick moves too
+#: (``sweeper.bindings._walk_back_lanelet_key``).
+_WALK_BACK_SIBLINGS = {
+    "s": "lanelet_id",
+    "spawn_s": "spawn_lanelet_id",
+    "goal_s": "goal_lanelet_id",
+}
+
+
 def _swept_lanelet_keys(cfg: Any) -> frozenset[str]:
     """The lanelet keys *cfg*'s sweep sets for each of its cases.
 
     A ``sweep.constraints`` key (``ego.spawn_lanelet_id``) is picked on the
-    map by the sweep, as a ``sweep.route`` picks the ego's spawn and goal: the
-    value the config writes there is not what the cases run with.  Empty
-    when the sweep is not a mapping (the run refuses it itself).
+    map by the sweep, a ``sweep.bindings`` key (``ego.goal_lanelet_id``,
+    ``route_through``) is derived from each pick, and the lanelet key beside
+    a bound spawn's ``s`` (``ego.goal_s`` -> ``ego.goal_lanelet_id``) is moved
+    when the binding walks back off the pick, as a ``sweep.route`` picks the
+    ego's spawn and goal: the value the config writes there is not what the
+    cases run with.  Empty when the sweep is not a mapping (the run refuses
+    it itself).
     """
     try:
         sweep = OmegaConf.select(cfg, "sweep") if isinstance(cfg, DictConfig) else None
@@ -244,6 +261,14 @@ def _swept_lanelet_keys(cfg: Any) -> frozenset[str]:
         constraints = sweep.get("constraints")
         if isinstance(constraints, (DictConfig, Mapping)):
             keys.update(str(key) for key in constraints)
+        bindings = sweep.get("bindings")
+        if isinstance(bindings, (DictConfig, Mapping)):
+            for key in bindings:
+                prefix, _, leaf = str(key).rpartition(".")
+                keys.add(str(key))
+                sibling = _WALK_BACK_SIBLINGS.get(leaf)
+                if sibling is not None:
+                    keys.add(f"{prefix}.{sibling}" if prefix else sibling)
         if sweep.get("route"):
             keys.update(("ego.spawn_lanelet_id", "ego.goal_lanelet_id"))
         return frozenset(keys)
