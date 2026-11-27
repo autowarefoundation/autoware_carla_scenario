@@ -243,4 +243,5 @@ class DriverConfig:
 class SweepConfig:
     job_timeout_seconds: int = 120
     resume_from: int = 0
+    samples: int = 1
     case_index: Optional[int] = None

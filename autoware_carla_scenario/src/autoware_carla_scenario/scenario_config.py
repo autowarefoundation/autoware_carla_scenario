@@ -726,7 +726,10 @@ class SweepConfig:
     list of constraint dicts; it holds one key, the parameter swept (a
     second is refused when the sweep is expanded).  ``bindings`` maps a target key
     (e.g. ``ego.spawn_s``) to a binding dict that auto-derives the value.
-    ``odd_sample`` draws the settings of each case from the ODD.  ``exclude``
+    ``constraints`` may also map scalar parameters to the one distribution
+    each is drawn from (``type: uniform`` or ``type: normal``), drawn
+    ``samples`` times for each case.  ``odd_sample`` draws the settings of
+    each case from the ODD.  ``exclude``
     maps a key to the values a case may not end with on it, once its bindings
     are applied.
     """
@@ -760,6 +763,12 @@ class SweepConfig:
     #: and ``flaky`` (a flaky search learning from ``coverage_from``'s runs).
     #: Empty draws nothing.
     odd_sample: dict[str, Any] = field(default_factory=dict)
+
+    #: How many times each case runs, each time with values of its own drawn
+    #: from the distributions in ``constraints`` (``type: uniform`` or
+    #: ``type: normal``; :mod:`autoware_carla_scenario.sweeper.distributions`).
+    #: A whole number >= 1.
+    samples: int = 1
 
     #: Keep only the case at this (0-based) index of the expansion; ``None``
     #: keeps them all.  ``++sweep.case_index=0`` on a batch runs each scenario

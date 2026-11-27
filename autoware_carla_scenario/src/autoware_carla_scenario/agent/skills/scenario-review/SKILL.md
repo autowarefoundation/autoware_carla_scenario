@@ -11,7 +11,7 @@ description: This skill should be used when reviewing CARLA scenario parameters 
 
 Review and validate the parameter design of CARLA test scenarios before converting concrete scenarios to logical scenarios. Ensure parameters are orthogonal, minimal, and compatible with the lanelet constraint sweeper.
 
-**How the sweeper works** (`scenario-writing`'s `references/constraints-reference.md`): `sweep.constraints` sweeps exactly **one** key -- a lanelet ID, usually `ego.spawn_lanelet_id` -- picking every lanelet that matches its constraints; `sweep.bindings` derives every other value a case needs from that pick; `sweep.exclude` drops cases by the values they end with. Scalar knobs (speeds, weather, ...) are not swept by constraints: `sweep.odd_sample` draws them from the ODD (`docs/odd.md`, "Sampling scenarios from the ODD").
+**How the sweeper works** (`scenario-writing`'s `references/constraints-reference.md`): `sweep.constraints` sweeps exactly **one** key -- a lanelet ID, usually `ego.spawn_lanelet_id` -- picking every lanelet that matches its constraints; `sweep.bindings` derives every other value a case needs from that pick; `sweep.exclude` drops cases by the values they end with. A scalar parameter of the scenario itself (a distance, a speed, a time) can be drawn from a distribution beside that key -- `- type: uniform` (`low`, `high`) or `- type: normal` (`mean`, `std`, optional `low`/`high`) under its own key in `sweep.constraints`, `sweep.samples` draws per case (`docs/usage.md`, "Drawing scalar parameters from distributions"); what the ODD describes (the weather, the traffic) `sweep.odd_sample` draws from the ODD (`docs/odd.md`, "Sampling scenarios from the ODD").
 
 ## Parameter Review Process
 
@@ -213,7 +213,7 @@ sweep:
         value: 30
 ```
 
-**Fix:** A timeout is a constant: keep it as the dataclass default (long enough for every case). A scalar worth varying (a speed, the weather) is drawn with `sweep.odd_sample`, not swept by constraints.
+**Fix:** A timeout is a constant: keep it as the dataclass default (long enough for every case). A scalar worth varying is drawn: a parameter of the scenario (a speed, a distance) from a distribution in `sweep.constraints` (`type: uniform` / `type: normal`), what the ODD describes (the weather) with `sweep.odd_sample`.
 
 ## Integration with Write Workflow
 

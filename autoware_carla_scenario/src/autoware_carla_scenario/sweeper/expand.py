@@ -73,6 +73,7 @@ from .constraints import (
     find_matching_lanelets,
     parse_constraint,
 )
+from .distributions import draw_values, is_distribution, parse_distribution
 
 if TYPE_CHECKING:
     from ..odd.sampler import OddDraws
@@ -171,8 +172,9 @@ def expand_sweep(
             **odd_sample,
             "seed": DEFAULT_SEED if seed is None else seed,
         }
+    lanelet_constraints, distributions = split_constraints(sweep)
     if sweep.get("route"):
-        if sweep.get("constraints"):
+        if lanelet_constraints:
             raise ValueError(
                 "sweep has both a route search and constraints; a scenario is "
                 "expanded by one of them"
@@ -182,12 +184,12 @@ def expand_sweep(
         )
         # A route case is on its spawn.
         lanelets = [_case_lanelet(case) for case in base_cases]
-    elif sweep.get("constraints"):
+    elif lanelet_constraints:
         base_cases, picks = _lanelet_cases(sweep, lanelet_map)
         # A lanelet case is on its pick, wherever a walk-back moved its
         # spawn (docs/odd.md, "The road a case is on").
         lanelets = list(picks)
-    elif odd_sample:
+    elif odd_sample or distributions:
         base_cases = [[]]
         lanelets = [None]
     else:
@@ -205,6 +207,14 @@ def expand_sweep(
             environment_rules=environment_rules,
             arguments=[*arguments, *composed],
         )
+    if distributions and base_cases:
+        base_cases = _with_distribution_draws(
+            base_cases,
+            distributions,
+            _samples(sweep.get("samples")),
+            DEFAULT_SEED if seed is None else seed,
+            [*arguments, *composed],
+        )
     if index is not None:
         if not 0 <= index < len(base_cases):
             raise ValueError(
@@ -213,6 +223,94 @@ def expand_sweep(
             )
         base_cases = [base_cases[index]]
     return [[*case, *arguments] for case in base_cases]
+
+
+def split_constraints(
+    sweep: Mapping[Any, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``sweep.constraints`` split in two: the key it enumerates lanelets for,
+    with its constraints (at most one key), and the keys drawn from a
+    distribution, each with its distribution parsed
+    (:mod:`.distributions`).
+
+    *sweep* has passed :func:`check_constraint_keys`.
+    """
+    lanelet: dict[str, Any] = {}
+    distributions: dict[str, Any] = {}
+    for key, constraint_list in (_section(sweep, "constraints") or {}).items():
+        if is_distribution(constraint_list):
+            distributions[str(key)] = parse_distribution(str(key), constraint_list)
+        else:
+            lanelet[str(key)] = constraint_list
+    return lanelet, distributions
+
+
+def _samples(value: Any) -> int:
+    """``sweep.samples``: how many times each case runs, each with values of
+    its own drawn from the distributions; 1 when unset.
+
+    Raises:
+        ValueError: Naming ``sweep.samples``, if it is not a whole number of
+            at least 1.
+    """
+    if value is None:
+        return 1
+    from ..odd.sampler import whole_number_setting  # noqa: PLC0415
+
+    samples = whole_number_setting("sweep.samples", value, minimum=1)
+    return 1 if samples is None else samples
+
+
+def _draw_override(value: float) -> str:
+    """A drawn value as an override writes it: rounded to 1e-9, which no
+    scenario parameter resolves finer, so the override reads back as the
+    value the case recorded."""
+    return repr(round(value, 9))
+
+
+def _with_distribution_draws(
+    base_cases: list[list[str]],
+    distributions: Mapping[str, Any],
+    samples: int,
+    seed: int,
+    arguments: Sequence[str],
+) -> list[list[str]]:
+    """Each of *base_cases* *samples* times, each time with a value drawn for
+    every key of *distributions* (:func:`.distributions.draw_values`, from
+    *seed*), in the order of the base cases.
+
+    Raises:
+        ValueError: If a base case (a binding, a route match or a case drawn
+            from the ODD) or one of *arguments* already sets a key a
+            distribution draws: the run would follow that value while the
+            sweep said it was drawn.
+    """
+    keys = set(distributions)
+    for case in base_cases:
+        clash = sorted(keys & {_override_key(o) for o in case})
+        if clash:
+            raise ValueError(
+                f"sweep.constraints draws {', '.join(clash)} from a distribution, "
+                "but the sweep's bindings, route or ODD sample set it too"
+            )
+    clash = sorted(keys & {_override_key(a) for a in arguments})
+    if clash:
+        raise ValueError(
+            f"sweep.constraints draws {', '.join(clash)} from a distribution; an "
+            "override may not set it too (drop the override, or the distribution)"
+        )
+    draws = draw_values(distributions, len(base_cases) * samples, seed)
+    cases: list[list[str]] = []
+    for number, case in enumerate(base_cases):
+        for sample in range(samples):
+            values = draws[number * samples + sample]
+            cases.append(
+                [
+                    *case,
+                    *(f"{key}={_draw_override(values[key])}" for key in sorted(values)),
+                ]
+            )
+    return cases
 
 
 #: The setting a knob of a map-decided attribute writes: none a run reads.
@@ -624,7 +722,17 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
             "ego.spawn_lanelet_id) to a list of constraints, got "
             f"{_shape(constraints_cfg)}"
         )
-    keys = [str(key) for key in constraints_cfg]
+    for key, constraint_list in constraints_cfg.items():
+        if not _is_list(constraint_list):
+            raise ValueError(
+                f"sweep.constraints.{key} must be a list of constraints "
+                f"(- type: ...), got {_shape(constraint_list)}"
+            )
+    # A key drawn from a distribution is a scalar parameter of its own; the
+    # lanelet constraints still sweep one key.
+    keys = [
+        str(key) for key, items in constraints_cfg.items() if not is_distribution(items)
+    ]
     if len(keys) > 1:
         raise ValueError(
             "sweep.constraints sweeps one parameter; got keys "
@@ -632,11 +740,9 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
             "from its lanelet with sweep.bindings."
         )
     for key, constraint_list in constraints_cfg.items():
-        if not _is_list(constraint_list):
-            raise ValueError(
-                f"sweep.constraints.{key} must be a list of constraints "
-                f"(- type: ...), got {_shape(constraint_list)}"
-            )
+        if is_distribution(constraint_list):
+            parse_distribution(str(key), constraint_list)
+    _samples(sweep.get("samples"))
     bindings_cfg = _section(sweep, "bindings")
     if not isinstance(bindings_cfg, Mapping):
         raise ValueError(
@@ -711,7 +817,7 @@ def _lanelet_cases(
         ValueError: If the constraints, bindings or exclusions do not parse,
             or the constraints are empty.
     """
-    constraints_cfg = sweep.get("constraints") or {}
+    constraints_cfg = split_constraints(sweep)[0]
     # Constraints are keyed by the target parameter (e.g. ego.spawn_lanelet_id);
     # each value is a list of constraint dicts.  That there is one such key,
     # and each section's shape, expand_sweep (the only caller) has checked
@@ -1002,8 +1108,8 @@ def expand_config(
         from ..odd.sampler import check_sample_settings  # noqa: PLC0415
 
         check_sample_settings(odd_sample)
-    if not (sweep.get("constraints") or sweep.get("route")):
-        # Drawing from the ODD alone needs no map.
+    if not (split_constraints(sweep)[0] or sweep.get("route")):
+        # Drawing from the ODD or from distributions alone needs no map.
         return expand_sweep(
             sweep,
             None,
@@ -1175,6 +1281,7 @@ def environment_rules(cfg: DictConfig) -> Any:
 __all__ = [
     "EMPTY_SWEEP_MESSAGE",
     "check_constraint_keys",
+    "split_constraints",
     "environment_rules",
     "expand_config",
     "expand_route",
