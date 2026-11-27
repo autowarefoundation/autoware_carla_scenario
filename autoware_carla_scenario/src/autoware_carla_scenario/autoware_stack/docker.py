@@ -184,6 +184,15 @@ def _open_lock_file(path: Path) -> int:
     return os.open(path, os.O_RDONLY)
 
 
+def _warn_unlocked(subject: str, problem: str) -> None:
+    """Log that *subject* is built without its lock, because of *problem*."""
+    logger.warning(
+        "Building %s without a lock (%s): another run may build it at the same time",
+        subject,
+        problem,
+    )
+
+
 def _take_lock(path: Path, subject: str) -> int:
     """Wait for, and take, the lock *path* on building *subject*; its
     descriptor, or -1 when it cannot be locked (which is logged).
@@ -198,12 +207,7 @@ def _take_lock(path: Path, subject: str) -> int:
     try:
         fd = _open_lock_file(path)
     except OSError as exc:
-        logger.warning(
-            "Building %s without a lock (%s): another run may build it "
-            "at the same time",
-            subject,
-            exc,
-        )
+        _warn_unlocked(subject, str(exc))
         return -1
     # Read here, not as a default: a default is bound once.
     timeout = _BUILD_LOCK_TIMEOUT_S
@@ -222,12 +226,7 @@ def _take_lock(path: Path, subject: str) -> int:
             except BlockingIOError:
                 pass
             except OSError as exc:
-                logger.warning(
-                    "Building %s without a lock (%s): another run may build "
-                    "it at the same time",
-                    subject,
-                    exc,
-                )
+                _warn_unlocked(subject, str(exc))
                 break
             if time.monotonic() >= deadline:
                 raise AutowareStackError(
@@ -679,16 +678,23 @@ class DockerAutowareLauncher:
         return self._process.poll()
 
     def stop(self) -> None:
-        if self._process is not None:
-            # SIGINT, through the CLI's signal proxy, is ros2 launch's cue to
-            # shut its nodes down.  Past that, removing the container is what
-            # stops everything in it: signalling the CLI harder does not.
-            code = self._process.stop(escalate=False)
-            logger.info("Autoware stack stopped (exit code %s)", code)
-            self._process = None
-        if self._container_name is not None:
-            self._docker("rm", "--force", self._container_name, check=False)
-            self._container_name = None
+        try:
+            if self._process is not None:
+                # SIGINT, through the CLI's signal proxy, is ros2 launch's cue
+                # to shut its nodes down.  Past that, removing the container
+                # is what stops everything in it: signalling the CLI harder
+                # does not.
+                try:
+                    code = self._process.stop(escalate=False)
+                    logger.info("Autoware stack stopped (exit code %s)", code)
+                finally:
+                    # Cleared whatever happened, so the next start() is not
+                    # refused as "already running" (#2561).
+                    self._process = None
+        finally:
+            if self._container_name is not None:
+                self._docker("rm", "--force", self._container_name, check=False)
+                self._container_name = None
 
     def close(self) -> None:
         self.stop()
@@ -868,12 +874,7 @@ class DockerAutowareLauncher:
         except RuntimeError as exc:  # no home directory to put it in
             failed, problem = True, str(exc)
         if failed:
-            logger.warning(
-                "Building %s without a lock (%s): another run may build it "
-                "at the same time",
-                tag,
-                problem,
-            )
+            _warn_unlocked(tag, problem)
             return -1
         name = _safe_name(f"{socket.gethostname()}-{tag}") + ".lock"
         return _take_lock(directory / name, tag)
@@ -1163,6 +1164,10 @@ class DockerAutowareLauncher:
                 # The run was interrupted: end the command too (#2187).
                 _end_process(process)
                 raise
+            # Closed on success too, not left to the garbage collector
+            # (a ResourceWarning per pull, install and build; #2561).
+            if process.stdout is not None:
+                process.stdout.close()
             return process.wait()
         finally:
             if log is not None:
@@ -1203,13 +1208,10 @@ class DockerAutowareLauncher:
         *,
         name: str,
         extra_env: dict[str, str],
-        remove: bool = True,
-        image: Optional[str] = None,
         volumes: Optional[dict[str, str]] = None,
     ) -> list[str]:
-        """``docker run`` up to the image, for a container named *name*.
+        """``docker run --rm`` up to the stack's image, for a container named *name*.
 
-        *remove* is ``--rm``; *image* replaces the one the stack runs in;
         *volumes* are further ``host: container[:options]`` mounts.  The
         ``autoware.launcher.env`` variables of :meth:`_named_env` are passed
         by name: the CLI is run with :meth:`_run_env` (*extra_env* the same).
@@ -1229,7 +1231,7 @@ class DockerAutowareLauncher:
         argv = [
             config.docker,
             "run",
-            *(["--rm"] if remove else []),
+            "--rm",
             "--name",
             name,
             "--label",
@@ -1268,10 +1270,7 @@ class DockerAutowareLauncher:
             else:
                 argv += ["--env", f"{key}={value}"]
         argv += list(config.docker_args)
-        if image:
-            argv.append(image)
-        else:
-            argv.append(self._container.image)
+        argv.append(self._container.image)
         return argv
 
     def _named_env(self, extra_env: dict[str, str]) -> dict[str, str]:

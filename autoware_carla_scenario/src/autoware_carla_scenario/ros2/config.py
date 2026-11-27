@@ -576,9 +576,21 @@ class Ros2EgoConfig:
         names = [source.name for source in self.sources]
         if len(set(names)) != len(names):
             raise ValueError(f"command source names must be unique, got {names}")
+        # Compared as the entity names them: a relative name is taken as
+        # absolute, so `cam/image` is `/cam/image`, one DDS topic
+        # (messages.dds_topic) the two cameras' frames would interleave on.
         topics = [camera.topic for camera in self.cameras]
-        if len(set(topics)) != len(topics):
-            raise ValueError(f"camera topics must be unique, got {topics}")
+        seen: dict[str, str] = {}
+        for topic in topics:
+            absolute = "/" + topic.lstrip("/")
+            if absolute in seen:
+                if seen[absolute] == topic:
+                    raise ValueError(f"camera topics must be unique, got {topics}")
+                raise ValueError(
+                    f"camera topics must be unique, got {topics}: "
+                    f"{seen[absolute]!r} and {topic!r} are the same topic"
+                )
+            seen[absolute] = topic
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "Ros2EgoConfig":

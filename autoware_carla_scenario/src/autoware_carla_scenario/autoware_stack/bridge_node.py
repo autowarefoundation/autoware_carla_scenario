@@ -26,6 +26,8 @@ from ..utils.cache_dir import user_cache_dir
 __all__ = [
     "BRIDGE_APT_PACKAGES",
     "BRIDGE_MODULE",
+    "BOOLEAN_PARAMETERS",
+    "BOOLEAN_WORDS",
     "BRIDGE_PROTOBUF_REQUIREMENT",
     "DOUBLE_PARAMETERS",
     "INTEGER_PARAMETERS",
@@ -40,6 +42,7 @@ __all__ = [
     "launcher_bridge_parameters",
     "liveness_timeout_problem",
     "min_liveness_timeout_s",
+    "yaml_quoted",
 ]
 
 #: What ``python3 -m`` runs.
@@ -86,6 +89,38 @@ DOUBLE_PARAMETERS: tuple[str, ...] = (
 #: float is passed as the int (``10``), and any other float refused (#2217).
 INTEGER_PARAMETERS: tuple[str, ...] = ("reroute_max_attempts",)
 
+#: The node's parameters declared as booleans (``ros_bridge/node.py``,
+#: ``_declare_parameters()``), and rclpy's own ``use_sim_time``.  Strings are
+#: passed quoted (:func:`yaml_quoted`), so a string for one of these would
+#: reach rclpy as a string, which it refuses for a boolean declaration.  A
+#: string rcl reads as a boolean (``'false'``, as an ``oc.env`` interpolation
+#: gives, :data:`BOOLEAN_WORDS`) is passed as that boolean, as a bare
+#: ``:=false`` always did; any other is refused here, before the node starts
+#: (#2561).
+BOOLEAN_PARAMETERS: tuple[str, ...] = (
+    "auto_engage",
+    "initialize_localization",
+    "require_localization_initialized",
+    "use_sim_time",
+)
+
+#: The words rcl's parameter parser reads as a boolean, and the one each
+#: means (``rcl_yaml_param_parser``, ``get_value()``): a string for a
+#: :data:`BOOLEAN_PARAMETERS` one is passed as that boolean.  rcl takes each
+#: in lower case, capitalised or upper case (``false``, ``False``,
+#: ``FALSE``), not in any other mix (``fAlse`` is a string to it), and
+#: neither does :func:`bridge_ros_args`.
+BOOLEAN_WORDS: dict[str, bool] = {
+    "y": True,
+    "yes": True,
+    "true": True,
+    "on": True,
+    "n": False,
+    "no": False,
+    "false": False,
+    "off": False,
+}
+
 #: The node's parameter :func:`bridge_command` sets, to the pid of the shell
 #: that starts the stack (``$$``): the node shuts down once that process is
 #: gone, as a node started in the background with ``(... &)`` is no child of
@@ -113,6 +148,56 @@ def bridge_package_dir() -> Path:
     return Path(bridge_file).resolve().parent
 
 
+#: The digits of a hexadecimal escape (:func:`yaml_quoted`).
+_HEX_DIGITS: str = "0123456789abcdef"
+
+
+def _hex(code: int, width: int) -> str:
+    """*code* as *width* lowercase hexadecimal digits."""
+    digits = ""
+    for _ in range(width):
+        digits = _HEX_DIGITS[code % 16] + digits
+        code //= 16
+    return digits
+
+
+def yaml_quoted(text: str) -> str:
+    """*text* as a YAML double-quoted scalar, which reads back as the same string.
+
+    rcl reads the value of a ``-p name:=value`` override as YAML, so a string
+    passed bare is parsed: ``[::1]:50052`` is a syntax error, an empty string
+    no value at all, and ``123`` or ``true`` another type.  Quoted, each is
+    the string it was.  ``"`` and ``\\`` are escaped, and so is every
+    character YAML would not read back as itself: a control character (NEL
+    and the line and paragraph separators, which YAML folds as line breaks,
+    among them), U+FFFE and U+FFFF.  (A lone surrogate is no character of
+    any command line's UTF-8, quoted or not.)
+    """
+    quoted = '"'
+    for character in text:
+        code = ord(character)
+        if character == '"' or character == "\\":
+            quoted += "\\" + character
+        elif code == 9:
+            quoted += "\\t"
+        elif code == 10:
+            quoted += "\\n"
+        elif code == 13:
+            quoted += "\\r"
+        elif code < 32 or 127 <= code < 160:
+            quoted += "\\x" + _hex(code, 2)
+        elif (
+            code == 0x2028  # LINE SEPARATOR and PARAGRAPH SEPARATOR: YAML
+            or code == 0x2029  # line breaks, which a quoted scalar folds
+            or code == 0xFFFE
+            or code == 0xFFFF
+        ):
+            quoted += "\\u" + _hex(code, 4)
+        else:
+            quoted += character
+    return quoted + '"'
+
+
 def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[str]:
     """The node's ``--ros-args``: the bridge's address, then *parameters*.
 
@@ -121,18 +206,24 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
     declares as a double (:data:`DOUBLE_PARAMETERS`) is passed as a float,
     which rclpy takes where it refuses the integer; a whole float for one it
     declares as an integer (:data:`INTEGER_PARAMETERS`) is passed as the int.
+    The address and every string are passed as YAML double-quoted scalars
+    (:func:`yaml_quoted`): rcl reads each ``-p`` value as YAML, so a bare
+    ``[::1]:50052`` would not parse, an empty string would be no value, and
+    ``123`` or ``true`` would reach the node as another type (#2561).
 
     Raises:
         ValueError: naming the parameter and the value, for a value the node
             would refuse, or misbehave with, as it starts, after the scenario
             has: a boolean or a string (``'5'``, which reaches ROS as an
-            integer or a string) for a number; a NaN or an infinity for a
+            integer or a string) for a number; anything but a boolean for a
+            :data:`BOOLEAN_PARAMETERS` one but a string of
+            :data:`BOOLEAN_WORDS`; a NaN or an infinity for a
             double; one that is not positive for a
             :data:`POSITIVE_PARAMETERS` one; a float that is not a whole
             number for an integer parameter; any :data:`PARENT_PID_PARAMETER`,
             which :func:`bridge_command` sets.
     """
-    args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
+    args = ["--ros-args", "-p", "bridge_address:=" + yaml_quoted(bridge_address)]
     for name, value in parameters.items():
         if value is None:
             continue
@@ -140,6 +231,21 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
             raise ValueError(
                 f"{name} is not a bridge parameter to set: the launcher sets it "
                 f"to the pid of the shell that starts the stack, got {value!r}"
+            )
+        if name in BOOLEAN_PARAMETERS and isinstance(value, str):
+            # YAML trims a bare scalar's spaces, tabs and line breaks.
+            word = value.strip(" \t\r\n")
+            lower = word.lower()
+            if lower in BOOLEAN_WORDS and word in (
+                lower,
+                lower.capitalize(),
+                lower.upper(),
+            ):
+                value = BOOLEAN_WORDS[lower]
+        if name in BOOLEAN_PARAMETERS and not isinstance(value, bool):
+            raise ValueError(
+                f"{name} must be a boolean, as the scenario_bridge node "
+                f"declares it, got {value!r}"
             )
         number = name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS
         if number and (isinstance(value, bool) or not isinstance(value, (int, float))):
@@ -165,6 +271,8 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
                     f"node declares it an integer, got {value!r}"
                 )
             value = int(value)
+        elif isinstance(value, str):
+            value = yaml_quoted(value)
         args += ["-p", f"{name}:={value}"]
     return args
 

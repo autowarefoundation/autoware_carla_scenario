@@ -376,24 +376,43 @@ class ProcessGroup:
             if escalate
             else [self._stop_signal]
         )
-        for sig in signals:
-            if self._process.poll() is not None:
-                break
-            signal_group(self._pgid, int(sig))
-            try:
-                self._process.wait(timeout=self._stop_timeout_s)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "Process %d did not exit %.0f s after %s",
-                    self._process.pid,
-                    self._stop_timeout_s,
-                    sig.name,
-                )
-        # The leader may be gone while a node it started is not: whatever is
-        # left of the group goes too.
-        signal_group(self._pgid, int(signal.SIGKILL))
-        self._close_log()
+        try:
+            for sig in signals:
+                if self._process.poll() is not None:
+                    break
+                self._signal(sig)
+                try:
+                    self._process.wait(timeout=self._stop_timeout_s)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "Process %d did not exit %.0f s after %s",
+                        self._process.pid,
+                        self._stop_timeout_s,
+                        sig.name,
+                    )
+            # The leader may be gone while a node it started is not: whatever
+            # is left of the group goes too.
+            self._signal(signal.SIGKILL)
+        finally:
+            self._close_log()
         return self._process.poll()
+
+    def _signal(self, sig: signal.Signals) -> None:
+        """Send *sig* to the group, logging a failure rather than raising it.
+
+        ``signal_group`` lets ``PermissionError`` through: EPERM, when all
+        that is left of the group is another user's (a ``sudo`` child).
+        :meth:`stop` never raises, so it goes on without it (#2561).
+        """
+        try:
+            signal_group(self._pgid, int(sig))
+        except OSError as exc:
+            logger.warning(
+                "Could not send %s to process group %d: %s",
+                sig.name,
+                self._pgid,
+                exc,
+            )
 
     def _close_log(self) -> None:
         if self._log is not None:
@@ -517,9 +536,13 @@ class CommandAutowareLauncher:
     def stop(self) -> None:
         if self._process is None:
             return
-        code = self._process.stop()
-        logger.info("Autoware stack stopped (exit code %s)", code)
-        self._process = None
+        try:
+            code = self._process.stop()
+            logger.info("Autoware stack stopped (exit code %s)", code)
+        finally:
+            # Cleared whatever happened, so the next start() is not refused
+            # as "already running" (#2561).
+            self._process = None
 
     def close(self) -> None:
         self.stop()
