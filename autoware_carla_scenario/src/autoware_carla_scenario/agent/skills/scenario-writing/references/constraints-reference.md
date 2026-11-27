@@ -27,7 +27,7 @@ sweep:
 ```
 
 - **`constraints` holds exactly one key of lanelet constraints**: the swept parameter (usually `ego.spawn_lanelet_id`). A second such key is refused. Everything else a case needs is derived from the pick with `bindings`.
-- **A scalar parameter can be drawn from a distribution** under a key of its own in `constraints`, one item: `- {type: uniform, low, high}` or `- {type: normal, mean, std, low?, high?}` (truncated to the bounds given). `samples: N` (default 1) runs each case N times, each with values of its own, drawn from the run's `seed`. A drawn key may not also be set by a binding or an override (`docs/usage.md`, "Drawing scalar parameters from distributions"):
+- **A scalar parameter can be drawn from a distribution** under a key of its own in `constraints`, one item: `- {type: uniform, low, high}` or `- {type: normal, mean, std, low?, high?}` (truncated to the bounds given). `samples: N` (default 1) runs each case N times, each with values of its own; each value's seed is made of `sweep.seed` (else the run's `seed`), the scenario's name, the case and the sample's number, so a case keeps its values whatever other cases the sweep has. A drawn key may not also be set by a binding or an override (`docs/usage.md`, "Drawing scalar parameters from distributions"):
   ```yaml
   constraints:
     ego.spawn_lanelet_id: [...]
@@ -41,7 +41,7 @@ sweep:
   exclude:
     ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
   ```
-- Other keys: `job_timeout_seconds` (per job, default 120), `resume_from`, `case_index`, `samples`, and `odd_sample` (cases drawn from the ODD for what it describes, such as the weather: `docs/odd.md`, "Sampling scenarios from the ODD").
+- Other keys: `job_timeout_seconds` (per job, default 120), `resume_from`, `case_index`, `samples`, `seed`, and `odd_sample` (cases drawn from the ODD for what it describes, such as the weather: `docs/odd.md`, "Sampling scenarios from the ODD").
 
 Two bindings that set one key to different values on a pick are refused. Map-specific exclusions (`no_3d_model_lanelet_ids`) are in `conf/map/<map_name>.yaml`, referenced as `${map.no_3d_model_lanelet_ids}`.
 
