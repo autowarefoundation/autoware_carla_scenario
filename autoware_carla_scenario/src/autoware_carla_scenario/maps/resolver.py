@@ -247,14 +247,16 @@ def _find_lanelet2(
 
     Args:
         directory: The map directory.
-        named: The ``.osm`` the caller asked for by name, preferred when it is
-            there.
+        named: The ``.osm`` the caller asked for by name.  It is the one used:
+            a named file that is missing, or is not a map file, is an error,
+            never a fallback to another ``.osm`` beside it.
         label: What to call the map in an error -- its source URI, or its
             directory.
         where: Which directory to name in an error, when *label* does not.
 
     Raises:
-        MapResolutionError: If there is no ``.osm`` that belongs to the map, or
+        MapResolutionError: If the ``.osm`` *named* is not a map file in
+            *directory*, if there is no ``.osm`` that belongs to the map, or
             more than one and none of them is named the way Autoware names it.
     """
     label = label or str(directory)
@@ -262,6 +264,15 @@ def _find_lanelet2(
         candidate = directory / Path(named).name
         if _is_map_file(directory, candidate):
             return candidate
+        # A file named outright is the one meant, as resolve_directory holds
+        # it: falling back to another .osm beside it would run a typo, or a
+        # file renamed upstream, against the wrong map (#2598).
+        if candidate.is_symlink() or candidate.exists():
+            raise MapResolutionError(
+                f"{label}: {candidate.name} is a link out of its directory, a "
+                "dangling link or a directory, so it is not that map's file."
+            )
+        raise MapResolutionError(f"{label}: {candidate.name} does not exist.")
 
     candidates = sorted(
         p for p in directory.glob("*.osm") if _is_map_file(directory, p)

@@ -19,7 +19,11 @@ from autoware_carla_scenario.conditions import map_area_from_fields
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import OpenDrivePose
 from autoware_carla_scenario.coordinate.transform import to_carla_world
-from autoware_carla_scenario.maps.opencrg import read_crg, relief_regions
+from autoware_carla_scenario.maps.opencrg import (
+    crg_references,
+    read_crg,
+    relief_regions,
+)
 
 _DATA = Path(__file__).resolve().parents[3] / "data"
 
@@ -212,6 +216,11 @@ class TestReading:
         [
             ({"mode": "genuine"}, "genuine mode"),
             ({"file": "missing.crg"}, "missing.crg"),
+            # Not a crash out of setup() (#2598).
+            ({"sEnd": "10m"}, 'road.crg: sEnd="10m" is not a number'),
+            ({"sStart": "x"}, 'sStart="x" is not a number'),
+            ({"sOffset": "1,5"}, 'sOffset="1,5" is not a number'),
+            ({"tOffset": "-"}, 'tOffset="-" is not a number'),
         ],
     )
     def test_what_cannot_be_read_is_said_and_passed_over(
@@ -223,6 +232,24 @@ class TestReading:
         regions, problems = relief_regions(_xodr(tmp_path, "road.crg", **attributes))
         assert regions == []
         assert len(problems) == 1 and said in problems[0]
+
+    def test_a_malformed_crg_is_passed_over_and_the_others_still_read(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the <CRG> with the bad attribute is skipped (#2598)."""
+        (tmp_path / "road.crg").write_text(
+            _crg_text(15.0, 45.0, -2.0, 2.5, _hump_and_groove)
+        )
+        xodr = _xodr(tmp_path, "road.crg")
+        text = xodr.read_text()
+        xodr.write_text(
+            text.replace("</surface>", '<CRG file="road.crg" sEnd="10m"/></surface>')
+        )
+        regions, problems = relief_regions(xodr)
+        assert {region.kind for region in regions} == {"raised", "grooved"}
+        assert problems == [f'road {_ROAD}: road.crg: sEnd="10m" is not a number']
+        with pytest.raises(ValueError, match='sEnd="10m" is not a number'):
+            crg_references(xodr)
 
     def test_a_binary_grid_is_said(self, tmp_path: Path) -> None:
         text = _crg_text(15.0, 16.0, -1.0, 1.0, _hump_and_groove)
@@ -375,6 +402,40 @@ class TestOnTheMap:
         assert found["measure"] == pytest.approx(6.0 - 0.8 - 0.06, abs=0.1)
         assert found["ignore"] is None
         assert found["plan"] == 0.0
+
+    def test_a_malformed_crg_attribute_is_said_and_never_holds(
+        self, tmp_path: Path
+    ) -> None:
+        """Said as the condition's problem, not raised out of setup() (#2598)."""
+        (tmp_path / "road_80.crg").write_text(
+            _crg_text(15.0, 45.0, -2.0, 2.5, _hump_and_groove)
+        )
+        text = (_DATA / "nishishinjuku_carla.xodr").read_text()
+        start = re.search(r'<road [^>]*id="80"[^>]*>', text)
+        assert start is not None
+        end = text.index("</road>", start.end())
+        surface = (
+            '<surface><CRG file="road_80.crg" sStart="15" sEnd="10m" '
+            'orientation="same" mode="attached" purpose="elevation"/></surface>'
+        )
+        (tmp_path / "map.xodr").write_text(text[:end] + surface + text[end:])
+        saved = MapManager._instance
+        MapManager.reset()
+        manager = MapManager.get_instance()
+        manager.initialize(tmp_path / "map.xodr", _DATA / "nishishinjuku.osm")
+        try:
+            condition = EntityAreaDistanceCondition(
+                entity_name="Ego",
+                area=MapArea(AreaGround.SURFACE_RAISED),
+                value=1.0,
+                label="hump",
+            )
+            assert condition.problem == (
+                "no raised road surface (0.01 m and more) on the map "
+                '(road 80: road_80.crg: sEnd="10m" is not a number)'
+            )
+        finally:
+            MapManager._instance = saved
 
     def test_a_map_with_no_surface_is_said_and_never_holds(self) -> None:
         saved = MapManager._instance
