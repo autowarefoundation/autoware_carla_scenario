@@ -26,14 +26,22 @@ sweep:
     <key>: [<values>]         # drop a case that ends with one of these on <key>
 ```
 
-- **`constraints` holds exactly one key**: the swept parameter (usually `ego.spawn_lanelet_id`). A second key is refused. Everything else a case needs is derived from the pick with `bindings`.
+- **`constraints` holds exactly one key of lanelet constraints**: the swept parameter (usually `ego.spawn_lanelet_id`). A second such key is refused. Everything else a case needs is derived from the pick with `bindings`.
+- **A scalar parameter can be drawn from a distribution** under a key of its own in `constraints`, one item: `- {type: uniform, low, high}` or `- {type: normal, mean, std, low?, high?}` (truncated to the bounds given). `samples: N` (default 1) runs each case N times, each with values of its own; each value's seed is made of `sweep.seed` (else the run's `seed`), the scenario's name, the case and the sample's number, so a case keeps its values whatever other cases the sweep has. A drawn key may not also be set by a binding or an override (`docs/usage.md`, "Drawing scalar parameters from distributions"):
+  ```yaml
+  constraints:
+    ego.spawn_lanelet_id: [...]
+    scenario.stop_line_distance_m:
+      - {type: uniform, low: 0.5, high: 3.0}
+  samples: 6
+  ```
 - **`bindings`** maps a config key to a binding; it is applied to each pick. Picks that end as the same case once their bindings are applied run once.
 - **`exclude`** drops a case by the values it *ends up with* after its bindings (a constraint only sees the pick, not where a walk-back moves a spawn):
   ```yaml
   exclude:
     ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
   ```
-- Other keys: `job_timeout_seconds` (per job, default 120), `resume_from`, `case_index`, and `odd_sample` (cases drawn from the ODD for scalar knobs such as speeds: `docs/odd.md`, "Sampling scenarios from the ODD").
+- Other keys: `job_timeout_seconds` (per job, default 120), `resume_from`, `case_index`, `samples`, `seed`, and `odd_sample` (cases drawn from the ODD for what it describes, such as the weather: `docs/odd.md`, "Sampling scenarios from the ODD").
 
 Two bindings that set one key to different values on a pick are refused. Map-specific exclusions (`no_3d_model_lanelet_ids`) are in `conf/map/<map_name>.yaml`, referenced as `${map.no_3d_model_lanelet_ids}`.
 

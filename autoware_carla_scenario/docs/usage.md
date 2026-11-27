@@ -396,8 +396,10 @@ value itself (`seed=1,2`, `'seed=range(0,32)'`, the rollouts of
 `sweep.constraints` sweeps **one** parameter: it holds a single target key
 (such as `ego.spawn_lanelet_id`) with its list of constraints, and every other
 parameter a case needs is derived from the matched lanelet by
-`sweep.bindings`. A `sweep.constraints` with a second key is refused with an
-error when the sweep is expanded, rather than searched together with the first.
+`sweep.bindings`. A `sweep.constraints` with a second key of lanelet constraints
+is refused with an error when the sweep is expanded, rather than searched
+together with the first. Its other keys may name scalar parameters drawn from a
+distribution instead ([Drawing scalar parameters from distributions](#drawing-scalar-parameters-from-distributions)).
 So is a section of the wrong shape: `sweep.constraints` that is not a mapping
 of its key to a list of constraints, `sweep.bindings` that is not a mapping of
 keys to bindings (`{type: ...}`), and `sweep.exclude` that is not a mapping of
@@ -709,6 +711,70 @@ A *logical* scenario -- a document with a route search, whose `sweep:` holds
 that matches its pattern, each with the ego's spawn and goal and the match
 itself (`scenario.route.*`); see
 [Logical Scenarios from Routes](logical_scenarios.md).
+
+#### Drawing scalar parameters from distributions
+
+A scalar parameter of the scenario -- a distance, a speed, a time -- can be
+drawn for each case rather than fixed or listed by hand. In
+`sweep.constraints`, map its key to the one distribution its value is drawn
+from, beside the lanelet key, and say in `sweep.samples` how many times each
+case runs:
+
+```yaml
+sweep:
+  constraints:
+    ego.spawn_lanelet_id:
+      - type: previous_of
+        constraints:
+          - type: has_traffic_light_stop_line
+    scenario.stop_line_distance_m:
+      - type: uniform
+        low: 0.5
+        high: 3.0
+    ego.initial_speed_kmh:
+      - type: normal
+        mean: 40.0
+        std: 5.0
+        low: 30.0      # optional: truncated to [low, high]
+        high: 50.0
+  samples: 6           # each lanelet case runs 6 times; 1 when not given
+  seed: 7              # optional: the run's seed when not given
+```
+
+| `type` | Fields | Draws |
+|---|---|---|
+| `uniform` | `low`, `high` (`low < high`) | every value in `[low, high]` equally likely |
+| `normal` | `mean`, `std` (`> 0`), optional `low`, `high` | a normal, truncated to `[low, high]` when bounds are given: drawn from its shape inside them, never clipped |
+
+Each case of the sweep -- a lanelet the constraints match, a route match, a
+case drawn from the ODD, or the one case of a sweep with only distributions,
+which needs no map -- runs `sweep.samples` times, each with a value of its own
+for every distribution, written as an override (`scenario.stop_line_distance_m=1.734`).
+Each value is drawn from a seed of its own, made of `sweep.seed` (else the
+run's `seed`, else the default seed), the scenario's name (`scenario.name`), the
+case's overrides, the sample's number and the key. So:
+
+- the same config and seed draw the same values: two planners run on the same
+  cases;
+- a case keeps its values when the sweep gains or loses other cases (a map
+  update, a constraint changed): the values of lanelet 56's second sample do not
+  depend on the lanelets beside it;
+- adding a distribution does not move the values the others draw;
+- two scenarios drawing the same key (`ego.initial_speed_kmh`) do not draw the
+  same values;
+- `sweep.seed` draws another set of values without moving the run's other
+  randomness (the traffic, the pedestrians), which follows the run's `seed`.
+
+`sweep.case_index` counts the drawn cases.
+
+A distribution with a field it does not take, a field missing or not a finite
+number, `low` not below `high`, a `std` not above 0, a truncation too far into
+the tail to draw from, or a list holding anything beside the one distribution
+is refused, naming the key, as a bad constraint is; so is a `sweep.samples`
+that is not a whole number of at least 1 and a `sweep.seed` that is not a whole
+number from 0 to 2^31 - 1. A key drawn from a distribution may
+not be set by a binding, a route match, the ODD sample or an override of the
+run: the run would follow that value while the sweep said it was drawn.
 
 ### Resume from a Specific Scenario
 
