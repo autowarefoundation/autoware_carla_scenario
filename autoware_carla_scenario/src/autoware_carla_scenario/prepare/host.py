@@ -21,6 +21,7 @@ __all__ = [
     "HostResources",
     "assign_gpus",
     "probe_host",
+    "visible_gpu_devices",
 ]
 
 
@@ -286,6 +287,33 @@ def _visible(gpus: tuple[Gpu, ...]) -> tuple[Gpu, ...]:
                 if gpu not in chosen:
                     chosen.append(gpu)
     return tuple(chosen)
+
+
+def visible_gpu_devices() -> Optional[list[str]]:
+    """The GPUs ``CUDA_VISIBLE_DEVICES`` lets this process use, as ``docker
+    run --gpus device=`` names them, or ``None`` when it is unset (every GPU).
+
+    Read as :func:`probe_host` reads it (:func:`_visible`), by index or UUID:
+    each is the index ``nvidia-smi`` gives it, which docker counts by too,
+    not its position in ``CUDA_VISIBLE_DEVICES``, so ``CUDA_VISIBLE_DEVICES=2``
+    is docker's ``device=2`` (#2584).  Without ``nvidia-smi`` the entries are
+    passed on as given, an index or a UUID, both of which docker reads.  An
+    empty list is no GPU.
+    """
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return None
+    devices: list[str] = []
+    gpus = _gpus()
+    if gpus:
+        for gpu in _visible(gpus):
+            devices.append(str(gpu.index))
+        return devices
+    for item in visible.split(","):
+        item = item.strip()
+        if item and item not in devices:
+            devices.append(item)
+    return devices
 
 
 def _available_memory_mb() -> int:

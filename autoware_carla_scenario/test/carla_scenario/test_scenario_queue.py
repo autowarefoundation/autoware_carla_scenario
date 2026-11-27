@@ -806,8 +806,9 @@ class TestScenarioQueueUnit:
             ("wait", "CARLA cooldown"),
             ("run", (2, False)),
             # A later run_all(): its first case resets the world the last one
-            # left, with no cooldown before it (none before a first case).
+            # left, and cools down after it, as any case after a run (#2584).
             ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
             ("run", (0, False)),
             # ... and its retry waits, then resets.
             ("wait", "CARLA cooldown (retry)"),
@@ -850,6 +851,84 @@ class TestScenarioQueueUnit:
             ("run", (1, False)),
         ]
 
+    def test_a_fresh_world_s_first_case_does_not_cool_down(self) -> None:
+        """#2584: a local batch keeps its timing -- no cooldown before the
+        first case on a freshly started server, one after each reset after."""
+        queue = ScenarioQueue(server=MagicMock(), cooldown_seconds=1.0)
+        runner = _RaisesThenRuns(run_failures=0)
+        queue._runner = runner  # type: ignore[assignment]
+        for _ in range(3):
+            queue.add(_NullScenario(_make_ego_config()))
+        events = runner.events
+
+        def wait(_seconds: float, *, desc: str) -> None:
+            events.append(("wait", desc))
+
+        with patch("autoware_carla_scenario.scenario_queue._wait_with_progress", wait):
+            queue.run_all(release=True, continue_on_error=True)
+
+        assert events == [
+            ("run", (0, False)),
+            ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
+            ("run", (1, False)),
+            ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
+            ("run", (2, False)),
+        ]
+
+    def test_a_case_per_run_all_cools_down_after_the_reset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#2584: a SLURM task runs its cases one run_all() each, so the
+        cooldown between cases is the queue's, after the reset of the world
+        the case before left -- as a local batch's -- not the worker's own
+        sleep before run_all() (and so before the reset)."""
+        import autoware_carla_scenario.scenario_queue as queue_module
+
+        runner = _RaisesThenRuns(run_failures=0)
+        events = runner.events
+
+        class _Clock:
+            @staticmethod
+            def sleep(seconds: float) -> None:
+                if events and events[-1][0] == "sleep":
+                    events[-1] = ("sleep", events[-1][1] + seconds)  # type: ignore[operator]
+                else:
+                    events.append(("sleep", seconds))
+
+        monkeypatch.setattr(queue_module, "time", _Clock)
+        queue = ScenarioQueue(server=MagicMock(), cooldown_seconds=2.0)
+        queue._runner = runner  # type: ignore[assignment]
+        for _ in range(3):
+            queue.add(_NullScenario(_make_ego_config()))
+            (result,) = queue.run_all(release=True, continue_on_error=True)
+            assert result.passed
+
+        assert [kind for kind, _ in events] == [
+            "run",
+            "reset",
+            "sleep",
+            "run",
+            "reset",
+            "sleep",
+            "run",
+        ]
+        slept = [seconds for kind, seconds in events if kind == "sleep"]
+        assert slept == [pytest.approx(2.0), pytest.approx(2.0)]
+
+    def test_the_slurm_worker_leaves_the_cooldown_to_the_queue(self) -> None:
+        """#2584: the worker slept before each case's run_all(), ahead of the
+        queue's reset; the queue cools down after it now, so a worker that
+        slept as well would wait twice."""
+        import inspect
+
+        from autoware_carla_scenario.slurm import worker
+
+        source = inspect.getsource(worker.run_task)
+        assert "_cooldown_seconds" not in source
+        assert "time.sleep(cooldown)" not in source
+
     def test_an_interrupt_ends_a_run_that_continues_on_error(self) -> None:
         queue, runner, _ = self._queue_whose_second_case_cannot_run(KeyboardInterrupt())
 
@@ -873,6 +952,80 @@ class TestScenarioQueueUnit:
         assert len(queue) == 2
         assert len(again) == 2
         assert queue.result_for(scenarios[1]) is runner.results[-1]
+
+    @pytest.mark.parametrize(
+        ("xodr_path", "map_name"),
+        [(None, "Town10HD_Opt"), (Path("map.xodr"), None), (None, None)],
+    )
+    def test_overwrite_xodr_without_its_paths_is_refused_before_carla_starts(
+        self, xodr_path: Path | None, map_name: str | None
+    ) -> None:
+        """#2584: refused when the queue is made, as its other settings are,
+        not once start() has launched CARLA and connected a runner -- a CARLA
+        town's OpenDRIVE is derived, so its batch has no xodr_path."""
+        server = MagicMock()
+        with (
+            patch("autoware_carla_scenario.scenario_queue.ScenarioRunner") as runner,
+            patch(
+                "autoware_carla_scenario.scenario_queue.CarlaServerManager"
+            ) as manager,
+        ):
+            for given in (server, None):
+                with pytest.raises(ValueError, match="overwrite_xodr requires both"):
+                    ScenarioQueue(
+                        server=given,
+                        overwrite_xodr=True,
+                        xodr_path=xodr_path,
+                        map_name=map_name,
+                    )
+        server.start.assert_not_called()
+        manager.assert_not_called()
+        runner.assert_not_called()
+
+    def test_overwrite_xodr_installs_the_given_map(self) -> None:
+        server = MagicMock()
+        with patch("autoware_carla_scenario.scenario_queue.ScenarioRunner") as runner:
+            queue = ScenarioQueue(
+                server=server,
+                overwrite_xodr=True,
+                xodr_path=Path("map.xodr"),
+                map_name="Odaiba",
+            )
+            queue.start()
+        runner.return_value.load_map_by_overwriting_xodr.assert_called_once_with(
+            Path("map.xodr"), "Odaiba"
+        )
+        runner.return_value.load_map_by_name.assert_not_called()
+
+    def test_a_failed_add_after_start_leaves_the_queue_as_it_was(self) -> None:
+        """#2584: the scenario was queued before its backends were prepared,
+        and its timeout, case and stem recorded after: a preparation that
+        raised left it queued without them, to run with the queue's default
+        timeout, no case and a numbered stem."""
+        from autoware_carla_scenario.prepare import InsufficientResourcesError
+
+        pool = MagicMock()
+        pool.prepare_scenarios.side_effect = InsufficientResourcesError("no room")
+        queue = ScenarioQueue(server=MagicMock(), backends=pool)
+        queue._runner = MagicMock()  # as after start()
+        scenario = _NullScenario(_make_ego_config())
+
+        with pytest.raises(InsufficientResourcesError, match="no room"):
+            queue.add(
+                scenario,
+                timeout_seconds=300.0,
+                case=MagicMock(),
+                file_stem="CutIn-3",
+            )
+
+        assert len(queue) == 0
+        assert (queue._timeouts, queue._cases, queue._stems) == ({}, {}, {})
+        # One that prepares is queued with what it was added with.
+        pool.prepare_scenarios.side_effect = None
+        queue.add(scenario, timeout_seconds=300.0, file_stem="CutIn-3")
+        assert len(queue) == 1
+        assert queue._timeouts == {id(scenario): 300.0}
+        assert queue._stems == {id(scenario): "CutIn-3"}
 
     def test_owns_server_flag_when_no_server_provided(self) -> None:
         with patch("autoware_carla_scenario.scenario_queue.CarlaServerManager"):

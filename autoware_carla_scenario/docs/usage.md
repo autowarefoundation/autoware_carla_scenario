@@ -215,7 +215,9 @@ same way, as its scenario list does.
   attempt is retried, or the case is reported as `[ERROR]`, and the batch
   goes on. The case that ran before the reset keeps its verdict, and is not
   run again (#1941). Between cases the world is reset first, and
-  `server.cooldown_seconds` is waited after it
+  `server.cooldown_seconds` is waited after it -- in a SLURM task too, whose
+  queue runs one case at a time (#2584). No cooldown comes before the first
+  case on a freshly started server
 - A CARLA server the batch started that dies mid-batch is restarted before the
   next attempt (a retry, or the next case), with the map loaded again, so the
   cases after the crash run rather than spend their attempts on a server that

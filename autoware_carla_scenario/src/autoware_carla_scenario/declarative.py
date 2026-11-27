@@ -286,7 +286,8 @@ class DeclarativeScenario(BaseScenario):
 
         Raises:
             ValueError: When a node's override is not a mapping, naming
-                ``scenario.param_overrides.<node>``.
+                ``scenario.param_overrides.<node>``, or a record's, naming
+                ``scenario.param_overrides.<node>.<records>.<index>``.
         """
         for node_id, override in (self._config.param_overrides or {}).items():
             if override is None:
@@ -962,9 +963,21 @@ def _merge_records(
 
     An index the list does not have is logged and skipped, as an unknown node
     is: the override is the run's opinion, the document says how many rows
-    there are.
+    there are.  A row's override that is not a mapping of fields
+    (``...<records>.0=5``, the sub-field left out) is refused, as a node's is
+    (:func:`_check_override_mapping`), rather than dropped (#2584); a null one
+    is skipped, as a null field is.
+
+    Raises:
+        ValueError: When a row's override is not a mapping, naming
+            ``scenario.param_overrides.<node>.<records>.<index>``.
     """
     for key, fields in override.items():
+        if fields is None:
+            continue
+        _check_override_mapping(
+            f"scenario.param_overrides.{node_id}.{name}.{key}", fields
+        )
         text = str(key)
         index = int(text) if text.isascii() and text.isdigit() else -1
         if not 0 <= index < len(records) or not isinstance(records[index], dict):
@@ -975,7 +988,6 @@ def _merge_records(
                 name,
             )
             continue
-        if isinstance(fields, Mapping):
-            records[index].update(
-                {str(sub): value for sub, value in fields.items() if value is not None}
-            )
+        records[index].update(
+            {str(sub): value for sub, value in fields.items() if value is not None}
+        )

@@ -460,6 +460,26 @@ class TestAssignGpus:
         ):
             assign_gpus([("a", need), ("b", Resources(gpu_memory_mb=5000))], host)
 
+    def test_the_visible_gpus_are_named_as_docker_counts_them(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#2584: by nvidia-smi's index, which docker --gpus counts by, read
+        from CUDA_VISIBLE_DEVICES's indices or UUIDs as the check reads it."""
+        gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2), Gpu(2, "GPU-cccc", 3))
+        monkeypatch.setattr(host_module, "_gpus", lambda: gpus)
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        assert host_module.visible_gpu_devices() is None
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+        assert host_module.visible_gpu_devices() == ["2"]
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-cc,0")
+        assert host_module.visible_gpu_devices() == ["2", "0"]
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+        assert host_module.visible_gpu_devices() == []
+        # Without nvidia-smi, as given: docker reads an index or a UUID.
+        monkeypatch.setattr(host_module, "_gpus", lambda: ())
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1, GPU-bbbb,1")
+        assert host_module.visible_gpu_devices() == ["1", "GPU-bbbb"]
+
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
@@ -606,6 +626,62 @@ class TestDockerBackend:
         backend = ArdyBackend.from_settings({"gpus": gpus, "gpu_memory_mb": 0})
         assert backend.resources().gpu_memory_mb == 0
         assert docker_module._gpu_args(gpus, None) == ["--gpus", gpus]
+
+    @pytest.mark.parametrize(
+        ("gpus", "placed", "visible", "args"),
+        [
+            # CUDA_VISIBLE_DEVICES unset: every GPU, as before.
+            ("all", 2, None, ["--gpus", "all"]),
+            ("auto", None, None, ["--gpus", "all"]),
+            # Set: every GPU is the visible ones alone (#2584).
+            ("all", 2, ["2"], ["--gpus", "device=2"]),
+            (" all ", 1, ["1", "3"], ["--gpus", '"device=1,3"']),
+            ("count=all", 1, ["1", "3"], ["--gpus", '"device=1,3"']),
+            ('"count=all"', 1, ["1"], ["--gpus", "device=1"]),
+            ("auto", None, ["2"], ["--gpus", "device=2"]),
+            ("auto", None, ["0", "GPU-b"], ["--gpus", '"device=0,GPU-b"']),
+            ("all", None, [], []),
+            # What names its GPUs keeps them; none is none.
+            ("auto", 3, ["2", "3"], ["--gpus", "device=3"]),
+            ("device=1", 1, ["1"], ["--gpus", "device=1"]),
+            ("2", 0, ["0", "1"], ["--gpus", "2"]),
+            ("none", None, ["1"], []),
+        ],
+    )
+    def test_every_gpu_is_every_visible_gpu(
+        self,
+        gpus: str,
+        placed: Optional[int],
+        visible: Optional[list[str]],
+        args: list[str],
+    ) -> None:
+        assert docker_module._gpu_args(gpus, placed, visible) == args
+
+    @pytest.mark.parametrize(("gpus", "gpu"), [("all", 2), ("auto", None)])
+    def test_a_container_on_every_gpu_stays_within_cuda_visible_devices(
+        self, monkeypatch: pytest.MonkeyPatch, gpus: str, gpu: Optional[int]
+    ) -> None:
+        """#2584: with CUDA_VISIBLE_DEVICES=2, ``all`` was checked and booked
+        on GPU 2 alone, and handed docker ``--gpus all``: the container got
+        GPUs outside the SLURM job's allocation."""
+        recorded = _Docker()
+        monkeypatch.setattr(docker_module.subprocess, "run", recorded)
+        monkeypatch.setattr(
+            host_module, "_gpus", lambda: (Gpu(0, "GPU-a", 1), Gpu(2, "GPU-c", 1))
+        )
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+        _Answering.from_settings({"gpus": gpus, "gpu_memory_mb": 0}).start(
+            None, gpu=gpu
+        )
+        (run,) = [c for c in recorded.calls if c[1] == "run"]
+        assert run[run.index("--gpus") + 1] == "device=2"
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES")
+        recorded.calls.clear()
+        _Answering.from_settings({"gpus": gpus, "gpu_memory_mb": 0}).start(
+            None, gpu=gpu
+        )
+        (run,) = [c for c in recorded.calls if c[1] == "run"]
+        assert run[run.index("--gpus") + 1] == "all"
 
     def test_a_missing_image_is_pulled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorded = _Docker(image_present=False)
