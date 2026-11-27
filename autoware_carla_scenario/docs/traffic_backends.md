@@ -1104,9 +1104,11 @@ that backend exactly.
 the TrafficManager backend keeps a scenario vehicle's route, lane changes
 and parameters by its actor, and a condition may read that actor at any
 time, so the scenario's own vehicles stay in CARLA
-(`mesoscopic.scenario_vehicles: true` is refused). The focus points are the
-ego and every other vehicle in CARLA that is not background traffic; a run
-with none of those changes nobody's level. Each decision
+(`mesoscopic.scenario_vehicles: true` is refused). Nor does a background
+vehicle released to an adversity (`release_actor`) while it is released: the
+scenario drives it. The focus points are the ego and every other vehicle in
+CARLA that is not background traffic the TrafficManager drives -- a released
+one among them; a run with none of those changes nobody's level. Each decision
 (`update_interval_s`) is `plan_fidelity`'s, with every option of
 `MesoscopicConfig` as the `sumo` backend reads it: the radii, `horizon_s`,
 `max_microscopic` -- which here bounds the background vehicles in CARLA.

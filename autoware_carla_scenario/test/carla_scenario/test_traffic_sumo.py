@@ -4330,6 +4330,44 @@ def test_an_entitys_own_overrides_outlast_a_mesoscopic_round_trip(
 
 
 @needs_sumo
+def test_a_run_wide_override_given_later_wins_over_an_entitys_own_across_a_round_trip(
+    crossroads: Path, tmp_path: Path, meso_engine: str
+) -> None:
+    """The one given last wins: a run-wide override of a field an entity's
+    own sets spends it, so the round trip does not bring the older one back;
+    the fields the run-wide one leaves alone stay the entity's own."""
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+
+    backend, world, entity, _ego = _mesoscopic(crossroads, tmp_path, meso_engine)
+    (sumo_id,) = backend._driven
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        backend.override_entity_parameters(
+            world,
+            VehicleParameters(reaction_time_s=Spread(1.7), accel=Spread(1.5)),
+            entity,
+        )
+        backend.override_vehicle_parameters(
+            world, VehicleParameters(reaction_time_s=Spread(1.2))
+        )
+        assert tc.vehicle.getTau(sumo_id) == pytest.approx(1.2)
+        assert backend._own_overrides[sumo_id].set_fields() == ["accel"]
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        assert backend.require_microscopic(entity, world)
+        for i in range(3):
+            backend.tick(world, i * 0.05)
+        assert tc.vehicle.getTau(sumo_id) == pytest.approx(1.2)
+        assert tc.vehicle.getAccel(sumo_id) == pytest.approx(1.5)
+    finally:
+        backend.close()
+
+
+@needs_sumo
 @pytest.mark.parametrize("on_call", [True, False])
 def test_an_emergency_vehicle_is_as_on_duty_back_from_the_mesoscopic_model(
     crossroads: Path, tmp_path: Path, meso_engine: str, on_call: bool

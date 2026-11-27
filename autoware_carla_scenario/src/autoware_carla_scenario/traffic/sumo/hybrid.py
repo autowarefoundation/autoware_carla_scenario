@@ -407,14 +407,14 @@ class HybridTrafficBackend(TrafficManagerBackend):
         for handle, actor in list(self._background.items()):
             if self._spawned_at(handle, frame) is not None:
                 continue  # not in the world's snapshot yet: decided next time
-            if int(actor.id) in self._released:
-                continue  # driven by the scenario: a focus point (above)
             # Destroyed by the TrafficManager or the server: read at the
             # origin, it would be moved into the mesoscopic model, and brought
-            # back later as a live vehicle (#2245).
+            # back later as a live vehicle (#2245).  A released one too.
             if actor_destroyed(actor):
                 self._drop_background(handle)
                 continue
+            if int(actor.id) in self._released:
+                continue  # driven by the scenario: a focus point (above)
             try:
                 location = actor.get_location()
                 velocity = actor.get_velocity() if ahead else None

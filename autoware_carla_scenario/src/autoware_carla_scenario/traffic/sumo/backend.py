@@ -899,6 +899,17 @@ class SumoTrafficBackend(TrafficBackend):
         if self._tm_drives_scenario:
             self._warn_dropped(overrides, shared)
             self._tm.override_vehicle_parameters(world, shared)
+        # The one given last wins: an entity's own override of a field this
+        # sets is spent, not drawn over the run's again when it next departs
+        # (_apply_parameters), as the TrafficManager backend spends its own.
+        overridden = set(overrides.set_fields())
+        for own_id in list(self._own_overrides):
+            own = self._own_overrides[own_id]
+            kept = set(own.set_fields()) - overridden
+            if kept:
+                self._own_overrides[own_id] = own.restricted_to(kept)
+            else:
+                del self._own_overrides[own_id]
         if not self._running:
             return
         for sumo_id in self._traci.vehicle.getIDList():
