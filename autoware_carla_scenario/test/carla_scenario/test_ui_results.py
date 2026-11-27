@@ -220,8 +220,8 @@ def test_a_box_is_centred_at_its_logged_center(tmp_path: Path) -> None:
 
 def test_a_box_s_center_turns_with_its_actor(tmp_path: Path) -> None:
     """Turned by 90 degrees, the box's offset (1.3, 0.5) puts its centre at
-    (-0.5, 1.3), as ``metrics._box_of`` places it: its side is at x=0.5, 0.5 m
-    from a walker at (1.3, 1.3)."""
+    (-0.5, 1.3), as ``utils.polygon.ground_box`` places it: its side is at
+    x=0.5, 0.5 m from a walker at (1.3, 1.3)."""
     log = _boxed_log(
         tmp_path / "Case.trajectory.jsonl",
         ego_center=[1.3, 0.5, 0.75],

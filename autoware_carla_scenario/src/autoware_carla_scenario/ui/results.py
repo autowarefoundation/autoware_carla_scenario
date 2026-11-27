@@ -71,8 +71,6 @@ from .comparison import varying_attributes as _varying_attributes
 # library check; the names case_metrics used stay importable from here.
 from .drive_metrics import DECEL_WINDOW_S as _DECEL_WINDOW_S  # noqa: F401
 from .drive_metrics import DriveMetrics
-from .drive_metrics import _point_segment as _point_segment
-from .drive_metrics import _separated as _separated
 from .drive_metrics import box as _box
 from .drive_metrics import box_distance as _box_distance
 

@@ -26,15 +26,20 @@ __all__ = [
     "Box",
     "Point",
     "bounding_circle",
+    "box_distance",
+    "boxes_meet",
     "cross",
     "edge_value",
     "ground_box",
+    "oriented_box",
+    "point_in_box",
     "point_in_polygon",
     "point_segment_distance",
     "polygon_distance",
     "polygon_distance_at",
     "polygon_gap",
     "polygon_gap_at",
+    "segment_meets_box",
     "segments_cross",
 ]
 
@@ -52,7 +57,7 @@ def ground_box(actor: "carla.Actor", transform: "carla.Transform") -> Box:
     """*actor*'s bounding box on the ground, in the world frame, *transform*
     being where the actor is."""
     heading = math.radians(transform.rotation.yaw)
-    yaw = heading
+    box_yaw = 0.0
     extent_x, extent_y = 0.0, 0.0
     offset_x, offset_y = 0.0, 0.0
     # Not getattr() with a default, which Codon lacks (docs/typecheck.md).
@@ -60,19 +65,45 @@ def ground_box(actor: "carla.Actor", transform: "carla.Transform") -> Box:
         box = actor.bounding_box
         extent_x, extent_y = float(box.extent.x), float(box.extent.y)
         offset_x, offset_y = float(box.location.x), float(box.location.y)
-        yaw += math.radians(box.rotation.yaw)
+        box_yaw = math.radians(box.rotation.yaw)
     except AttributeError:
         pass
+    return oriented_box(
+        transform.location.x,
+        transform.location.y,
+        heading,
+        extent_x,
+        extent_y,
+        offset_x,
+        offset_y,
+        box_yaw,
+    )
+
+
+def oriented_box(
+    x: float,
+    y: float,
+    heading: float,
+    extent_x: float,
+    extent_y: float,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    box_yaw: float = 0.0,
+) -> Box:
+    """The corners of a box on the ground (front left, front right, rear
+    right, rear left): a road user's at *x*, *y* (its origin) heading
+    *heading* (radians), *extent_x* and *extent_y* its half length and half
+    width, *offset_x*, *offset_y* the box's centre in the road user's frame
+    (turned with it) and *box_yaw* (radians) the box's own turn on top of
+    *heading*.  :func:`ground_box` reads them off a CARLA actor; the viewer
+    (``ui.drive_metrics.box``) off a trajectory log."""
+    yaw = heading + box_yaw
     # CARLA's frame is left-handed: +y is to the right of +x.
     forward = (math.cos(yaw), math.sin(yaw))
     right = (-forward[1], forward[0])
     centre = (
-        transform.location.x
-        + offset_x * math.cos(heading)
-        - offset_y * math.sin(heading),
-        transform.location.y
-        + offset_x * math.sin(heading)
-        + offset_y * math.cos(heading),
+        x + offset_x * math.cos(heading) - offset_y * math.sin(heading),
+        y + offset_x * math.sin(heading) + offset_y * math.cos(heading),
     )
 
     def corner(along: float, across: float) -> Point:
@@ -121,6 +152,71 @@ def segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
         or point_segment_distance(c, a, b) <= _ON_EDGE_M
         or point_segment_distance(d, a, b) <= _ON_EDGE_M
     )
+
+
+def point_in_box(point: Point, box: Box) -> bool:
+    """Whether *point* is in the convex *box* or on its edge.
+
+    A box of no area (a road user whose extent read as zero: a point, or a
+    segment) holds only the points on it (#1997): every side's cross product
+    is zero for it, which would otherwise hold every point on the line.
+    """
+    sign = 0.0
+    for i in range(len(box)):
+        side = cross(box[i], box[(i + 1) % len(box)], point)
+        if abs(side) <= 1e-12:
+            continue
+        if sign == 0.0:
+            sign = side
+        elif (side > 0.0) != (sign > 0.0):
+            return False
+    if sign == 0.0:
+        # Every side is in line with the point: the box is a point or a
+        # segment (or the point is a corner of a box that is); on it or not.
+        for i in range(len(box)):
+            if point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
+                return True
+        return False
+    return True
+
+
+def _box_edges(box: Box) -> list[tuple[Point, Point]]:
+    return [(box[i], box[(i + 1) % len(box)]) for i in range(len(box))]
+
+
+def segment_meets_box(a: Point, b: Point, box: Box) -> bool:
+    """Whether segment *ab* meets the convex *box*, touching included."""
+    if point_in_box(a, box) or point_in_box(b, box):
+        return True
+    for c, d in _box_edges(box):
+        if segments_cross(a, b, c, d):
+            return True
+    return False
+
+
+def boxes_meet(one: Box, other: Box) -> bool:
+    """Whether two convex boxes on the ground touch or overlap."""
+    for a, b in _box_edges(one):
+        if segment_meets_box(a, b, other):
+            return True
+    # One wholly inside the other.
+    return point_in_box(other[0], one)
+
+
+def box_distance(one: Box, other: Box) -> float:
+    """Metres between two convex boxes on the ground; ``0.0`` when they
+    meet.  A box of no area is the point or segment it is (#1997)."""
+    if boxes_meet(one, other):
+        return 0.0
+    one_edges, other_edges = _box_edges(one), _box_edges(other)
+    best = math.inf
+    for p in one:
+        for a, b in other_edges:
+            best = min(best, point_segment_distance(p, a, b))
+    for p in other:
+        for a, b in one_edges:
+            best = min(best, point_segment_distance(p, a, b))
+    return best
 
 
 def point_in_polygon(point: Point, polygon: list[Point]) -> bool:

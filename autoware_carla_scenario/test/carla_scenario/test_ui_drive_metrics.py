@@ -3,8 +3,10 @@ it (#741): ui.results still exports every name it did, and case_metrics reads
 the same metrics, to the last bit, off every log it read them off before.
 
 ``data/ui_drive_metrics/golden.json`` holds what ui.results read before the
-split, off the logs below; regenerate it only for a change meant to alter
-them::
+split, off the logs below, but for the gaps of boxes of no area (#2590: the
+viewer measures with the metrics' geometry, ``utils.polygon``, and two
+zero-extent boxes are the points they are, not touching); regenerate it only
+for a change meant to alter them::
 
     uv run python autoware_carla_scenario/test/carla_scenario/test_ui_drive_metrics.py
 
@@ -392,8 +394,6 @@ def test_the_golden_file_covers_every_log() -> None:
         ("_DECEL_WINDOW_S", "DECEL_WINDOW_S"),
         ("_box", "box"),
         ("_box_distance", "box_distance"),
-        ("_point_segment", "_point_segment"),
-        ("_separated", "_separated"),
     ],
 )
 def test_results_re_exports_the_drive_metrics(name: str, moved: str) -> None:
@@ -405,6 +405,24 @@ def test_results_re_exports_the_drive_metrics(name: str, moved: str) -> None:
 def test_results_still_exports_every_name() -> None:
     for name in (*results.__all__, "METRICS", "_metrics_cache"):
         assert hasattr(results, name), name
+
+
+def test_the_viewer_measures_boxes_as_the_metrics_do() -> None:
+    """#2590: the viewer's box and gap are ``utils.polygon``'s, so a box of
+    no area is the point it is (#1997), not touching everything."""
+    from autoware_carla_scenario.ui import drive_metrics  # noqa: PLC0415
+    from autoware_carla_scenario.utils import polygon  # noqa: PLC0415
+
+    assert drive_metrics.box_distance is polygon.box_distance
+    here = drive_metrics.box(0.0, 0.0, 0.0, (0.0, 0.0))
+    there = drive_metrics.box(10.0, 5.0, 30.0, (0.0, 0.0))
+    assert drive_metrics.box_distance(here, there) == pytest.approx(math.hypot(10, 5))
+    # A real box: the gap of its side to a point ahead of it.
+    ego = drive_metrics.box(0.0, 0.0, 0.0, (2.0, 1.0))
+    assert drive_metrics.box_distance(ego, there) == pytest.approx(math.hypot(8, 4))
+    # The corners are ground_box's, turned with the actor, its offset too.
+    turned = drive_metrics.box(1.0, 2.0, 90.0, (2.0, 1.0), (0.5, 0.0))
+    assert turned == polygon.oriented_box(1.0, 2.0, math.pi / 2, 2.0, 1.0, 0.5, 0.0)
 
 
 def test_no_tick_gives_no_metrics() -> None:

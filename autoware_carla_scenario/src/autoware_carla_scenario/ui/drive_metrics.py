@@ -4,15 +4,18 @@ the viewer reads off a trajectory log, fed one tick at a time.
 ``ui.results.case_metrics`` reads the log (its JSON lines, records of any
 type) and hands each of the ego's ticks to a :class:`DriveMetrics`, and the
 gap of the ego's box (:func:`box`) to each other road user's
-(:func:`box_distance`). Split out of ``ui.results``, which re-exports what it
-used of it, so that the library check compiles the arithmetic
-(``docs/typecheck.md``, "Checking the framework itself").
+(:func:`box_distance`, the metrics' own, ``utils.polygon``'s). Split out
+of ``ui.results``, which re-exports what it used of it, so that the library
+check compiles the arithmetic (``docs/typecheck.md``, "Checking the framework
+itself").
 """
 
 from __future__ import annotations
 
 import math
 from typing import Optional
+
+from ..utils.polygon import box_distance, oriented_box
 
 __all__ = ["DECEL_WINDOW_S", "DriveMetrics", "box", "box_distance"]
 
@@ -31,53 +34,12 @@ def box(
     origin), turned by *yaw* (degrees), *extent* its half length and half
     width, *center* the box's offset from the origin in the actor's frame
     (the trajectory log's ``center``; turned with the actor, as
-    ``metrics._box_of`` turns the bounding box's location)."""
-    c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
-    ex, ey = extent
-    cx, cy = center
-    x, y = x + c * cx - s * cy, y + s * cx + c * cy
-    return [
-        (x + c * dx - s * dy, y + s * dx + c * dy)
-        for dx, dy in ((ex, ey), (-ex, ey), (-ex, -ey), (ex, -ey))
-    ]
-
-
-def _separated(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> bool:
-    for poly in (a, b):
-        for i in range(4):
-            x1, y1 = poly[i]
-            x2, y2 = poly[(i + 1) % 4]
-            nx, ny = y2 - y1, x1 - x2
-            pa = [nx * px + ny * py for px, py in a]
-            pb = [nx * px + ny * py for px, py in b]
-            if max(pa) < min(pb) or max(pb) < min(pa):
-                return True
-    return False
-
-
-def _point_segment(
-    p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
-) -> float:
-    ax, ay = a
-    dx, dy = b[0] - ax, b[1] - ay
-    length = dx * dx + dy * dy
-    t = (
-        0.0
-        if length == 0
-        else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / length))
-    )
-    return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
-
-
-def box_distance(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
-    """The distance between two boxes on the ground (0 when they overlap)."""
-    if not _separated(a, b):
-        return 0.0
-    return min(
-        _point_segment(p, q[i], q[(i + 1) % 4])
-        for p_box, q in ((a, b), (b, a))
-        for p in p_box
-        for i in range(4)
+    :func:`~autoware_carla_scenario.utils.polygon.ground_box` turns the
+    bounding box's location).  The metrics' box
+    (:func:`~autoware_carla_scenario.utils.polygon.oriented_box`), so the
+    viewer's gaps (:func:`box_distance`) are the metrics'."""
+    return oriented_box(
+        x, y, math.radians(yaw), extent[0], extent[1], center[0], center[1]
     )
 
 
