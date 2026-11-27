@@ -229,6 +229,24 @@ class RuleSet:
             return None
         return min(violations, key=lambda name: violations[name])
 
+    def hard_window_robustness(self, signal: torch.Tensor, n_steps: int) -> torch.Tensor:
+        """The worst hard rule's robustness over the opening ``n_steps``.
+
+        Negative exactly when :meth:`imminent_hard_violation` names a rule, as
+        one tensor so a batch of plans is judged in one ``vmap``
+        (`RobustnessOptimizer._keeps_hard_rules`). Requires a hard rule.
+        """
+        window = signal[: max(2, min(n_steps, signal.shape[0]))]
+        worst: torch.Tensor | None = None
+        for rule in self.rules:
+            if not rule.hard:
+                continue
+            robustness = scalar_robustness(rule.formula, window, **EXACT)
+            worst = robustness if worst is None else torch.minimum(worst, robustness)
+        if worst is None:
+            raise ValueError("the specification has no hard rule")
+        return worst
+
     def imminent_hard_violation(self, signal: torch.Tensor, n_steps: int) -> str | None:
         """The first hard rule violated within the opening ``n_steps``, if any.
 

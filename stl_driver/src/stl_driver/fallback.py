@@ -7,7 +7,10 @@ Two situations, and they are different.
 started, or the runtime has not published a route.  Hold the current heading
 and coast, which is what :class:`RouteFollowerPolicy` does in the same spot.
 
-*A hard rule is violated by every plan considered.*  Something is wrong.
+*A hard rule is violated soon -- within ``fallback_window_s`` -- by every
+plan considered.*  Something is wrong.  (The optimizer ranks a plan that keeps
+the hard rules over that window above one that does not, so the plan it
+returns breaches one only when every plan it found does.)
 Brake, harder than the comfort rule permits -- the point of marking a rule
 ``hard`` is that comfort is no longer the priority.
 

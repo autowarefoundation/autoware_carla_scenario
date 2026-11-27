@@ -89,12 +89,15 @@ plans, in one batch, against a smoothed robustness with a sharpening
 temperature. This is what turns "brake somewhat" into "brake exactly hard
 enough to stop at the line".
 
-The plan chosen is checked against the rules marked `hard` over its first
-`fallback_window_s` (1.2 s). If one is violated there and the vehicle is moving
+Plans are ranked in three tiers: one that satisfies every rule first; then,
+when none does, one that violates no `hard` rule within its first
+`fallback_window_s` (1.2 s); and within a tier, the best objective. The plan
+chosen is checked against the rules marked `hard` over that window. If one is violated there and the vehicle is moving
 faster than `creep_speed_mps` — so that braking harder can still change the
 outcome — the policy emits an emergency stop instead of that plan: driving a
 plan that violates a rule you said you would never violate is what makes `hard`
-meaningless. A violation later in the horizon, or one braking cannot help, is
+meaningless. Because of the middle tier, that happens only when no plan the
+search found keeps the `hard` rules over the window. A violation later in the horizon, or one braking cannot help, is
 reported and the plan is driven; the next replan gets another say.
 
 Median step: **73 ms** against the runtime's 100 ms control period, measured

@@ -529,10 +529,10 @@ def test_the_driven_sample_is_not_among_the_alternatives(optimizer, monkeypatch)
 
     pick = optimizer_module._lexicographic_pick
 
-    def second_best(merit, robustness):
+    def second_best(merit, robustness, keeps_hard=None):
         # The sampling stage's pick only; refinement picks among its own.
         if "picked" in seen:
-            return pick(merit, robustness)
+            return pick(merit, robustness, keeps_hard)
         seen["picked"] = int(torch.argsort(seen["scores"], descending=True)[1])
         return seen["picked"]
 
@@ -969,6 +969,108 @@ def test_when_nothing_satisfies_the_objective_decides():
     merit = torch.tensor([1.0, 7.0, 3.0])
     robustness = torch.tensor([-0.1, -2.0, -0.5])
     assert _lexicographic_pick(merit, robustness) == 1
+
+
+def test_when_nothing_satisfies_a_plan_keeping_the_hard_rules_comes_first():
+    from stl_driver.optimizer import _lexicographic_pick
+
+    merit = torch.tensor([10.0, 1.0, 3.0])
+    robustness = torch.tensor([-0.2, -0.5, -0.1])
+    keeps_hard = torch.tensor([False, True, False])
+    assert _lexicographic_pick(merit, robustness, keeps_hard) == 1
+
+
+def test_the_hard_rule_tier_does_not_override_a_satisfying_plan():
+    from stl_driver.optimizer import _lexicographic_pick
+
+    merit = torch.tensor([10.0, 1.0, 3.0])
+    robustness = torch.tensor([-0.2, -0.5, 0.1])
+    keeps_hard = torch.tensor([True, True, False])
+    assert _lexicographic_pick(merit, robustness, keeps_hard) == 2
+    # Nor does it change anything when no plan, or every plan, keeps them.
+    robustness = torch.tensor([-0.2, -0.5, -0.1])
+    for keeps in (torch.zeros(3, dtype=torch.bool), torch.ones(3, dtype=torch.bool), None):
+        assert _lexicographic_pick(merit, robustness, keeps) == 0
+
+
+def _solve_on_signals(monkeypatch, signals, merit, speed0_mps=8.0):
+    """Solve with the sampling stage scoring ``signals`` and no refinement.
+
+    Row ``i`` of ``signals`` stands in for candidate ``i``'s rollout; the
+    rest of the batch repeats the last row, at merit -100.
+    """
+    optimizer = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    inputs = make_inputs(CONFIG, speed0_mps=speed0_mps)
+
+    def scored(candidates, _inputs):
+        n = candidates.shape[0]
+        batch = torch.cat([signals, signals[-1:].expand(n - len(signals), -1, -1)])
+        merits = torch.cat([merit, torch.full((n - len(merit),), -100.0)])
+        robustness = torch.stack([optimizer.rules.spec_robustness(s) for s in batch])
+        return batch, merits.clone(), merits, robustness, True
+
+    def no_refinement(seeds, _inputs, _started, _budget):
+        return seeds[0], torch.zeros(()), -math.inf, -1, 0
+
+    monkeypatch.setattr(optimizer, "_score_batch", scored)
+    monkeypatch.setattr(optimizer, "_refine", no_refinement)
+    return optimizer.solve(inputs)
+
+
+def _clearance_signal(dip_at: int | None) -> torch.Tensor:
+    """A plan whose clearance dips to -0.2 m at row ``dip_at``, and whose
+    speed headroom violates the soft `speed_limit` so nothing satisfies."""
+    clearance = constant(8.0)
+    if dip_at is not None:
+        clearance[dip_at] = -0.2
+    return signal_from_columns(clearance=clearance, speed_headroom=constant(-2.0))
+
+
+def test_the_fallback_is_not_summoned_while_some_plan_keeps_the_hard_rules(monkeypatch):
+    """#2491: the merit-best plan breaches a hard rule in the opening second,
+    another keeps every hard rule -- drive the other, no emergency stop."""
+    imminent = _clearance_signal(dip_at=3)
+    keeps = _clearance_signal(dip_at=None)
+    solution = _solve_on_signals(
+        monkeypatch, torch.stack([imminent, keeps]), torch.tensor([51.9, 46.6])
+    )
+    assert torch.equal(solution.signal, keeps)
+    assert solution.robustness < 0.0  # nothing satisfied everything
+    assert not solution.needs_fallback
+    assert solution.imminent_rule is None
+
+
+def test_the_fallback_is_still_summoned_when_every_plan_breaches_a_hard_rule(monkeypatch):
+    early, later = _clearance_signal(dip_at=3), _clearance_signal(dip_at=6)
+    solution = _solve_on_signals(
+        monkeypatch, torch.stack([early, later]), torch.tensor([51.9, 46.6])
+    )
+    assert torch.equal(solution.signal, early)  # the objective decides, as before
+    assert solution.needs_fallback
+    assert solution.imminent_rule == "collision_free"
+
+
+def test_a_satisfying_plan_is_picked_as_before(monkeypatch):
+    satisfying = signal_from_columns(clearance=constant(8.0))
+    keeps = _clearance_signal(dip_at=None)
+    solution = _solve_on_signals(
+        monkeypatch, torch.stack([keeps, satisfying]), torch.tensor([51.9, 46.6])
+    )
+    assert torch.equal(solution.signal, satisfying)
+    assert solution.robustness >= 0.0
+    assert not solution.needs_fallback
+
+
+def test_the_hard_rule_check_matches_the_one_the_fallback_uses(optimizer):
+    """`_keeps_hard_rules` is `imminent_hard_violation` over a batch."""
+    signals = torch.stack(
+        [_clearance_signal(dip_at=None), _clearance_signal(dip_at=3), _clearance_signal(dip_at=30)]
+    )
+    keeps = optimizer._keeps_hard_rules(signals)
+    rows = optimizer._fallback_rows()
+    expected = [optimizer.rules.imminent_hard_violation(s, rows) is None for s in signals]
+    assert keeps.tolist() == expected == [True, False, True]
+    assert optimizer._hard_window_looped(signals, rows).ge(0.0).tolist() == expected
 
 
 def test_selection_does_not_reward_simply_stopping(optimizer):
