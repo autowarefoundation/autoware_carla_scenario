@@ -104,8 +104,10 @@ class Launcher:
     def launch(self, batches, initial_job_idx):
         if sys.argv[3] == "stubborn":
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        (work / "job.pid").write_text(str(os.getpid()))
         try:
+            # Inside the try: the test signals as soon as the pid is visible,
+            # and a stop that lands before the try would skip the finally.
+            (work / "job.pid").write_text(str(os.getpid()))
             time.sleep(3600)  # a case still running: _JOB_SECONDS
         finally:
             (work / "cleaned").write_text("yes")
@@ -144,8 +146,10 @@ lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: [
 def task(cfg: DictConfig) -> None:
     print(f"case {cfg.case}", flush=True)
     work = Path(cfg.work)
-    (work / f"job{cfg.case}.pid").write_text(str(os.getpid()))
     try:
+        # Inside the try, as Launcher.launch does: the test signals as soon as
+        # the pid is visible.
+        (work / f"job{cfg.case}.pid").write_text(str(os.getpid()))
         time.sleep(3600)  # _JOB_SECONDS
     finally:
         # What `with queue:` / `with CarlaServerManager()` do on the way out.
