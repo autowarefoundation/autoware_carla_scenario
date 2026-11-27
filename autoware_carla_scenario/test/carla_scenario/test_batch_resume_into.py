@@ -324,7 +324,12 @@ def test_the_resumed_batch_through_the_cli(
         ],
     )
     batch.run.main()
-    assert seen == {"expand": True, "resume_from": 0, "resume_into": directory}
+    assert seen == {
+        "expand": True,
+        "resume_from": 0,
+        "resume_into": directory,
+        "pattern": "intersection_passing/straight_3np*",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
@@ -123,3 +123,55 @@ def resolve_sweep(
     jobs = [[f"scenario={scenario_name}", *case] for case in cases]
     logger.info("Resolved %d job(s) for %s", len(jobs), scenario_name)
     return jobs
+
+
+def _compose(scenario_name: str, extra_overrides: list[str]) -> Any:
+    """Scenario *scenario_name* composed with *extra_overrides* under
+    :data:`HYDRA_LOCK`, or ``None`` when it does not compose (its run, or
+    :func:`resolve_sweep`, reports that)."""
+    try:
+        with HYDRA_LOCK:
+            GlobalHydra.instance().clear()
+            with initialize_config_dir(config_dir=str(_CONF_DIR), version_base=None):
+                return compose(
+                    config_name="config",
+                    overrides=[f"scenario={scenario_name}", *extra_overrides],
+                )
+    except Exception:  # noqa: BLE001 -- Hydra, OmegaConf, ...: reported later
+        logger.debug("%s does not compose", scenario_name, exc_info=True)
+        return None
+
+
+def fitting_scenarios(
+    pattern: str,
+    scenario_names: list[str],
+    extra_overrides: list[str] | None = None,
+    *,
+    expanding: bool = False,
+) -> list[str]:
+    """The scenarios the glob *pattern* picked that fit the map, as a batch of
+    the same glob runs them: one that does not -- its
+    ``scenario.required_map`` is another map's, or a lanelet id it names is
+    not on the map -- is skipped with a warning
+    (:func:`~autoware_carla_scenario.map_fit.skip_off_map_scenarios`, #2253).
+    With *expanding* (a sweep is expanded) the lanelets each sweep picks are
+    not checked.  Blocking (Hydra, the map's resolution): the caller runs it
+    on a worker thread.
+
+    Raises:
+        NothingFitsError: when every one of them was skipped.
+    """
+    from autoware_carla_scenario.map_fit import (  # noqa: PLC0415
+        skip_off_map_scenarios,
+    )
+    from autoware_carla_scenario.maps import resolve_map_paths  # noqa: PLC0415
+
+    load_scenario_plugins()
+    extra = list(extra_overrides or [])
+    return skip_off_map_scenarios(
+        pattern,
+        scenario_names,
+        lambda name: _compose(name, extra),
+        resolve_map_paths,
+        expanding=expanding,
+    )

@@ -125,6 +125,29 @@ same way, as its scenario list does.
   configured. A batch whose cases differ in any of them is refused, naming the
   key and the cases (`map.no_3d_model_lanelet_ids` may differ: only a sweep's
   constraints read it)
+- A scenario the glob picked that does not fit the map -- its
+  `scenario.required_map` names another `map.name` (the `adversity` cases,
+  written for Town10HD_Opt), or a lanelet id it names (`ego.spawn_lanelet_id`,
+  `ego.goal_lanelet_id`, `ego.waypoint_lanelet_ids`, an adversity's
+  `scenario.npc_lanelet_id`) is no lanelet of the Lanelet2 map it resolved --
+  is skipped with a warning naming it and why
+  (`WARNING ...: Skipping adversity/cut_in (picked by scenario=*/*): it does
+  not fit the map: ...`, then one line listing every scenario skipped), and
+  the rest run: a glob over every scenario cannot fit every map, so
+  `scenario='*/*'` on the default map runs every scenario but `adversity/*`,
+  and `scenario='*/*' map=town10hd_opt` the ones written for Town10HD_Opt
+  (#2253). With `--multirun` the lanelets a scenario's sweep picks
+  (`sweep.constraints` keys, the lanelet keys `sweep.bindings` derives from
+  each pick, such as a `route_through` goal, and a `sweep.route`'s spawn and
+  goal) are not checked here: the sweep picks them on the map. A skipped scenario is not a
+  case of the batch: `batch_results.json` does not list it. When every
+  scenario the glob picked is skipped, the batch exits 1 with
+  `Error: no scenario that scenario=<glob> matches fits map '<map.name>': ...`.
+  A scenario named alone (no glob characters: `scenario=adversity/cut_in`) is
+  refused for it rather than skipped, as is a case of a sweep (`--multirun`,
+  `hydra/sweeper=lanelet_constraint`, `map=a,b`); a SLURM batch, the
+  viewer's Run form and `scenario-expand` skip a glob's scenarios as a local
+  batch does
 - A config value a case would refuse -- an unknown `server.world_reset`, a
   `scenario.timeout_seconds` that is not positive, a `server.port` out of
   range, a NaN or negative `server.cooldown_seconds`, a
@@ -1458,8 +1481,8 @@ Tests ego vehicle lane change maneuvers. Can test both successful lane changes a
 |--------|-----------|-----------------|-------------------|
 | `lane_change/left` | left | success | `10.0` |
 | `lane_change/right` | right | success | `10.0` |
-| `lane_change_fail/left` | left | fail (no lane a change is allowed into) | `1.5` |
-| `lane_change_fail/right` | right | fail (no lane a change is allowed into) | `1.5` |
+| `lane_change_fail/left` | left | fail (no lane a change is allowed into) | `10.0` |
+| `lane_change_fail/right` | right | fail (no lane a change is allowed into) | `10.0` |
 
 A refused change's lanelet has no lane on that side a change is allowed into
 (the routing graph's `left` / `right`, which `has_adjacent` asks about), but
@@ -1480,7 +1503,7 @@ crossing into it fails the run
 - Sets all traffic lights to GREEN
 - Immediately registers a LaneChangeAction
 - Derives the target lane from the current spawn position and direction
-- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`, failing that its `adjacentLeft` / `adjacentRight`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there
+- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`, failing that its `adjacentLeft` / `adjacentRight`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there and with the ego still in its own lane (the spawn lanelet or one that continues it, through junctions), and fails once the ego has been off its own lane for 0.2 s (#2253)
 - Checks via an EntityLanePositionCondition per target lanelet, any of them, latched (not by OpenDRIVE road and lane IDs)
 
 #### Traffic Light Compliance
@@ -1622,7 +1645,11 @@ by `scenario.kind`. Each case and its full parameter table are in
 Unlike the other examples these are concrete cases on Town10HD_Opt: run them
 with `map=town10hd_opt` (`uv run scenario scenario=adversity/brake_check
 map=town10hd_opt`). On the default map their lanelet ids name other lanelets
-or none.
+or none, so each names its map, `scenario.required_map: Town10HD_Opt`, and is
+refused before anything starts on any other `map.name` (#2253) -- or, picked
+by a glob (`scenario='*/*'`), skipped with a warning while the rest of the
+batch runs ([Batch Execution with Glob
+Patterns](#batch-execution-with-glob-patterns)).
 
 | Config | `kind` | The adversity |
 |--------|--------|---------------|

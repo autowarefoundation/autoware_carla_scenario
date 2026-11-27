@@ -99,6 +99,16 @@ def _require_finite(key: str, value: float) -> None:
     finite_number_setting(f"scenario.{key}", value)
 
 
+def _require_map_name(key: str, value: str) -> None:
+    """Refuse *value* of ``scenario.<key>`` unless it is a map's name, a
+    non-blank string: a dataclass is not coerced, so Hydra's ``=true`` or
+    ``=10`` would otherwise be compared with ``map.name`` as text."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"scenario.{key} must be a map name (map.name) or null, not {value!r}"
+        )
+
+
 def _require_positive(key: str, value: float) -> None:
     """Refuse *value* of ``scenario.<key>`` unless it is a number, finite and
     above 0.
@@ -640,10 +650,18 @@ class AdversityConfig:
     fire, or NADE among background traffic (#404).
 
     The shipped cases (``conf/scenario/adversity``) are placed on Town10HD_Opt
-    (``map=town10hd_opt``).
+    (``map=town10hd_opt``), and say so with :attr:`required_map`.
     """
 
     name: str = "adversity"
+
+    #: The ``map.name`` the config's lanelet ids (``npc_lanelet_id``, the
+    #: ego's spawn) were written for; ``None``: any map.  A run composed on
+    #: another map is refused before it starts
+    #: (:func:`~autoware_carla_scenario.authoring.hydra_config.required_map_refusal`,
+    #: #2253): a config cannot select its map group, and on the default map
+    #: the shipped cases' ids name other lanelets or none.
+    required_map: Optional[str] = None
 
     #: What is carried out: ``brake_check``, ``ignore_leader``, ``cut_in``,
     #: ``traffic_rule``, ``jaywalking`` (by one NPC or pedestrian), or ``nade``.
@@ -725,6 +743,9 @@ class AdversityConfig:
                 f"scenario.kind must be one of {', '.join(ADVERSITY_KINDS)}, "
                 f"not {self.kind!r}"
             )
+        required_map = self.required_map
+        if required_map is not None:
+            _require_map_name("required_map", required_map)
         _require_not_negative("npc_speed_kmh", self.npc_speed_kmh)
         ego_speed_kmh = self.ego_speed_kmh
         if ego_speed_kmh is not None:

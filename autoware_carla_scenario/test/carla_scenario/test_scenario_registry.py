@@ -2686,7 +2686,7 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
     with pytest.raises(SystemExit):
         run.run_batch(["lane_change/left", "lane_change_fail/right"], [])
 
-    assert added == [(built[0], 10.0), (built[1], 1.5)]
+    assert added == [(built[0], 10.0), (built[1], 10.0)]
 
 
 def test_a_batch_lets_go_of_each_scenario_once_it_has_run(

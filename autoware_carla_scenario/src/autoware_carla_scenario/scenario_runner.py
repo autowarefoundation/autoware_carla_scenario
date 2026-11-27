@@ -109,8 +109,7 @@ def _bounds_the_run(condition: BaseCondition) -> bool:
 
     The runner ends the run on the first tick a pass or a fail condition
     reports anything at all, so the same composites count on either side
-    (#2382): a pass-side timeout ends the run as a pass -- ``lane_change``
-    with ``expect=fail`` passes once its timeout runs out.  Exactly these
+    (#2382): a pass-side timeout ends the run as a pass.  Exactly these
     count:
 
     - a bare :class:`TimeoutCondition`;

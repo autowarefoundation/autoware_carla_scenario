@@ -11,6 +11,9 @@
 scenario:
   name: adversity
   kind: brake_check
+  # The map the lanelet ids below are written for: a run on any other map
+  # is refused before it starts (#2253).
+  required_map: Town10HD_Opt
   npc_lanelet_id: 324
   npc_ahead_m: 15.0
   npc_speed_kmh: 30.0

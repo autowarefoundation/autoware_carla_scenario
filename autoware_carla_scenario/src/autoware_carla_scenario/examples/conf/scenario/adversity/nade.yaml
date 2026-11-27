@@ -14,6 +14,9 @@
 scenario:
   name: adversity
   kind: nade
+  # The map the lanelet ids below are written for: a run on any other map
+  # is refused before it starts (#2253).
+  required_map: Town10HD_Opt
   nade_seconds: 45.0
   nade_probability: 0.05
   nade_is_probability: 0.5

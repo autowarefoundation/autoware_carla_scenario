@@ -326,8 +326,7 @@ the runner adds no default to cut it short: a red light whose drawn red phase
 is 13.4 s, given seven seconds after the green, runs for 20.4 s even when the
 run's default is twelve. A timeout counts whether it is a fail condition or a
 pass one: the runner ends the run on the first tick any condition reports
-anything, so a pass-side timeout ends it too, as a pass (the `lane_change`
-example expecting no lane change passes once its timeout runs out), and a
+anything, so a pass-side timeout ends it too, as a pass, and a
 default fail timeout could only fail such a run first. Exactly these pass or
 fail conditions count as its own:
 

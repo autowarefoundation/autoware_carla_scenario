@@ -39,9 +39,11 @@ import typesafe_carla.carla as carla
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
     AlwaysTrueCondition,
+    AndCondition,
     BaseCondition,
     BaseScenario,
     EgoConfig,
+    ElapsedTimeCondition,
     EntityLanePositionCondition,
     GroundProjectionConfig,
     LaneChangeAction,
@@ -64,6 +66,7 @@ from autoware_carla_scenario.coordinate import (
 )
 
 from .configs import LaneChangeConfig
+from .cut_in import ego_lanes_ahead, left_lanes_ahead
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,17 @@ _DIRECTION_MAP: dict[str, LaneChangeDirection] = {
 #: target lane are looked for; :func:`lanes_ahead_before_junction` stops at
 #: the next junction well before it.
 TARGET_LANES_AHEAD_M = 1000.0
+
+#: ``expect=fail``: how far ahead of the spawn lanelet the ego's own lanes are
+#: followed (m): the spawn lanelet and every lanelet that continues it,
+#: through junctions (:func:`~.cut_in.ego_lanes_ahead`), well past what the
+#: ego drives before its timeout.
+OWN_LANES_AHEAD_M = 1000.0
+
+#: ``expect=fail``: how long the ego has to be off its own lanes before the
+#: run fails (s), as ``CutInConfig.leaving_lane_seconds``: a tick or two off
+#: at a seam between lanelets is not leaving them.
+LEAVING_LANE_SECONDS = 0.2
 
 
 def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
@@ -118,6 +132,32 @@ def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
     return StickyCondition(on_any, label="ego_target_lane_sticky")
 
 
+def on_own_lanes(lanelet_id: int, distance_m: float) -> BaseCondition:
+    """The ego is on its own lanes: *lanelet_id* or a lanelet that continues
+    it, through junctions, within *distance_m* (:func:`~.cut_in.ego_lanes_ahead`).
+
+    An ``EntityLanePositionCondition`` per lanelet, under an ``OrCondition``
+    when there is more than one; not latched, so it holds only while the ego
+    is on one of them.
+    """
+    # Appended one by one, and chosen by if/else, as in lane_change_target.
+    on_lanes: list[BaseCondition] = []
+    for lanelet in ego_lanes_ahead(lanelet_id, distance_m):
+        on_lanes.append(
+            EntityLanePositionCondition(
+                EGO_ROLE_NAME,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"ego_on_own_lanelet_{lanelet}",
+            )
+        )
+    on_any: BaseCondition
+    if len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label="ego_on_own_lanes")
+    return on_any
+
+
 class LaneChangeScenario(BaseScenario):
     """Spawn the ego and verify it completes a lane change.
 
@@ -128,7 +168,11 @@ class LaneChangeScenario(BaseScenario):
     3. Registers a :class:`LaneChangeAction` that fires immediately.
     4. Finds the lanelet beside the spawn lanelet on the requested side, and
        registers a condition on the ego reaching it (:func:`lane_change_target`).
-    5. Registers a :class:`TimeoutCondition` as a fail-safe.
+    5. Registers a :class:`TimeoutCondition` as a fail-safe -- or, for
+       ``expect=fail``, passes once it has run out with the ego still in its
+       own lane (:func:`on_own_lanes`), and fails as soon as the ego reaches
+       the lane beside or leaves its own lanes for
+       :data:`LEAVING_LANE_SECONDS` (#2253).
     """
 
     _config: LaneChangeConfig
@@ -197,14 +241,39 @@ class LaneChangeScenario(BaseScenario):
         )
 
         if expect_fail:
-            # expect=fail: lane change should NOT happen.
-            # If ego reaches the target lane → fail.
-            # If timeout expires without lane change → pass.
+            # expect=fail: the lane change is refused, and the ego stays in
+            # its own lane (#2253).
+            # The timeout runs out with the ego on its own lanes → pass.  Pass
+            # conditions are checked first on a tick, so the timeout below
+            # fails the run only when the ego is not on them then.  An
+            # ElapsedTimeCondition, which fires on the same tick as the
+            # timeout: a TimeoutCondition's failure would be the AND's result,
+            # and the passed run would read "Timeout after ...".
+            self.register_pass_condition(
+                AndCondition(
+                    [
+                        ElapsedTimeCondition(
+                            cfg.timeout_seconds, label="lane_change_window"
+                        ),
+                        on_own_lanes(spawn_pose.lanelet_id, OWN_LANES_AHEAD_M),
+                    ],
+                    label="ego_kept_its_lane",
+                )
+            )
+            # The ego reaches the lane beside → fail.
             self.register_fail_condition(
                 NotCondition(lane_position_condition),
                 category=FailureCategory.LANE_KEEPING,
             )
-            self.register_pass_condition(timeout_condition)
+            # The ego leaves its own lanes some other way (onto a lane beside
+            # across a line, off the road) → fail.
+            self.register_fail_condition(
+                left_lanes_ahead(
+                    spawn_pose.lanelet_id, OWN_LANES_AHEAD_M, LEAVING_LANE_SECONDS
+                ),
+                category=FailureCategory.LANE_KEEPING,
+            )
+            self.register_fail_condition(timeout_condition)
         else:
             # expect=success: lane change should happen.
             # If ego reaches the target lane → pass.

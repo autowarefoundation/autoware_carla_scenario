@@ -652,6 +652,23 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
         return _refused(str(exc))
     if not scenario_names:
         return _refused(f"No scenarios match '{scenario}'")
+    if is_scenario_glob(scenario):
+        # The glob's scenarios that do not fit the map are skipped, with a
+        # warning, as a batch of the same glob skips them (#2253).  Composes
+        # Hydra and resolves the map: on a worker thread, as a sweep is.
+        from ..map_fit import NothingFitsError  # noqa: PLC0415
+        from .sweep_resolver import fitting_scenarios  # noqa: PLC0415
+
+        try:
+            scenario_names = await asyncio.to_thread(
+                fitting_scenarios,
+                scenario,
+                scenario_names,
+                extra_overrides,
+                expanding=bool(sweeper),
+            )
+        except NothingFitsError as exc:
+            return _refused(str(exc))
 
     if sweeper:
         # Expand each scenario's sweep in-process (no CARLA), as
