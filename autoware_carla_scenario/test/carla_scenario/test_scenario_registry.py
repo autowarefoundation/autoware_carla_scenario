@@ -2579,6 +2579,34 @@ class TestEntityConfigNumbersMustBeFinite:
         )
         assert config.initial_speed_kmh == 0.0
 
+    @pytest.mark.parametrize("value", [2.5, True, -1, "3", math.nan])
+    def test_vehicle_configs_refuse_a_retry_count_not_a_whole_number(
+        self, value: Any
+    ) -> None:
+        """Refused when built, as the Hydra path refuses it -- not a
+        TypeError after a first failed spawn, one retry or none (#2593)."""
+        from autoware_carla_scenario import VehicleEntityConfig
+
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        with pytest.raises(ValueError, match=r"^spawn_retry_max_count must be"):
+            VehicleEntityConfig(
+                role_name="npc", spawn_location=spawn, spawn_retry_max_count=value
+            )
+        with pytest.raises(ValueError, match=r"^spawn_retry_max_count must be"):
+            EgoConfig(spawn_location=spawn, spawn_retry_max_count=value)
+
+    def test_vehicle_configs_take_a_whole_retry_count_as_an_int(self) -> None:
+        from autoware_carla_scenario import VehicleEntityConfig
+
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        config = VehicleEntityConfig(
+            role_name="npc",
+            spawn_location=spawn,
+            spawn_retry_max_count=3.0,  # type: ignore[arg-type]
+        )
+        assert config.spawn_retry_max_count == 3
+        assert type(config.spawn_retry_max_count) is int
+
 
 # ---------------------------------------------------------------------------
 # Tests for build_goal_pose helper

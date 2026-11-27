@@ -1731,6 +1731,31 @@ def test_every_drive_carries_the_run_so_far_as_a_t4_scene(
     assert entity._t4 is None  # noqa: SLF001
 
 
+def test_the_scene_carries_the_first_lidars_sweep_or_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first LiDAR's sweep by its id: one with no sweep this step is
+    left out of the sweeps, and the next LiDAR's is not taken for it (#2593)."""
+    from carla_driver_interface.protocol import common_pb2, pack_lidar_sweep
+
+    monkeypatch.setattr(CarlaDriverEntity, "_road_ahead_in_map", lambda self: None)
+    entity, _ = _entity()
+    live: Any = _FakeLiveScene()
+    live.ticks.append((0.0, None))  # a tick recorded: a scene to ask for
+    entity._t4 = live  # noqa: SLF001
+    entity._lidars = [("top", None, None), ("rear", None, None)]  # type: ignore[list-item]  # noqa: SLF001
+
+    def sweep(logical_id: str, n: int) -> Any:
+        points = np.zeros((n, 4), dtype=np.float32)
+        return pack_lidar_sweep(logical_id, 0, points, common_pb2.Pose())
+
+    entity._t4_scene([sweep("rear", 3)])  # noqa: SLF001
+    assert live.asked[-1]["lidar_points"] is None
+    entity._t4_scene([sweep("rear", 3), sweep("top", 5)])  # noqa: SLF001
+    points: Any = live.asked[-1]["lidar_points"]
+    assert points.shape == (5, 4)
+
+
 def test_route_to_keeps_the_routes_roads_and_the_goal_for_the_scenes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

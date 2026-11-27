@@ -9,15 +9,17 @@ for the world (:func:`vehicle_sizes`).  The choice is made against whatever the 
 has -- its version, its assets -- rather than a table written for one.
 
 Candidates are the blueprints whose ``base_type`` is a car, a van, a truck
-or a bus (no bicycles or motorcycles), less :data:`FIT_EXCLUDED`: the
-emergency vehicles, which CARLA 0.10 marks with no ``special_type``.
+or a bus (no bicycles or motorcycles), less the emergency vehicles
+(:func:`~autoware_carla_scenario.utils.vehicles.is_emergency_vehicle_type`:
+their ``special_type``, or their id on CARLA 0.10, which gives them none).
 """
 
 from __future__ import annotations
 
-import fnmatch
 import logging
 from typing import TYPE_CHECKING, Optional
+
+from ..utils.vehicles import is_emergency_vehicle_type
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -28,7 +30,9 @@ logger = logging.getLogger(__name__)
 
 #: The blueprints' ``base_type`` a fitted vehicle may have.
 FIT_BASE_TYPES = ("car", "van", "truck", "bus")
-#: Blueprint ids (glob patterns) never chosen: emergency vehicles.
+#: The emergency vehicles' blueprint ids, as glob patterns: those of
+#: :data:`~autoware_carla_scenario.utils.vehicles.EMERGENCY_BLUEPRINT_WORDS`,
+#: which, with the ``special_type``, decide which are never chosen.
 FIT_EXCLUDED = ("*firetruck*", "*ambulance*", "*cop*", "*police*")
 #: Where a candidate is spawned to read its box: far below any map.
 _OUT_OF_SIGHT = (0.0, 0.0, -2000.0)
@@ -38,7 +42,10 @@ _SIZES: dict[int, dict[str, tuple[float, float]]] = {}
 
 
 def _candidate(blueprint: carla.ActorBlueprint) -> bool:
-    if any(fnmatch.fnmatch(blueprint.id, pattern) for pattern in FIT_EXCLUDED):
+    special_type = ""
+    if blueprint.has_attribute("special_type"):
+        special_type = blueprint.get_attribute("special_type").as_str()
+    if is_emergency_vehicle_type(str(blueprint.id), special_type):
         return False
     if not blueprint.has_attribute("base_type"):
         return True  # an older server: no base type to go by
