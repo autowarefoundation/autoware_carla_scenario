@@ -95,15 +95,11 @@ class NormalDistribution:
             (self.low - self.mean) / self.std
         )
 
-    def truncated(self, low: float, high: float) -> Any:
+    def truncated(self, low: float, high: float) -> NormalDistribution:
         """The distribution inside ``[low, high]`` (``low < high``, both within
-        its own bounds): this normal truncated there, or -- when the interval
-        is so far in its tail that the normal has no probability left there --
-        uniform over it, which keeps a draw inside rather than at a bound."""
-        normal = NormalDistribution(mean=self.mean, std=self.std, low=low, high=high)
-        if not normal.mass() > 1e-300 and math.isfinite(high - low):
-            return UniformDistribution(low=low, high=high)
-        return normal
+        its own bounds): this normal truncated there.  Where its :meth:`mass`
+        is 0 it draws at a bound."""
+        return NormalDistribution(mean=self.mean, std=self.std, low=low, high=high)
 
     def draw(self, rng: random.Random) -> float:
         """A value of the distribution, from *rng*: drawn uniformly between the

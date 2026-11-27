@@ -80,6 +80,7 @@ from fractions import Fraction
 from typing import Any, Callable, Mapping, Sequence
 
 from .constraints import _real_number
+from .distributions import NormalDistribution
 
 __all__ = [
     "MAX_REJECTIONS",
@@ -685,7 +686,16 @@ def _draw_in(distribution: Any, low: float, high: float, rng: random.Random) -> 
     is one point."""
     if not low < high:
         return low
-    return float(distribution.truncated(low, high).draw(rng))
+    truncated = distribution.truncated(low, high)
+    if (
+        isinstance(truncated, NormalDistribution)
+        and not truncated.mass() > 1e-300
+        and math.isfinite(high - low)
+    ):
+        # The normal has no probability left there (the interval is far in
+        # its tail): uniform over it keeps the draw inside, not at a bound.
+        return rng.uniform(low, high)
+    return float(truncated.draw(rng))
 
 
 class RelationSolver:
