@@ -1139,12 +1139,17 @@
    * this page's -- but a row button is checked strictly, and would be refused
    * by the very flush its click caused. So when the answer is the revision
    * after the one the flush sent, which means no other save came between,
-   * requests name that revision in place of the one their form shows.
+   * and every row the page shows is where the answer puts it, requests name
+   * that revision in place of the one their form shows. A flush can move
+   * rows -- a waypoint condition put on another vertex re-sorts them all --
+   * and a row button rendered before it would then act on whatever row came
+   * to its index; it is refused instead, as the strict check would.
    *
    * A flush that fails stops the navigation, its failure shown as any other's,
-   * and the field keeps what was typed. One the server refuses (a value it
-   * cannot take) is posted again as an ordinary edit, so its reason is shown
-   * where an edit's always is.
+   * and the field keeps what was typed, still a change not posted: the next
+   * navigation tries it again. One the server refuses (a value it cannot
+   * take) is posted again as an ordinary edit, so its reason is shown where
+   * an edit's always is.
    * ------------------------------------------------------------------- */
 
   var inFlight = [];     // elements whose request is on its way
@@ -1189,24 +1194,61 @@
       : null;
   }
 
+  // The `data-row` inputs of the row-addressed forms under *root*, by the
+  // URL of their form and their name.
+  function rowMap(root) {
+    var map = {};
+    Array.prototype.forEach.call(root.querySelectorAll('form[hx-post]'), function (form) {
+      var url = form.getAttribute('hx-post');
+      rowInputs(form).forEach(function (input) {
+        (map[url] = map[url] || {})[input.name] = input;
+      });
+    });
+    return map;
+  }
+
+  // Whether every row this page shows sits, in the answer *page* to the
+  // flush *config*, at the URL it sits at here, under its name or the one
+  // the flush renamed it to: then no index a row button posts has moved.
+  function rowsStay(page, config) {
+    var before = rowMap(document);
+    var after = rowMap(page);
+    var urls = Object.keys(before);
+    if (urls.length !== Object.keys(after).length) return false;
+    return urls.every(function (url) {
+      var now = after[url];
+      return !!now && Object.keys(before[url]).every(function (name) {
+        return !!now[name] && rowNames(before[url][name], config).indexOf(now[name].value) >= 0;
+      });
+    });
+  }
+
   // Remember the revision a flush made, when it made the only save since the
-  // one it sent: see `htmx:configRequest`.
+  // one it sent and moved no row: see `htmx:configRequest`.
   function noteRevision(answer, page) {
-    var data = answer.requestConfig && answer.requestConfig.formData;
+    var config = answer.requestConfig;
+    var data = config && config.formData;
     var made = page && page.querySelector('input[name="' + REVISION + '"]');
     if (!made || !data || !data.get || !data.has || !data.has(REVISION)) return;
     var sent = String(data.get(REVISION));
     if (!/^\d+$/.test(sent) || made.value !== String(Number(sent) + 1)) return;
+    if (!rowsStay(page, config)) return;
     Object.keys(revisionNow).forEach(function (shown) {
       if (revisionNow[shown] === sent) revisionNow[shown] = made.value;
     });
     revisionNow[sent] = made.value;
   }
 
-  // Whether the navigation may go on after *owner*'s flush was *answer*ed.
-  function flushed(owner, answer) {
+  // Whether the navigation may go on after *owner*'s flush, which posted
+  // the changes *held*, was *answer*ed.
+  function flushed(owner, answer, held) {
     if (!answer) return true;               // not sent: its form had left
-    if (!answer.successful) return false;   // shown by showRequestError
+    if (!answer.successful) {               // shown by showRequestError
+      held.forEach(function (el) {
+        if (el.isConnected && unsent.indexOf(el) < 0) unsent.push(el);
+      });
+      return false;
+    }
     var page = parsed(answer.xhr && answer.xhr.responseText);
     if (page && page.querySelector('[data-edit-refused]')) {
       window.htmx.ajax('POST', owner.getAttribute('hx-post'), { source: owner });
@@ -1219,13 +1261,14 @@
   function flush(owner) {
     return new Promise(function (resolve) {
       var answer = null;
+      var held = unsent.filter(function (el) { return ownerOf(el) === owner; });
       function heard(event) {
         // Its own debounced post targets `#editor-body`; the flush, itself.
         if (event.detail && event.detail.target === owner) answer = event.detail;
       }
       function done() {
         owner.removeEventListener('htmx:afterRequest', heard);
-        resolve(flushed(owner, answer));
+        resolve(flushed(owner, answer, held));
       }
       owner.addEventListener('htmx:afterRequest', heard);
       window.htmx.ajax('POST', owner.getAttribute('hx-post'),

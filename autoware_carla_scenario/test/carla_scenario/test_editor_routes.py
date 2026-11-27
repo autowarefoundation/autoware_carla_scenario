@@ -3065,13 +3065,32 @@ const rowButton = Object.assign(node('row-button', body), { post: '/draft/d/sign
 const inspector = node('inspector', body);
 const editorBody = node('editor-body', body);
 
-const docOn = listeners();
-const doc = Object.assign(docOn, { body, activeElement: body, querySelectorAll: () => [] });
+// Row-addressed forms (a waypoint condition's), as `data-row` inputs name
+// their rows: on the page, and in an answer as `<form hx-post="URL" row="V">`.
+function rowForm(url, value) {
+  const form = { getAttribute: (a) => (a === 'hx-post' ? url : null) };
+  const input = { name: 'row', value, form,
+    getAttribute: (a) => (a === 'data-row-field' ? 'vertex' : null) };
+  form.elements = { namedItem: () => ({ value }) };
+  form.querySelectorAll = () => [input];
+  return form;
+}
+let rowForms = [];
+const FORMS = 'form[hx-post]';
 
-// Enough of DOMParser for an editor body: its revision, and its refusal.
+const docOn = listeners();
+const doc = Object.assign(docOn, { body, activeElement: body,
+  querySelectorAll: (sel) => (sel === FORMS ? rowForms : []) });
+
+// Enough of DOMParser for an editor body: its revision, its refusal, its rows.
 class DOMParser {
   parseFromString(text) {
     return {
+      querySelectorAll(sel) {
+        if (sel !== FORMS) throw new Error('selector not modelled: ' + sel);
+        return [...text.matchAll(/<form hx-post="([^"]+)" row="([^"]+)">/g)]
+          .map((m) => rowForm(m[1], m[2]));
+      },
       querySelector(sel) {
         if (sel === 'input[name="draft_revision"]') {
           const m = /name="draft_revision" value="(\d+)"/.exec(text);
@@ -3171,6 +3190,8 @@ const saved = '<input type="hidden" name="draft_revision" value="8">';
   flushes.shift().answer(409, 'Changed elsewhere');
   await tick(); await tick();
   out.failed = log.splice(0);
+  // What it posted is still a change not posted: its debounce is not dropped.
+  out.keptAfterFailure = !navigate(form, editorBody, 'change').prevented;
 
   // A refused value is posted again as an edit, and the navigation stopped.
   typed();
@@ -3180,6 +3201,32 @@ const saved = '<input type="hidden" name="draft_revision" value="8">';
   await tick(); await tick();
   out.refusedRepost = flushes.length === 1 && flushes[0].ctx.source === form && !flushes[0].ctx.swap;
   out.refused = log.splice(0);
+
+  // A flush that moved rows (a waypoint condition put on another vertex
+  // re-sorts them): a row button rendered before it keeps its revision, and
+  // is refused rather than acting on the row now at its index.
+  flushes.shift().answer(200, saved.replace('8', '10'));
+  await tick(); await tick();
+  rowForms = [rowForm('/a/0', '2'), rowForm('/a/1', '5')];
+  const rows = (a, b) => '<form hx-post="/a/0" row="' + a + '"><form hx-post="/a/1" row="' + b + '">';
+  typed();
+  navigate(rowButton, editorBody);
+  await tick();
+  flushes.shift().answer(200, saved.replace('8', '10') + rows('5', '9'));
+  await tick(); await tick();
+  const moved = { headers: {}, elt: rowButton, formData: new FormData({ draft_revision: '9' }) };
+  fire(body, 'htmx:configRequest', moved);
+  out.movedKept = moved.formData.get('draft_revision');
+  // Rows where they were: the revision is moved on as before.
+  typed();
+  navigate(rowButton, editorBody);
+  await tick();
+  flushes.shift().answer(200, saved.replace('8', '10') + rows('2', '5'));
+  await tick(); await tick();
+  const stayed = { headers: {}, elt: rowButton, formData: new FormData({ draft_revision: '9' }) };
+  fire(body, 'htmx:configRequest', stayed);
+  out.stayedRewritten = stayed.formData.get('draft_revision');
+  log.splice(0);
 
   out.flushedWith = out.flushedWith && {
     source: out.flushedWith.source.id, target: out.flushedWith.target.id, swap: out.flushedWith.swap };
@@ -3259,6 +3306,12 @@ class TestPendingChangeBeforeNavigating:
             "ajax /draft/d/scenario sent 9 swap:none",
             "ajax /draft/d/scenario sent 9",
         ]
+        # A failed flush leaves the change to be posted again.
+        assert result["keptAfterFailure"] is True
+        # A flush that moved rows does not vouch for a row button rendered
+        # before it: the strict check refuses that click, as it should.
+        assert result["movedKept"] == "9"
+        assert result["stayedRewritten"] == "10"
 
 
 class TestScenarioMap:

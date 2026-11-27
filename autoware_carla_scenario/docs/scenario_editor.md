@@ -1028,11 +1028,16 @@ swapped in (`swap: 'none'`), and the request goes only once those posts are
 answered (#2348). The form's own debounced post is then dropped. Behind a
 click that opens another card the canvas still shows the document as it was,
 until the next edit re-renders it. The forms on the page still name the
-revision before those saves; when the answer was the very next revision, the
-page sends that revision instead, so a row button checked strictly (below) is
-not refused by the save its own click caused. If one of those posts fails the
-click goes nowhere and the failure is shown; if the server refuses the value,
-it is posted again as an ordinary edit, so the reason is shown as an edit's is.
+revision before those saves; when the answer was the very next revision and
+every row the page shows (a signal group, a phase, a waypoint condition) is
+where the answer puts it, the page sends that revision instead, so a row
+button checked strictly (below) is not refused by the save its own click
+caused. A save that moved rows -- a waypoint condition put on another vertex
+re-sorts them -- does not: a row button rendered before it may now point at
+another row, and is refused. If one of those posts fails the click goes
+nowhere, the failure is shown, and the change waits for the next click; if
+the server refuses the value, it is posted again as an ordinary edit, so the
+reason is shown as an edit's is.
 
 A form posts **all** of its fields, so one rendered from an older copy of the
 draft would put back whatever was changed since. Each draft therefore has a
