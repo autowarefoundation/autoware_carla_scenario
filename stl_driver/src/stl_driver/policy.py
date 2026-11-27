@@ -46,6 +46,12 @@ from stl_driver.ruleset import RuleSet
 
 __all__ = ["EgoPolicy", "warmed_up_policy"]
 
+#: The longest interval the acceleration anchor is rate-limited over
+#: (`EgoPolicy._plausible_acceleration`). A longer gap between two steps -- a
+#: paused runtime, a session resumed -- is treated as this long: by then the
+#: jerk limit lets the anchor cross most of the acceleration envelope anyway.
+_MAX_ANCHOR_INTERVAL_S = 1.0
+
 
 @dataclass
 class _RolloutMemory:
@@ -62,6 +68,9 @@ class _RolloutMemory:
     #: The acceleration the last plan was anchored at, so this one can be
     #: anchored somewhere the vehicle could actually have got to.
     anchor_accel_mps2: float | None = None
+    #: The step time (``DriveContext.time_now_us``) that anchor was set at, so
+    #: the next one is rate-limited over the time that actually passed.
+    anchor_time_us: int | None = None
     #: Last step's reading of the light, so a stop margin that had to give way
     #: stays given way for the same line (`read_traffic_light`).
     light: TrafficLight | None = None
@@ -222,7 +231,7 @@ class EgoPolicy(BaseDriver):
             speed_mps = session.speed_mps()
             state = session.latest_dynamic_state()
             accel_mps2 = float(state.linear_acceleration.x) if state is not None else 0.0
-        accel_mps2 = self._plausible_acceleration(accel_mps2, memory)
+        accel_mps2 = self._plausible_acceleration(accel_mps2, memory, ctx.time_now_us)
 
         if len(route) < 2 or anchor is None:
             # Not an error: the route has not arrived yet.
@@ -294,11 +303,19 @@ class EgoPolicy(BaseDriver):
 
     # -- plumbing ----------------------------------------------------------
 
-    def _plausible_acceleration(self, measured_mps2: float, memory: _RolloutMemory) -> float:
+    def _plausible_acceleration(
+        self,
+        measured_mps2: float,
+        memory: _RolloutMemory,
+        time_now_us: int | None = None,
+    ) -> float:
         """Confine the measured acceleration to the envelope the plan respects.
 
         ``memory`` is the rollout's own (`_memory`): the anchor is rate-limited
         from that rollout's last anchor, never from another session's.
+        ``time_now_us`` is this step's time (`DriveContext.time_now_us`); the
+        rate limit covers the time since the step that set the last anchor
+        (`_anchor_interval_s`).
 
         The plan's acceleration profile is anchored at this value so that it
         starts from the vehicle's actual state rather than stepping to a new
@@ -323,10 +340,11 @@ class EgoPolicy(BaseDriver):
         every rule read as satisfied. `comfort` cannot see this: it judges one
         plan, and this is a disagreement between two.
 
-        So the anchor moves no faster than the vehicle itself could, which is
-        the jerk limit over one policy step -- about 0.39 m/s^2. Noise faster
-        than that is not acceleration, and a real change is followed at the
-        rate a real vehicle would take to make it.
+        So the anchor moves no faster than the vehicle itself could: the jerk
+        limit times the time since the last anchor -- about 0.39 m/s^2 at a
+        0.1 s policy step, 0.78 m/s^2 at 0.2 s. Noise faster than that is not
+        acceleration, and a real change is followed at the rate a real vehicle
+        would take to make it, whatever ``driver.policy_timestep_s`` is.
         """
         if not np.isfinite(measured_mps2):
             return 0.0
@@ -348,10 +366,29 @@ class EgoPolicy(BaseDriver):
         with self._rollouts_lock:
             previous = memory.anchor_accel_mps2
             if previous is not None:
-                step = limits.plan_jerk_limit() * self.config.horizon.step_s
+                interval_s = self._anchor_interval_s(memory.anchor_time_us, time_now_us)
+                step = limits.plan_jerk_limit() * interval_s
                 plausible = float(np.clip(plausible, previous - step, previous + step))
             memory.anchor_accel_mps2 = plausible
+            memory.anchor_time_us = time_now_us
         return plausible
+
+    def _anchor_interval_s(self, previous_us: int | None, now_us: int | None) -> float:
+        """The time the anchor's rate limit covers, from ``previous_us`` to ``now_us``.
+
+        The real time since the step that set the last anchor, at most
+        `_MAX_ANCHOR_INTERVAL_S`. Where there is no such time -- either step
+        came without one -- or it does not move forward (a repeated or
+        out-of-order step), one horizon step (``horizon.step_s``), the
+        nominal policy period, as before the interval was measured.
+        """
+        nominal = self.config.horizon.step_s
+        if previous_us is None or now_us is None:
+            return nominal
+        elapsed_s = (now_us - previous_us) * 1e-6
+        if not np.isfinite(elapsed_s) or elapsed_s <= 0.0:
+            return nominal
+        return min(elapsed_s, _MAX_ANCHOR_INTERVAL_S)
 
     def _locate_ego(self, route_in_rig: np.ndarray) -> tuple[RouteTable, float, float]:
         """The route table and the ego's ``(station, offset)`` on it.

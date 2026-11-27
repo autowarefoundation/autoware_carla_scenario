@@ -80,7 +80,10 @@ class PlanSolution:
     alternatives: list[torch.Tensor] = field(default_factory=list)
     n_refine_steps: int = 0
     solve_seconds: float = 0.0
-    #: Set when a hard rule is violated soon enough that no plan avoids it.
+    #: Set when the chosen plan violates a hard rule within
+    #: `OptimizerConfig.fallback_window_s` and braking can still help. The
+    #: chosen plan is one that does not whenever any plan considered does not
+    #: (`_lexicographic_pick`), so this means no plan the search found avoids it.
     needs_fallback: bool = False
     #: Which hard rule that was, if any.
     imminent_rule: str | None = None
@@ -305,11 +308,18 @@ class RobustnessOptimizer:
         # weight, so standing still costs something even when it is permitted.
         # Robustness keeps the job it is good at -- saying whether the
         # specification holds, and deciding the emergency plan below.
-        best_sample = _lexicographic_pick(merit, robustness)
+        #
+        # Between "satisfies everything" and "the objective alone" sits a
+        # middle tier: a plan that keeps every hard rule over the fallback
+        # window. Without it the objective, where a hard violation is only a
+        # linear penalty, could prefer a plan the emergency stop then refuses
+        # to drive over one that needed no emergency stop at all.
+        keeps_hard = self._keeps_hard_rules_if_needed(signals, robustness)
+        best_sample = _lexicographic_pick(merit, robustness, keeps_hard)
         best_params = candidates[best_sample].clone()
         best_signal = signals[best_sample]
         best_merit = float(merit[best_sample])
-        best_satisfies = bool(robustness[best_sample] >= 0.0)
+        best_tier = _tier(best_sample, robustness, keeps_hard)
 
         # Carry on from last step's plan unless something is meaningfully
         # better. The warm start is one of the fixed entries of the candidate
@@ -318,10 +328,10 @@ class RobustnessOptimizer:
         margin = optimizer.continuity_margin
         if warm_start is not None and margin > 0.0:
             carried = len(candidates) + WARM_START_ROW
-            carried_satisfies = bool(robustness[carried] >= 0.0)
-            if carried_satisfies >= best_satisfies and float(merit[carried]) >= best_merit - margin:
+            carried_tier = _tier(carried, robustness, keeps_hard)
+            if carried_tier >= best_tier and float(merit[carried]) >= best_merit - margin:
                 best_sample = carried
-                best_satisfies = carried_satisfies
+                best_tier = carried_tier
                 best_params = candidates[carried].clone()
                 best_signal = signals[carried]
                 best_merit = float(merit[carried])
@@ -337,14 +347,14 @@ class RobustnessOptimizer:
             candidates[index].clone() for index in runners_up[: optimizer.n_reported_candidates]
         ]
 
-        refined_params, refined_signal, refined_merit, refined_ok, n_steps = self._refine(
+        refined_params, refined_signal, refined_merit, refined_tier, n_steps = self._refine(
             seeds, inputs, started, optimizer.time_budget_s if honour_budget else None
         )
         # Refinement has to clear the same bar: it starts from the carried plan
         # when that was preferred, so accepting any improvement at all would
         # let it drift a little every step and undo the continuity.
         bar = margin if warm_start is not None else 0.0
-        if (refined_ok, refined_merit) > (best_satisfies, best_merit + bar):
+        if (refined_tier, refined_merit) > (best_tier, best_merit + bar):
             best_params, best_signal = refined_params, refined_signal
 
         per_rule = {name: float(value) for name, value in self.rules.per_rule(best_signal).items()}
@@ -352,8 +362,7 @@ class RobustnessOptimizer:
 
         # Only a violation we can no longer plan our way out of summons the
         # emergency plan; see `RuleSet.imminent_hard_violation`.
-        window = max(2, self.config.horizon.rows_within(optimizer.fallback_window_s))
-        imminent = self.rules.imminent_hard_violation(best_signal, window)
+        imminent = self.rules.imminent_hard_violation(best_signal, self._fallback_rows())
         if imminent is not None and not self._braking_can_help(inputs):
             # Braking changes nothing, so it is not the answer.
             #
@@ -382,6 +391,50 @@ class RobustnessOptimizer:
             # A later stage may have fallen back after sampling batched.
             used_vmap=used_vmap and self._vmap_ok,
         )
+
+    def _fallback_rows(self) -> int:
+        """How many rows of a signal the emergency-stop check judges."""
+        rows = self.config.horizon.rows_within(self.config.optimizer.fallback_window_s)
+        return max(2, rows)
+
+    def _keeps_hard_rules_if_needed(
+        self, signals: torch.Tensor, robustness: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Which of ``signals`` keep every hard rule over the fallback window.
+
+        ``None`` when some signal satisfies the whole specification: the
+        middle tier of `_lexicographic_pick` cannot change the pick then, so
+        the batch is not evaluated for it -- the common case costs nothing.
+        """
+        if bool((robustness >= 0.0).any()):
+            return None
+        return self._keeps_hard_rules(signals)
+
+    def _keeps_hard_rules(self, signals: torch.Tensor) -> torch.Tensor:
+        """``[B]`` bools: no hard rule violated within the fallback window.
+
+        One batched evaluation of the hard rules over the window's rows -- the
+        test `RuleSet.imminent_hard_violation` applies to the chosen plan,
+        applied to every candidate at once.
+        """
+        if not self.rules.hard_rules:
+            return torch.ones(signals.shape[0], dtype=torch.bool, device=signals.device)
+        rows = self._fallback_rows()
+        with torch.no_grad():
+            robustness = self._vmapped(
+                None, self._hard_window_eager, self._hard_window_looped, signals, rows
+            )
+        return robustness >= 0.0
+
+    def _hard_window_eager(self, signals: torch.Tensor, rows: int) -> torch.Tensor:
+        """The batched body of :meth:`_keeps_hard_rules`."""
+        if signals.shape[0] == 1:
+            return self.rules.hard_window_robustness(signals[0], rows).reshape(1)
+        return torch.vmap(lambda s: self.rules.hard_window_robustness(s, rows))(signals)
+
+    def _hard_window_looped(self, signals: torch.Tensor, rows: int) -> torch.Tensor:
+        """:meth:`_hard_window_eager` one signal at a time, without ``vmap``."""
+        return torch.stack([self.rules.hard_window_robustness(s, rows) for s in signals])
 
     def _braking_can_help(self, inputs: RolloutInputs) -> bool:
         """Whether stopping harder is capable of changing anything.
@@ -506,7 +559,7 @@ class RobustnessOptimizer:
         inputs: RolloutInputs,
         started: float,
         budget: float | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, float, bool, int]:
+    ) -> tuple[torch.Tensor, torch.Tensor, float, int, int]:
         """Gradient-ascend the smoothed objective from several seeds at once.
 
         Descending from one starting point finds the nearest local optimum,
@@ -525,7 +578,9 @@ class RobustnessOptimizer:
         Every iterate of every seed is scored by the *exact* specification,
         not by the smoothed objective being descended, and the best across all
         of them is kept.  Smoothing can prefer a plan the specification does
-        not, and it is the specification that decides.
+        not, and it is the specification that decides. The best is ranked
+        as :meth:`solve` ranks the samples (`_lexicographic_pick`), and its
+        tier (`_tier`) is returned so the two can be compared.
 
         What is *not* considered is the seeds themselves.  They came from the
         sampling stage and :meth:`solve` already holds the best of them, so
@@ -546,7 +601,7 @@ class RobustnessOptimizer:
         best_params = seeds[0].detach().clone()
         best_signal = torch.zeros(())
         best_merit = -math.inf
-        best_ok = False
+        best_tier = -1
 
         completed = 0
         # Measured cost of the last iteration, used to decide whether the next
@@ -587,13 +642,11 @@ class RobustnessOptimizer:
                 with torch.no_grad():
                     candidates = signals.detach()
                     candidate_merit, candidate_rob = self._batched_scores(candidates)
-                    candidate_ok = candidate_rob >= 0.0
-                    pick = _lexicographic_pick(candidate_merit, candidate_rob)
-                    if (bool(candidate_ok[pick]), float(candidate_merit[pick])) > (
-                        best_ok,
-                        best_merit,
-                    ):
-                        best_ok = bool(candidate_ok[pick])
+                    keeps = self._keeps_hard_rules_if_needed(candidates, candidate_rob)
+                    pick = _lexicographic_pick(candidate_merit, candidate_rob, keeps)
+                    tier = _tier(pick, candidate_rob, keeps)
+                    if (tier, float(candidate_merit[pick])) > (best_tier, best_merit):
+                        best_tier = tier
                         best_merit = float(candidate_merit[pick])
                         best_params = params[pick].detach().clone()
                         best_signal = candidates[pick]
@@ -613,17 +666,16 @@ class RobustnessOptimizer:
             with torch.no_grad():
                 final_signals = self._batched_rollout(params.detach(), inputs)
                 final_merit, final_rob = self._batched_scores(final_signals)
-                pick = _lexicographic_pick(final_merit, final_rob)
-                if (bool(final_rob[pick] >= 0.0), float(final_merit[pick])) > (
-                    best_ok,
-                    best_merit,
-                ):
-                    best_ok = bool(final_rob[pick] >= 0.0)
+                keeps = self._keeps_hard_rules_if_needed(final_signals, final_rob)
+                pick = _lexicographic_pick(final_merit, final_rob, keeps)
+                tier = _tier(pick, final_rob, keeps)
+                if (tier, float(final_merit[pick])) > (best_tier, best_merit):
+                    best_tier = tier
                     best_merit = float(final_merit[pick])
                     best_params = params[pick].detach().clone()
                     best_signal = final_signals[pick]
 
-        return best_params, best_signal, best_merit, best_ok, completed
+        return best_params, best_signal, best_merit, best_tier, completed
 
     def _batched_rollout(self, params: torch.Tensor, inputs: RolloutInputs) -> torch.Tensor:
         if params.shape[0] == 1:
@@ -707,10 +759,17 @@ class RobustnessOptimizer:
         return losses, signals
 
 
-def _lexicographic_pick(merit: torch.Tensor, robustness: torch.Tensor) -> int:
-    """Index of the plan to drive: satisfying first, then best objective.
+def _lexicographic_pick(
+    merit: torch.Tensor,
+    robustness: torch.Tensor,
+    keeps_hard: torch.Tensor | None = None,
+) -> int:
+    """Index of the plan to drive: satisfying first, then keeping the hard
+    rules over the fallback window, then best objective.
 
-    Two criteria, in order, because neither works alone.
+    ``keeps_hard`` is ``[B]`` bools from `RobustnessOptimizer._keeps_hard_rules`,
+    or ``None`` when it was not evaluated (`_keeps_hard_rules_if_needed`
+    skips it whenever some plan satisfies, where it cannot change the pick).
 
     Ranking by robustness -- a minimum over rules -- is degenerate. A rule
     gated off by an obstruction contributes nothing to a minimum, and where an
@@ -726,14 +785,43 @@ def _lexicographic_pick(merit: torch.Tensor, robustness: torch.Tensor) -> int:
 
     So: prefer a plan that satisfies the specification, and among those take
     the best objective. Where nothing satisfies it -- which is a third of city
-    driving -- the objective decides, since there is no satisfying plan to
-    prefer and the weights are the only guidance left.
+    driving -- prefer a plan that violates no hard rule within the fallback
+    window, and among those take the best objective; only where there is none
+    does the objective alone decide.
+
+    That middle tier is what keeps the emergency stop for what no plan
+    avoids. The stop is decided on the plan driven, and in the objective a
+    hard violation is only a linear penalty, so soft-rule gains can outbid
+    it: a plan whose predicted clearance dips 0.2 m below zero in the opening
+    second could beat a braking plan that keeps every hard rule, and the
+    policy would then emergency-brake at 7 m/s^2 instead of driving the
+    3.6 m/s^2 plan it had.
     """
     satisfying = robustness >= 0.0
     if bool(satisfying.any()):
-        masked = torch.where(satisfying, merit, torch.full_like(merit, -math.inf))
-        return int(torch.argmax(masked))
-    return int(torch.argmax(merit))
+        tier = satisfying
+    elif keeps_hard is not None and bool(keeps_hard.any()):
+        tier = keeps_hard
+    else:
+        return int(torch.argmax(merit))
+    masked = torch.where(tier, merit, torch.full_like(merit, -math.inf))
+    return int(torch.argmax(masked))
+
+
+def _tier(index: int, robustness: torch.Tensor, keeps_hard: torch.Tensor | None) -> int:
+    """The rank `_lexicographic_pick` gave plan ``index``: 2 satisfies, 1 keeps
+    the hard rules over the fallback window, 0 neither.
+
+    Comparable across batches -- which is how :meth:`RobustnessOptimizer.solve`
+    weighs the carried plan and the refined one against its best sample --
+    for every plan that matters: a plan below 2 reads as 0 only where its
+    batch held a satisfying plan, which outranks it either way.
+    """
+    if bool(robustness[index] >= 0.0):
+        return 2
+    if keeps_hard is not None and bool(keeps_hard[index]):
+        return 1
+    return 0
 
 
 def _atanh(fraction: torch.Tensor) -> torch.Tensor:

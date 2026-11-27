@@ -35,8 +35,12 @@ rollout ended with zero actual collisions.
 
 The one place a violation changes what is driven is a `hard` rule breached
 within the next 1.2 s, when braking could still help; then the emergency plan
-replaces the optimizer's.  That fired on 0.6% of steps.  Everywhere else the
-best plan found is driven, violations and all.
+replaces the optimizer's.  That fired on 0.6% of steps, measured before the
+ranking below was added.  Where no plan satisfies every rule, one that keeps
+the `hard` rules over those 1.2 s is now ranked above the rest before the
+objective decides, so the emergency plan is summoned only when no plan the
+search found avoids the breach.  Everywhere else the best plan found is
+driven, violations and all.
 
 Every rule is an STL formula over a signal of twelve columns, sampled at
 0.1 s over a 4 s horizon.  Each column is a **slack**: a quantity that should
