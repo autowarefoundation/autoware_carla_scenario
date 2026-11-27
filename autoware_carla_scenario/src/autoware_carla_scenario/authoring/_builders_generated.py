@@ -730,6 +730,7 @@ def build_area_distance_condition(
         rule=ComparisonRule[str(params["rule"]).upper()],
         tolerance=params["tolerance"],
         label=compiled.label,
+        levels=str(params["levels"]),
     )
 
 

@@ -1185,13 +1185,18 @@ class EntityAreaDistanceCondition(BaseCondition):
 
     def __init__(self, entity_name, area: MapArea, value: float,
                  rule: ComparisonRule = ComparisonRule(2),  # LESS_THAN
-                 tolerance: float = 1e-06, *_kw, label = _Required()):
-        _keyword_only(_kw, "EntityAreaDistanceCondition(): label")
+                 tolerance: float = 1e-06, *_kw, label = _Required(),
+                 levels: str = "measure"):
+        _keyword_only(_kw, "EntityAreaDistanceCondition(): label and levels")
         _expect_role(entity_name)
         super().__init__(_required_str(label, "EntityAreaDistanceCondition(): label"))
 
     @property
     def area(self) -> MapArea:
+        raise NotImplementedError()
+
+    @property
+    def levels(self) -> str:
         raise NotImplementedError()
 
     @property

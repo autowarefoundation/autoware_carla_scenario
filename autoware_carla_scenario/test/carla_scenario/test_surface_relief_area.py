@@ -8,6 +8,7 @@ import math
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -156,6 +157,15 @@ class TestReading:
         assert groove.kind == "grooved" and groove.extreme_m == pytest.approx(-0.03)
         assert len(relief_regions(surface)[0]) == 2
 
+    def test_every_point_of_an_outline_has_the_grid_s_value_there(
+        self, surface: Path
+    ) -> None:
+        """What lifts the region off the road's own height (#2314)."""
+        hump, groove = relief_regions(surface)[0]
+        assert len(hump.relief) == len(hump.outline)
+        assert hump.relief == pytest.approx([0.06] * len(hump.outline))
+        assert groove.relief == pytest.approx([-0.03] * len(groove.outline))
+
     def test_what_stands_off_less_than_the_threshold_does_not_count(
         self, surface: Path
     ) -> None:
@@ -280,13 +290,14 @@ def run_map(surfaced_map: MapManager) -> Iterator[MapManager]:
     MapManager._instance = saved
 
 
-def _ego_on_road(s: float) -> MagicMock:
-    """A 4 m by 2 m vehicle on road 80's reference line at *s*, along it."""
+def _ego_on_road(s: float, lift: float = 0.0) -> MagicMock:
+    """A 4 m by 2 m vehicle on road 80's reference line at *s*, along it, or
+    *lift* m above it -- on a road over it."""
     pose = to_carla_world(OpenDrivePose(_ROAD, 0, s, 0.0))
     actor = MagicMock()
     actor.attributes = {"role_name": "Ego"}
     transform = carla.Transform(
-        carla.Location(pose.x, pose.y, pose.z), carla.Rotation(yaw=pose.yaw)
+        carla.Location(pose.x, pose.y, pose.z + lift), carla.Rotation(yaw=pose.yaw)
     )
     actor.get_transform.return_value = transform
     actor.get_location.return_value = transform.location
@@ -342,6 +353,28 @@ class TestOnTheMap:
         assert grooved.check(world, 1.0) is None
         assert grooved.closest_m is not None and grooved.closest_m > 15.0
         assert math.isfinite(grooved.closest_m)
+
+    def test_a_hump_on_the_road_below_is_not_under_the_ego_on_the_bridge(
+        self, run_map: MapManager
+    ) -> None:
+        """6 m over the hump, its box 0.8 m below its origin: the hump, 6 cm
+        up on road 80, is some 5.1 m below the box (#2314)."""
+        over = _world(_ego_on_road(22.0, lift=6.0))
+        found: dict[str, Optional[float]] = {}
+        for levels in ("measure", "ignore", "plan"):
+            condition = EntityAreaDistanceCondition(
+                entity_name="Ego",
+                area=MapArea(AreaGround.SURFACE_RAISED),
+                value=0.1,
+                label="on the hump",
+                levels=levels,
+            )
+            fired = condition.check(over, 1.0) is not None
+            assert fired == (levels == "plan")
+            found[levels] = condition.closest_m
+        assert found["measure"] == pytest.approx(6.0 - 0.8 - 0.06, abs=0.1)
+        assert found["ignore"] is None
+        assert found["plan"] == 0.0
 
     def test_a_map_with_no_surface_is_said_and_never_holds(self) -> None:
         saved = MapManager._instance

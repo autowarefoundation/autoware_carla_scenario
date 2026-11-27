@@ -4086,10 +4086,31 @@ register_condition_spec(
                 minimum=0.0,
                 help=(
                     "From the subject's body (its bounding box) to the nearest "
-                    "outline of the area, on the ground: 0 once it is over it."
+                    "outline of the area: 0 once it is over it."
                 ),
             ),
             _tolerance_field("m", "0.05 m"),
+            FieldSpec(
+                name="levels",
+                label="Other road levels",
+                kind="select",
+                default="measure",
+                required=False,
+                options=(
+                    SelectOption("measure", "Measured through the height"),
+                    SelectOption("ignore", "Left out"),
+                    SelectOption("plan", "As near as in plan"),
+                ),
+                help=(
+                    "Where roads are stacked, how an area on the road above "
+                    "or below the subject counts: as far as the plan distance "
+                    "and the height between them make it (a crosswalk 6 m "
+                    "below a bridge is about 6 m away), not at all, or as "
+                    "near as a plan of the map draws it.  Within a metre of "
+                    "height, or within a road's grade, is the same level, so "
+                    "on a map without stacked roads all three agree."
+                ),
+            ),
         ),
         description=(
             "How near an entity's body comes to an area of the map chosen by "

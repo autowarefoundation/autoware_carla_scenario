@@ -122,6 +122,7 @@ is chosen by what the ground is:
 | Only these lanelets | Narrows lanelet ground to lanelets picked on the map, which must each be of the ground. Not for polygons |
 | Attributes | `key=value` tags every element must have, apart by commas: `turn_direction=left`, `location=urban`. A bare key asks only that the tag is there. Not for the road surface |
 | Surface counts from | For the road surface: how far above or below its design the surface has to stand to count. Empty: 0.01 m |
+| Other road levels | Where roads are stacked, how an area on the road above or below the subject counts: measured through the height between them (the default: a crosswalk 6 m below a bridge is about 6 m away), left out, or as near as in plan. Within a metre of height, or within a road's grade, is the same level, so on a map without stacked roads all three agree |
 
 The places panel outlines an area **whole** rather than pinning it: every
 lanelet it matches is outlined, and it is listed under the places with how many
