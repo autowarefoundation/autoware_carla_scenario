@@ -109,6 +109,8 @@ class _Walkable:
 
     def at(self, s: float) -> Tuple[float, float]:
         """The point ``s`` metres along the centreline, clamped to it."""
+        # Kept apart from the other centreline interpolations (#2545): see
+        # ``coordinate.stacked.height_at``.
         last = len(self.xs) - 1
         for i in range(last):
             if s <= self.arc[i + 1] or i == last - 1:

@@ -89,12 +89,6 @@ def _clear_clamped_s_warnings() -> None:
     _clamped_s_warned.clear()
 
 
-#: How much farther (m) from a point's elevation than the nearest lanelet
-#: surface over or under it a lanelet's surface may be and still hold the
-#: point (:func:`on_lanelet`, :func:`.stacked.choose_lanelet`).
-_STACKED_HEIGHT_TOLERANCE = STACKED_HEIGHT_TOLERANCE_M
-
-
 # ---------------------------------------------------------------------------
 # Public API (overloaded)
 # ---------------------------------------------------------------------------
@@ -228,7 +222,7 @@ def on_lanelet(
     point is on the one its elevation (``pose.z``) is at, as
     :func:`to_lanelet2` reads it.  A lanelet holds the point unless another
     lanelet that holds it in plan view has a surface nearer the point's
-    elevation by more than ``_STACKED_HEIGHT_TOLERANCE``, so lanelets
+    elevation by more than :data:`.stacked.STACKED_HEIGHT_TOLERANCE_M`, so lanelets
     overlapping on one level all hold it, and a map whose elevation is off
     where nothing is stacked still reads as it does in plan view.
 
@@ -257,7 +251,7 @@ def on_lanelet(
             continue
         if own < 0.0:
             own = _project_with_height(lanelet, x, y, z)[0]
-        if _project_with_height(other, x, y, z)[0] + _STACKED_HEIGHT_TOLERANCE < own:
+        if _project_with_height(other, x, y, z)[0] + STACKED_HEIGHT_TOLERANCE_M < own:
             return False
     return True
 
@@ -1199,6 +1193,8 @@ def _interpolate_at_s(
     -------
     (x, y, z, heading)  where heading is the tangent direction in radians.
     """
+    # Kept apart from the other centreline interpolations (#2545): see
+    # ``coordinate.stacked.height_at``.
     xs = np.array([p[0] for p in points])
     ys = np.array([p[1] for p in points])
     zs = np.array([p[2] for p in points])

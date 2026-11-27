@@ -72,6 +72,12 @@ def height_at(points: list[tuple[float, float, float]], s: float) -> float:
 
     Linear between vertices; clamped to the first and last vertex.
     """
+    # Centreline interpolation is written four times, on purpose (#2545):
+    # here, ``trajectory.relative_lane._point_at`` (the same walk in plan view,
+    # 2D points), ``transform._interpolate_at_s`` (numpy's ``interp``) and
+    # ``walk_graph._Walkable.at`` (precomputed ``s``).  Their floating-point
+    # results differ by an ulp or so, and at the ends (``s <= 0``, NaN), so
+    # sharing one would move every pose they give.
     if len(points) == 1 or s <= 0.0:
         return points[0][2]
     travelled = 0.0

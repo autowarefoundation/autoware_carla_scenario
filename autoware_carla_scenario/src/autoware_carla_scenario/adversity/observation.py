@@ -38,7 +38,8 @@ from typing import TYPE_CHECKING, Optional
 import lanelet2.core
 import lanelet2.geometry
 
-from ..coordinate.transform import _STACKED_HEIGHT_TOLERANCE, _project_with_height
+from ..coordinate.stacked import STACKED_HEIGHT_TOLERANCE_M
+from ..coordinate.transform import _project_with_height
 from ..odd.probes import lanelet_speed_limit
 from ..route.geometry import LaneSpan, MapFeatures
 from ..trajectory.relative_lane import _arc, _centreline, _point_at, reference_lane_pose
@@ -567,7 +568,7 @@ class Scene:
             )
             if float(distance) <= road_radius
         ]
-        # Only those at its level: no more than _STACKED_HEIGHT_TOLERANCE
+        # Only those at its level: no more than STACKED_HEIGHT_TOLERANCE_M
         # farther from the bottom of its box than the surface nearest it in
         # height, each surface read on its centreline at its foot in plan
         # view, as coordinate.transform.on_lanelet reads it.  A road and the
@@ -581,7 +582,7 @@ class Scene:
                 _project_with_height(lanelet, agent.x, agent.y, standing[0])[0]
                 for _distance, lanelet in found
             ]
-            level = min(heights) + _STACKED_HEIGHT_TOLERANCE
+            level = min(heights) + STACKED_HEIGHT_TOLERANCE_M
             found = [found[i] for i in range(len(found)) if heights[i] <= level]
         # Sorted by distance: the first crosswalk is the nearest, and the
         # one underfoot if any is.
