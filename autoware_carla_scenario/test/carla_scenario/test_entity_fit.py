@@ -148,6 +148,29 @@ class TestFitting:
             "vehicle.city.bus",
         }
 
+    @pytest.mark.parametrize(
+        ("blueprint_id", "special_type", "candidate"),
+        [
+            ("vehicle.saloon.car", "emergency", False),  # CARLA 0.9's mark
+            ("vehicle.dodge.Police_Charger", "", False),  # any case
+            ("vehicle.saloon.car", "", True),
+        ],
+    )
+    def test_an_emergency_vehicle_is_known_as_everywhere_else(
+        self, blueprint_id: str, special_type: str, candidate: bool
+    ) -> None:
+        """By its ``special_type``, or its id in any case
+        (``utils.vehicles.is_emergency_vehicle_type``, #2593)."""
+        attributes = {"base_type": "car"}
+        if special_type:
+            attributes["special_type"] = special_type
+        blueprint = SimpleNamespace(
+            id=blueprint_id,
+            has_attribute=lambda name: name in attributes,
+            get_attribute=lambda name: _Attribute(attributes[name]),
+        )
+        assert fit._candidate(blueprint) is candidate  # noqa: SLF001
+
     def test_each_box_is_read_once_per_world(self, world: _World) -> None:
         fit.fitted_vehicle(world, 4.5, 1.8)
         fit.fitted_vehicle(world, 8.0, 2.4)

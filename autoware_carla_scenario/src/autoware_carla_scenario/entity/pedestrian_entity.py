@@ -117,8 +117,9 @@ def _walk_by_ai(
     turn_back: Optional[tuple[Optional[float], Optional[float], float]] = None,
 ) -> bool:
     """One tick of *walker* on CARLA's walker controller
-    (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh, or
-    while it is stepped over a road stretch."""
+    (:mod:`._walker_ai`); ``False`` on a map without a navigation mesh,
+    while it is stepped over a road stretch, or while it is stepped toward a
+    walk it stands off (:data:`._walker_ai._START_WAIT_TICKS`)."""
     from ._walker_ai import drive  # noqa: PLC0415
 
     try:
@@ -609,8 +610,9 @@ class PedestrianEntity(WalkedEntity):
                 _release_walker_ai(walker)
                 walker.apply_control(carla.WalkerControl(speed=0.0))
         else:
-            # Stepped along the route (over a road stretch, or on a map with
-            # no navigation mesh), giving way to a walker in its way.
+            # Stepped along the route (over a road stretch, toward a walk it
+            # stands off, or on a map with no navigation mesh), giving way to
+            # a walker in its way.
             if _gives_way(walker, path, here, location):
                 speed = 0.0
             steer_walker(walker, location, path, here, speed)

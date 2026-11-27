@@ -157,9 +157,8 @@ def spawn_vehicle_actor(
     else:
         resolved_transform = spawn_location.value
 
+    # Known to be there (checked above): find() raises rather than return None.
     vehicle_bp = bp_lib.find(vehicle_type)
-    if vehicle_bp is None:
-        raise RuntimeError(f"Blueprint not found: {vehicle_type}")
     if ros2_autoware_role_name is not None:
         native_role: str = ros2_autoware_role_name
         if vehicle_bp.has_attribute(ROS2_AUTOWARE_CONTROL_ATTRIBUTE):

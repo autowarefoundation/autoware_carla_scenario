@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..coordinate.snap import GroundProjectionConfig
 
 from ..entity_role import _refuse_ego_role_name
+from ..seed import check_whole_number
 from ..traffic.base import DrivenEntity
 from ..traffic.driven import BackendDriven
 from ..utils.vehicles import is_emergency_vehicle_type, set_siren_lights
@@ -102,6 +103,13 @@ class VehicleEntityConfig:
         _check_non_negative_finite("initial_speed_kmh", self.initial_speed_kmh)
         _check_non_negative_finite("spawn_retry_t_step", self.spawn_retry_t_step)
         _check_non_negative_finite("spawn_retry_z_step", self.spawn_retry_z_step)
+        # A whole number, 0 or more, as the Hydra path checks it: 2.5 would
+        # break the retry loop after a first failed spawn, True would be one
+        # retry and -1 none (#2593).
+        count = check_whole_number("spawn_retry_max_count", self.spawn_retry_max_count)
+        if count < 0:
+            raise ValueError(f"spawn_retry_max_count must be at least 0, got {count}")
+        self.spawn_retry_max_count = count
 
 
 def _same_vehicle_config(a: VehicleEntityConfig, b: VehicleEntityConfig) -> bool:

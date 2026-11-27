@@ -1259,6 +1259,32 @@ def test_a_routed_walker_is_walked_by_carlas_controller() -> None:
     ]
 
 
+def test_a_walker_off_its_walk_is_stepped_toward_it_after_a_few_ticks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One that stands more than _START_NEAR_M off its walk waits a few ticks
+    (one just brought in reads its old place), then is stepped toward it
+    (``False``), said once, until its controller takes it near enough (#2593)."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    world = _AiWorld(True, 105)
+    where = SimpleNamespace(x=0.0, y=8.0, z=0.0)
+    walker = SimpleNamespace(id=61, get_world=lambda: world, get_location=lambda: where)
+    path = path_of(25.0)
+    with caplog.at_level(logging.WARNING):
+        for _ in range(_walker_ai._START_WAIT_TICKS):  # noqa: SLF001
+            assert _walker_ai.drive(walker, path, 0.0, 1.4, where)
+        assert not _walker_ai.drive(walker, path, 0.0, 1.4, where)
+        assert not _walker_ai.drive(walker, path, 0.0, 1.4, where)
+    assert sum("off its walk" in r.getMessage() for r in caplog.records) == 1
+    assert world.controller.calls == []
+    where.y = 1.0  # stepped near enough: its controller starts
+    assert _walker_ai.drive(walker, path, 0.0, 1.4, where)
+    assert world.controller.calls[0] == "start"
+    assert 61 not in _walker_ai._START_WAITED  # noqa: SLF001
+    _walker_ai.release(61)
+
+
 def test_a_walkers_own_cross_factor_is_set_as_its_controller_starts() -> None:
     from autoware_carla_scenario.entity import _walker_ai
 

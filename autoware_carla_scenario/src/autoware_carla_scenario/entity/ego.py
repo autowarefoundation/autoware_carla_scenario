@@ -267,7 +267,9 @@ class EgoVehicle(BackendDriven):
         """
 
     def destroy(self) -> None:
-        """Destroy the vehicle actor."""
+        """Destroy the vehicle actor -- or, when it is not this entity's
+        (:attr:`attaches_to_existing_actor`), only let go of it."""
         if self._vehicle is not None:
-            self._vehicle.destroy()
+            if not self.attaches_to_existing_actor:
+                self._vehicle.destroy()
             self._vehicle = None

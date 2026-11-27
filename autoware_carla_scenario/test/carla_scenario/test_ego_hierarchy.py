@@ -79,3 +79,18 @@ def test_a_refusal_names_what_drives(
         refuse(entity)
     assert "not driven by the TrafficManager" in caplog.text
     assert "left to the Autoware stack" in caplog.text
+
+
+@pytest.mark.parametrize("attaches", [False, True])
+def test_destroy_leaves_an_actor_that_is_not_the_egos_own(attaches: bool) -> None:
+    """An ego that attached to an actor outside the scenario
+    (``attaches_to_existing_actor``) only lets go of it (#2593)."""
+    from unittest.mock import MagicMock
+
+    entity = EgoVehicle()
+    entity.attaches_to_existing_actor = attaches
+    actor = MagicMock()
+    entity._vehicle = actor  # noqa: SLF001
+    entity.destroy()
+    assert actor.destroy.called is not attaches
+    assert entity._vehicle is None  # noqa: SLF001

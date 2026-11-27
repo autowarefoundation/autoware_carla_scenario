@@ -138,6 +138,11 @@ RETARGET_S: float = 2.0
 _NAVMESH_PROBES = 20
 #: How near (m) its walk a walker has to stand for its controller to start.
 _START_NEAR_M = 3.0
+#: How many ticks a walker waits to stand there (one just brought in reads
+#: its old place, or under the map, for a tick) before it is stepped toward
+#: its walk instead, with a warning: one that stands off it would wait for
+#: ever.
+_START_WAIT_TICKS = 5
 #: Below this (m/s) a walker is held: kept on its controller at a top speed
 #: of 0 (taken off it, it would snap back onto the navigation mesh).
 _HOLD_MPS = 0.05
@@ -183,6 +188,9 @@ BACK_STALL_S: float = 1.5
 _BACK_PROGRESS_M: float = 0.05
 #: How long (s) each stepped walker has given way, by actor id.
 _GIVING_WAY: dict[int, float] = {}
+#: How many ticks each walker not yet on its controller has waited to stand
+#: on its walk, by actor id.
+_START_WAITED: dict[int, int] = {}
 
 #: Whether each episode's map has a navigation mesh, by world id.
 _NAVMESH: dict[int, bool] = {}
@@ -343,8 +351,9 @@ def drive(
     *location*) on CARLA's walker controller at *speed* m/s, crossing roads
     away from crossings with probability *cross_factor*, waiting at a kerb and
     turning back by *turn_back* (``(distance_m, ttc_s, within_m)``); ``False``
-    when the map has no navigation mesh, or while it is stepped, for the
-    caller to step it."""
+    when the map has no navigation mesh, while it is stepped, or while it
+    stands off its walk past :data:`_START_WAIT_TICKS` ticks, for the caller
+    to step it."""
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     world = walker.get_world()
@@ -357,12 +366,30 @@ def drive(
         # (set where it appears) still reads its old place until the world
         # ticks, and a controller started then registers it there -- under
         # the map, at its spawn -- and walks it from wherever that is.
+        # For a few ticks only: one that stands off its walk (an initial
+        # pose, or a recorded track, more than _START_NEAR_M from it) is
+        # stepped toward it (``False``) until it stands near enough.
         on = path.at_distance(here)
-        if (
-            location.z < HIDDEN_BELOW_M
-            or math.hypot(location.x - on.x, location.y - on.y) > _START_NEAR_M
-        ):
-            return True
+        off = math.hypot(location.x - on.x, location.y - on.y)
+        if location.z < HIDDEN_BELOW_M or off > _START_NEAR_M:
+            key = int(walker.id)
+            waited = _START_WAITED.get(key, 0) + 1
+            _START_WAITED[key] = waited
+            if waited <= _START_WAIT_TICKS:
+                return True
+            if waited == _START_WAIT_TICKS + 1:
+                logger.warning(
+                    "walker %d stands %.1f m off its walk (z %.1f) after %d "
+                    "ticks: stepped toward it until it is within %.1f m, "
+                    "where CARLA's walker controller takes it",
+                    key,
+                    off,
+                    location.z,
+                    _START_WAIT_TICKS,
+                    _START_NEAR_M,
+                )
+            return False
+        _START_WAITED.pop(int(walker.id), None)
         targets: list[tuple[float, "carla.Location"]] = []
         along = TARGET_SPACING_M
         while along < path.length:
@@ -1073,6 +1100,7 @@ def release(walker_id: int) -> bool:
     was walking it (stopped here), for the caller to let the walker take
     steps again (:func:`own_steps`)."""
     _GIVING_WAY.pop(int(walker_id), None)
+    _START_WAITED.pop(int(walker_id), None)
     _WALKING.forget(int(walker_id))
     driven = _DRIVEN.pop(int(walker_id), None)
     if driven is None:
@@ -1101,6 +1129,7 @@ def forget_all() -> None:
     the client's timeout."""
     _DRIVEN.clear()
     _GIVING_WAY.clear()
+    _START_WAITED.clear()
     _WALKING.clear()
 
 

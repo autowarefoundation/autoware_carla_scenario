@@ -979,15 +979,19 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
     def _t4_scene(self, sweeps: Sequence[LidarSweep]) -> bytes:
         """The run so far as a serialized T4Scene, the current sweep (the first
-        LiDAR's) on its last row; empty without ``driver.t4_scene``."""
+        LiDAR's, none when it has none this step) on its last row; empty
+        without ``driver.t4_scene``."""
         if self._t4 is None:
             return b""
         points = None
         age_ns = 0
-        if sweeps:
+        # The first LiDAR's by its id: *sweeps* leaves out a LiDAR with no
+        # sweep this step, so sweeps[0] may be another's (#2593).
+        first_id = self._lidars[0][0] if self._lidars else None
+        sweep = next((taken for taken in sweeps if taken.logical_id == first_id), None)
+        if sweep is not None:
             import numpy as np  # noqa: PLC0415
 
-            sweep = sweeps[0]
             points = np.frombuffer(sweep.points_xyzi, dtype="<f4").reshape(-1, 4)
             age_ns = (self._sim_time_us - int(sweep.timestamp_us)) * 1000
         sent = self._road_ahead_in_map()
@@ -1156,7 +1160,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         return self._plan_markers
 
     def debug_state(self) -> Dict[str, float]:
-        """Return a snapshot of the loop's state, for logging and tests."""
+        """Return a snapshot of the loop's state, for tests and debugging
+        (nothing in the framework logs it)."""
         return {
             "sim_time_us": float(self._sim_time_us),
             "drive_count": float(self._drive_count),
