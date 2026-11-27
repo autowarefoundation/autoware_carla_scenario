@@ -171,7 +171,7 @@ def test_ranges_are_narrowed_to_what_the_relations_leave() -> None:
         parse_relations(["a.x >= a.y + 8"]),
         {"a.x": UniformDistribution(0.0, 10.0), "a.y": UniformDistribution(0.0, 10.0)},
     )
-    assert solver._ranges_for({}, {}) == {"a.x": (8.0, 10.0), "a.y": (0.0, 2.0)}
+    assert solver._case({}).ranges == {"a.x": (8.0, 10.0), "a.y": (0.0, 2.0)}
 
 
 def test_a_parameter_in_no_relation_draws_as_without_relations() -> None:
@@ -285,7 +285,8 @@ def test_a_case_value_of_the_wrong_type_is_refused() -> None:
 
 
 def test_the_config_s_own_values_are_the_default() -> None:
-    from autoware_carla_scenario.sweeper.expand import relation_defaults
+    from autoware_carla_scenario.sweeper.expand import config_lookup
+    from autoware_carla_scenario.sweeper.relations import constant_value
 
     cfg = OmegaConf.create(
         {
@@ -293,32 +294,50 @@ def test_the_config_s_own_values_are_the_default() -> None:
             "ego": {"limit": "${scenario.lead_speed_kmh}", "missing": "???"},
         }
     )
-    relations = [
-        f"{_EGO} > scenario.lead_speed_kmh",
-        f"{_EGO} >= ego.limit",
-        "scenario.night and scenario.weather == 'rain'",
-        "ego.missing > 1 or ego.unknown < 2 or True",
-    ]
+    lookup = config_lookup(cfg)
+    assert [
+        constant_value(lookup(key))
+        for key in (
+            "scenario.lead_speed_kmh",
+            "ego.limit",
+            "scenario.night",
+            "scenario.weather",
+            "ego.missing",
+            "ego.unknown",
+            "scenario",
+        )
+    ] == [30.0, 30.0, True, "rain", None, None, None]
     sweep: dict[str, Any] = {
         "constraints": {_EGO: _uniform(0.0, 100.0)},
-        "relations": relations,
+        "relations": [
+            f"{_EGO} > scenario.lead_speed_kmh",
+            f"{_EGO} >= ego.limit",
+            "scenario.night and scenario.weather == 'rain'",
+        ],
         "samples": 20,
     }
-    defaults = relation_defaults(cfg, sweep)
-    assert defaults == {
-        "scenario.lead_speed_kmh": 30.0,
-        "ego.limit": 30.0,
-        "scenario.night": True,
-        "scenario.weather": "rain",
-    }
-    sweep["relations"] = relations[:3]
-    for case in expand_sweep(sweep, None, scenario="s", defaults=defaults):
+    for case in expand_sweep(sweep, None, scenario="s", config_value=lookup):
         assert float(_values_typed(case)[_EGO]) > 30.0
     # An override of the run wins over the config's value.
     for case in expand_sweep(
-        sweep, None, ["scenario.lead_speed_kmh=80"], scenario="s", defaults=defaults
+        sweep, None, ["scenario.lead_speed_kmh=80"], scenario="s", config_value=lookup
     ):
         assert float(_values_typed(case)[_EGO]) > 80.0
+    # A key the config does not hold is refused, naming the relation.
+    sweep["relations"] = [f"{_EGO} > ego.missing"]
+    with pytest.raises(ValueError, match="names ego.missing"):
+        expand_sweep(sweep, None, scenario="s", config_value=lookup)
+
+
+def test_override_values_are_read_as_hydra_reads_them() -> None:
+    sweep = {
+        "constraints": {"a.x": _uniform(0.0, 10.0)},
+        "relations": ["scenario.mode == 'none' or a.x < 1"],
+        "samples": 5,
+    }
+    # Hydra reads `none` as the string "none", not as null.
+    cases = expand_sweep(sweep, None, ["scenario.mode=none"], scenario="s")
+    assert len(cases) == 5
 
 
 def test_relations_over_values_alone_filter_the_lanelet_cases(

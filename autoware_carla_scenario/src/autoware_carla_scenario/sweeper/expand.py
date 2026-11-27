@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
@@ -131,7 +131,7 @@ def expand_sweep(
     environment_rules: Any = None,
     composed: Sequence[str] = (),
     scenario: str = "",
-    defaults: Mapping[str, Any] | None = None,
+    config_value: Callable[[str], Any] | None = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -166,10 +166,10 @@ def expand_sweep(
     theirs, conditioned on ``sweep.relations`` (solved with Z3,
     :mod:`.relations`), ``sweep.samples`` times for each case, from ``sweep.seed`` (else
     *seed*, else :data:`~autoware_carla_scenario.seed.DEFAULT_SEED`), the
-    *scenario*'s name and the case (:mod:`.distributions`).  A relation
-    naming no drawn key filters the cases.  *defaults* are the scenario
-    config's values of the keys the relations name (:func:`relation_defaults`):
-    what a case holds for a key it does not set.
+    *scenario*'s name and the case (:mod:`.distributions`).  Before that,
+    a case the relations cannot hold for is dropped.  *config_value* reads a
+    key of the scenario's config (:func:`config_lookup`): what a case holds
+    for a key a relation names and the case does not set.
 
     With ``sweep.case_index``, only the case at that (0-based) index is kept.
 
@@ -223,7 +223,12 @@ def expand_sweep(
             arguments=[*arguments, *composed],
         )
     relations = parse_relations(sweep.get("relations"))
-    if (distributions or relations) and base_cases:
+    solver = RelationSolver(relations, distributions) if relations else None
+    if solver is not None and base_cases:
+        base_cases = _with_relations_holding(
+            base_cases, solver, [*arguments, *composed], config_value
+        )
+    if distributions and base_cases:
         draw_seed = _draw_seed(sweep.get("seed"))
         base_cases = _with_distribution_draws(
             base_cases,
@@ -232,8 +237,8 @@ def expand_sweep(
             run_seed if draw_seed is None else draw_seed,
             scenario,
             [*arguments, *composed],
-            relations,
-            defaults or {},
+            solver,
+            config_value,
         )
     if index is not None:
         if not 0 <= index < len(base_cases):
@@ -292,61 +297,85 @@ def _clashes(keys: set[str], overrides: Sequence[str]) -> str:
     return ", ".join(sorted(keys & {_override_key(o) for o in overrides}))
 
 
-def _override_constant(text: str) -> Any:
-    """An override's value (*text*) as a relation's constant
-    (:func:`.relations.constant_value`): ``true``/``false`` a bool, a number a
-    float, ``null`` nothing, a quoted or bare word a string; ``None`` for a
-    list or a mapping."""
-    text = text.strip()
-    if text[:1] in "[{":
-        return None
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
-        return text[1:-1]
-    lowered = text.lower()
-    if lowered in ("true", "false"):
-        return lowered == "true"
-    if lowered in ("null", "none", ""):
-        return None
-    try:
-        return constant_value(float(text))
-    except ValueError:
-        return text
+def config_lookup(cfg: Any) -> Callable[[str], Any]:
+    """A reader of *cfg*'s value at a dotted key: ``None`` for a key it does
+    not have, a missing value or an interpolation that does not resolve."""
+
+    def value(key: str) -> Any:
+        try:
+            return OmegaConf.select(cfg, key, default=None, throw_on_missing=False)
+        except Exception:  # noqa: BLE001 -- an interpolation that does not resolve
+            return None
+
+    return value
 
 
-def _case_values(overrides: Sequence[str]) -> dict[str, Any]:
-    """The values *overrides* set, as relations' constants, later ones
-    winning; a key an override deletes (``~a.b``) holds nothing."""
-    values: dict[str, Any] = {}
+def _relation_values(
+    solver: RelationSolver,
+    overrides: Sequence[str],
+    config_value: Callable[[str], Any] | None,
+) -> dict[str, Any]:
+    """What a case holds for each key the relations name and no distribution
+    draws, as relations' constants (:func:`.relations.constant_value`): what
+    *overrides* (the case's, then the run's) set, read as Hydra reads them,
+    else *config_value*'s; ``None`` when neither holds a value."""
+    from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+        OverridesParser,
+    )
+
+    wanted = set(solver.constant_keys)
+    values: dict[str, Any] = {
+        key: constant_value(config_value(key)) if config_value else None
+        for key in wanted
+    }
+    parser = OverridesParser.create()
     for override in overrides:
-        key = _override_key(override)
-        if override.startswith("~") or "=" not in override:
-            values[key] = None
+        if _override_key(override) not in wanted:
             continue
-        values[key] = _override_constant(override.split("=", 1)[1])
+        parsed = parser.parse_override(override)
+        if not parsed.is_sweep_override():
+            values[_override_key(override)] = (
+                None if parsed.is_delete() else constant_value(parsed.value())
+            )
     return values
 
 
-def relation_defaults(cfg: Any, sweep: Mapping[Any, Any]) -> dict[str, Any]:
-    """The scenario config *cfg*'s values of the keys ``sweep.relations``
-    names (none when it has none), as relations' constants: what a case
-    holds for a key it does not set.  A key *cfg* does not have, or holds
-    no number, string or bool at, is left out."""
-    try:
-        relations = parse_relations(sweep.get("relations"))
-    except ValueError:
-        # Refused, naming it, where the sweep is expanded.
-        return {}
-    keys = sorted(set().union(*(r.keys for r in relations))) if relations else []
-    defaults: dict[str, Any] = {}
-    for key in keys:
+def _with_relations_holding(
+    base_cases: list[list[str]],
+    solver: RelationSolver,
+    arguments: Sequence[str],
+    config_value: Callable[[str], Any] | None,
+) -> list[list[str]]:
+    """*base_cases* but those the relations cannot hold for (Z3,
+    :class:`.relations.RelationSolver`), with the values each holds
+    (:func:`_relation_values`).  How many were dropped is logged.
+
+    Raises:
+        ValueError: If the relations hold for none, or name a key that is
+            neither drawn nor held by a case, or a value of the wrong type.
+    """
+    kept: list[list[str]] = []
+    dropped: list[str] = []
+    for case in base_cases:
         try:
-            value = OmegaConf.select(cfg, key, default=None, throw_on_missing=False)
-        except Exception:  # noqa: BLE001 -- an interpolation that does not resolve
+            solver.check(_relation_values(solver, [*case, *arguments], config_value))
+        except RelationsUnsatisfiable as exc:
+            dropped.append(str(exc))
             continue
-        constant = constant_value(value)
-        if constant is not None:
-            defaults[key] = constant
-    return defaults
+        kept.append(case)
+    if dropped and not kept:
+        raise ValueError(
+            f"sweep.relations hold for none of the sweep's {len(base_cases)} "
+            f"case(s); for the first: {dropped[0]}"
+        )
+    if dropped:
+        logger.info(
+            "sweep.relations dropped %d of %d case(s); the first: %s",
+            len(dropped),
+            len(base_cases),
+            dropped[0],
+        )
+    return kept
 
 
 def _with_distribution_draws(
@@ -356,8 +385,8 @@ def _with_distribution_draws(
     seed: int,
     scenario: str,
     arguments: Sequence[str],
-    relations: Sequence[Any] = (),
-    defaults: Mapping[str, Any] | None = None,
+    solver: RelationSolver | None,
+    config_value: Callable[[str], Any] | None,
 ) -> list[list[str]]:
     """Each of *base_cases* *samples* times, each time with a value drawn for
     every key of *distributions*, in the order of the base cases.  A draw's
@@ -365,19 +394,16 @@ def _with_distribution_draws(
     encoded ODD case, which a change to the ODD's definition alone would move)
     and the sample's number (:mod:`.distributions`).
 
-    The keys *relations* (``sweep.relations``, parsed) name are drawn
-    together, conditioned on them (:class:`.relations.RelationSolver`), from a
-    seed of their own; the others each on their own as before.  A key a
-    relation names that no distribution draws holds the value the base case
-    (or *arguments*) sets, else *defaults*'.  A base case for which the
-    relations cannot hold is dropped (logged, with how many were).
+    The keys *solver*'s relations name are drawn together, conditioned on
+    them (:meth:`.relations.RelationSolver.draw`, with the values the case
+    holds: :func:`_relation_values`), from a seed of their own; the others
+    each on their own as before.
 
     Raises:
         ValueError: If a base case (a binding, a route match or a case drawn
             from the ODD) or one of *arguments* already sets a key a
             distribution draws: the run would follow that value while the
-            sweep said it was drawn.  Or if the relations hold for no base
-            case, or name a key that is neither drawn nor set to a number.
+            sweep said it was drawn.
     """
     from ..odd.control_fields import ODD_CASE_KEY  # noqa: PLC0415
 
@@ -395,57 +421,39 @@ def _with_distribution_draws(
             f"sweep.constraints draws {clash} from a distribution; an override "
             "may not set it too (drop the override, or the distribution)"
         )
-    solver = RelationSolver(relations, distributions) if relations else None
-    related = set(solver.related) if solver is not None else set()
+    # The solver, when its relations relate a drawn key: those it draws.
+    joint = solver if solver is not None and solver.related else None
+    related = set(joint.related) if joint is not None else set()
     alone = {k: d for k, d in distributions.items() if k not in related}
     cases: list[list[str]] = []
-    dropped: list[str] = []
     for case in base_cases:
         named = [o for o in case if _override_key(o) != ODD_CASE_KEY]
-        constants = (
-            {**(defaults or {}), **_case_values([*named, *arguments])}
-            if solver is not None
+        held = (
+            _relation_values(joint, [*case, *arguments], config_value)
+            if joint is not None
             else {}
         )
-        if solver is not None:
-            try:
-                solver.check(constants)
-            except RelationsUnsatisfiable as exc:
-                dropped.append(str(exc))
-                logger.debug("Dropping case %s: %s", " ".join(named), exc)
-                continue
         # The case's part of each draw's identity, hashed once.
         h = fnv1a("\x1f".join([str(seed), scenario, *named]))
-        # Without a distribution every sample would be the same case.
-        for sample in range(samples if distributions else 1):
+        for sample in range(samples):
             h_sample = fnv1a(f"\x1fsample={sample}", h)
             values = draw_case(alone, h_sample)
-            if solver is not None:
+            if joint is not None:
                 rng = random.Random(
                     fnv1a("\x1frelations", h_sample) & 0x7FFFFFFFFFFFFFFF
                 )
-                values.update(solver.draw(constants, rng))
-                values = {k: values[k] for k in sorted(values)}
+                values.update(joint.draw(held, rng))
             cases.append(
                 [
                     *case,
                     # Rounded to 1e-9, which no scenario parameter resolves
                     # finer, so the override reads back as the value drawn.
-                    *(f"{k}={_override_value(round(v, 9))}" for k, v in values.items()),
+                    *(
+                        f"{k}={_override_value(round(v, 9))}"
+                        for k, v in sorted(values.items())
+                    ),
                 ]
             )
-    if dropped and cases:
-        logger.info(
-            "sweep.relations dropped %d of %d case(s); the first: %s",
-            len(dropped),
-            len(base_cases),
-            dropped[0],
-        )
-    if dropped and not cases:
-        raise ValueError(
-            f"sweep.relations hold for none of the sweep's {len(base_cases)} "
-            f"case(s); for the first: {dropped[0]}"
-        )
     return cases
 
 
@@ -936,7 +944,7 @@ def _check_relations(
             "sweep has no constraints, route or odd_sample to expand"
         )
     solver = RelationSolver(relations, distributions)
-    if not solver.constants():
+    if not solver.constant_keys:
         solver.check()
 
 
@@ -1288,7 +1296,7 @@ def expand_config(
             environment_rules=weather,
             composed=composed,
             scenario=scenario,
-            defaults=relation_defaults(cfg, sweep),
+            config_value=config_lookup(cfg),
         )
 
     lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
@@ -1304,7 +1312,7 @@ def expand_config(
         environment_rules=weather,
         composed=composed,
         scenario=scenario,
-        defaults=relation_defaults(cfg, sweep),
+        config_value=config_lookup(cfg),
     )
 
 
