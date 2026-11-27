@@ -140,10 +140,22 @@ class ReliefRegion:
         return f"{self.kind} {abs(self.extreme_m):.3f} m on road {self.road_id}"
 
 
-def _number(text: Optional[str], default: float) -> float:
-    if text is None or not text.strip():
+def _number(element: Element, key: str, default: float) -> float:
+    """*element*'s number attribute *key*, or *default* where it has none or
+    an empty one.
+
+    Raises:
+        ValueError: The attribute is not a number; the error names it.
+    """
+    text = _attribute(element, key, "")
+    if not text.strip():
         return default
-    return float(text)
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    # Raised outside the handler, so float()'s own error is not chained to it.
+    raise ValueError(f'{key}="{text}" is not a number')
 
 
 def _attribute(element: Element, key: str, default: str) -> str:
@@ -163,9 +175,27 @@ def crg_references(xodr_path: Path) -> list[CrgReference]:
     Raises:
         OSError: The file cannot be read.
         xml.etree.ElementTree.ParseError: It is not XML.
+        ValueError: A ``<CRG>``'s ``sStart``, ``sEnd``, ``sOffset`` or
+            ``tOffset`` is not a number.
+    """
+    references, problems = _read_references(xodr_path)
+    if problems:
+        raise ValueError(problems[0])
+    return references
+
+
+def _read_references(xodr_path: Path) -> tuple[list[CrgReference], list[str]]:
+    """:func:`crg_references`, and what could not be read: a ``<CRG>`` whose
+    ``sStart``, ``sEnd``, ``sOffset`` or ``tOffset`` is not a number is said
+    in words and passed over (#2598).
+
+    Raises:
+        OSError: The file cannot be read.
+        xml.etree.ElementTree.ParseError: It is not XML.
     """
     folder = xodr_path.parent
     found: list[CrgReference] = []
+    problems: list[str] = []
     for _event, element in iterparse(str(xodr_path)):
         if element.tag != "road":
             continue
@@ -174,14 +204,22 @@ def crg_references(xodr_path: Path) -> list[CrgReference]:
             road_id = _attribute(element, "id", "")
             for crg in surface.findall("CRG"):
                 name = _attribute(crg, "file", "")
+                try:
+                    s_start = _number(crg, "sStart", 0.0)
+                    s_end = _number(crg, "sEnd", math.inf)
+                    s_offset = _number(crg, "sOffset", 0.0)
+                    t_offset = _number(crg, "tOffset", 0.0)
+                except ValueError as exc:
+                    problems.append(f"road {road_id}: {name}: {exc}")
+                    continue
                 found.append(
                     CrgReference(
                         road_id=road_id,
                         path=folder / name,
-                        s_start=_number(crg.get("sStart"), 0.0),
-                        s_end=_number(crg.get("sEnd"), math.inf),
-                        s_offset=_number(crg.get("sOffset"), 0.0),
-                        t_offset=_number(crg.get("tOffset"), 0.0),
+                        s_start=s_start,
+                        s_end=s_end,
+                        s_offset=s_offset,
+                        t_offset=t_offset,
                         orientation=_attribute(crg, "orientation", "same").lower(),
                         mode=_attribute(crg, "mode", "attached").lower(),
                         purpose=_attribute(crg, "purpose", "elevation").lower(),
@@ -190,7 +228,7 @@ def crg_references(xodr_path: Path) -> list[CrgReference]:
         # A road's elements are not needed once it is read; the file may be
         # a city.
         element.clear()
-    return found
+    return (found, problems)
 
 
 def _header_value(header: dict[str, str], key: str) -> Optional[float]:
@@ -423,7 +461,7 @@ _CACHE: dict[str, tuple[list[ReliefRegion], list[str]]] = {}
 
 #: The ``<CRG>``s of an OpenDRIVE file, by its path and modification time:
 #: the scenario editor asks on every edit, and the file may be a city.
-_REFERENCES: dict[str, list[CrgReference]] = {}
+_REFERENCES: dict[str, tuple[list[CrgReference], list[str]]] = {}
 
 #: The grids read, by their path and modification time: a threshold typed in
 #: the editor asks again of the same grids, which are the slow part to read.
@@ -446,7 +484,8 @@ def relief_regions(
 ) -> tuple[list[ReliefRegion], list[str]]:
     """The raised and/or grooved regions of every road of the OpenDRIVE file,
     and what could not be read (a missing or binary grid, a mode that lays its
-    own reference line), each said in words and passed over.
+    own reference line, a ``<CRG>`` attribute that is not a number), each said
+    in words and passed over.
 
     Raises:
         ValueError: A threshold that is not positive.
@@ -456,12 +495,12 @@ def relief_regions(
         raise ValueError("the threshold of a raised or grooved part must be positive")
     xodr_stamp = _stamp(xodr_path)
     if xodr_stamp in _REFERENCES:
-        references = _REFERENCES[xodr_stamp]
+        references, unread = _REFERENCES[xodr_stamp]
     else:
-        references = crg_references(xodr_path)
+        references, unread = _read_references(xodr_path)
         if len(_REFERENCES) >= _CACHE_SIZE:
             _REFERENCES.clear()
-        _REFERENCES[xodr_stamp] = references
+        _REFERENCES[xodr_stamp] = (references, unread)
     grid_stamps: dict[str, str] = {}
     for reference in references:
         grid_stamps[str(reference.path)] = _stamp(reference.path)
@@ -471,7 +510,7 @@ def relief_regions(
         held = _CACHE[key]
         return (list(held[0]), list(held[1]))
     regions: list[ReliefRegion] = []
-    problems: list[str] = []
+    problems: list[str] = list(unread)
     for reference in references:
         if reference.purpose != "elevation":
             continue

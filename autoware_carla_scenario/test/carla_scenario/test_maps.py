@@ -834,6 +834,23 @@ class TestResolveMap:
         assert resolved.projector_info_path is not None
         assert resolved.name == "TownA"
 
+    def test_a_named_osm_that_is_missing_is_an_error_not_a_fallback(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Not the directory's one other .osm, as resolve_directory holds a
+        file named outright (#2598): an upstream rename would otherwise run
+        the scenario against another map."""
+        missing = _uri(origin_repo, "autoware_maps/TownA/lanelet2_map_v2.osm")
+        with pytest.raises(MapResolutionError, match="lanelet2_map_v2.osm does not"):
+            resolve_map(missing, cache=cache)
+        # The directory is on disk now: still not a fallback, and cached_map
+        # says "not here", which sends the caller to resolve_map's error.
+        assert resolve_map(_uri(origin_repo), cache=cache).name == "TownA"
+        assert cached_map(_uri(origin_repo), cache=cache) is not None
+        assert cached_map(missing, cache=cache) is None
+        with pytest.raises(MapResolutionError, match="lanelet2_map_v2.osm does not"):
+            resolve_map(missing, cache=cache)
+
     def test_an_unreachable_repository_is_reported(self, cache: GitMapCache) -> None:
         with pytest.raises(MapCacheError):
             resolve_map("git+file:///nonexistent/repo@main#maps/T", cache=cache)
@@ -1215,6 +1232,20 @@ class TestLinksInAMapDirectory:
         )
         assert getattr(resolved, _MAP_FILES[name]) is None
 
+    def test_a_named_osm_linked_out_is_an_error_not_a_fallback(
+        self, tmp_path: Path, cache: GitMapCache, outside: Path
+    ) -> None:
+        """Not the real lanelet2_map.osm beside it (#2598)."""
+
+        def build(directory: Path) -> None:
+            (directory / "lanelet2_map.osm").write_text(_OSM)
+            (directory / "edited.osm").symlink_to(outside / "lanelet2_map.osm")
+
+        repo = self._repo(tmp_path, build)
+        with pytest.raises(MapResolutionError, match="edited.osm is a link out"):
+            resolve_map(_uri(repo, "maps/TownL/edited.osm"), cache=cache)
+        assert cached_map(_uri(repo, "maps/TownL/edited.osm"), cache=cache) is None
+
     def test_a_derived_xodr_linked_out_of_the_cache_is_refused(
         self, origin_repo: Path, cache: GitMapCache, outside: Path
     ) -> None:
@@ -1319,6 +1350,17 @@ class TestProvisionedMaps:
         assert resolved.lanelet2_path == directory / "lanelet2_map.osm"
         cached = cached_map(_uri(origin_repo), cache=cache)
         assert cached is not None and cached.provisioned
+
+    def test_a_named_osm_it_lacks_is_an_error_not_a_fallback(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Not the provisioned lanelet2_map.osm beside it (#2598)."""
+        self._provision(cache, "autoware_maps/TownA", origin_repo)
+        (origin_repo / ".git").rename(origin_repo.parent / "gone")
+        missing = _uri(origin_repo, "autoware_maps/TownA/lanelet2_map_v2.osm")
+        with pytest.raises(MapResolutionError, match="lanelet2_map_v2.osm does not"):
+            resolve_map(missing, cache=cache)
+        assert cached_map(missing, cache=cache) is None
 
     def test_an_unpulled_lfs_pointer_is_reported(
         self, origin_repo: Path, cache: GitMapCache

@@ -237,7 +237,10 @@ class EntityAreaDistanceCondition(CompositionCondition):
 
         try:
             regions, skipped = surface_regions(xodr_path, self._area)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # What relief_regions documents raising: said, as a map that
+            # holds none of the area is, rather than raised out of setup()
+            # (#2598).  A <CRG> it cannot read is in *skipped*.
             self._unheld(str(exc))
             return
         for reason in skipped:
