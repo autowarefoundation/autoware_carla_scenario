@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any, Callable
 
 import pytest
@@ -15,7 +16,11 @@ from autoware_carla_scenario.actions._trajectory_run import TrajectoryRun
 from autoware_carla_scenario.actions.communication_loss import (
     CommunicationLossAction,
 )
+from autoware_carla_scenario.actions.play_motion import PlayMotionAction
 from autoware_carla_scenario.actions.routing import RoutingAction
+from autoware_carla_scenario.actions.smart_pedestrian import (
+    SmartPedestrianControllerAction,
+)
 from autoware_carla_scenario.actions.spawn import SpawnAction
 from autoware_carla_scenario.actions import walk_straight
 from autoware_carla_scenario.actions.walk_straight import WalkStraightAction
@@ -56,6 +61,31 @@ _BUILDS: dict[str, Callable[[Any], object]] = {
         "npc1", trajectory=_line(), initial_distance_offset=v
     ),
     "communication_loss.duration": lambda v: CommunicationLossAction(duration=v),
+    # #2597: the siblings of the speeds above.
+    "walk_straight.turn_back_ttc_s": lambda v: WalkStraightAction(
+        "pedestrian1", 1.4, turn_back_ttc_s=v
+    ),
+    "walk_straight.turn_back_distance_m": lambda v: WalkStraightAction(
+        "pedestrian1", 1.4, turn_back_distance_m=v
+    ),
+    "walk_straight.turn_back_within_m": lambda v: WalkStraightAction(
+        "pedestrian1", 1.4, turn_back_within_m=v
+    ),
+    "routing.turn_back_ttc_s": lambda v: RoutingAction(
+        "pedestrian1", _GOAL, turn_back_ttc_s=v
+    ),
+    "routing.turn_back_distance_m": lambda v: RoutingAction(
+        "pedestrian1", _GOAL, turn_back_distance_m=v
+    ),
+    "routing.turn_back_within_m": lambda v: RoutingAction(
+        "pedestrian1", _GOAL, turn_back_within_m=v
+    ),
+    "smart_pedestrian.speed_ms": lambda v: SmartPedestrianControllerAction(
+        "pedestrian1", "walks on", speed_ms=v
+    ),
+    "smart_pedestrian.duration_s": lambda v: SmartPedestrianControllerAction(
+        "pedestrian1", "walks on", duration_s=v
+    ),
 }
 
 
@@ -66,6 +96,22 @@ def test_a_boolean_is_refused(name: str, boolean: bool) -> None:
     build(1.0)  # the number True would read as is taken: the type is refused
     with pytest.raises(ValueError, match=repr(boolean)):
         build(boolean)
+
+
+@pytest.mark.parametrize("key", ["fps", "duration_s"])
+@pytest.mark.parametrize("boolean", [True, False])
+def test_a_played_motion_refuses_a_boolean(
+    key: str, boolean: bool, tmp_path: Path
+) -> None:
+    """A boolean fps or duration would read as 0 or 1 (#2597)."""
+    from .test_play_motion import RAISED, _write_motion
+
+    motion = _write_motion(tmp_path / "wave.npz", [{}, RAISED])
+    taken: dict[str, Any] = {key: 1.0}
+    refused: dict[str, Any] = {key: boolean}
+    PlayMotionAction("pedestrian1", motion, **taken)
+    with pytest.raises(ValueError, match=repr(boolean)):
+        PlayMotionAction("pedestrian1", motion, **refused)
 
 
 @pytest.mark.parametrize("duration", [math.inf, math.nan, -math.inf])

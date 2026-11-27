@@ -374,7 +374,8 @@ class RoutingAction(TrajectoryRun):
             waypoints beside a trajectory, a goal with a mode other than
             ``driver`` or a positive *initial_distance_offset*, a walking
             speed that is a boolean or not finite and positive, a *speed* or turn-back
-            threshold that is negative or not finite, or what :class:`~._trajectory_run.TrajectoryRun` refuses.
+            threshold that is negative or not finite (or, a turn-back one, a
+            boolean), or what :class:`~._trajectory_run.TrajectoryRun` refuses.
     """
 
     _stop_at_goal: bool
@@ -445,21 +446,30 @@ class RoutingAction(TrajectoryRun):
             raise ValueError(
                 f"walking_speed must be finite and positive, not {walking_speed!r}"
             )
+        # A boolean turn-back threshold would read as 0 or 1, too (#2597).
         if turn_back_ttc_s is not None and (
-            not math.isfinite(turn_back_ttc_s) or turn_back_ttc_s < 0.0
+            isinstance(turn_back_ttc_s, bool)
+            or not math.isfinite(turn_back_ttc_s)
+            or turn_back_ttc_s < 0.0
         ):
             raise ValueError(
                 "turn_back_ttc_s must be finite and not negative, "
                 f"not {turn_back_ttc_s!r}"
             )
         if turn_back_distance_m is not None and (
-            not math.isfinite(turn_back_distance_m) or turn_back_distance_m < 0.0
+            isinstance(turn_back_distance_m, bool)
+            or not math.isfinite(turn_back_distance_m)
+            or turn_back_distance_m < 0.0
         ):
             raise ValueError(
                 "turn_back_distance_m must be finite and not negative, "
                 f"not {turn_back_distance_m!r}"
             )
-        if not math.isfinite(turn_back_within_m) or turn_back_within_m < 0.0:
+        if (
+            isinstance(turn_back_within_m, bool)
+            or not math.isfinite(turn_back_within_m)
+            or turn_back_within_m < 0.0
+        ):
             raise ValueError(
                 "turn_back_within_m must be finite and not negative, "
                 f"not {turn_back_within_m!r}"

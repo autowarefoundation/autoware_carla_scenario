@@ -6,6 +6,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Optional, Union
 
+from ..action_state import ActionState
 from ..conditions.base import BaseCondition
 from ..conditions.lane_change_settled import LaneChangeSettledCondition
 from ..entity.registry import fail_if_pedestrian, find_vehicle_entity
@@ -81,7 +82,9 @@ class LaneChangeAction(BaseAction):
         overrides: Take over a control domain of the entity another action
             holds (:attr:`~BaseAction.overrides`).
         until: Overrides what counts as the manoeuvre having settled.  Defaults
-            to :class:`LaneChangeSettledCondition` on *entity_name*.
+            to :class:`LaneChangeSettledCondition` on *entity_name*.  One that
+            ends the run before the vehicle has settled stops the lane change
+            still to be carried out, as an override does (:meth:`tick`).
         start_after_m: How far to drive after the trigger before starting to
             cross, m.  ``0.0`` (default): at once.
         lane_change_length_m: How far to drive while crossing, m.  ``0.0``
@@ -97,6 +100,7 @@ class LaneChangeAction(BaseAction):
     _direction: LaneChangeDirection
     _start_after_m: float
     _lane_change_length_m: float
+    _settled: LaneChangeSettledCondition
 
     def __init__(
         self,
@@ -149,12 +153,29 @@ class LaneChangeAction(BaseAction):
         self._direction = direction
         self._start_after_m = start_after_m
         self._lane_change_length_m = lane_change_length_m
+        # Whether the vehicle has settled, asked as a run ends: one its
+        # *until* ended before then is stopped (:meth:`tick`).
+        self._settled = LaneChangeSettledCondition(
+            entity_name, label=f"{label}_settled"
+        )
 
     @property
     def needs_tick_loop(self) -> bool:
         """Always: the run waits on its *until*, the vehicle settling onto the
         next lane, which only a tick can see."""
         return True
+
+    def tick(self, world: "carla.World", elapsed: float) -> None:
+        """Step the run (:meth:`BaseAction.tick`); one its *until* ends before
+        the vehicle has settled onto the next lane is a stop, as an overridden
+        one is (:meth:`_stopped`): the lane change still to be carried out is
+        dropped, so it does not happen on top of a later lateral action."""
+        super().tick(world, elapsed)
+        if (
+            self.state is ActionState.END_TRANSITION
+            and self._settled.check(world, elapsed) is None
+        ):
+            self._stopped(world)
 
     # ------------------------------------------------------------------
     # BaseAction interface
@@ -180,8 +201,9 @@ class LaneChangeAction(BaseAction):
         )
 
     def _stopped(self, world: "carla.World") -> None:
-        """Overridden mid-run (:meth:`BaseAction._stop_overridden`): the lane
-        change the backend is still to carry out -- one waiting for its
+        """Overridden mid-run (:meth:`BaseAction._stop_overridden`), or the
+        run ended by its *until* before the vehicle settled (:meth:`tick`):
+        the lane change the backend is still to carry out -- one waiting for its
         *start_after_m*, or being stretched over its *lane_change_length_m* --
         is dropped, so it does not happen on top of what took the lane over
         (#2430).  One that is done is left as it is

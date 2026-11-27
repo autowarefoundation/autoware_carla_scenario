@@ -471,6 +471,9 @@ class SpawnAction(BaseAction):
             )
             return False
         found: "carla.Actor" = actor
+        # At the speed given, each time it is brought in: an earlier fire of a
+        # repeating spawn may have slowed it behind a road user (#2597).
+        self._speed = self._given_speed
         extent = found.bounding_box.extent
         # Entering at speed, it needs the room to stop ahead of it clear too
         # (a car put 0.3 m behind a slower one ran into it).

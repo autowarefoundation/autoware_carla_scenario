@@ -247,7 +247,6 @@ class TrajectoryRun(BaseAction):
     _elapsed: float
     _finished: bool
     _warned_missing: bool
-    _warned_absent: bool
     _start_time: float
     _clock_shift: float
     _clock_start: float
@@ -351,7 +350,6 @@ class TrajectoryRun(BaseAction):
         # Per run.
         self._finished = False
         self._warned_missing = False
-        self._warned_absent = False
         self._start_time = 0.0
         self._clock_shift = 0.0
         self._clock_start = 0.0
@@ -377,7 +375,6 @@ class TrajectoryRun(BaseAction):
         self._elapsed = 0.0
         self._finished = False
         self._warned_missing = False
-        self._warned_absent = False
         self._start_time = 0.0
         self._clock_shift = 0.0
         self._clock_start = 0.0
@@ -473,9 +470,9 @@ class TrajectoryRun(BaseAction):
 
     def _entity_absent(self) -> None:
         """The entity is not (or no longer) in the world -- despawned, or
-        never spawned: said once, and a run it was on ends."""
-        if not self._warned_absent:
-            self._warned_absent = True
+        never spawned: said once (:meth:`BaseAction._report_missing`), and a
+        run it was on ends."""
+        if self._report_missing():
             logger.warning(
                 "%s: entity '%s' not found; nothing to move",
                 self.label,

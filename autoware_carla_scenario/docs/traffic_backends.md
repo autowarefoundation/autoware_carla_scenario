@@ -675,8 +675,8 @@ it was doing, which is also what `LaneChangeAction` sees when it asks whether th
 manoeuvre finished.
 
 `cancel_lane_change` is called when a `LaneChangeAction` is stopped before
-the vehicle settled, overridden by another action that takes its lane (a
-`TurnAction`, say). A lane change the backend keeps to carry out later -- one
+the vehicle settled: overridden by another action that takes its lane (a
+`TurnAction`, say), or its run ended first by an `until` of its own. A lane change the backend keeps to carry out later -- one
 waiting for its `start_after_m`, or being stretched over its
 `lane_change_length_m` -- is dropped, and what it changed in how the vehicle
 drives given back; one that is done, or was handed on at once, is left as it

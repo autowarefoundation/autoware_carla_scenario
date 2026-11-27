@@ -16,9 +16,11 @@ import typesafe_carla.carla as carla
 import pytest
 
 from autoware_carla_scenario import (
+    BaseCondition,
     BaseScenario,
     EgoConfig,
     ElapsedTimeCondition,
+    ScenarioResult,
     SpawnTransform,
     TrafficSinkAction,
     TrafficSourceAction,
@@ -218,6 +220,37 @@ class TestSource:
         assert len(backend.vehicles) == at_three
         assert 4 <= at_three <= 5
 
+    def test_a_later_run_owes_nothing_for_the_time_it_was_idle(self) -> None:
+        """A repeating source starting another run adds at its rate from then
+        on: no burst for the time between its runs, and no initial vehicles
+        again (#2597)."""
+        backend, world = _Backend(), _World()
+        trigger, until = _Flag("go"), _Flag("stop")
+        trigger.on = True
+        source = TrafficSourceAction(
+            _NOT_JUNCTION,
+            initial_vehicles=2,
+            vehicles_per_minute=60.0,
+            min_gap_m=0.0,
+            condition=trigger,
+            until=until,
+            once=False,
+        )
+        source.set_traffic_backend(backend)
+        _run(source, world, 2.0)
+        first_run = len(backend.vehicles)
+        assert 3 <= first_run <= 4
+        # The run ends (acting once more on the tick it sees until), and the
+        # source stands idle for 100 s.
+        trigger.on, until.on = False, True
+        _run(source, world, 100.0)
+        idle = len(backend.vehicles)
+        assert idle <= first_run + 1
+        # Another run: one a second again, from now.
+        trigger.on, until.on = True, False
+        _run(source, world, 2.0)
+        assert idle + 1 <= len(backend.vehicles) <= idle + 2
+
     def test_max_vehicles_caps_what_is_on_the_road_at_once(self) -> None:
         backend, world = _Backend(), _World()
         source = TrafficSourceAction(
@@ -381,6 +414,19 @@ class TestSink:
         backend.vehicles["after"] = (5.0, 0.0, 0.0)
         _run(sink, world, 1.0)
         assert "after" in backend.vehicles
+
+
+class _Flag(BaseCondition):
+    """Holds while :attr:`on` is set."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__(label=label)
+        self.on = False
+
+    def check(self, world: Any, elapsed: float) -> Optional[ScenarioResult]:
+        if not self.on:
+            return None
+        return ScenarioResult(passed=True, message="on", elapsed_seconds=elapsed)
 
 
 def _scenario() -> BaseScenario:

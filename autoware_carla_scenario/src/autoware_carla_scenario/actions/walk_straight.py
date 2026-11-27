@@ -111,7 +111,7 @@ class WalkStraightAction(BaseAction):
     Raises:
         ValueError: If *speed_ms*, a turn-back threshold or
             *turn_back_within_m* is negative or not finite (``None`` turns a
-            threshold off), or *speed_ms* is a boolean.  A negative speed would be read
+            threshold off), or any of them is a boolean.  A negative speed would be read
             by CARLA as a direction rather than refused, and a pedestrian
             walking backwards through a crossing is not what anyone wrote.
     """
@@ -158,21 +158,31 @@ class WalkStraightAction(BaseAction):
                 "speed_ms must be finite and not negative (a number), "
                 f"not {speed_ms!r}"
             )
+        # A boolean threshold would read as 0 or 1 (s or m), as a boolean
+        # speed would (#2273, #2597).
         if turn_back_ttc_s is not None and (
-            not math.isfinite(turn_back_ttc_s) or turn_back_ttc_s < 0
+            isinstance(turn_back_ttc_s, bool)
+            or not math.isfinite(turn_back_ttc_s)
+            or turn_back_ttc_s < 0
         ):
             raise ValueError(
                 "turn_back_ttc_s must be finite and not negative, "
                 f"not {turn_back_ttc_s!r}"
             )
         if turn_back_distance_m is not None and (
-            not math.isfinite(turn_back_distance_m) or turn_back_distance_m < 0
+            isinstance(turn_back_distance_m, bool)
+            or not math.isfinite(turn_back_distance_m)
+            or turn_back_distance_m < 0
         ):
             raise ValueError(
                 "turn_back_distance_m must be finite and not negative, "
                 f"not {turn_back_distance_m!r}"
             )
-        if not math.isfinite(turn_back_within_m) or turn_back_within_m < 0:
+        if (
+            isinstance(turn_back_within_m, bool)
+            or not math.isfinite(turn_back_within_m)
+            or turn_back_within_m < 0
+        ):
             raise ValueError(
                 "turn_back_within_m must be finite and not negative, "
                 f"not {turn_back_within_m!r}"
