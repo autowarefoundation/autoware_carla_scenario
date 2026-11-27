@@ -20,13 +20,15 @@ from autoware_carla_scenario import (
     MapArea,
 )
 from autoware_carla_scenario.conditions import map_area_from_fields
+from autoware_carla_scenario.conditions.composition.entity_area_distance import (
+    _Outline,
+)
 from autoware_carla_scenario.conditions.map_area import (
     area_lanelet_ids,
     area_shapes,
     parse_attributes,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
-from autoware_carla_scenario.utils.clearance import level_gap, on_another_level
 from autoware_carla_scenario.utils.polygon import (
     bounding_circle,
     edge_value,
@@ -628,16 +630,34 @@ class TestStacked:
                     assert measured is not None
                     box = ground_box(ego, ego.get_transform())
                     body = (z, z + 1.6)
-                    every = []
-                    for outline in outlines:
-                        planar, edge, along = polygon_distance_at(
-                            box, outline.points, (x, y)
-                        )
-                        at = edge_value(outline.heights, edge, along)
-                        if on_another_level(body, (at, at), planar):
-                            planar = math.hypot(planar, level_gap(body, (at, at)))
-                        every.append(planar)
+                    every = [
+                        condition._outline_distance(outline, box, body, False)
+                        for outline in outlines
+                    ]
                     assert measured[0] == pytest.approx(min(every)), (x, y, z)
+
+    def test_inside_a_wide_area_on_a_hill_it_is_on_the_ego_s_level(
+        self, stacked_map: dict[str, int]
+    ) -> None:
+        """An intersection's area, 40 m by 100 m, falling 9 % eastward: the
+        ego in it, 12 m from its east edge, stands 1.08 m above that edge --
+        clear of it by more than a metre, but no more than the road falls
+        over the 12 m, so the edge is on its level and the ego is in the
+        area, not 1.08 m from it."""
+        condition = _levels_condition("measure", MapArea(AreaGround.CROSSWALK))
+        corners = [(0.0, -50.0), (40.0, -50.0), (40.0, 50.0), (0.0, 50.0)]
+        condition._outlines = [
+            _Outline(corners, [-0.09 * x for x, _y in corners], "polygon", 1)
+        ]
+        inside = _world(_ego(28.0, 0.0, z=-0.09 * 28.0))
+        assert condition.check(inside, 1.0) is not None
+        assert condition.closest_m == 0.0
+        # 6 m below the road there, in a tunnel under it: another level, its
+        # east edge (3.6 m down) 3.32 m over the ego's 1.6 m roof.
+        under = _levels_condition("measure", MapArea(AreaGround.CROSSWALK))
+        under._outlines = condition._outlines
+        assert under.check(_world(_ego(28.0, 0.0, z=-0.09 * 28.0 - 6.0)), 1.0) is None
+        assert under.closest_m == pytest.approx(-3.6 - (-0.09 * 28.0 - 6.0 + 1.6))
 
     def test_further_down_a_hill_is_the_same_level(
         self, stacked_map: dict[str, int]

@@ -119,9 +119,10 @@ class EntityAreaDistanceCondition(CompositionCondition):
     than the entity (:func:`~...utils.clearance.on_another_level`) when it is
     clear of the entity's box by more than a metre in height
     (:func:`~...utils.clearance.level_gap`) and further up or down from where
-    the entity stands than a road's grade (10 %) climbs over the plan
-    distance -- so a crosswalk on the same street further down a hill is on
-    the entity's level.  Such an area counts as *levels* says:
+    the entity stands than a road's grade (10 %) climbs between the middle of
+    its body and that point -- so a crosswalk on the same street further
+    down a hill, or the far edge of an intersection on a slope the entity is
+    in, is on the entity's level.  Such an area counts as *levels* says:
 
     * ``"measure"`` (the default): its distance is ``hypot(plan, height)``,
       the height being how far it is clear of the box.  An area on the
@@ -344,9 +345,10 @@ class EntityAreaDistanceCondition(CompositionCondition):
         loop stops at the first whose circle is no nearer than the best
         found -- most of a city's crosswalks are never measured; one whose
         circle is clear of the body's cannot overlap it, so only its gap is
-        measured.  Measuring through the levels, the bound is the circles'
-        combined with how far the outline's span of heights is from the
-        body's, so an area a level away is skipped as one far in plan is."""
+        measured.  Measuring through the levels, the bound of an outline
+        whose circle is clear of the body's is the circles' combined with how
+        far the outline's span of heights is from the body's, so an area a
+        level away is skipped as one far in plan is."""
         assert self._entity_name is not None  # noqa: S101
         entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
@@ -356,7 +358,6 @@ class EntityAreaDistanceCondition(CompositionCondition):
         box_x, box_y, box_reach = bounding_circle(box)
         body = actor_vertical_span(entity, transform)
         measure = self._levels == LEVELS_MEASURE
-        ignore = self._levels == LEVELS_IGNORE
         planar_bounds: list[float] = []
         bounds: list[tuple[float, int]] = []
         for i in range(len(self._outlines)):
@@ -365,14 +366,22 @@ class EntityAreaDistanceCondition(CompositionCondition):
             planar_bound = math.hypot(cx - box_x, cy - box_y) - radius - box_reach
             planar_bounds.append(planar_bound)
             bound = planar_bound
-            if measure:
+            # Only for an outline that cannot overlap the body: one that can
+            # may be on the entity's level however far its edges climb from
+            # where the body stands (_outline_distance), so it keeps its plan
+            # bound.
+            if measure and planar_bound > 0.0:
                 apart = level_gap(body, outline.span)
                 if apart > 0.0:
                     # Through the height, at least the span's gap; in plan --
-                    # the height within a road's grade of the plan distance
-                    # -- at least as far as that grade climbs the gap.
-                    plan = max(planar_bound, 0.0)
-                    bound = min(math.hypot(plan, apart), max(plan, apart / _MAX_GRADE))
+                    # the height within a road's grade of how far the point
+                    # read is from the middle of the body, which is at most
+                    # the plan distance and the body's reach -- at least as
+                    # far as that grade climbs the gap, less the reach.
+                    bound = min(
+                        math.hypot(planar_bound, apart),
+                        max(planar_bound, apart / _MAX_GRADE - box_reach),
+                    )
             bounds.append((bound, i))
         bounds.sort()
         best = math.inf
@@ -380,29 +389,58 @@ class EntityAreaDistanceCondition(CompositionCondition):
         for bound, i in bounds:
             if bound >= best:
                 break
-            outline = self._outlines[i]
-            planar = 0.0
-            edge = -1
-            along = 0.0
-            if planar_bounds[i] > 0.0:
-                planar, edge, along = polygon_gap_at(box, outline.points)
-            else:
-                planar, edge, along = polygon_distance_at(
-                    box, outline.points, (box_x, box_y)
-                )
-            distance = planar
-            if (measure or ignore) and edge >= 0:
-                height = edge_value(outline.heights, edge, along)
-                if on_another_level(body, (height, height), planar):
-                    if ignore:
-                        continue
-                    distance = math.hypot(planar, level_gap(body, (height, height)))
+            distance = self._outline_distance(
+                self._outlines[i], box, body, planar_bounds[i] > 0.0
+            )
             if distance < best:
                 best = distance
                 nearest = i
         if nearest < 0:
             return None
         return (best, nearest)
+
+    def _outline_distance(
+        self,
+        outline: _Outline,
+        box: list[Point],
+        body: tuple[float, float],
+        apart: bool,
+    ) -> float:
+        """The distance from the body's outline *box* (its vertical span
+        *body*) to *outline*, as *levels* counts another level: ``inf`` for
+        one left out.  *apart*: the two cannot overlap (their circles are
+        clear), so only the gap is measured.
+
+        Whether the area is on the entity's level is reckoned from the middle
+        of the body, where it stands, to the point of the outline its height
+        is read at: inside a wide area -- an intersection on a hill -- that
+        point is the edge nearest the middle, and the road climbs or falls
+        between them as it does between the body and an area beside it."""
+        box_x, box_y, _reach = bounding_circle(box)
+        planar = 0.0
+        edge = -1
+        along = 0.0
+        if apart:
+            planar, edge, along = polygon_gap_at(box, outline.points)
+        else:
+            planar, edge, along = polygon_distance_at(
+                box, outline.points, (box_x, box_y)
+            )
+        if self._levels == LEVELS_PLAN or edge < 0:
+            return planar
+        height = edge_value(outline.heights, edge, along)
+        points = outline.points
+        start = points[edge]
+        end = points[(edge + 1) % len(points)]
+        x = start[0] + (end[0] - start[0]) * along
+        y = start[1] + (end[1] - start[1]) * along
+        if not on_another_level(
+            body, (height, height), math.hypot(x - box_x, y - box_y)
+        ):
+            return planar
+        if self._levels == LEVELS_IGNORE:
+            return math.inf
+        return math.hypot(planar, level_gap(body, (height, height)))
 
     def _check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
         """Keep the closest the entity came, and return a pass result once the
