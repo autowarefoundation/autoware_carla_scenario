@@ -801,6 +801,68 @@ number from 0 to 2^31 - 1. A key drawn from a distribution may
 not be set by a binding, a route match, the ODD sample or an override of the
 run: the run would follow that value while the sweep said it was drawn.
 
+#### Relations between drawn parameters (Z3)
+
+A distribution draws one parameter on its own, so it cannot say "the ego is
+faster than the car it follows". `sweep.relations` can: a list of
+expressions over the parameters' keys, which every case's values meet. They
+are solved with the SMT solver [Z3](https://github.com/Z3Prover/z3)
+(`autoware_carla_scenario.sweeper.relations`):
+
+```yaml
+sweep:
+  constraints:
+    ego.initial_speed_kmh:
+      - {type: uniform, low: 20.0, high: 60.0}
+    scenario.lead_speed_kmh:
+      - {type: uniform, low: 10.0, high: 50.0}
+    scenario.gap_m:
+      - {type: normal, mean: 30.0, std: 10.0, low: 5.0}
+  relations:
+    - ego.initial_speed_kmh > scenario.lead_speed_kmh + 5
+    - scenario.gap_m >= (ego.initial_speed_kmh - scenario.lead_speed_kmh) / 3.6 * 2
+  samples: 10
+```
+
+An expression is made of keys (`a.b.c`), numbers, `+ - * /`, `abs()`,
+`min()`, `max()`, the comparisons `< <= > >= == !=` (chained too: `0 < a.x <
+b.y`), and `and`, `or`, `not`; it is parsed, never run as Python. A key is a
+parameter drawn from a distribution, or one the case sets to a number -- a
+binding's value, a route match's, an override's (`ego.spawn_s=12`) -- which is
+then a constant of that case. Every relation must name at least one drawn
+parameter.
+
+For each case:
+
+1. Z3 checks that the relations can hold within the distributions' bounds.
+   When they cannot, the case is dropped with a warning naming the relations
+   that conflict (Z3's unsat core); a sweep with no case left is an error.
+   Relations naming only drawn parameters are checked before the map loads,
+   so `scenario-expand` refuses them at once.
+2. Each related parameter's range is narrowed to the values the relations
+   leave it (Z3 minimising and maximising it). This removes no solution, so
+   it only makes the next step faster.
+3. Values are drawn from the distributions, truncated to those ranges, until
+   a draw meets every relation: the values follow the distributions
+   **conditioned on the relations** (uniform `x`, `y` on `[0, 1]` with `x >
+   y` draws `x` with mean 2/3).
+4. If 1000 draws meet none (an equality, which a continuous draw meets with
+   probability 0, or a very narrow region), the related parameters are drawn
+   one after another, in key order, each within what the relations leave it
+   given those drawn before it. Every case still meets the relations, but the
+   values are no longer exactly the conditioned distribution, and a warning
+   says so.
+
+The related parameters are drawn together from a seed of their own, made like
+a distribution's; a parameter in no relation draws exactly what it drew
+without relations, so adding a relation moves only the values it relates.
+Relations are linear in practice: a product of two drawn parameters is
+non-linear, which Z3 may not decide (an error), and whose ranges are then not
+narrowed. A relation that does not parse, names something else than keys and
+numbers, a key that is neither drawn nor set to a number by the case, or a
+`sweep.relations` without any distribution is refused, naming the item
+(`sweep.relations[1]`).
+
 ### Resume from a Specific Scenario
 
 When running large batches, you can skip already-completed scenarios.

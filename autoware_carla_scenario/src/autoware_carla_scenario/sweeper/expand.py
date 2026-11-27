@@ -51,6 +51,7 @@ elsewhere -- e.g. a test suite fanning them out over a cluster.
 from __future__ import annotations
 
 import logging
+import random
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
@@ -74,6 +75,7 @@ from .constraints import (
     parse_constraint,
 )
 from .distributions import draw_case, fnv1a, is_distribution, parse_distribution
+from .relations import RelationSolver, RelationsUnsatisfiable, parse_relations
 
 if TYPE_CHECKING:
     from ..odd.sampler import OddDraws
@@ -155,7 +157,8 @@ def expand_sweep(
     :data:`~autoware_carla_scenario.seed.DEFAULT_SEED` when both are.
 
     The distributions in ``sweep.constraints`` draw a value for every key of
-    theirs, ``sweep.samples`` times for each case, from ``sweep.seed`` (else
+    theirs, conditioned on ``sweep.relations`` (solved with Z3,
+    :mod:`.relations`), ``sweep.samples`` times for each case, from ``sweep.seed`` (else
     *seed*, else :data:`~autoware_carla_scenario.seed.DEFAULT_SEED`), the
     *scenario*'s name and the case (:mod:`.distributions`).
 
@@ -219,6 +222,7 @@ def expand_sweep(
             run_seed if draw_seed is None else draw_seed,
             scenario,
             [*arguments, *composed],
+            parse_relations(sweep.get("relations")),
         )
     if index is not None:
         if not 0 <= index < len(base_cases):
@@ -277,6 +281,23 @@ def _clashes(keys: set[str], overrides: Sequence[str]) -> str:
     return ", ".join(sorted(keys & {_override_key(o) for o in overrides}))
 
 
+def _numbers(overrides: Sequence[str]) -> dict[str, float]:
+    """The keys *overrides* set to a finite number, with it: the constants a
+    relation may name (:mod:`.relations`)."""
+    numbers: dict[str, float] = {}
+    for override in overrides:
+        if "=" not in override or override.startswith("~"):
+            continue
+        text = override.split("=", 1)[1].strip().strip("'\"")
+        try:
+            value = float(text)
+        except ValueError:
+            continue
+        if value == value and abs(value) != float("inf"):
+            numbers[_override_key(override)] = value
+    return numbers
+
+
 def _with_distribution_draws(
     base_cases: list[list[str]],
     distributions: Mapping[str, Any],
@@ -284,6 +305,7 @@ def _with_distribution_draws(
     seed: int,
     scenario: str,
     arguments: Sequence[str],
+    relations: Sequence[Any] = (),
 ) -> list[list[str]]:
     """Each of *base_cases* *samples* times, each time with a value drawn for
     every key of *distributions*, in the order of the base cases.  A draw's
@@ -291,11 +313,18 @@ def _with_distribution_draws(
     encoded ODD case, which a change to the ODD's definition alone would move)
     and the sample's number (:mod:`.distributions`).
 
+    The keys *relations* (``sweep.relations``, parsed) name are drawn
+    together, conditioned on them (:class:`.relations.RelationSolver`), from a
+    seed of their own; the others each on their own as before.  A base case
+    for which the relations cannot hold (with the numbers it sets) is dropped
+    with a warning.
+
     Raises:
         ValueError: If a base case (a binding, a route match or a case drawn
             from the ODD) or one of *arguments* already sets a key a
             distribution draws: the run would follow that value while the
-            sweep said it was drawn.
+            sweep said it was drawn.  Or if the relations hold for no base
+            case, or name a key that is neither drawn nor set to a number.
     """
     from ..odd.control_fields import ODD_CASE_KEY  # noqa: PLC0415
 
@@ -313,13 +342,32 @@ def _with_distribution_draws(
             f"sweep.constraints draws {clash} from a distribution; an override "
             "may not set it too (drop the override, or the distribution)"
         )
+    solver = RelationSolver(relations, distributions) if relations else None
+    related = set(solver.related) if solver is not None else set()
+    alone = {k: d for k, d in distributions.items() if k not in related}
     cases: list[list[str]] = []
+    dropped: list[str] = []
     for case in base_cases:
         named = [o for o in case if _override_key(o) != ODD_CASE_KEY]
+        constants = _numbers([*arguments, *named]) if solver is not None else {}
+        if solver is not None:
+            try:
+                solver.check(constants)
+            except RelationsUnsatisfiable as exc:
+                dropped.append(str(exc))
+                logger.warning("Dropping case %s: %s", " ".join(named), exc)
+                continue
         # The case's part of each draw's identity, hashed once.
         h = fnv1a("\x1f".join([str(seed), scenario, *named]))
         for sample in range(samples):
-            values = draw_case(distributions, fnv1a(f"\x1fsample={sample}", h))
+            h_sample = fnv1a(f"\x1fsample={sample}", h)
+            values = draw_case(alone, h_sample)
+            if solver is not None:
+                rng = random.Random(
+                    fnv1a("\x1frelations", h_sample) & 0x7FFFFFFFFFFFFFFF
+                )
+                values.update(solver.draw(constants, rng))
+                values = {k: values[k] for k in sorted(values)}
             cases.append(
                 [
                     *case,
@@ -328,6 +376,11 @@ def _with_distribution_draws(
                     *(f"{k}={_override_value(round(v, 9))}" for k, v in values.items()),
                 ]
             )
+    if dropped and not cases:
+        raise ValueError(
+            f"sweep.relations hold for none of the sweep's {len(base_cases)} "
+            f"case(s); for the first: {dropped[0]}"
+        )
     return cases
 
 
@@ -720,7 +773,8 @@ def check_constraint_keys(
     A route search derives nothing from a pick, so ``sweep.bindings`` beside
     ``sweep.route`` is refused rather than silently dropped (#2454).
     Its other keys may each hold a distribution (:mod:`.distributions`),
-    checked here with ``sweep.samples`` and ``sweep.seed``.
+    checked here with ``sweep.samples``, ``sweep.seed`` and
+    ``sweep.relations`` (:mod:`.relations`).
     Callers run this before loading the map, so a bad config fails at once
     rather than after a clone.
 
@@ -765,6 +819,7 @@ def check_constraint_keys(
         )
     _samples(sweep.get("samples"))
     _draw_seed(sweep.get("seed"))
+    _check_relations(sweep.get("relations"), distributions)
     bindings_cfg = _section(sweep, "bindings")
     if not isinstance(bindings_cfg, Mapping):
         raise ValueError(
@@ -796,6 +851,24 @@ def check_constraint_keys(
                 f"sweep.exclude.{key} must be a list of values, got {_shape(values)}"
             )
     return lanelet, distributions
+
+
+def _check_relations(value: Any, distributions: Mapping[str, Any]) -> None:
+    """Refuse a ``sweep.relations`` that does not parse, relates no drawn
+    parameter, or -- naming only drawn parameters -- cannot hold within their
+    distributions' bounds (Z3, :mod:`.relations`): before the map is loaded.
+    Relations naming a value a case sets are solved for each case instead."""
+    relations = parse_relations(value)
+    if not relations:
+        return
+    if not distributions:
+        raise ValueError(
+            "sweep.relations relate parameters drawn from a distribution in "
+            "sweep.constraints (- type: uniform / normal), and it draws none"
+        )
+    solver = RelationSolver(relations, distributions)
+    if not solver.constants():
+        solver.check()
 
 
 def _section(sweep: Mapping[Any, Any], key: str) -> Any:

@@ -35,6 +35,15 @@ sweep:
       - {type: uniform, low: 0.5, high: 3.0}
   samples: 6
   ```
+- **`relations`** relates drawn parameters to each other (or to numbers the case sets), solved with Z3: a list of expressions such as `ego.initial_speed_kmh > scenario.lead_speed_kmh + 5` (keys, numbers, `+ - * /`, `abs/min/max`, `< <= > >= == !=`, `and/or/not`). Each case's values are drawn from the distributions conditioned on them; a case they cannot hold for is dropped, and relations that conflict on their own are refused before the map loads (`docs/usage.md`, "Relations between drawn parameters (Z3)"). Prefer a relation over a derived parameter only when both parameters should vary; a value fully determined by others is better computed in the scenario:
+  ```yaml
+  constraints:
+    ego.initial_speed_kmh: [{type: uniform, low: 20, high: 60}]
+    scenario.lead_speed_kmh: [{type: uniform, low: 10, high: 50}]
+  relations:
+    - ego.initial_speed_kmh > scenario.lead_speed_kmh + 5
+  samples: 10
+  ```
 - **`bindings`** maps a config key to a binding; it is applied to each pick. Picks that end as the same case once their bindings are applied run once.
 - **`exclude`** drops a case by the values it *ends up with* after its bindings (a constraint only sees the pick, not where a walk-back moves a spawn):
   ```yaml

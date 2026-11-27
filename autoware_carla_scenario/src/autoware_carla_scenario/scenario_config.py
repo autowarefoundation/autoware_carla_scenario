@@ -728,7 +728,8 @@ class SweepConfig:
     (e.g. ``ego.spawn_s``) to a binding dict that auto-derives the value.
     ``constraints`` may also map scalar parameters to the one distribution
     each is drawn from (``type: uniform`` or ``type: normal``), drawn
-    ``samples`` times for each case, from ``seed`` (else the run's).
+    ``samples`` times for each case, from ``seed`` (else the run's), and
+    conditioned on ``relations`` between them (solved with Z3).
     ``odd_sample`` draws the settings of each case from the ODD.  ``exclude``
     maps a key to the values a case may not end with on it, once its bindings
     are applied.
@@ -769,6 +770,12 @@ class SweepConfig:
     #: ``type: normal``; :mod:`autoware_carla_scenario.sweeper.distributions`).
     #: A whole number >= 1.
     samples: int = 1
+
+    #: Relations between the parameters drawn from distributions, each an
+    #: expression such as ``"ego.initial_speed_kmh > scenario.lead_speed_kmh
+    #: + 5"``: each case's values are drawn conditioned on them, solved with
+    #: the SMT solver Z3 (:mod:`autoware_carla_scenario.sweeper.relations`).
+    relations: list[str] = field(default_factory=list)
 
     #: The seed the distributions draw from; ``None`` takes the run's
     #: ``seed``.  Setting it draws other values without moving the run's
