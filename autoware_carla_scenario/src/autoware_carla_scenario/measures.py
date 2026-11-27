@@ -1680,7 +1680,12 @@ def check_measure_key(key: str, where: str) -> None:
 # The running scenario
 # ---------------------------------------------------------------------------
 
-_MEASURED: dict[str, Optional["BaseScenario"]] = {"scenario": None}
+#: The running scenario, if one is: empty, or the one scenario the runner set.
+#: Not an ``Optional`` holding ``None``: Codon 0.19 lowers that ``None`` when it
+#: reads this module, and a subclass of ``BaseScenario`` defined after it (a
+#: scenario module that imports measures before its class) then fails its code
+#: generation (#263, docs/typecheck.md).
+_MEASURED: list["BaseScenario"] = []
 
 
 def prepare_vehicle_ahead() -> None:
@@ -1702,7 +1707,9 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
 
     The runner sets the scenario it runs, and clears it when the run ends.
     """
-    _MEASURED["scenario"] = scenario
+    _MEASURED.clear()
+    if scenario is not None:
+        _MEASURED.append(scenario)
     _CACHE.world = None
     _CACHE.at, _CACHE.around = None, None
     _CACHE.lead_at, _CACHE.lead = None, None
@@ -1714,7 +1721,9 @@ def set_measured_scenario(scenario: Optional["BaseScenario"]) -> None:
 
 def measured_scenario() -> Optional["BaseScenario"]:
     """The scenario whose measures are read, if one is running."""
-    return _MEASURED["scenario"]
+    if len(_MEASURED) == 0:
+        return None
+    return _MEASURED[0]
 
 
 def read_measure(key: str, world: "carla.World") -> Optional[float]:
@@ -1723,9 +1732,8 @@ def read_measure(key: str, world: "carla.World") -> Optional[float]:
     ``None`` when there is nothing to read, the key is not measured, or the
     measure raised.
     """
-    scenario = _MEASURED["scenario"]
-    if scenario is not None:
-        return scenario.measure(key, world)
+    if len(_MEASURED) > 0:
+        return _MEASURED[0].measure(key, world)
     if key not in BUILT_IN_MEASURES:
         return None
     measure = BUILT_IN_MEASURES[key]
