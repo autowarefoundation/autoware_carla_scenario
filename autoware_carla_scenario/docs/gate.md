@@ -170,8 +170,11 @@ logged):
   `case`, `outcome`, `files` or `ego` is not a JSON object, whose lists
   are not JSON arrays, whose `outcome.passed` is not a JSON boolean
   (missing, or `"false"`, `0`, `[0]`: a truthy value is never read as a
-  pass), whose ego rows hold a route s, lateral offset or
-  speed beyond 1e7, or whose text cannot be written back as UTF-8 (a lone
+  pass), whose `segment_ends` are not JSON numbers (a string, a boolean),
+  are not finite (`NaN`, `Infinity`), or are negative or decreasing (each
+  is the route s a segment ends at, the first starting at 0), whose ego
+  rows hold a value that is no finite JSON number or a route s, lateral
+  offset or speed beyond 1e7, or whose text cannot be written back as UTF-8 (a lone
   surrogate): `scenario-gate` reports it as unreadable (exit code 2)
   and judges the other records. A malformed gate is refused with
   `--document` too, though the document's gate replaces it: the record is
@@ -180,7 +183,9 @@ logged):
   (one it did not write is left out, except the result, written just after
   the record and named even if that write then fails); the coverage
   criteria merge the
-  `coverage` files of the runs judged.
+  `coverage` files of the runs judged. A record that names no coverage file
+  is warned about; a coverage file a record names that is missing, or
+  cannot be read, is an error (exit code 2).
 - The record is compact JSON: a row a tick adds up over a long run.
 
 ## Judging: `scenario-gate`
@@ -455,12 +460,12 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, did not finish or (planned) never ran, and left no record (unless `--allow-unrecorded`; above), a batch summary, SLURM manifest or sweep plan could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, `--scenario` is not `--document`'s id, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
+| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, did not finish or (planned) never ran, and left no record (unless `--allow-unrecorded`; above), a batch summary, SLURM manifest or sweep plan could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names is missing or could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, `--scenario` is not `--document`'s id, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
 `passed`, `value`, `threshold`, `comparison`, `detail`), the `warnings`, the
-`errors` (coverage files that could not be read; the run then exits `2` even
+`errors` (coverage files that are missing or could not be read; the run then exits `2` even
 if `passed`) and the records' paths. Of two sets, it holds the `baseline` and `candidate`
 paths and a comparison per scenario (`comparisons`): `passed` (the candidate's gate), `regressed`,
 both verdicts, each criterion's `change` and `delta` (candidate less

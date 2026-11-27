@@ -206,22 +206,21 @@ def _slurm_cases(directory: Path) -> tuple[list[str], int, Optional[str]]:
     return unrecorded, len(cases), unreadable
 
 
-def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
-    """:func:`_slurm_cases` as one value: the labels and how many cases the
-    batch has, or why its manifest cannot be read."""
-    names, total, why = _slurm_cases(directory)
-    return (names, total) if why is None else why
+def _shown(names: list[str]) -> str:
+    """The first :data:`_NAMED` of *names*, joined, and how many more there
+    are (``a, b, c, d, e, and 2 more``): what a refusal's line names."""
+    shown = ", ".join(names[:_NAMED])
+    more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
+    return f"{shown}{more}"
 
 
 def _batch_line(directory: Path, names: list[str], total: int) -> str:
     """The refusal's line for a batch whose cases *names* (of *total*)
     raised or have no outcome and left no gate record, naming the first
     :data:`_NAMED` of them."""
-    shown = ", ".join(names[:_NAMED])
-    more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
     return (
         f"{directory}: {len(names)} of {total} case(s) raised or have no "
-        f"outcome, and left no gate record ({shown}{more}); the gate would "
+        f"outcome, and left no gate record ({_shown(names)}); the gate would "
         "be judged over the runs that survived"
     )
 
@@ -251,25 +250,23 @@ def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
     return lines, unreadable
 
 
-def _has_gate_record(directory: Path) -> bool:
-    """Whether *directory* holds a gate record."""
+def _has_file(directory: Path, suffix: str) -> bool:
+    """Whether *directory* holds a file whose name ends in *suffix*;
+    ``False`` when it cannot be listed."""
     try:
-        return any(
-            p.name.endswith(GATE_RECORD_SUFFIX) and p.is_file()
-            for p in directory.iterdir()
-        )
+        return any(p.name.endswith(suffix) and p.is_file() for p in directory.iterdir())
     except OSError:
         return False
+
+
+def _has_gate_record(directory: Path) -> bool:
+    """Whether *directory* holds a gate record."""
+    return _has_file(directory, GATE_RECORD_SUFFIX)
 
 
 def _has_result(directory: Path) -> bool:
     """Whether *directory* holds a run's result (``*_result.json``)."""
-    try:
-        return any(
-            p.name.endswith(_RESULT_SUFFIX) and p.is_file() for p in directory.iterdir()
-        )
-    except OSError:
-        return False
+    return _has_file(directory, _RESULT_SUFFIX)
 
 
 def _has_file_since(directory: Path, suffix: str, since: float) -> bool:
@@ -339,11 +336,9 @@ def _unstarted_jobs(path: Path) -> tuple[list[str], list[str]]:
                 names.append(str(job))
         if not names:
             continue
-        shown = ", ".join(names[:_NAMED])
-        more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
         lines.append(
             f"{plan.parent}: {len(names)} of {len(jobs)} planned job(s) of the "
-            f"sweep never ran, and left no gate record ({shown}{more}); the "
+            f"sweep never ran, and left no gate record ({_shown(names)}); the "
             "gate would be judged over the runs that survived"
         )
     return lines, unreadable
@@ -394,11 +389,10 @@ def _errored_jobs(path: Path) -> list[str]:
         by_sweep.setdefault(job.parent, []).append(name)
     lines: list[str] = []
     for sweep, names in sorted(by_sweep.items()):
-        shown = ", ".join(names[:_NAMED])
-        more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
         lines.append(
             f"{sweep}: {len(names)} job(s) of the sweep raised, timed out, "
-            f"crashed or did not finish, and left no gate record ({shown}{more}); the gate would "
+            f"crashed or did not finish, and left no gate record "
+            f"({_shown(names)}); the gate would "
             "be judged over the runs that survived"
         )
     return lines

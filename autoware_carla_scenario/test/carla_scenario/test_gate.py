@@ -416,6 +416,88 @@ class TestRecord:
         assert (case.case_count, case.lanelet_ids, case.index) == (4, (1, 2), 0)
         assert all(type(v) is int for v in (case.case_count, *case.lanelet_ids))
 
+    @pytest.mark.parametrize(
+        ("ends", "named"),
+        [
+            ([math.nan, 60, 100], "'segment_ends'[0] is not finite (nan)"),
+            ([40, math.inf, 100], "'segment_ends'[1] is not finite (inf)"),
+            ([40, 60, -math.inf], "'segment_ends'[2] is not finite (-inf)"),
+            (["40", 60, 100], "'segment_ends'[0] is not a JSON number ('40')"),
+            ([40, True, 100], "'segment_ends'[1] is not a JSON number (True)"),
+            ([40, None, 100], "'segment_ends'[1] is not a JSON number (None)"),
+            ([40, [60], 100], "'segment_ends'[1] is not a JSON number ([60])"),
+            ([-1.0, 60, 100], "'segment_ends'[0] (-1.0) is below the segment's"),
+            ([40, 30, 100], "'segment_ends'[1] (30) is below the segment's start"),
+        ],
+        ids=["nan", "inf", "-inf", "str", "bool", "null", "list", "neg", "back"],
+    )
+    def test_segment_ends_that_are_no_route_s_are_unreadable(
+        self, tmp_path: Path, ends: list[Any], named: str
+    ) -> None:
+        # float() read NaN, "40" and true; a NaN end left a third of the
+        # route's stations, so the spread was judged on the rest (#2563).
+        _write(tmp_path, "a", _record())
+        bad = _write(tmp_path, "b", _record())
+        raw = json.loads(bad.read_text())
+        raw["case"]["segment_ends"] = ends
+        bad.write_text(json.dumps(raw))
+        records, errors = load_gate_records(find_gate_records([tmp_path]))
+        assert [r.path for r in records] == [tmp_path / "a_gate.json"]
+        (error,) = errors
+        assert error.startswith(f"{bad}: case ") and named in error
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    def test_segment_ends_from_zero_and_equal_ends_are_read(
+        self, tmp_path: Path
+    ) -> None:
+        # A segment of no length (an end equal to the one before, or a
+        # first at 0) is the route's, as RouteMatch allows; ints read too.
+        path = _write(tmp_path, "a", _record())
+        raw = json.loads(path.read_text())
+        raw["case"]["segment_ends"] = [0, 60, 60.0, 100]
+        path.write_text(json.dumps(raw))
+        ends = read_gate_record(path).case.segment_ends
+        assert ends == (0.0, 60.0, 60.0, 100.0)
+        assert all(type(v) is float for v in ends)
+
+    @pytest.mark.parametrize(
+        "value",
+        [math.nan, math.inf, "1.0", True, False, None, [1.0]],
+        ids=["nan", "inf", "str", "true", "false", "null", "list"],
+    )
+    @pytest.mark.parametrize("column", range(4))
+    def test_an_ego_value_that_is_no_finite_json_number_is_unreadable(
+        self, tmp_path: Path, value: Any, column: int
+    ) -> None:
+        # float() read true as 1.0 and "1.0" as 1.0 (#2563).
+        _write(tmp_path, "a", _record())
+        bad = _write(tmp_path, "b", _record())
+        raw = json.loads(bad.read_text())
+        raw["ego"]["rows"][3][column] = value
+        bad.write_text(json.dumps(raw))
+        records, errors = load_gate_records(find_gate_records([tmp_path]))
+        assert [r.path for r in records] == [tmp_path / "a_gate.json"]
+        (error,) = errors
+        assert error.startswith(f"{bad}: malformed ego row")
+
+    def test_an_ego_row_of_ints_is_read(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "a", _record())
+        raw = json.loads(path.read_text())
+        raw["ego"]["rows"] = [[0, 0, 0, 10], [1, 2, 0, 10]]
+        path.write_text(json.dumps(raw))
+        assert read_gate_record(path).ego == [
+            (0.0, 0.0, 0.0, 10.0),
+            (1.0, 2.0, 0.0, 10.0),
+        ]
+
+    def test_a_too_large_integer_is_unreadable(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "a", _record())
+        raw = json.loads(path.read_text())
+        raw["case"]["segment_ends"] = [10**400]
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="'segment_ends'.0. is not finite"):
+            read_gate_record(path)
+
 
 class TestSignedLateral:
     def test_left_of_the_route_is_positive(self) -> None:
@@ -695,11 +777,29 @@ class TestJudge:
         assert by_name["coverage_items[x]"].detail == "1 hole(s)"
 
     def test_no_coverage_file_fails_a_coverage_criterion(self, tmp_path: Path) -> None:
+        # A record that names no coverage file (the run wrote none) is
+        # warned about, not an error.
         record = _record(gate={"min_odd_coverage": 0.1})
         _write(tmp_path, "run", record)
+        record.files = {}
         verdict = judge([record])
         assert not verdict.passed
         assert any("no coverage file" in w for w in verdict.warnings)
+        assert verdict.errors == []
+
+    def test_a_named_coverage_file_that_is_missing_is_an_error(
+        self, tmp_path: Path
+    ) -> None:
+        # The run names its coverage file only when it wrote it: one gone
+        # since is an error, as a corrupt one is, not a warning (#2563).
+        record = _record(gate={"min_odd_coverage": 0.1})
+        _write(tmp_path, "run", record)
+        verdict = judge([record])
+        missing = tmp_path / "run_coverage.json"
+        assert verdict.errors == [
+            f"{missing}: the coverage file {record.path} names is missing"
+        ]
+        assert not any("no coverage file" in w for w in verdict.warnings)
 
 
 class _World:
@@ -963,6 +1063,43 @@ class TestCli:
         # Both records are still judged; the error is in the verdict.
         assert judged["runs"] == 2
         assert any("b_coverage.json" in e for e in judged["errors"])
+
+    def test_a_missing_coverage_file_a_record_names_exits_2(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        # Two records name their coverage files and only one is there: the
+        # grade judged on the one would pass, and the gate exited 0 (#2563).
+        verdict = tmp_path / "v.json"
+        gate = {"min_scenario_coverage": 0.3}
+        for i in range(2):
+            _write(tmp_path, f"run{i}", _record(gate=gate))
+        collector = CoverageCollector(
+            [CoverItem("x", lambda world: world.value, values=[1, 2, 3])]
+        )
+        collector.end(_World(1), 0.0)
+        collector.write(tmp_path / "run0_coverage.json", "S")
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        missing = tmp_path / "run1_coverage.json"
+        assert f"{missing}: the coverage file" in capsys.readouterr().err
+        judged = json.loads(verdict.read_text())["verdicts"][0]
+        assert judged["runs"] == 2
+        assert any(str(missing) in e and "missing" in e for e in judged["errors"])
+        assert not any("no coverage file" in w for w in judged["warnings"])
+
+    def test_a_record_naming_no_coverage_file_still_only_warns(
+        self, tmp_path: Path
+    ) -> None:
+        # A run that wrote no coverage file names none: not an error.
+        gate = {"min_scenario_coverage": 0.3}
+        _write(tmp_path, "run0", _record(gate=gate))
+        collector = CoverageCollector(
+            [CoverItem("x", lambda world: world.value, values=[1, 2, 3])]
+        )
+        collector.end(_World(1), 0.0)
+        collector.write(tmp_path / "run0_coverage.json", "S")
+        bare = _record(gate=gate)
+        write_gate_record(tmp_path / "run1_gate.json", bare)
+        assert main([str(tmp_path)]) == EXIT_PASSED
 
     def test_a_corrupt_coverage_file_exits_2_in_two_sets(self, tmp_path: Path) -> None:
         base, cand = tmp_path / "base", tmp_path / "cand"

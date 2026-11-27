@@ -116,6 +116,56 @@ def _wholes(raw: Mapping[str, Any], key: str) -> tuple[int, ...]:
     )
 
 
+def _number(what: str, value: Any) -> float:
+    """*value*, a JSON number, as a float.
+
+    ``float()`` would read ``true`` as 1 and ``"40"`` as 40, and JSON's
+    ``NaN`` and ``Infinity`` are no distance, time or speed: each passes or
+    fails every comparison the criteria make (#2563).
+
+    Raises:
+        ValueError: If *value* is a boolean, a string or anything else that
+            is no int or float, or is not finite; naming *what*.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{what} is not a JSON number ({value!r})")
+    try:
+        number = float(value)
+    except OverflowError:
+        # An integer literal too large for a float.
+        raise ValueError(f"{what} is not finite ({value!r})") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{what} is not finite ({value!r})")
+    return number
+
+
+def _segment_ends(raw: Mapping[str, Any]) -> tuple[float, ...]:
+    """The route s each segment of the case *raw* holds ends at
+    (``segment_ends``), as :func:`_number` reads each; empty when it holds
+    none.
+
+    Each segment starts where the one before ends, the first at 0, as the
+    route's ``RouteMatch`` writes them: an end below that would be a segment
+    of negative length, and would misplace the stations the consistency
+    criteria compare the runs at.
+
+    Raises:
+        ValueError: If ``segment_ends`` is no array, or an end is no finite
+            JSON number, or below the end before it (0 for the first).
+    """
+    ends: list[float] = []
+    for index, value in enumerate(_array(raw, "segment_ends")):
+        what = f"case 'segment_ends'[{index}]"
+        end = _number(what, value)
+        begin = ends[-1] if ends else 0.0
+        if end < begin:
+            raise ValueError(
+                f"{what} ({value!r}) is below the segment's start, {begin:g}"
+            )
+        ends.append(end)
+    return tuple(ends)
+
+
 @dataclass(frozen=True)
 class GateCase:
     """The concrete case a run drove: one route match on one map.
@@ -170,7 +220,9 @@ class GateCase:
         Raises:
             ValueError: If *raw* is not a JSON object, one of its lists is
                 not a JSON array, or its index, case count, a lanelet id or a
-                segment's lanelet count is no whole number.
+                segment's lanelet count is no whole number, or a segment's
+                end is no finite JSON number or below the one before it
+                (:func:`_segment_ends`).
         """
         if not isinstance(raw, dict):
             raise ValueError(f"the case is not a JSON object ({type(raw).__name__})")
@@ -180,7 +232,7 @@ class GateCase:
             lanelet_ids=_wholes(raw, "lanelet_ids"),
             case_count=_whole(raw, "case_count"),
             segment_kinds=tuple(str(v) for v in _array(raw, "segment_kinds")),
-            segment_ends=tuple(float(v) for v in _array(raw, "segment_ends")),
+            segment_ends=_segment_ends(raw),
             segment_lanelets=_wholes(raw, "segment_lanelets"),
         )
 
@@ -257,7 +309,8 @@ class GateRecord:
             ValueError: If *raw* is not a gate record of this format: another
                 schema, no ``gate`` object, or a part that is not of its JSON
                 type (``case``, ``outcome``, ``files`` and ``ego`` objects,
-                the ego's rows arrays), or an outcome whose ``passed`` is not
+                the ego's rows arrays), an ego row value that is no finite
+                JSON number (:func:`_number`), or an outcome whose ``passed`` is not
                 a JSON boolean (missing, ``"false"``, ``0``, ...: counting it
                 as a pass or a failure would guess the run's result).
         """
@@ -283,11 +336,12 @@ class GateRecord:
         for row in _array(ego, "rows"):
             if not isinstance(row, list):
                 raise ValueError(f"malformed ego row {row!r}")
-            values = tuple(float(v) for v in row)
-            if len(values) != len(EGO_COLUMNS) or not all(
-                math.isfinite(v) for v in values
-            ):
+            if len(row) != len(EGO_COLUMNS):
                 raise ValueError(f"malformed ego row {row!r}")
+            try:
+                values = tuple(_number("an ego row's value", v) for v in row)
+            except ValueError as exc:
+                raise ValueError(f"malformed ego row {row!r} ({exc})") from None
             if any(abs(v) > EGO_VALUE_LIMIT for v in values[1:]):
                 raise ValueError(
                     f"ego row {row!r} beyond {EGO_VALUE_LIMIT:g} (route s, "

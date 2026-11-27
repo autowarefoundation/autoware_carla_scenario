@@ -83,7 +83,6 @@ from .unrecorded import _has_result_since as _has_result_since
 from .unrecorded import _recorded_at_stem as _recorded_at_stem
 from .unrecorded import _scan_batches as _scan_batches
 from .unrecorded import _slurm_cases as _slurm_cases
-from .unrecorded import _slurm_unrecorded as _slurm_unrecorded
 from .unrecorded import _summary_cases as _summary_cases
 from .unrecorded import _unstarted_jobs as _unstarted_jobs
 from .report import (
@@ -296,9 +295,10 @@ def _coverage_criteria(
     """The coverage grades the gate asks for, from the records' coverage files
     merged.
 
-    A coverage file a record names that cannot be read (openodd's loader
-    skips it), or files that cannot be merged, go into *errors*: the grades
-    are judged on what was read, and ``scenario-gate`` exits 2.
+    A record that names no coverage file goes into *warnings*.  A coverage
+    file a record names that is missing (#2563) or cannot be read (openodd's
+    loader skips it), or files that cannot be merged, go into *errors*: the
+    grades are judged on what was read, and ``scenario-gate`` exits 2.
     """
     groups = [
         (name, group, threshold)
@@ -318,10 +318,14 @@ def _coverage_criteria(
     paths: list[Path] = []
     for record in records:
         path = record.file("coverage")
-        if path is not None and path.is_file():
+        if path is None:
+            warnings.append(f"{record.path}: no coverage file beside it")
+        elif path.is_file():
             paths.append(path)
         else:
-            warnings.append(f"{record.path}: no coverage file beside it")
+            # Named by the run, which names it only when it wrote it: gone
+            # since, it is as unreadable as a corrupt one (#2563).
+            errors.append(f"{path}: the coverage file {record.path} names is missing")
     report = None
     if paths:
         documents = load_coverage_files(paths)
