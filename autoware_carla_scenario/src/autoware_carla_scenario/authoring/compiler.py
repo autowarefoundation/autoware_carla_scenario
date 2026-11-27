@@ -2,7 +2,7 @@
 
 The pipeline is::
 
-    ScenarioDocument -> ScenarioCompiler -> BaseAction / BaseCondition -> BaseScenario
+    ScenarioDocument -> compile_document -> BaseAction / BaseCondition -> BaseScenario
 
 and it is deliberately split in two halves:
 

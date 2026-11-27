@@ -802,16 +802,39 @@ def _check_map_area(out: _Collector, path: str, node: ConditionNode) -> None:
     from the one place they are written (:meth:`~..conditions.MapArea.validate`).
     Whether the map holds it -- a picked lanelet of another ground, a ground
     the map has none of -- is the map's to say: the places panel outlines
-    the area, and the run says so once and does not hold."""
+    the area, and the run says so once and does not hold.
+
+    The fields are read as the compiler reads them (its ``coerce_params``,
+    #2579): a blank one stands for its spec default, so a blank
+    ``relief_m`` is the 1 cm the run uses, not a ``float('')``.  A field that
+    failed its own check has been reported already, so the area is not
+    judged again from it.
+    """
     if node.type != "area_distance":
         return
+    spec = get_condition_spec(node.type)
+    if spec is None:
+        return
     from ..conditions.map_area import map_area_from_fields  # noqa: PLC0415
+    from .compiler import coerce_params  # noqa: PLC0415 -- compiler imports this
 
-    params = node.params
+    names = ("ground", "lanelet_ids", "attributes", "relief_m")
+    failed = {f"{path}.{name}" for name in names}
+    if any(i.severity == "error" and i.path in failed for i in out.issues):
+        return
+    fields = tuple(f for f in spec.fields if f.name in names)
+    try:
+        params = coerce_params(fields, node.params)
+    except (TypeError, ValueError):
+        return
+    lanelet_ids = params.get("lanelet_ids")
+    if isinstance(lanelet_ids, str):
+        # A ``${...}`` reference, which Hydra resolves: no ids to judge here.
+        return
     try:
         map_area_from_fields(
-            str(params.get("ground") or "CROSSWALK"),
-            params.get("lanelet_ids") or None,
+            str(params.get("ground")),
+            lanelet_ids or None,
             str(params.get("attributes") or ""),
             params.get("relief_m"),
         )
@@ -1095,12 +1118,25 @@ def _check_routing(out: _Collector, path: str, node: ActionNode) -> None:
     domain = _value(node, "time_domain")
     timed = not _is_blank(domain) and domain != "none"
     if source == "goal":
-        if _is_blank(params.get("goal_lanelet_id")):
+        goal = params.get("goal_lanelet_id")
+        if _is_blank(goal):
             out.error(
                 f"{path}.goal_lanelet_id",
                 "A route to a goal needs its goal lanelet.",
                 node.id,
             )
+        elif _coercible_int(goal) and int(str(goal).strip()) <= 0:
+            # 0 (or less) is the empty field, as everywhere else a lanelet is
+            # read (_has_place): unless the sweep searches for the goal or
+            # derives it, the run would be sent to lanelet 0 (#2579).
+            choice = node.searches.get("goal_lanelet_id")
+            if choice is None or not (choice.searching or choice.deriving):
+                out.error(
+                    f"{path}.goal_lanelet_id",
+                    "A route to a goal needs its goal lanelet: a lanelet ID "
+                    "above 0.",
+                    node.id,
+                )
         if timed:
             out.error(
                 f"{path}.time_domain",
@@ -1568,7 +1604,8 @@ def _check_binding(
     produces: str,
     owner_id: str,
 ) -> None:
-    """Check a binding exists, is known, works out a *produces*, and is filled in."""
+    """Check a binding exists, is known, works out a *produces*, and is filled
+    in, and warn of a parameter its spec does not know."""
     noun = "offset" if produces == "s" else produces
     if binding is None:
         out.error(path, f"A derived {noun} needs a binding.", owner_id)
@@ -1586,6 +1623,9 @@ def _check_binding(
         return
     for field_spec in binding_spec.fields:
         _check_field(out, path, field_spec, binding.params, _NO_REFS, owner_id)
+    # The export leaves them out of ``sweep.bindings`` (BindingRef.to_sweep_dict),
+    # whose parse_binding refuses a key it does not know (#2579).
+    _check_unknown_params(out, path, binding_spec.fields, binding.params, owner_id)
 
 
 def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
