@@ -80,11 +80,15 @@ def test_a_division_by_zero_fails_the_relation() -> None:
     ("text", "message"),
     [
         ("a.x +", "does not parse"),
-        ("a.x + 1", "is a number where a condition"),
-        ("a.x > (b.y < 1)", "is a condition where a number"),
-        ("a.x > 'fast'", "is not a number"),
-        ("a.x > True", "is not a number"),
-        ("a.x in b.y", "no comparison"),
+        ("a.x + 1", "is a number, where a condition"),
+        ("a.x > (b.y < 1)", "takes a number, but (b.y < 1) is a bool"),
+        ("a.x > 'fast'", "takes a number, but 'fast' is a string"),
+        ("a.x and 3", "takes a bool, but 3 is a number"),
+        ("a.x in b.y", "'in' takes a list of literals"),
+        ("a.x in [1, 'a']", "mixes numbers and strings"),
+        ("a.x in [b.y]", "is not a literal"),
+        ("a.x is 3", "no comparison"),
+        ("a.x == None", "None is not a number, string or bool"),
         ("a.x > sqrt(b.y)", "not a function"),
         ("a.x > abs(b.y, 1)", "abs() takes 1 argument"),
         ("a.x > b.y ** 2", "is not something a relation takes"),
@@ -120,16 +124,16 @@ def test_unsatisfiable_relations_are_refused_naming_the_conflict() -> None:
     assert "sweep.relations[1]" not in str(exc.value)
 
 
-def test_relations_need_a_distribution() -> None:
-    with pytest.raises(ValueError, match="draws none"):
-        check_constraint_keys(
-            {"constraints": {"ego.spawn_lanelet_id": []}, "relations": ["a.x > 1"]}
-        )
+def test_relations_need_something_to_expand() -> None:
+    with pytest.raises(ValueError, match="no constraints, route or odd_sample"):
+        check_constraint_keys({"relations": ["a.x > 1"]})
 
 
-def test_a_relation_must_name_a_drawn_parameter() -> None:
-    with pytest.raises(ValueError, match="names no parameter drawn"):
-        check_constraint_keys(_sweep(["ego.spawn_s > 3"]))
+def test_a_drawn_parameter_compared_with_a_string_is_refused() -> None:
+    with pytest.raises(ValueError, match="compares values of one type"):
+        check_constraint_keys(_sweep([f"{_EGO} == 'fast'"]))
+    with pytest.raises(ValueError, match="'in' over that list takes a string"):
+        check_constraint_keys(_sweep([f"{_EGO} in ['a', 'b']"]))
 
 
 # -- Drawing -------------------------------------------------------------------------
@@ -236,3 +240,116 @@ def test_a_constant_the_case_does_not_set_is_refused() -> None:
     }
     with pytest.raises(ValueError, match="neither drawn"):
         expand_sweep(sweep, None, scenario="s")
+
+
+# -- Values of the case: typed constants, and relations as a filter -------------
+
+
+def test_relations_compare_strings_bools_and_ids() -> None:
+    relation = parse_relation(
+        "scenario.weather in ['rain', 'fog'] and not scenario.night "
+        "and scenario.npc_lanelet_id != ego.spawn_lanelet_id",
+        "r",
+    )
+    base = {
+        "scenario.weather": "rain",
+        "scenario.night": False,
+        "scenario.npc_lanelet_id": 12.0,
+        "ego.spawn_lanelet_id": 34.0,
+    }
+    assert relation.holds(base)
+    assert not relation.holds({**base, "scenario.weather": "clear"})
+    assert not relation.holds({**base, "scenario.night": True})
+    assert not relation.holds({**base, "scenario.npc_lanelet_id": 34.0})
+
+
+def test_a_value_of_the_case_conditions_the_draws() -> None:
+    sweep = {
+        "constraints": {"a.x": _uniform(0.0, 100.0)},
+        "relations": ["scenario.weather != 'rain' or a.x < 20"],
+        "samples": 30,
+    }
+    rainy = expand_sweep(sweep, None, ["scenario.weather=rain"], scenario="s")
+    assert all(float(_values_typed(c)["a.x"]) < 20 for c in rainy)
+    clear = expand_sweep(sweep, None, ["scenario.weather=clear"], scenario="s")
+    assert any(float(_values_typed(c)["a.x"]) >= 20 for c in clear)
+
+
+def test_a_case_value_of_the_wrong_type_is_refused() -> None:
+    sweep = {
+        "constraints": {"a.x": _uniform(0.0, 10.0)},
+        "relations": ["a.x < scenario.weather"],
+    }
+    with pytest.raises(ValueError, match="sets scenario.weather to a string"):
+        expand_sweep(sweep, None, ["scenario.weather=rain"], scenario="s")
+
+
+def test_the_config_s_own_values_are_the_default() -> None:
+    from autoware_carla_scenario.sweeper.expand import relation_defaults
+
+    cfg = OmegaConf.create(
+        {
+            "scenario": {"lead_speed_kmh": 30, "weather": "rain", "night": True},
+            "ego": {"limit": "${scenario.lead_speed_kmh}", "missing": "???"},
+        }
+    )
+    relations = [
+        f"{_EGO} > scenario.lead_speed_kmh",
+        f"{_EGO} >= ego.limit",
+        "scenario.night and scenario.weather == 'rain'",
+        "ego.missing > 1 or ego.unknown < 2 or True",
+    ]
+    sweep: dict[str, Any] = {
+        "constraints": {_EGO: _uniform(0.0, 100.0)},
+        "relations": relations,
+        "samples": 20,
+    }
+    defaults = relation_defaults(cfg, sweep)
+    assert defaults == {
+        "scenario.lead_speed_kmh": 30.0,
+        "ego.limit": 30.0,
+        "scenario.night": True,
+        "scenario.weather": "rain",
+    }
+    sweep["relations"] = relations[:3]
+    for case in expand_sweep(sweep, None, scenario="s", defaults=defaults):
+        assert float(_values_typed(case)[_EGO]) > 30.0
+    # An override of the run wins over the config's value.
+    for case in expand_sweep(
+        sweep, None, ["scenario.lead_speed_kmh=80"], scenario="s", defaults=defaults
+    ):
+        assert float(_values_typed(case)[_EGO]) > 80.0
+
+
+def test_relations_over_values_alone_filter_the_lanelet_cases(
+    nishishinjuku: Any,
+) -> None:
+    ids = sorted(lanelet.id for lanelet in nishishinjuku.laneletLayer)[:3]
+    sweep = {
+        "constraints": {
+            "ego.spawn_lanelet_id": [{"type": "in_set", "values": ids}],
+        },
+        "relations": [f"ego.spawn_lanelet_id != {ids[1]}"],
+    }
+    cases = expand_sweep(sweep, nishishinjuku, scenario="s")
+    picked = sorted(int(_values_typed(c)["ego.spawn_lanelet_id"]) for c in cases)
+    assert picked == [ids[0], ids[2]]
+    sweep["relations"] = ["ego.spawn_lanelet_id < 0"]
+    with pytest.raises(ValueError, match="hold for none"):
+        expand_sweep(sweep, nishishinjuku, scenario="s")
+
+
+@pytest.fixture(scope="module")
+def nishishinjuku() -> Any:
+    from pathlib import Path
+
+    from autoware_carla_scenario.sweeper.map_loader import load_lanelet2_map
+
+    data = Path(__file__).resolve().parents[3] / "data"
+    return load_lanelet2_map(
+        data / "nishishinjuku.osm", data / "nishishinjuku_carla.xodr"
+    )
+
+
+def _values_typed(case: list[str]) -> dict[str, str]:
+    return {o.split("=", 1)[0]: o.split("=", 1)[1] for o in case}

@@ -1,10 +1,10 @@
-"""Relations between the parameters a sweep draws, solved with Z3.
+"""Relations between a sweep's parameters, solved with Z3.
 
 A distribution in ``sweep.constraints`` draws one parameter on its own.  A
 scenario often needs its parameters to stand in a relation to each other --
 the ego faster than the car it follows, a gap long enough for the speed --
 which no distribution of one parameter can say.  ``sweep.relations`` lists
-them, each a Python-like expression over the parameters' keys::
+them, each a Python-like expression over the config's keys::
 
     sweep:
       constraints:
@@ -17,20 +17,36 @@ them, each a Python-like expression over the parameters' keys::
       relations:
         - ego.initial_speed_kmh > scenario.lead_speed_kmh + 5
         - scenario.gap_m >= (ego.initial_speed_kmh - scenario.lead_speed_kmh) / 3.6 * 2
+        - scenario.npc_lanelet_id != ego.spawn_lanelet_id
+        - scenario.weather in ["rain", "fog"] or ego.initial_speed_kmh > 30
       samples: 10
 
-An expression is made of the keys (``a.b.c``), numbers, ``+ - * /``,
-``abs()``, ``min()``, ``max()``, the comparisons ``< <= > >= == !=`` (chained
-too: ``0 < a < b``), and ``and``, ``or``, ``not``.  A key is a parameter drawn
-from a distribution, or one the case sets to a number (a binding's value, a
-route match's, an override's): that one is a constant of the case.
+The relations apply **after** the sweep is expanded: the map's part -- which
+lanelets, what is adjacent, where the stop line is -- is the constraints' and
+bindings' (:mod:`.constraints`, :mod:`.bindings`), and each case they expand
+to has its values.  A key a relation names is either
+
+* a parameter drawn from a distribution: a real number the relations solve
+  for, or
+* a value the case holds: one the case sets (a binding's, a route match's,
+  an ODD sample's, an override's), else the scenario config's own: a
+  constant of that case, a number (an int such as a lanelet ID, or a float),
+  a string (an enum's name too) or a bool.
+
+An expression is made of keys (``a.b.c``), numbers, strings, ``True`` and
+``False``, ``+ - * /``, ``abs()``, ``min()``, ``max()``, the comparisons
+``< <= > >= == !=`` (chained too: ``0 < a < b``), ``in [...]`` and ``not in
+[...]`` (a list of literals), and ``and``, ``or``, ``not``; a bool key is a
+condition of its own.  ``< <= > >=`` and arithmetic take numbers; ``==``,
+``!=`` and ``in`` take two values of one type.  It is parsed, never run.
 
 For each case the relations are handed to the SMT solver Z3
 (:class:`RelationSolver`):
 
-1. With the distributions' bounds, the relations must be satisfiable.  A case
-   for which they are not is dropped, with a warning naming the relations
-   that conflict (Z3's unsat core); a sweep with no case left is an error.
+1. With the case's values and the distributions' bounds, the relations must
+   be satisfiable.  A case for which they are not is dropped (the log says
+   how many, and for the first the relations that conflict: Z3's unsat
+   core); a sweep with no case left is an error.  Relations over values alone are so a filter of cases.
 2. Each drawn parameter's range is narrowed to the values the relations
    leave it (Z3's ``Optimize``, minimising and maximising it over the
    relations' closure).  Narrowing never removes a value a solution has, so
@@ -54,6 +70,7 @@ bounds and satisfiability, which do not depend on its search.
 from __future__ import annotations
 
 import ast
+import enum
 import logging
 import math
 import operator
@@ -69,6 +86,7 @@ __all__ = [
     "Relation",
     "RelationSolver",
     "RelationsUnsatisfiable",
+    "constant_value",
     "parse_relation",
     "parse_relations",
 ]
@@ -83,22 +101,50 @@ MAX_REJECTIONS = 1000
 #: it takes the value Z3's model gives it.
 _SEQUENTIAL_RETRIES = 32
 
+#: The types of a relation's values.
+NUM, STR, BOOL = "number", "string", "bool"
+
 
 class RelationsUnsatisfiable(ValueError):
-    """The relations have no solution within the distributions' bounds."""
+    """The relations have no solution for a case."""
+
+
+def constant_value(value: Any) -> Any:
+    """*value* (a config value) as a relation's constant: a float for a
+    number, the string for a string or an enum (its name), the bool;
+    ``None`` for anything else (null, a list, a mapping), which a relation
+    cannot name."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, enum.Enum):
+        return value.name
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _type_of(value: Any) -> str:
+    if isinstance(value, bool):
+        return BOOL
+    if isinstance(value, str):
+        return STR
+    return NUM
 
 
 # -- Expressions -----------------------------------------------------------------
 #
 # An expression is a small tree, built from Python's own parser (``ast``, mode
 # "eval") and accepted only in the shapes below; nothing of it is ever run by
-# Python.  Each node evaluates to a float (a term) or a bool (a formula), both
-# on plain floats -- to check a draw -- and as a Z3 expression.
+# Python.  A key's type is only known for a case (a drawn key is a number; a
+# constant has its value's type), so the tree is typed twice: once as parsed,
+# with what its literals and operators say, and again for each case.
 
 
 @dataclass(frozen=True)
-class _Num:
-    value: Fraction
+class _Lit:
+    value: Any  # Fraction, str or bool
 
 
 @dataclass(frozen=True)
@@ -132,6 +178,13 @@ class _Compare:
 
 
 @dataclass(frozen=True)
+class _In:
+    item: Any
+    options: tuple[_Lit, ...]
+    negated: bool
+
+
+@dataclass(frozen=True)
 class _BoolOp:
     op: str  # "and", "or"
     operands: tuple[Any, ...]
@@ -141,9 +194,6 @@ class _BoolOp:
 class _Not:
     operand: Any
 
-
-_TERMS = (_Num, _Key, _Neg, _Arith, _Call)
-_FORMULAS = (_Compare, _BoolOp, _Not)
 
 _ARITH_OPS: dict[type, str] = {
     ast.Add: "+",
@@ -159,11 +209,12 @@ _COMPARE_OPS: dict[type, str] = {
     ast.Eq: "==",
     ast.NotEq: "!=",
 }
+_ORDERING = frozenset(["<", "<=", ">", ">="])
 #: A comparison negated: ``not (a < b)`` is ``a >= b``.
 _NEGATED = {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!=", "!=": "=="}
 #: A comparison's closure: ``a < b`` relaxed to ``a <= b``; ``!=`` to true.
 _RELAXED = {"<": "<=", ">": ">=", "<=": "<=", ">=": ">=", "==": "==", "!=": None}
-_PY_COMPARE: dict[str, Callable[[float, float], bool]] = {
+_PY_COMPARE: dict[str, Callable[[Any, Any], bool]] = {
     "<": operator.lt,
     "<=": operator.le,
     ">": operator.gt,
@@ -174,23 +225,50 @@ _PY_COMPARE: dict[str, Callable[[float, float], bool]] = {
 _FUNCTIONS = {"abs": (1, 1), "min": (2, None), "max": (2, None)}
 
 
-@dataclass(frozen=True)
-class Relation:
-    """One relation of ``sweep.relations``: its text, where it is, and its
-    parsed expression (a formula)."""
+def _show(tree: Any) -> str:
+    """*tree* written back as an expression, for errors."""
+    if isinstance(tree, _Lit):
+        if isinstance(tree.value, Fraction):
+            return f"{float(tree.value):g}"
+        return repr(tree.value)
+    if isinstance(tree, _Key):
+        return tree.key
+    if isinstance(tree, _Neg):
+        return f"-{_show(tree.operand)}"
+    if isinstance(tree, (_Arith, _Compare)):
+        return f"({_show(tree.left)} {tree.op} {_show(tree.right)})"
+    if isinstance(tree, _Call):
+        return f"{tree.name}({', '.join(_show(a) for a in tree.args)})"
+    if isinstance(tree, _In):
+        options = ", ".join(_show(o) for o in tree.options)
+        return f"{_show(tree.item)} {'not in' if tree.negated else 'in'} [{options}]"
+    if isinstance(tree, _BoolOp):
+        return "(" + f" {tree.op} ".join(_show(o) for o in tree.operands) + ")"
+    if isinstance(tree, _Not):
+        return f"not {_show(tree.operand)}"
+    return repr(tree)
 
-    text: str
-    label: str
-    formula: Any = field(repr=False)
-    keys: frozenset[str] = frozenset()
 
-    def holds(self, values: Mapping[str, float]) -> bool:
-        """Whether the relation holds for *values* (key -> value), every key
-        of it among them.  A division by zero makes it fail."""
-        try:
-            return bool(_evaluate(self.formula, values))
-        except ZeroDivisionError:
-            return False
+def _literal(node: ast.AST, label: str) -> _Lit:
+    """The literal *node* is: a finite number, a string or a bool."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = _literal(node.operand, label)
+        if not isinstance(inner.value, Fraction):
+            raise ValueError(f"{label}: -{inner.value!r} is not a number")
+        return _Lit(-inner.value)
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if isinstance(value, (bool, str)):
+            return _Lit(value)
+        if isinstance(value, (int, float)):
+            if not math.isfinite(value):
+                raise ValueError(f"{label}: {value!r} is not a finite number")
+            return _Lit(Fraction(value))
+        raise ValueError(f"{label}: {value!r} is not a number, string or bool")
+    raise ValueError(
+        f"{label}: {ast.unparse(node)!r} is not a literal (a number, a string, "
+        "True or False)"
+    )
 
 
 def _dotted(node: ast.AST) -> str | None:
@@ -205,74 +283,41 @@ def _dotted(node: ast.AST) -> str | None:
     return None
 
 
-def _term(node: ast.AST, label: str) -> Any:
-    """The term (a number-valued expression) *node* is."""
-    tree = _node(node, label)
-    if not isinstance(tree, _TERMS):
-        raise ValueError(
-            f"{label}: {ast.unparse(node)!r} is a condition where a number is "
-            "expected"
-        )
-    return tree
-
-
-def _formula(node: ast.AST, label: str) -> Any:
-    """The formula (a true-or-false expression) *node* is."""
-    tree = _node(node, label)
-    if not isinstance(tree, _FORMULAS):
-        raise ValueError(
-            f"{label}: {ast.unparse(node)!r} is a number where a condition "
-            "(a comparison, and/or/not) is expected"
-        )
-    return tree
-
-
 def _node(node: ast.AST, label: str) -> Any:
     """*node* of an expression, as a tree; refused, naming *label*, if it is
     anything but the shapes the module's description lists."""
     if isinstance(node, ast.Constant):
-        value = node.value
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{label}: {value!r} is not a number")
-        if not math.isfinite(value):
-            raise ValueError(f"{label}: {value!r} is not a finite number")
-        return _Num(Fraction(value))
+        return _literal(node, label)
     if isinstance(node, (ast.Name, ast.Attribute)):
         key = _dotted(node)
         if key is None:
             raise ValueError(f"{label}: {ast.unparse(node)!r} is not a key")
-        if key in ("True", "False", "None"):
-            raise ValueError(f"{label}: {key} is not a number")
+        if key == "None":
+            raise ValueError(f"{label}: None is not a value a relation takes")
         return _Key(key)
     if isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.USub):
-            return _Neg(_term(node.operand, label))
+            operand = _node(node.operand, label)
+            if isinstance(operand, _Lit) and isinstance(operand.value, Fraction):
+                return _Lit(-operand.value)
+            return _Neg(operand)
         if isinstance(node.op, ast.UAdd):
-            return _term(node.operand, label)
+            return _node(node.operand, label)
         if isinstance(node.op, ast.Not):
-            return _Not(_formula(node.operand, label))
+            return _Not(_node(node.operand, label))
     if isinstance(node, ast.BinOp) and type(node.op) in _ARITH_OPS:
         return _Arith(
             _ARITH_OPS[type(node.op)],
-            _term(node.left, label),
-            _term(node.right, label),
+            _node(node.left, label),
+            _node(node.right, label),
         )
     if isinstance(node, ast.BoolOp):
         return _BoolOp(
             "and" if isinstance(node.op, ast.And) else "or",
-            tuple(_formula(v, label) for v in node.values),
+            tuple(_node(v, label) for v in node.values),
         )
     if isinstance(node, ast.Compare):
-        terms = [_term(node.left, label)] + [_term(c, label) for c in node.comparators]
-        pairs: list[Any] = []
-        for i, op in enumerate(node.ops):
-            if type(op) not in _COMPARE_OPS:
-                raise ValueError(
-                    f"{label}: {type(op).__name__} is no comparison a relation "
-                    f"takes (use {' '.join(_PY_COMPARE)})"
-                )
-            pairs.append(_Compare(_COMPARE_OPS[type(op)], terms[i], terms[i + 1]))
-        return pairs[0] if len(pairs) == 1 else _BoolOp("and", tuple(pairs))
+        return _compare(node, label)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         name = node.func.id
         if name not in _FUNCTIONS or node.keywords:
@@ -282,16 +327,43 @@ def _node(node: ast.AST, label: str) -> Any:
             )
         least, most = _FUNCTIONS[name]
         if len(node.args) < least or (most is not None and len(node.args) > most):
-            raise ValueError(
-                f"{label}: {name}() takes "
-                + (f"{least} argument" if least == most else f"{least} or more arguments")
-                + f", got {len(node.args)}"
+            wanted = (
+                f"{least} argument" if least == most else f"{least} or more arguments"
             )
-        return _Call(name, tuple(_term(a, label) for a in node.args))
+            raise ValueError(f"{label}: {name}() takes {wanted}, got {len(node.args)}")
+        return _Call(name, tuple(_node(a, label) for a in node.args))
     raise ValueError(
         f"{label}: {ast.unparse(node)!r} is not something a relation takes "
-        "(keys, numbers, + - * /, abs/min/max, comparisons, and/or/not)"
+        "(keys, literals, + - * /, abs/min/max, comparisons, in [...], "
+        "and/or/not)"
     )
+
+
+def _compare(node: ast.Compare, label: str) -> Any:
+    """A comparison, chained ones split into an ``and`` of pairs."""
+    operands = [node.left, *node.comparators]
+    pairs: list[Any] = []
+    for i, op in enumerate(node.ops):
+        left = _node(operands[i], label)
+        right_node = operands[i + 1]
+        if isinstance(op, (ast.In, ast.NotIn)):
+            if not isinstance(right_node, (ast.List, ast.Tuple, ast.Set)):
+                raise ValueError(
+                    f"{label}: 'in' takes a list of literals "
+                    f'([1, 2] or ["rain", "fog"]), got {ast.unparse(right_node)!r}'
+                )
+            options = tuple(_literal(e, label) for e in right_node.elts)
+            if not options:
+                raise ValueError(f"{label}: 'in' takes a list of at least one value")
+            pairs.append(_In(left, options, isinstance(op, ast.NotIn)))
+            continue
+        if type(op) not in _COMPARE_OPS:
+            raise ValueError(
+                f"{label}: {type(op).__name__} is no comparison a relation "
+                f"takes (use {' '.join(_PY_COMPARE)}, in, not in)"
+            )
+        pairs.append(_Compare(_COMPARE_OPS[type(op)], left, _node(right_node, label)))
+    return pairs[0] if len(pairs) == 1 else _BoolOp("and", tuple(pairs))
 
 
 def _keys(tree: Any) -> frozenset[str]:
@@ -302,11 +374,120 @@ def _keys(tree: Any) -> frozenset[str]:
         return _keys(tree.operand)
     if isinstance(tree, (_Arith, _Compare)):
         return _keys(tree.left) | _keys(tree.right)
+    if isinstance(tree, _In):
+        return _keys(tree.item)
     if isinstance(tree, _Call):
         return frozenset().union(*(_keys(a) for a in tree.args))
     if isinstance(tree, _BoolOp):
         return frozenset().union(*(_keys(o) for o in tree.operands))
     return frozenset()
+
+
+def _type(tree: Any, types: Mapping[str, str], label: str) -> str | None:
+    """The type of *tree* (:data:`NUM`, :data:`STR`, :data:`BOOL`; ``None``
+    for a key whose type *types* does not know yet), refusing, naming
+    *label*, an operand of the wrong type."""
+
+    def need(sub: Any, wanted: str, where: str) -> None:
+        got = _type(sub, types, label)
+        if got is not None and got != wanted:
+            whose = (
+                f" (the case sets {sub.key} to a {got})"
+                if isinstance(sub, _Key)
+                else ""
+            )
+            raise ValueError(
+                f"{label}: {where} takes a {wanted}, but {_show(sub)} is a "
+                f"{got}{whose}"
+            )
+
+    if isinstance(tree, _Lit):
+        return _type_of(tree.value)
+    if isinstance(tree, _Key):
+        return types.get(tree.key)
+    if isinstance(tree, _Neg):
+        need(tree.operand, NUM, "'-'")
+        return NUM
+    if isinstance(tree, _Arith):
+        need(tree.left, NUM, f"'{tree.op}'")
+        need(tree.right, NUM, f"'{tree.op}'")
+        return NUM
+    if isinstance(tree, _Call):
+        for arg in tree.args:
+            need(arg, NUM, f"{tree.name}()")
+        return NUM
+    if isinstance(tree, _Compare):
+        if tree.op in _ORDERING:
+            need(tree.left, NUM, f"'{tree.op}'")
+            need(tree.right, NUM, f"'{tree.op}'")
+        else:
+            left = _type(tree.left, types, label)
+            right = _type(tree.right, types, label)
+            if left is not None and right is not None and left != right:
+                raise ValueError(
+                    f"{label}: '{tree.op}' compares values of one type, but "
+                    f"{_show(tree.left)} is a {left} and {_show(tree.right)} "
+                    f"a {right}"
+                )
+        return BOOL
+    if isinstance(tree, _In):
+        kinds = {_type_of(o.value) for o in tree.options}
+        if len(kinds) > 1:
+            raise ValueError(
+                f"{label}: the list of 'in' mixes "
+                + " and ".join(f"{kind}s" for kind in sorted(kinds))
+            )
+        need(tree.item, next(iter(kinds)), "'in' over that list")
+        return BOOL
+    if isinstance(tree, _BoolOp):
+        for operand in tree.operands:
+            need(operand, BOOL, f"'{tree.op}'")
+        return BOOL
+    if isinstance(tree, _Not):
+        need(tree.operand, BOOL, "'not'")
+        return BOOL
+    raise TypeError(f"not an expression: {tree!r}")
+
+
+@dataclass(frozen=True)
+class Relation:
+    """One relation of ``sweep.relations``: its text, where it is, and its
+    parsed expression (a condition)."""
+
+    text: str
+    label: str
+    formula: Any = field(repr=False)
+    keys: frozenset[str] = frozenset()
+
+    def check_types(self, types: Mapping[str, str]) -> None:
+        """Refuse the relation if, with the keys' *types*, an operand has the
+        wrong type or the whole is not a condition.
+
+        Raises:
+            ValueError: Naming the relation and the operand.
+        """
+        if isinstance(self.formula, _Key):
+            kind = types.get(self.formula.key)
+            if kind is not None and kind != BOOL:
+                raise ValueError(
+                    f"{self.label}: {self.text!r} is a {kind}, where a condition "
+                    "(a comparison, and/or/not, a bool key) is expected"
+                )
+            return
+        kind = _type(self.formula, types, self.label)
+        if kind != BOOL:
+            raise ValueError(
+                f"{self.label}: {self.text!r} is a {kind}, where a condition "
+                "(a comparison, and/or/not, a bool key) is expected"
+            )
+
+    def holds(self, values: Mapping[str, Any]) -> bool:
+        """Whether the relation holds for *values* (key -> value), every key
+        of it among them.  A division by zero makes it fail."""
+        try:
+            return bool(_evaluate(self.formula, values))
+        except ZeroDivisionError:
+            return False
 
 
 def parse_relation(text: Any, label: str) -> Relation:
@@ -326,10 +507,12 @@ def parse_relation(text: Any, label: str) -> Relation:
         parsed = ast.parse(text.strip(), mode="eval")
     except SyntaxError as exc:
         raise ValueError(f"{label}: {text!r} does not parse: {exc.msg}") from exc
-    formula = _formula(parsed.body, label)
-    return Relation(
+    formula = _node(parsed.body, label)
+    relation = Relation(
         text=text.strip(), label=label, formula=formula, keys=_keys(formula)
     )
+    relation.check_types({})
+    return relation
 
 
 def parse_relations(value: Any) -> list[Relation]:
@@ -352,10 +535,10 @@ def parse_relations(value: Any) -> list[Relation]:
     ]
 
 
-def _evaluate(tree: Any, values: Mapping[str, float]) -> Any:
-    """*tree* on plain floats: a float for a term, a bool for a formula."""
-    if isinstance(tree, _Num):
-        return float(tree.value)
+def _evaluate(tree: Any, values: Mapping[str, Any]) -> Any:
+    """*tree* on plain values: a float, a string or a bool."""
+    if isinstance(tree, _Lit):
+        return float(tree.value) if isinstance(tree.value, Fraction) else tree.value
     if isinstance(tree, _Key):
         return values[tree.key]
     if isinstance(tree, _Neg):
@@ -379,6 +562,11 @@ def _evaluate(tree: Any, values: Mapping[str, float]) -> Any:
         return _PY_COMPARE[tree.op](
             _evaluate(tree.left, values), _evaluate(tree.right, values)
         )
+    if isinstance(tree, _In):
+        found = _evaluate(tree.item, values) in [
+            _evaluate(o, values) for o in tree.options
+        ]
+        return found != tree.negated
     if isinstance(tree, _BoolOp):
         if tree.op == "and":
             return all(_evaluate(o, values) for o in tree.operands)
@@ -399,12 +587,29 @@ def _z3() -> Any:
     return z3
 
 
+def _exact(value: float | Fraction) -> str:
+    """*value* as the exact rational Z3 reads (a float is a dyadic
+    rational): no decimal rounding between the draw and the check."""
+    fraction = Fraction(value)
+    return f"{fraction.numerator}/{fraction.denominator}"
+
+
+def _z3_value(value: Any) -> Any:
+    """A constant as a Z3 value of its type."""
+    z3 = _z3()
+    if isinstance(value, bool):
+        return z3.BoolVal(value)
+    if isinstance(value, str):
+        return z3.StringVal(value)
+    return z3.RealVal(_exact(value))
+
+
 def _z3_term(tree: Any, env: Mapping[str, Any]) -> Any:
-    """Term *tree* as a Z3 real expression; *env* maps a key to its Z3
+    """*tree* as a Z3 expression of its type; *env* maps a key to its Z3
     variable or constant."""
     z3 = _z3()
-    if isinstance(tree, _Num):
-        return z3.RealVal(f"{tree.value.numerator}/{tree.value.denominator}")
+    if isinstance(tree, _Lit):
+        return _z3_value(tree.value)
     if isinstance(tree, _Key):
         return env[tree.key]
     if isinstance(tree, _Neg):
@@ -430,7 +635,8 @@ def _z3_term(tree: Any, env: Mapping[str, Any]) -> Any:
             else:
                 result = z3.If(arg > result, arg, result)
         return result
-    raise TypeError(f"not a term: {tree!r}")
+    # A condition where a value is compared (a bool key == True).
+    return _z3_formula(tree, env)
 
 
 def _z3_compare(op: str, left: Any, right: Any) -> Any:
@@ -454,7 +660,7 @@ def _z3_formula(
     negate: bool = False,
     relax: bool = False,
 ) -> Any:
-    """Formula *tree* as a Z3 boolean, negated if *negate* (pushed down to
+    """Condition *tree* as a Z3 boolean, negated if *negate* (pushed down to
     the comparisons), and with every comparison replaced by its closure if
     *relax* (``<`` by ``<=``, ``!=`` dropped): the set it describes then
     holds the original's, and its bounds are the original's bounds, which
@@ -463,11 +669,18 @@ def _z3_formula(
     if isinstance(tree, _Not):
         return _z3_formula(tree.operand, env, negate=not negate, relax=relax)
     if isinstance(tree, _BoolOp):
-        parts = [
-            _z3_formula(o, env, negate=negate, relax=relax) for o in tree.operands
-        ]
+        parts = [_z3_formula(o, env, negate=negate, relax=relax) for o in tree.operands]
         conjunction = (tree.op == "and") != negate
         return z3.And(*parts) if conjunction else z3.Or(*parts)
+    if isinstance(tree, _In):
+        item = _z3_term(tree.item, env)
+        within = tree.negated == negate
+        if not within and relax:
+            return z3.BoolVal(True)
+        options = [_z3_value(o.value) for o in tree.options]
+        if within:
+            return z3.Or(*[item == o for o in options])
+        return z3.And(*[item != o for o in options])
     if isinstance(tree, _Compare):
         op = _NEGATED[tree.op] if negate else tree.op
         if relax:
@@ -476,7 +689,11 @@ def _z3_formula(
                 return z3.BoolVal(True)
             op = relaxed
         return _z3_compare(op, _z3_term(tree.left, env), _z3_term(tree.right, env))
-    raise TypeError(f"not a formula: {tree!r}")
+    if isinstance(tree, (_Key, _Lit)):
+        # A bool key or literal.
+        value = _z3_term(tree, env)
+        return z3.Not(value) if negate else value
+    raise TypeError(f"not a condition: {tree!r}")
 
 
 def _as_float(value: Any) -> float | None:
@@ -494,12 +711,6 @@ def _as_float(value: Any) -> float | None:
 
 
 # -- Drawing -----------------------------------------------------------------------
-
-
-def _bounds(distribution: Any) -> tuple[float, float]:
-    """The interval *distribution* draws from (infinite for an untruncated
-    normal)."""
-    return distribution.low, distribution.high
 
 
 def _narrowed(distribution: Any, low: float, high: float) -> Any:
@@ -533,11 +744,24 @@ def _draw_in(distribution: Any, low: float, high: float, rng: random.Random) -> 
     return narrowed.draw(rng)
 
 
+def _shown(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:g}"
+    if isinstance(value, bool):
+        return str(value).lower()
+    return repr(value)
+
+
 class RelationSolver:
     """The relations of a sweep over the distributions it draws from.
 
     *distributions* maps each drawn key to its distribution
     (:mod:`.distributions`); *relations* are ``sweep.relations``, parsed.
+    A relation naming no drawn key is a filter of cases.
+
+    Raises:
+        ValueError: If a relation compares a drawn key (a number) with a
+            literal of another type.
     """
 
     def __init__(
@@ -549,80 +773,88 @@ class RelationSolver:
         self.related = sorted(
             set().union(*(r.keys for r in self.relations)) & set(self.distributions)
         )
+        drawn = {key: NUM for key in self.distributions}
         for relation in self.relations:
-            if not relation.keys & set(self.distributions):
-                raise ValueError(
-                    f"{relation.label}: {relation.text!r} names no parameter "
-                    "drawn from a distribution in sweep.constraints; a relation "
-                    "relates drawn parameters (to each other, or to values the "
-                    "case sets)"
-                )
-        self._ranges: dict[tuple[tuple[str, float], ...], dict[str, tuple[float, float]]] = {}
+            relation.check_types(drawn)
+        self._ranges: dict[Any, dict[str, tuple[float, float]]] = {}
+        self._typed: set[Any] = set()
         self._warned_sequential = False
 
     def constants(self) -> frozenset[str]:
         """The keys the relations name that no distribution draws: each case
-        must set them to a number."""
+        must hold a value for them."""
         names = set().union(*(r.keys for r in self.relations))
         return frozenset(names - set(self.distributions))
 
-    def _constants_of(self, case: Mapping[str, float]) -> dict[str, float]:
-        """The constants the relations need, from *case* (key -> number).
+    def _constants_of(self, case: Mapping[str, Any]) -> dict[str, Any]:
+        """The constants the relations need, from *case* (key -> value: a
+        float, a string or a bool), checked against the relations' types.
 
         Raises:
             ValueError: Naming the relation, if a key it names is neither
-                drawn nor set to a number by the case.
+                drawn nor held by the case, or the case's values give an
+                operand the wrong type.
         """
-        values: dict[str, float] = {}
+        values: dict[str, Any] = {}
         for relation in self.relations:
             for key in sorted(relation.keys - set(self.distributions)):
-                if key not in case:
+                if case.get(key) is None:
                     raise ValueError(
                         f"{relation.label}: {relation.text!r} names {key}, which "
                         "is neither drawn from a distribution in sweep.constraints "
-                        "nor set to a number by the case (a binding, the route "
-                        "or an override); draw it, or set it"
+                        "nor set to a number, a string or a bool by the case or "
+                        "the scenario's config"
                     )
                 values[key] = case[key]
+        types = {key: _type_of(value) for key, value in values.items()}
+        signature = tuple(sorted(types.items()))
+        if signature not in self._typed:
+            types.update({key: NUM for key in self.distributions})
+            for relation in self.relations:
+                relation.check_types(types)
+            self._typed.add(signature)
         return values
 
-    def _env(self, constants: Mapping[str, float], fixed: Mapping[str, float]) -> dict[str, Any]:
+    def _env(
+        self, constants: Mapping[str, Any], fixed: Mapping[str, float]
+    ) -> dict[str, Any]:
         z3 = _z3()
         env: dict[str, Any] = {}
         for key in self.related:
-            env[key] = (
-                z3.RealVal(_exact(fixed[key])) if key in fixed else z3.Real(key)
-            )
+            env[key] = z3.RealVal(_exact(fixed[key])) if key in fixed else z3.Real(key)
         for key, value in constants.items():
-            env[key] = z3.RealVal(_exact(value))
+            env[key] = _z3_value(value)
         return env
 
-    def _bound_constraints(self, env: Mapping[str, Any], fixed: Mapping[str, float]) -> list[Any]:
+    def _bound_constraints(
+        self, env: Mapping[str, Any], fixed: Mapping[str, float]
+    ) -> list[Any]:
         z3 = _z3()
         out: list[Any] = []
         for key in self.related:
             if key in fixed:
                 continue
-            low, high = _bounds(self.distributions[key])
-            if math.isfinite(low):
-                out.append(env[key] >= z3.RealVal(_exact(low)))
-            if math.isfinite(high):
-                out.append(env[key] <= z3.RealVal(_exact(high)))
+            distribution = self.distributions[key]
+            if math.isfinite(distribution.low):
+                out.append(env[key] >= z3.RealVal(_exact(distribution.low)))
+            if math.isfinite(distribution.high):
+                out.append(env[key] <= z3.RealVal(_exact(distribution.high)))
         return out
 
-    def check(self, case: Mapping[str, float] | None = None) -> None:
-        """Check the relations have a solution for *case* (its constants).
+    def check(self, case: Mapping[str, Any] | None = None) -> None:
+        """Check the relations have a solution for *case* (its values).
 
         Raises:
             RelationsUnsatisfiable: Naming the relations that conflict (with
-                the distributions' bounds), if they have none.
-            ValueError: If a key a relation names is neither drawn nor set
-                by *case*, or Z3 cannot decide (``unknown``).
+                the case's values and the distributions' bounds), if they
+                have none.
+            ValueError: If a key a relation names is neither drawn nor held
+                by *case*, has the wrong type, or Z3 cannot decide.
         """
         constants = self._constants_of(case or {})
         self._solve(constants, {})
 
-    def _solve(self, constants: Mapping[str, float], fixed: Mapping[str, float]) -> Any:
+    def _solve(self, constants: Mapping[str, Any], fixed: Mapping[str, float]) -> Any:
         """A Z3 model of the relations with *constants* and *fixed* values.
 
         Raises:
@@ -645,10 +877,14 @@ class RelationSolver:
                 for i, r in enumerate(self.relations)
                 if f"relation{i}" in core
             ]
-            given = ", ".join(f"{k}={v:g}" for k, v in sorted({**constants, **fixed}.items()))
+            given = ", ".join(
+                f"{k}={_shown(v)}"
+                for k, v in sorted({**constants, **fixed}.items())
+                if any(k in r.keys for r in self.relations)
+            )
             raise RelationsUnsatisfiable(
-                "sweep.relations cannot all hold within the distributions' "
-                "bounds"
+                "sweep.relations cannot all hold"
+                + (" within the distributions' bounds" if self.related else "")
                 + (f" (with {given})" if given else "")
                 + ": "
                 + ("; ".join(named) if named else "the bounds alone conflict")
@@ -661,7 +897,7 @@ class RelationSolver:
         )
 
     def _ranges_for(
-        self, constants: Mapping[str, float], fixed: Mapping[str, float]
+        self, constants: Mapping[str, Any], fixed: Mapping[str, float]
     ) -> dict[str, tuple[float, float]]:
         """Each related key not in *fixed*: the interval the relations leave
         it, within its distribution's bounds."""
@@ -674,12 +910,15 @@ class RelationSolver:
         for key in self.related:
             if key in fixed:
                 continue
-            low, high = _bounds(self.distributions[key])
+            low = self.distributions[key].low
+            high = self.distributions[key].high
             for sense in ("min", "max"):
                 opt = z3.Optimize()
                 opt.set("timeout", 10_000)
                 opt.add(*relaxed)
-                handle = opt.minimize(env[key]) if sense == "min" else opt.maximize(env[key])
+                handle = (
+                    opt.minimize(env[key]) if sense == "min" else opt.maximize(env[key])
+                )
                 if opt.check() != z3.sat:
                     # Non-linear, or timed out: the distribution's own bound.
                     continue
@@ -696,19 +935,21 @@ class RelationSolver:
 
     def draw(
         self,
-        case: Mapping[str, float],
+        case: Mapping[str, Any],
         rng: random.Random,
     ) -> dict[str, float]:
-        """A value of every related key for one draw of *case* (its numeric
-        values: the constants), from *rng*: the distributions conditioned on
-        the relations (steps 2-4 of the module's description).
+        """A value of every related key for one draw of *case* (its values:
+        the constants), from *rng*: the distributions conditioned on the
+        relations (steps 2-4 of the module's description).
 
         Raises:
             RelationsUnsatisfiable: If the relations have no solution for
                 *case*.
         """
         constants = self._constants_of(case)
-        signature = tuple(sorted(constants.items()))
+        if not self.related:
+            return {}
+        signature = tuple(sorted((k, _type_of(v), v) for k, v in constants.items()))
         ranges = self._ranges.get(signature)
         if ranges is None:
             self._solve(constants, {})
@@ -735,10 +976,11 @@ class RelationSolver:
         return self._draw_sequentially(constants, rng)
 
     def _draw_sequentially(
-        self, constants: Mapping[str, float], rng: random.Random
+        self, constants: Mapping[str, Any], rng: random.Random
     ) -> dict[str, float]:
         """Step 4: each related key in turn, drawn within the range the
         relations leave it given the keys drawn before it."""
+        z3 = _z3()
         fixed: dict[str, float] = {}
         for key in self.related:
             low, high = self._ranges_for(constants, fixed)[key]
@@ -753,15 +995,7 @@ class RelationSolver:
                 break
             if value is None:
                 model = self._solve(constants, fixed)
-                z3 = _z3()
                 found = _as_float(model.eval(z3.Real(key), model_completion=True))
                 value = low if found is None else found
             fixed[key] = value
         return fixed
-
-
-def _exact(value: float) -> str:
-    """*value* as the exact rational Z3 reads (a float is a dyadic
-    rational): no decimal rounding between the draw and the check."""
-    fraction = Fraction(value)
-    return f"{fraction.numerator}/{fraction.denominator}"

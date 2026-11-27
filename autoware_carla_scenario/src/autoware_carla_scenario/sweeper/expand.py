@@ -75,7 +75,12 @@ from .constraints import (
     parse_constraint,
 )
 from .distributions import draw_case, fnv1a, is_distribution, parse_distribution
-from .relations import RelationSolver, RelationsUnsatisfiable, parse_relations
+from .relations import (
+    RelationSolver,
+    RelationsUnsatisfiable,
+    constant_value,
+    parse_relations,
+)
 
 if TYPE_CHECKING:
     from ..odd.sampler import OddDraws
@@ -126,6 +131,7 @@ def expand_sweep(
     environment_rules: Any = None,
     composed: Sequence[str] = (),
     scenario: str = "",
+    defaults: Mapping[str, Any] | None = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -160,7 +166,10 @@ def expand_sweep(
     theirs, conditioned on ``sweep.relations`` (solved with Z3,
     :mod:`.relations`), ``sweep.samples`` times for each case, from ``sweep.seed`` (else
     *seed*, else :data:`~autoware_carla_scenario.seed.DEFAULT_SEED`), the
-    *scenario*'s name and the case (:mod:`.distributions`).
+    *scenario*'s name and the case (:mod:`.distributions`).  A relation
+    naming no drawn key filters the cases.  *defaults* are the scenario
+    config's values of the keys the relations name (:func:`relation_defaults`):
+    what a case holds for a key it does not set.
 
     With ``sweep.case_index``, only the case at that (0-based) index is kept.
 
@@ -213,7 +222,8 @@ def expand_sweep(
             environment_rules=environment_rules,
             arguments=[*arguments, *composed],
         )
-    if distributions and base_cases:
+    relations = parse_relations(sweep.get("relations"))
+    if (distributions or relations) and base_cases:
         draw_seed = _draw_seed(sweep.get("seed"))
         base_cases = _with_distribution_draws(
             base_cases,
@@ -222,7 +232,8 @@ def expand_sweep(
             run_seed if draw_seed is None else draw_seed,
             scenario,
             [*arguments, *composed],
-            parse_relations(sweep.get("relations")),
+            relations,
+            defaults or {},
         )
     if index is not None:
         if not 0 <= index < len(base_cases):
@@ -281,21 +292,61 @@ def _clashes(keys: set[str], overrides: Sequence[str]) -> str:
     return ", ".join(sorted(keys & {_override_key(o) for o in overrides}))
 
 
-def _numbers(overrides: Sequence[str]) -> dict[str, float]:
-    """The keys *overrides* set to a finite number, with it: the constants a
-    relation may name (:mod:`.relations`)."""
-    numbers: dict[str, float] = {}
+def _override_constant(text: str) -> Any:
+    """An override's value (*text*) as a relation's constant
+    (:func:`.relations.constant_value`): ``true``/``false`` a bool, a number a
+    float, ``null`` nothing, a quoted or bare word a string; ``None`` for a
+    list or a mapping."""
+    text = text.strip()
+    if text[:1] in "[{":
+        return None
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    lowered = text.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    if lowered in ("null", "none", ""):
+        return None
+    try:
+        return constant_value(float(text))
+    except ValueError:
+        return text
+
+
+def _case_values(overrides: Sequence[str]) -> dict[str, Any]:
+    """The values *overrides* set, as relations' constants, later ones
+    winning; a key an override deletes (``~a.b``) holds nothing."""
+    values: dict[str, Any] = {}
     for override in overrides:
-        if "=" not in override or override.startswith("~"):
+        key = _override_key(override)
+        if override.startswith("~") or "=" not in override:
+            values[key] = None
             continue
-        text = override.split("=", 1)[1].strip().strip("'\"")
+        values[key] = _override_constant(override.split("=", 1)[1])
+    return values
+
+
+def relation_defaults(cfg: Any, sweep: Mapping[Any, Any]) -> dict[str, Any]:
+    """The scenario config *cfg*'s values of the keys ``sweep.relations``
+    names (none when it has none), as relations' constants: what a case
+    holds for a key it does not set.  A key *cfg* does not have, or holds
+    no number, string or bool at, is left out."""
+    try:
+        relations = parse_relations(sweep.get("relations"))
+    except ValueError:
+        # Refused, naming it, where the sweep is expanded.
+        return {}
+    keys = sorted(set().union(*(r.keys for r in relations))) if relations else []
+    defaults: dict[str, Any] = {}
+    for key in keys:
         try:
-            value = float(text)
-        except ValueError:
+            value = OmegaConf.select(cfg, key, default=None, throw_on_missing=False)
+        except Exception:  # noqa: BLE001 -- an interpolation that does not resolve
             continue
-        if value == value and abs(value) != float("inf"):
-            numbers[_override_key(override)] = value
-    return numbers
+        constant = constant_value(value)
+        if constant is not None:
+            defaults[key] = constant
+    return defaults
 
 
 def _with_distribution_draws(
@@ -306,6 +357,7 @@ def _with_distribution_draws(
     scenario: str,
     arguments: Sequence[str],
     relations: Sequence[Any] = (),
+    defaults: Mapping[str, Any] | None = None,
 ) -> list[list[str]]:
     """Each of *base_cases* *samples* times, each time with a value drawn for
     every key of *distributions*, in the order of the base cases.  A draw's
@@ -315,9 +367,10 @@ def _with_distribution_draws(
 
     The keys *relations* (``sweep.relations``, parsed) name are drawn
     together, conditioned on them (:class:`.relations.RelationSolver`), from a
-    seed of their own; the others each on their own as before.  A base case
-    for which the relations cannot hold (with the numbers it sets) is dropped
-    with a warning.
+    seed of their own; the others each on their own as before.  A key a
+    relation names that no distribution draws holds the value the base case
+    (or *arguments*) sets, else *defaults*'.  A base case for which the
+    relations cannot hold is dropped (logged, with how many were).
 
     Raises:
         ValueError: If a base case (a binding, a route match or a case drawn
@@ -349,17 +402,22 @@ def _with_distribution_draws(
     dropped: list[str] = []
     for case in base_cases:
         named = [o for o in case if _override_key(o) != ODD_CASE_KEY]
-        constants = _numbers([*arguments, *named]) if solver is not None else {}
+        constants = (
+            {**(defaults or {}), **_case_values([*named, *arguments])}
+            if solver is not None
+            else {}
+        )
         if solver is not None:
             try:
                 solver.check(constants)
             except RelationsUnsatisfiable as exc:
                 dropped.append(str(exc))
-                logger.warning("Dropping case %s: %s", " ".join(named), exc)
+                logger.debug("Dropping case %s: %s", " ".join(named), exc)
                 continue
         # The case's part of each draw's identity, hashed once.
         h = fnv1a("\x1f".join([str(seed), scenario, *named]))
-        for sample in range(samples):
+        # Without a distribution every sample would be the same case.
+        for sample in range(samples if distributions else 1):
             h_sample = fnv1a(f"\x1fsample={sample}", h)
             values = draw_case(alone, h_sample)
             if solver is not None:
@@ -376,6 +434,13 @@ def _with_distribution_draws(
                     *(f"{k}={_override_value(round(v, 9))}" for k, v in values.items()),
                 ]
             )
+    if dropped and cases:
+        logger.info(
+            "sweep.relations dropped %d of %d case(s); the first: %s",
+            len(dropped),
+            len(base_cases),
+            dropped[0],
+        )
     if dropped and not cases:
         raise ValueError(
             f"sweep.relations hold for none of the sweep's {len(base_cases)} "
@@ -819,7 +884,7 @@ def check_constraint_keys(
         )
     _samples(sweep.get("samples"))
     _draw_seed(sweep.get("seed"))
-    _check_relations(sweep.get("relations"), distributions)
+    _check_relations(sweep, distributions)
     bindings_cfg = _section(sweep, "bindings")
     if not isinstance(bindings_cfg, Mapping):
         raise ValueError(
@@ -853,18 +918,22 @@ def check_constraint_keys(
     return lanelet, distributions
 
 
-def _check_relations(value: Any, distributions: Mapping[str, Any]) -> None:
-    """Refuse a ``sweep.relations`` that does not parse, relates no drawn
-    parameter, or -- naming only drawn parameters -- cannot hold within their
-    distributions' bounds (Z3, :mod:`.relations`): before the map is loaded.
-    Relations naming a value a case sets are solved for each case instead."""
-    relations = parse_relations(value)
+def _check_relations(
+    sweep: Mapping[Any, Any], distributions: Mapping[str, Any]
+) -> None:
+    """Refuse a ``sweep.relations`` that does not parse, compares a drawn
+    parameter with a string or a bool, has nothing to apply to (no
+    constraints, route or ODD sample), or -- naming only drawn parameters --
+    cannot hold within their distributions' bounds (Z3, :mod:`.relations`):
+    before the map is loaded.  Relations naming a value of the case are
+    solved for each case instead."""
+    relations = parse_relations(sweep.get("relations"))
     if not relations:
         return
-    if not distributions:
+    if not (sweep.get("constraints") or sweep.get("route") or sweep.get("odd_sample")):
         raise ValueError(
-            "sweep.relations relate parameters drawn from a distribution in "
-            "sweep.constraints (- type: uniform / normal), and it draws none"
+            "sweep.relations apply to the cases a sweep expands to, and the "
+            "sweep has no constraints, route or odd_sample to expand"
         )
     solver = RelationSolver(relations, distributions)
     if not solver.constants():
@@ -1219,6 +1288,7 @@ def expand_config(
             environment_rules=weather,
             composed=composed,
             scenario=scenario,
+            defaults=relation_defaults(cfg, sweep),
         )
 
     lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
@@ -1234,6 +1304,7 @@ def expand_config(
         environment_rules=weather,
         composed=composed,
         scenario=scenario,
+        defaults=relation_defaults(cfg, sweep),
     )
 
 
