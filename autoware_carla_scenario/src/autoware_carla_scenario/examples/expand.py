@@ -36,6 +36,13 @@ refused with ``Error: scenario-expand does not take <flag>`` and exit 2:
 nothing is run, so there is nothing to resume, and Hydra would read it as an
 override.
 
+A scenario a glob picked that does not fit the map it is composed on -- its
+``scenario.required_map`` names another map, or a lanelet id it names (but
+those its sweep picks) is not on the map -- is skipped with a warning on
+stderr, as a batch of the same glob skips it (#2253); a scenario named alone
+is refused for it.  When the glob's every scenario is skipped, it exits 1
+saying that nothing fits the map.
+
 The exit status is 0 when every scenario expanded, 1 when one is composed on
 another map than its document names (an exported scenario on a map of its own
 run without ``map=<id>_map``, refused before any map is read), the
@@ -108,6 +115,23 @@ def main(argv: list[str] | None = None) -> int:
     if not globbed:
         # A plain name is composed (and printed) as given, as a run does.
         names = [scenario]
+    else:
+        # The glob's scenarios that do not fit the map are skipped, with a
+        # warning, as a batch of the same glob skips them (#2253).
+        from ..map_fit import NothingFitsError, skip_off_map_scenarios  # noqa: PLC0415
+        from ..maps import resolve_map_paths  # noqa: PLC0415
+
+        try:
+            names = skip_off_map_scenarios(
+                scenario,
+                names,
+                lambda name: _compose_quietly(name, overrides),
+                resolve_map_paths,
+                expanding=True,
+            )
+        except NothingFitsError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
     listings: list[dict[str, object]] = []
     status = 0
     # One record of the ODD draws for the whole glob, as a batch keeps: a
@@ -159,6 +183,17 @@ def main(argv: list[str] | None = None) -> int:
         json.dump(listing, sys.stdout)
         sys.stdout.write("\n")
     return 0
+
+
+def _compose_quietly(name: str, overrides: list[str]) -> object:
+    """Scenario *name* composed with *overrides*, or ``None`` when it does
+    not compose: the listing reports that itself, once."""
+    from . import run  # noqa: PLC0415 - imports the CARLA client
+
+    try:
+        return run._compose_config(name, overrides)
+    except Exception:  # noqa: BLE001 - reported when it is composed again
+        return None
 
 
 if __name__ == "__main__":

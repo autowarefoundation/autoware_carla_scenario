@@ -54,7 +54,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from autoware_carla_scenario import (
     BaseScenario,
@@ -93,6 +93,20 @@ from autoware_carla_scenario.gate.errored import (
     write_case_errored,
     write_case_unfinished,
 )
+from autoware_carla_scenario.map_fit import (
+    _MAP_LANELET_IDS as _MAP_LANELET_IDS,
+)
+from autoware_carla_scenario.map_fit import (
+    NothingFitsError,
+    lanelet_refusal,
+    skip_off_map_scenarios,
+)
+from autoware_carla_scenario.map_fit import _lanelet_id as _lanelet_id
+from autoware_carla_scenario.map_fit import (
+    _waypoint_lanelet_ids as _waypoint_lanelet_ids,
+)
+from autoware_carla_scenario.map_fit import config_lanelet_ids as config_lanelet_ids
+from autoware_carla_scenario.map_fit import map_lanelet_ids as map_lanelet_ids
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.maps.pack import MapPack, packs_dir
 from autoware_carla_scenario.maps.config import map_setting
@@ -529,43 +543,6 @@ def build_ground_projection(cfg: DictConfig) -> GroundProjectionConfig:
     upper, lower = distances
     check_ray_distances(upper, lower, _RAY_UPPER_KEY, _RAY_LOWER_KEY)
     return GroundProjectionConfig(ray_distance_upper=upper, ray_distance_lower=lower)
-
-
-def _lanelet_id(key: str, value: Any) -> int:
-    """The lanelet id *value* of *key* names, checked as every whole-number
-    setting is (:func:`~autoware_carla_scenario.odd.sampler.whole_number_setting`):
-    ``242``, ``242.0`` or ``"242"`` -- not ``242.7``, which ``int()`` alone
-    truncated to 242 and so spawned the ego on another lanelet, ``abc``, a
-    boolean or null (#2089).
-
-    Raises:
-        ValueError: naming *key*.
-    """
-    lanelet_id = whole_number_setting(key, value)
-    if lanelet_id is None:
-        raise ValueError(f"{key} must be a lanelet id (a whole number), got None")
-    return lanelet_id
-
-
-def _waypoint_lanelet_ids(ego_cfg: Any) -> list[int]:
-    """``ego.waypoint_lanelet_ids`` of the ``ego`` group *ego_cfg*, each
-    checked (:func:`_lanelet_id`); empty when absent, null or empty.
-
-    Raises:
-        ValueError: naming the key (and the item), when it is not a list or
-            an item is not a lanelet id.
-    """
-    value = ego_cfg.get("waypoint_lanelet_ids")
-    if value is None:
-        return []
-    if not isinstance(value, (ListConfig, list, tuple)):
-        raise ValueError(
-            f"ego.waypoint_lanelet_ids must be a list of lanelet ids, got {value!r}"
-        )
-    return [
-        _lanelet_id(f"ego.waypoint_lanelet_ids[{i}]", item)
-        for i, item in enumerate(value)
-    ]
 
 
 def _check_ego_lanelet_ids(cfg: DictConfig) -> None:
@@ -2865,106 +2842,6 @@ def check_scenario_maps(
         raise RunConfigError(f"{prefix}{refusal}")
 
 
-#: The ``scenario`` keys a built-in scenario names a lanelet by, by scenario
-#: name: each is checked against the resolved map (:func:`config_lanelet_ids`)
-#: beside the ego's, unless the scenario's ``kind`` is one that does not read
-#: it.  ``adversity``'s NPC (or pedestrian) lanelet, which ``nade`` ignores.
-_SCENARIO_LANELET_KEYS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
-    "adversity": (("npc_lanelet_id", ("nade",)),),
-}
-
-
-def config_lanelet_ids(cfg: DictConfig) -> list[tuple[str, int]]:
-    """The lanelet ids *cfg* names, each with its key, in the order given.
-
-    The ego's -- ``ego.spawn_lanelet_id``, ``ego.goal_lanelet_id`` and
-    ``ego.waypoint_lanelet_ids[<i>]`` -- and a built-in scenario's own
-    (:data:`_SCENARIO_LANELET_KEYS`).  Each is read as building the run reads
-    it (:func:`_lanelet_id`); one that is absent or null is left out.
-
-    Raises:
-        ValueError: naming the key, when a value is not a lanelet id.
-    """
-    named: list[tuple[str, int]] = []
-    ego_cfg = cfg.get("ego")
-    if isinstance(ego_cfg, (DictConfig, Mapping)):
-        for key in ("spawn_lanelet_id", "goal_lanelet_id"):
-            value = ego_cfg.get(key)
-            if value is not None:
-                named.append((f"ego.{key}", _lanelet_id(f"ego.{key}", value)))
-        for i, lanelet_id in enumerate(_waypoint_lanelet_ids(ego_cfg)):
-            named.append((f"ego.waypoint_lanelet_ids[{i}]", lanelet_id))
-    scenario = cfg.get("scenario")
-    if isinstance(scenario, (DictConfig, Mapping)):
-        keys = _SCENARIO_LANELET_KEYS.get(str(scenario.get("name") or ""), ())
-        for key, ignored_by in keys:
-            if str(scenario.get("kind") or "") in ignored_by:
-                continue
-            value = scenario.get(key)
-            if value is not None:
-                named.append((f"scenario.{key}", _lanelet_id(f"scenario.{key}", value)))
-    return named
-
-
-#: The lanelet ids of each Lanelet2 file :func:`map_lanelet_ids` scanned, by
-#: path, with the file's size and modification time: a batch's cases, and a
-#: sweep's, share one map.
-_MAP_LANELET_IDS: dict[str, tuple[int, int, frozenset[int]]] = {}
-
-
-def map_lanelet_ids(lanelet2_path: object) -> frozenset[int] | None:
-    """The ids of the lanelets of the Lanelet2 file *lanelet2_path*, or ``None``.
-
-    Read off the ``.osm`` as XML -- each ``relation`` tagged ``type=lanelet``
-    that is not marked ``action=delete``, as Lanelet2 reads them -- not loaded with Lanelet2: no projection, no routing graph, nothing the
-    run loads again, so the check costs a scan of the file, once a file
-    (:data:`_MAP_LANELET_IDS`).  ``None`` when *lanelet2_path* is not a path
-    (``None``: the config names no Lanelet2 map), there is no such file, it
-    does not parse, or it has no lanelet at all (not a Lanelet2 map this can read):
-    nothing to check against, and the run reports the map as it always did.
-    """
-    if not isinstance(lanelet2_path, (str, Path)):
-        return None
-    path = Path(lanelet2_path)
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    key = str(path.resolve())
-    cached = _MAP_LANELET_IDS.get(key)
-    if (
-        cached is not None
-        and cached[0] == stat.st_size
-        and cached[1] == stat.st_mtime_ns
-    ):
-        return cached[2]
-    import xml.etree.ElementTree as ElementTree  # noqa: PLC0415
-
-    ids: set[int] = set()
-    try:
-        for _event, element in ElementTree.iterparse(str(path), events=("end",)):
-            # Lanelet2 skips an element JOSM marked deleted (action=delete).
-            if element.tag == "relation" and element.get("action") != "delete":
-                for tag in element.iter("tag"):
-                    if tag.get("k") == "type" and tag.get("v") == "lanelet":
-                        try:
-                            ids.add(int(element.get("id") or ""))
-                        except ValueError:
-                            pass
-                        break
-                element.clear()
-            elif element.tag in ("node", "way", "relation"):
-                element.clear()
-    except (OSError, ElementTree.ParseError):
-        logger.debug("could not scan %s for its lanelets", path, exc_info=True)
-        return None
-    if not ids:
-        return None
-    found = frozenset(ids)
-    _MAP_LANELET_IDS[key] = (stat.st_size, stat.st_mtime_ns, found)
-    return found
-
-
 def check_config_lanelets(
     configs: list[DictConfig],
     map_paths: Any,
@@ -2984,30 +2861,16 @@ def check_config_lanelets(
         RunConfigError: naming the case, the missing ids with their keys, and
             the map.
     """
-    lanelet2_path = getattr(map_paths, "lanelet2_path", None)
-    known = map_lanelet_ids(lanelet2_path)
-    if known is None:
-        return
     names = labels if labels is not None else []
     for i, cfg in enumerate(configs):
         try:
-            named = config_lanelet_ids(cfg)
+            refusal = lanelet_refusal(cfg, map_paths)
         except ValueError as exc:
             raise RunConfigError(str(exc)) from exc
-        missing = [
-            (key, lanelet_id) for key, lanelet_id in named if lanelet_id not in known
-        ]
-        if not missing:
+        if refusal is None:
             continue
         prefix = f"{names[i]}: " if i < len(names) else ""
-        listed = ", ".join(f"{key}={lanelet_id}" for key, lanelet_id in missing)
-        map_name = getattr(map_paths, "name", None)
-        raise RunConfigError(
-            f"{prefix}no lanelet of map {map_name!r} ({lanelet2_path}) has the "
-            f"id {listed}: the config names lanelets of another map.  Run it "
-            "on the map its lanelet ids were written for (map=<group>), or "
-            "name lanelets of this one"
-        )
+        raise RunConfigError(f"{prefix}{refusal}")
 
 
 def check_batch_configs(
@@ -3188,6 +3051,7 @@ def run_batch(
     wait: bool | None = None,
     resume_into: Path | None = None,
     output_dir: Path | None = None,
+    pattern: str | None = None,
 ) -> None:
     """Compose configs, build scenarios, and run them in a single queue.
 
@@ -3223,6 +3087,15 @@ def run_batch(
     one ``Error:`` line naming the scenario, and exits 2
     (:func:`~autoware_carla_scenario.examples.compose_errors.compose_or_report`).
 
+    With *pattern*, the glob that picked *scenario_names*, a scenario that
+    does not fit the map it is composed on -- its ``scenario.required_map``
+    is another map's, or a lanelet id it names is not on the map -- is
+    skipped with a warning naming it and why, and the rest run
+    (:func:`~autoware_carla_scenario.map_fit.skip_off_map_scenarios`, #2253);
+    with every one skipped, the batch exits 1 saying that nothing fits the
+    map.  Scenarios named one by one (no *pattern*) are refused for it, as a
+    single run is.
+
     Raises:
         RunConfigError: a config value a case would refuse
             (:func:`check_batch_configs`), before any scenario is built or the
@@ -3246,6 +3119,21 @@ def run_batch(
         except RuntimeError as exc:
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(2)
+    if pattern is not None:
+        # A glob over every scenario cannot fit every map: the scenarios it
+        # picked that do not fit this one are skipped, before any is expanded
+        # or checked (#2253).  Sweep keys are picked on the map with --multirun.
+        try:
+            scenario_names = skip_off_map_scenarios(
+                pattern,
+                scenario_names,
+                lambda name: _compose_case(name, overrides),
+                lambda map_cfg: resolve_map_paths(map_cfg),
+                expanding=expand,
+            )
+        except NothingFitsError as exc:
+            print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(1)
     # Each scenario's document, loaded once for every check of the batch.
     documents: dict[str, Any] = {}
     if expand:
@@ -5196,6 +5084,9 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
             extra["resume_into"] = Path(resume_into)
         if batch_dir is not None:
             extra["output_dir"] = batch_dir
+        if _is_glob_pattern(scenario_value):
+            # The glob's scenarios that do not fit the map are skipped (#2253).
+            extra["pattern"] = scenario_value
         try:
             run_batch(
                 scenario_names,

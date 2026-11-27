@@ -281,7 +281,12 @@ def test_multirun_on_a_glob_expands_the_batch_instead_of_reaching_hydra(
     (names, overrides, kw) = calls[0]
     assert _CONCRETE in names
     assert overrides == ["map=town10hd_opt"]
-    assert kw == {"expand": True, "resume_from": 3}
+    # The glob: its scenarios that do not fit the map are skipped (#2253).
+    assert kw == {
+        "expand": True,
+        "resume_from": 3,
+        "pattern": "intersection_passing/straight*",
+    }
 
 
 def test_each_run_of_one_scenario_class_keeps_files_of_its_own(tmp_path: Path) -> None:

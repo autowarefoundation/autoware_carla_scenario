@@ -20,6 +20,15 @@ refused before it starts when a lanelet id it names -- the ego's spawn, goal
 or waypoints, an adversity's `scenario.npc_lanelet_id` -- is not a lanelet of
 the Lanelet2 map it resolved.
 
+A glob is the exception: a batch whose scenarios a glob picked
+(`scenario='*/*'`, `scenario='adversity/*'`) -- locally, under
+`launcher=slurm`, from the viewer's Run form or in `scenario-expand` -- skips
+a case that does not fit the map, with a warning naming it and why, and runs
+the rest. So `scenario='*/*'` on the default map runs every other scenario,
+and `scenario='adversity/*'` there, where none fits, exits 1 saying that no
+scenario it matches fits the map ([Batch Execution with Glob
+Patterns](../usage.md#batch-execution-with-glob-patterns)).
+
 ```bash
 uv run scenario scenario=adversity/cut_in map=town10hd_opt
 ```
