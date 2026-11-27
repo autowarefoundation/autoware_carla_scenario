@@ -3150,7 +3150,7 @@ def test_the_bridge_command_keeps_the_quotes_through_the_shell(
 
 
 @pytest.mark.parametrize("name", BOOLEAN_PARAMETERS)
-@pytest.mark.parametrize("value", ["maybe", "", "1", 1, 0.0])
+@pytest.mark.parametrize("value", ["maybe", "", "1", "tRue", "oFF", 1, 0.0])
 def test_anything_but_a_boolean_for_a_boolean_parameter_is_refused(
     name: str, value: object
 ) -> None:
@@ -3165,7 +3165,15 @@ def test_anything_but_a_boolean_for_a_boolean_parameter_is_refused(
 @pytest.mark.parametrize("name", BOOLEAN_PARAMETERS)
 @pytest.mark.parametrize(
     ("value", "passed"),
-    [("false", "false"), ("True", "true"), (" off ", "false"), ("yes", "true")],
+    [
+        ("false", "false"),
+        ("True", "true"),
+        ("FALSE", "false"),
+        (" off ", "false"),
+        ("yes", "true"),
+        ("Y", "true"),
+        ("N", "false"),
+    ],
 )
 def test_a_boolean_word_for_a_boolean_parameter_is_that_boolean(
     name: str, value: str, passed: str

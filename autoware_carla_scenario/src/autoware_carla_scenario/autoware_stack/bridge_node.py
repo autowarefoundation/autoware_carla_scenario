@@ -27,6 +27,7 @@ __all__ = [
     "BRIDGE_APT_PACKAGES",
     "BRIDGE_MODULE",
     "BOOLEAN_PARAMETERS",
+    "BOOLEAN_WORDS",
     "BRIDGE_PROTOBUF_REQUIREMENT",
     "DOUBLE_PARAMETERS",
     "INTEGER_PARAMETERS",
@@ -104,8 +105,11 @@ BOOLEAN_PARAMETERS: tuple[str, ...] = (
 )
 
 #: The words rcl's parameter parser reads as a boolean, and the one each
-#: means (``rcl_yaml_param_parser``): a string for a
-#: :data:`BOOLEAN_PARAMETERS` one is passed as that boolean.
+#: means (``rcl_yaml_param_parser``, ``get_value()``): a string for a
+#: :data:`BOOLEAN_PARAMETERS` one is passed as that boolean.  rcl takes each
+#: in lower case, capitalised or upper case (``false``, ``False``,
+#: ``FALSE``), not in any other mix (``fAlse`` is a string to it), and
+#: neither does :func:`bridge_ros_args`.
 BOOLEAN_WORDS: dict[str, bool] = {
     "y": True,
     "yes": True,
@@ -229,9 +233,15 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
                 f"to the pid of the shell that starts the stack, got {value!r}"
             )
         if name in BOOLEAN_PARAMETERS and isinstance(value, str):
-            word = value.strip().lower()
-            if word in BOOLEAN_WORDS:
-                value = BOOLEAN_WORDS[word]
+            # YAML trims a bare scalar's spaces, tabs and line breaks.
+            word = value.strip(" \t\r\n")
+            lower = word.lower()
+            if lower in BOOLEAN_WORDS and word in (
+                lower,
+                lower.capitalize(),
+                lower.upper(),
+            ):
+                value = BOOLEAN_WORDS[lower]
         if name in BOOLEAN_PARAMETERS and not isinstance(value, bool):
             raise ValueError(
                 f"{name} must be a boolean, as the scenario_bridge node "
