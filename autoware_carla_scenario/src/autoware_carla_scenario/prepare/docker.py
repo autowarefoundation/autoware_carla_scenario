@@ -76,7 +76,8 @@ class DockerSettings:
             above 0, and the host checked): ``"auto"`` with none
             (``gpu_memory_mb: 0``) passes ``--gpus all``, every GPU, as
             ``"all"`` does -- under ``CUDA_VISIBLE_DEVICES``, the visible
-            ones alone (``--gpus device=2``, #2584); ``"none"`` passes none.  Any other value is
+            ones alone, by UUID (``--gpus device=GPU-...``, #2584);
+            ``"none"`` passes none.  Any other value is
             checked on the GPUs docker gives the container: every one for
             ``"all"``, those listed for ``device=``, and the first *N* for a
             count *N* (docker's ``--gpus N``).
@@ -808,7 +809,8 @@ def _gpu_args(
     gives the container every GPU (:func:`_every_gpu`) gives it those alone,
     not ``--gpus all`` -- the GPUs a SLURM job was not allocated with them
     (#2584) -- and none when there are none.  A list of several is quoted, as
-    docker takes it (``"device=0,1"``).
+    docker takes it (``"device=GPU-a,GPU-b"``): an argument of its own, with
+    no shell to take the quotes off.
     """
     text = gpus.strip()
     if text == _NONE:

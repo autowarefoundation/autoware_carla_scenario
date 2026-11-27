@@ -469,16 +469,25 @@ class TestAssignGpus:
         monkeypatch.setattr(host_module, "_gpus", lambda: gpus)
         monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
         assert host_module.visible_gpu_devices() is None
+        # By UUID: the docker daemon, outside a SLURM job's cgroup, would
+        # read a renumbered index as another GPU of the host.
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
-        assert host_module.visible_gpu_devices() == ["2"]
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-cc,0")
-        assert host_module.visible_gpu_devices() == ["2", "0"]
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
-        assert host_module.visible_gpu_devices() == []
+        assert host_module.visible_gpu_devices() == ["GPU-cccc"]
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-cc,0,2")
+        assert host_module.visible_gpu_devices() == ["GPU-cccc", "GPU-aaaa"]
+        # A MIG instance nvidia-smi --query-gpu does not list, as given;
+        # what names no GPU, left out.
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-1234, 7")
+        assert host_module.visible_gpu_devices() == ["MIG-1234"]
+        for none in ("", "-1", "NoDevFiles"):
+            monkeypatch.setenv("CUDA_VISIBLE_DEVICES", none)
+            assert host_module.visible_gpu_devices() == []
         # Without nvidia-smi, as given: docker reads an index or a UUID.
         monkeypatch.setattr(host_module, "_gpus", lambda: ())
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1, GPU-bbbb,1")
-        assert host_module.visible_gpu_devices() == ["1", "GPU-bbbb"]
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1, GPU-bbbb,1,MIG-x,-1")
+        assert host_module.visible_gpu_devices() == ["1", "GPU-bbbb", "MIG-x"]
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "NoDevFiles")
+        assert host_module.visible_gpu_devices() == []
 
     def test_only_the_visible_gpus_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         gpus = (Gpu(0, "GPU-aaaa", 1), Gpu(1, "GPU-bbbb", 2))
@@ -674,7 +683,7 @@ class TestDockerBackend:
             None, gpu=gpu
         )
         (run,) = [c for c in recorded.calls if c[1] == "run"]
-        assert run[run.index("--gpus") + 1] == "device=2"
+        assert run[run.index("--gpus") + 1] == "device=GPU-c"
         monkeypatch.delenv("CUDA_VISIBLE_DEVICES")
         recorded.calls.clear()
         _Answering.from_settings({"gpus": gpus, "gpu_memory_mb": 0}).start(

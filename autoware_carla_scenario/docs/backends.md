@@ -102,11 +102,15 @@ what others are about to take:
   SLURM renumbers a job's GPUs from 0, set `gpus: device=N` to the host's index
   instead.
 - With `CUDA_VISIBLE_DEVICES` set, `gpus: all` (and `auto` with
-  `gpu_memory_mb: 0`) gives the container the visible GPUs alone, by their
-  `nvidia-smi` indices (`--gpus device=2`, or `--gpus '"device=1,3"'` for
-  several), not `--gpus all`, so a SLURM job's container stays within the
-  job's GPUs (#2584). Without it, they pass `--gpus all`. A GPU that `device=`
-  or a count names and that is not visible is refused.
+  `gpu_memory_mb: 0`) gives the container the visible GPUs alone, by the
+  UUIDs `nvidia-smi` gives them (`--gpus device=GPU-...`, or
+  `--gpus '"device=GPU-a,GPU-b"'` for several), not `--gpus all`, so a SLURM
+  job's container stays within the job's GPUs (#2584) even where the job
+  renumbers them. A MIG instance (`MIG-...`) is passed on as given; an entry
+  that names no GPU (`-1`, `NoDevFiles`) is left out, and with none visible
+  the container gets no GPU. Without `CUDA_VISIBLE_DEVICES`, they pass
+  `--gpus all`. A GPU that `device=` or a count names and that is not visible
+  is refused.
 
 ## Containers
 

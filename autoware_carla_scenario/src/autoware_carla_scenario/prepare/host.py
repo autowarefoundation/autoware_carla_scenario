@@ -293,27 +293,50 @@ def visible_gpu_devices() -> Optional[list[str]]:
     """The GPUs ``CUDA_VISIBLE_DEVICES`` lets this process use, as ``docker
     run --gpus device=`` names them, or ``None`` when it is unset (every GPU).
 
-    Read as :func:`probe_host` reads it (:func:`_visible`), by index or UUID:
-    each is the index ``nvidia-smi`` gives it, which docker counts by too,
-    not its position in ``CUDA_VISIBLE_DEVICES``, so ``CUDA_VISIBLE_DEVICES=2``
-    is docker's ``device=2`` (#2584).  Without ``nvidia-smi`` the entries are
-    passed on as given, an index or a UUID, both of which docker reads.  An
+    Read as :func:`probe_host` reads it (:func:`_visible`), by index or UUID,
+    and named by the UUID ``nvidia-smi`` gives each: the docker daemon runs
+    outside the job, so an index -- which a SLURM job's cgroup may renumber
+    from 0 -- could name another GPU of the host, where a UUID names the same
+    one everywhere (#2584).  A MIG instance (``MIG-...``), which
+    ``nvidia-smi --query-gpu`` does not list, is passed on as given, as is
+    every entry without ``nvidia-smi``: docker reads an index, a UUID or a
+    MIG UUID.  What names no GPU (``-1``, ``NoDevFiles``) is left out.  An
     empty list is no GPU.
     """
     visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if visible is None:
         return None
-    devices: list[str] = []
     gpus = _gpus()
-    if gpus:
-        for gpu in _visible(gpus):
-            devices.append(str(gpu.index))
-        return devices
+    devices: list[str] = []
     for item in visible.split(","):
         item = item.strip()
-        if item and item not in devices:
+        if gpus:
+            found = _visible_one(gpus, item)
+            if found is not None:
+                item = found.uuid
+            elif not item.startswith("MIG-"):
+                continue
+        elif not (
+            (item.isascii() and item.isdigit())
+            or item.startswith("GPU-")
+            or item.startswith("MIG-")
+        ):
+            continue
+        if item not in devices:
             devices.append(item)
     return devices
+
+
+def _visible_one(gpus: tuple[Gpu, ...], item: str) -> Optional[Gpu]:
+    """The GPU of *gpus* that a ``CUDA_VISIBLE_DEVICES`` entry names, by
+    index or UUID (prefix), as :func:`_visible` matches them; ``None`` if
+    none."""
+    if not item:
+        return None
+    for gpu in gpus:
+        if item == str(gpu.index) or gpu.uuid.startswith(item):
+            return gpu
+    return None
 
 
 def _available_memory_mb() -> int:
