@@ -132,8 +132,9 @@ def _user_location(
     A frame is the author's when it is in the package of the ODD module
     (also when that package is installed, i.e. under site-packages), or in a
     file that is neither the library's, the standard library's, a frozen
-    module nor in site-packages.  A :class:`SyntaxError` names the line it is
-    on itself: the frames that raised it are only the import machinery's.
+    module nor in site-packages or dist-packages.  A :class:`SyntaxError`
+    names the line it is on itself: the frames that raised it are only the
+    import machinery's.
     """
     if (
         isinstance(exc, SyntaxError)
@@ -150,7 +151,7 @@ def _user_location(
         path = tb.tb_frame.f_code.co_filename
         module = str(tb.tb_frame.f_globals.get("__name__", ""))
         if not (own is not None and module.split(".", 1)[0] == own):
-            if "site-packages" in path:
+            if _SITE_DIRECTORIES.intersection(Path(path).parts):
                 continue
         found = (path, tb.tb_lineno)
     return found
@@ -270,7 +271,9 @@ def _scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
             names += matched
         else:
             names.append(pattern)
-    return names, overrides
+    # Patterns may overlap: a config they both name is planned once, where
+    # it is first named, or its metres would be summed twice.
+    return list(dict.fromkeys(names)), overrides
 
 
 def _format_route(coverage: Any) -> list[str]:
@@ -292,7 +295,11 @@ def _format_route(coverage: Any) -> list[str]:
 
 
 def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
-    from .route import combine_route_coverage, plan_route_coverage  # noqa: PLC0415
+    from .route import (  # noqa: PLC0415
+        _route_map_attributes,
+        combine_route_coverage,
+        plan_route_coverage,
+    )
 
     try:
         odd = resolve_odd(spec)
@@ -358,7 +365,7 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
             print(f"{name}: NOT PLANNED: {reason}")  # noqa: T201
         if routes:
             print("expected coverage, all routes:")  # noqa: T201
-            for attribute in routes[0].map_attributes:
+            for attribute in _route_map_attributes(odd, routes):
                 buckets = summary.expected_m.get(attribute)
                 if buckets is not None:
                     print(f"  {attribute}: {_format_buckets(buckets) or '-'}")  # noqa: T201

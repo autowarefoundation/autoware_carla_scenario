@@ -185,6 +185,14 @@ def _check_control(
                     f"{base}.{name}", f"expected a number, got {spec[name]!r}"
                 )
             )
+        elif name in spec and not math.isfinite(spec[name]):
+            # A NaN or infinite scale or offset maps every draw outside the
+            # ODD, which the sampler would only report as no case found.
+            out.append(
+                ControlDiagnostic(
+                    f"{base}.{name}", f"expected a finite number, got {spec[name]!r}"
+                )
+            )
     if _is_number(spec.get("scale")) and spec["scale"] == 0:
         out.append(ControlDiagnostic(f"{base}.scale", "must not be zero"))
     if "quantity" in spec and (
