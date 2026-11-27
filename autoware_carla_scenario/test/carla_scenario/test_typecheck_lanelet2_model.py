@@ -423,6 +423,12 @@ def test_the_geometry_functions(lanelet_map: Any) -> None:
     assert isinstance(polygon, core.CompoundPolygon2d)
     assert len(polygon) == len(lanelet.leftBound) + len(lanelet.rightBound)
     assert all(isinstance(corner, core.ConstPoint2d) for corner in polygon)
+    polygon_3d = lanelet.polygon3d()
+    assert isinstance(polygon_3d, core.CompoundPolygon3d)
+    assert len(polygon_3d) == len(polygon)
+    assert all(isinstance(corner, core.ConstPoint3d) for corner in polygon_3d)
+    # The same outline, point for point (map_area.area_shapes reads both).
+    assert [(c.x, c.y) for c in polygon_3d] == [(c.x, c.y) for c in polygon]
     mutable = core.LineString3d(
         lanelet2.core.getId(),
         [

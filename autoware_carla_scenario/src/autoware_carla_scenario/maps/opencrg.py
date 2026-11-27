@@ -123,12 +123,17 @@ class ReliefRegion:
         extreme_m: The most it stands off the design: the highest crest of a
             raised region, the deepest point of a grooved one (negative).
         outline: Its outline, ``(s, t)`` on the road.
+        relief: How far (m) the surface stands off its design at each point
+            of *outline*, in the same order: the grid's value at the cell the
+            point is a corner of.  Placed on the road's own height, it is the
+            height of the region (#2314).
     """
 
     road_id: str
     kind: str
     extreme_m: float
     outline: list[tuple[float, float]]
+    relief: list[float]
 
     def describe(self) -> str:
         """``raised 0.080 m on road 12``."""
@@ -353,9 +358,10 @@ def _cell_edges(values: list[float], index: int) -> tuple[float, float]:
 
 def _outline(
     grid: CrgGrid, component: list[tuple[int, int, int]]
-) -> list[tuple[float, float]]:
+) -> list[tuple[float, float, float]]:
     """A component's outline in ``(u, v)``: along each cross section from its
-    first cell to its last (the module's "The outline of a region")."""
+    first cell to its last (the module's "The outline of a region"), each
+    point with the value of the cell it is a corner of."""
     spans: dict[int, tuple[int, int]] = {}
     for row, first, last in component:
         if row in spans:
@@ -364,21 +370,23 @@ def _outline(
         else:
             spans[row] = (first, last)
     rows = sorted(spans)
-    right: list[tuple[float, float]] = []
-    left: list[tuple[float, float]] = []
+    right: list[tuple[float, float, float]] = []
+    left: list[tuple[float, float, float]] = []
     for row in rows:
         first, last = spans[row]
         u_low, u_high = _cell_edges(grid.u, row)
         v_low = _cell_edges(grid.v, first)[0]
         v_high = _cell_edges(grid.v, last)[1]
-        right.append((u_low, v_low))
-        right.append((u_high, v_low))
-        left.append((u_high, v_high))
-        left.append((u_low, v_high))
+        at_first = grid.values[row][first]
+        at_last = grid.values[row][last]
+        right.append((u_low, v_low, at_first))
+        right.append((u_high, v_low, at_first))
+        left.append((u_high, v_high, at_last))
+        left.append((u_low, v_high, at_last))
     left.reverse()
-    points: list[tuple[float, float]] = []
+    points: list[tuple[float, float, float]] = []
     for point in right + left:
-        if points and points[-1] == point:
+        if points and points[-1][0] == point[0] and points[-1][1] == point[1]:
             continue
         # A run of three on one line keeps only its ends.
         if len(points) >= 2 and (
@@ -501,9 +509,13 @@ def relief_regions(
                         if sign * value > sign * extreme:
                             extreme = value
                 outline: list[tuple[float, float]] = []
-                for u, v in _outline(grid, component):
+                relief: list[float] = []
+                for u, v, value in _outline(grid, component):
                     outline.append(_on_road(reference, grid.u[0], u, v))
-                regions.append(ReliefRegion(reference.road_id, kind, extreme, outline))
+                    relief.append(value)
+                regions.append(
+                    ReliefRegion(reference.road_id, kind, extreme, outline, relief)
+                )
     if len(_CACHE) >= _CACHE_SIZE:
         _CACHE.clear()
     _CACHE[key] = (list(regions), list(problems))

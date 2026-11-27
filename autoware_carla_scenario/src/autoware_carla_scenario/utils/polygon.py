@@ -8,7 +8,10 @@ Autoware's intersection area -- convex or not.  :func:`polygon_distance` is
 the distance between two of them: ``0`` once they touch, overlap, or one
 holds the other, and otherwise the shortest distance between their edges,
 which for two polygons that do not meet is always from a corner of one to an
-edge of the other.
+edge of the other.  :func:`polygon_distance_at` says where on the second
+polygon's outline that distance is measured to, as an edge and how far along
+it, so a value kept per corner -- the height of an area's outline -- can be
+read there (:func:`edge_value`).
 """
 
 from __future__ import annotations
@@ -24,11 +27,14 @@ __all__ = [
     "Point",
     "bounding_circle",
     "cross",
+    "edge_value",
     "ground_box",
     "point_in_polygon",
     "point_segment_distance",
     "polygon_distance",
+    "polygon_distance_at",
     "polygon_gap",
+    "polygon_gap_at",
     "segments_cross",
 ]
 
@@ -83,14 +89,20 @@ def ground_box(actor: "carla.Actor", transform: "carla.Transform") -> Box:
     ]
 
 
-def point_segment_distance(p: Point, a: Point, b: Point) -> float:
-    """Metres from *p* to the segment *ab* (to *a* when the two ends meet)."""
+def _segment_nearest(p: Point, a: Point, b: Point) -> tuple[float, float]:
+    """Metres from *p* to the segment *ab*, and how far along it (``0`` at
+    *a*, ``1`` at *b*) the nearest point of it is."""
     dx, dy = b[0] - a[0], b[1] - a[1]
     length2 = dx * dx + dy * dy
     t = 0.0
     if length2 > 0.0:
         t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2))
-    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
+    return (math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy)), t)
+
+
+def point_segment_distance(p: Point, a: Point, b: Point) -> float:
+    """Metres from *p* to the segment *ab* (to *a* when the two ends meet)."""
+    return _segment_nearest(p, a, b)[0]
 
 
 def cross(o: Point, a: Point, b: Point) -> float:
@@ -155,22 +167,44 @@ def _edges_meet(one: list[Point], other: list[Point]) -> bool:
     return False
 
 
+def polygon_gap_at(one: list[Point], other: list[Point]) -> tuple[float, int, float]:
+    """:func:`polygon_gap`, and where on *other*'s outline it is measured to:
+    ``(distance, edge, along)``, the point *along* (``0`` to ``1``) the edge
+    from *other*'s corner *edge* to the next.  ``(inf, -1, 0)`` when either
+    has no corners."""
+    best = math.inf
+    edge = -1
+    along = 0.0
+    count, other_count = len(one), len(other)
+    if count == 0:
+        return (best, edge, along)
+    for p in one:
+        for j in range(other_count):
+            distance, t = _segment_nearest(p, other[j], other[(j + 1) % other_count])
+            if distance < best:
+                best, edge, along = distance, j, t
+    for j in range(other_count):
+        for i in range(count):
+            distance = _segment_nearest(other[j], one[i], one[(i + 1) % count])[0]
+            if distance < best:
+                best, edge, along = distance, j, 0.0
+    return (best, edge, along)
+
+
 def polygon_gap(one: list[Point], other: list[Point]) -> float:
     """The shortest distance from a corner of either polygon to an edge of the
     other: the distance between two polygons known not to meet (their
     bounding circles apart, say), without asking whether they do.  ``inf``
     when either has no corners."""
-    best = math.inf
-    count, other_count = len(one), len(other)
-    for p in one:
-        for j in range(other_count):
-            best = min(
-                best, point_segment_distance(p, other[j], other[(j + 1) % other_count])
-            )
-    for p in other:
-        for i in range(count):
-            best = min(best, point_segment_distance(p, one[i], one[(i + 1) % count]))
-    return best
+    return polygon_gap_at(one, other)[0]
+
+
+def _meet(one: list[Point], other: list[Point]) -> bool:
+    return (
+        point_in_polygon(one[0], other)
+        or point_in_polygon(other[0], one)
+        or _edges_meet(one, other)
+    )
 
 
 def polygon_distance(one: list[Point], other: list[Point]) -> float:
@@ -179,13 +213,41 @@ def polygon_distance(one: list[Point], other: list[Point]) -> float:
     ``inf`` when either has no corners."""
     if not one or not other:
         return math.inf
-    if (
-        point_in_polygon(one[0], other)
-        or point_in_polygon(other[0], one)
-        or _edges_meet(one, other)
-    ):
+    if _meet(one, other):
         return 0.0
     return polygon_gap(one, other)
+
+
+def polygon_distance_at(
+    one: list[Point], other: list[Point], centre: Point
+) -> tuple[float, int, float]:
+    """:func:`polygon_distance`, and where on *other*'s outline it is read:
+    ``(distance, edge, along)`` as :func:`polygon_gap_at` says it.  Where the
+    two meet, the distance is ``0`` and the point is the one of *other*'s
+    outline nearest *centre* -- the middle of *one*, say, over the area.
+    ``(inf, -1, 0)`` when either has no corners."""
+    if not one or not other:
+        return (math.inf, -1, 0.0)
+    if not _meet(one, other):
+        return polygon_gap_at(one, other)
+    best = math.inf
+    edge = 0
+    along = 0.0
+    count = len(other)
+    for j in range(count):
+        distance, t = _segment_nearest(centre, other[j], other[(j + 1) % count])
+        if distance < best:
+            best, edge, along = distance, j, t
+    return (0.0, edge, along)
+
+
+def edge_value(values: list[float], edge: int, along: float) -> float:
+    """A value kept per corner of a polygon (*values*, one per corner, in
+    order) at the point *along* (``0`` to ``1``) the edge from corner *edge*
+    to the next, linearly between the two."""
+    a = values[edge]
+    b = values[(edge + 1) % len(values)]
+    return a + (b - a) * along
 
 
 def bounding_circle(polygon: list[Point]) -> tuple[float, float, float]:

@@ -15,8 +15,8 @@ through a junction, or the lanelets of a private road are all one area::
     MapArea(AreaGround.JUNCTION, attributes=(("turn_direction", "left"),))
     MapArea(AreaGround.INTERSECTION_AREA)
 
-Its shapes are the outlines of what it matches (:func:`area_shapes`), in the
-Lanelet2 map's frame, read from any loaded Lanelet2 map: the run reads them
+Its shapes are the outlines of what it matches (:func:`area_shapes`), with
+the height of each of their points, in the Lanelet2 map's frame, read from any loaded Lanelet2 map: the run reads them
 from its own map, and the scenario editor from the map it previews, so the
 outline the editor draws is the ground the run measures to.
 
@@ -295,11 +295,17 @@ class AreaShape:
         layer: ``"lanelet"`` or ``"polygon"``: which layer it is from.
         element_id: Its id in that layer.
         points: Its outline, ``(x, y)`` in the Lanelet2 map's frame.
+        heights: The height of each point of *points*, in the same order: its
+            ``z`` on the Lanelet2 map, which is the absolute elevation
+            (:attr:`~autoware_carla_scenario.coordinate.map_manager.MapManager.z_offset`
+            above CARLA's).  Where roads are stacked, the outlines of two
+            levels meet in plan and part here (#2314).
     """
 
     layer: str
     element_id: int
     points: list[tuple[float, float]]
+    heights: list[float]
 
 
 def _tag(attributes: "AttributeMap", key: str) -> Optional[str]:
@@ -335,9 +341,9 @@ def _polygon_matches(polygon: "Polygon3d", area: MapArea) -> bool:
 
 
 def area_shapes(lanelet_map: "LaneletMap", area: MapArea) -> list[AreaShape]:
-    """The outlines of every element of *lanelet_map* in *area*, in the order
-    the map holds them (picked lanelets, in the order picked), in the map's
-    own frame.  None for a surface ground, which is not on the Lanelet2 map
+    """The outlines of every element of *lanelet_map* in *area*, and the
+    height of each of their points, in the order the map holds them (picked
+    lanelets, in the order picked), in the map's own frame.  None for a surface ground, which is not on the Lanelet2 map
     (:func:`surface_regions`).
 
     Raises:
@@ -368,13 +374,23 @@ def area_shapes(lanelet_map: "LaneletMap", area: MapArea) -> list[AreaShape]:
             ]
         for lanelet in candidates:
             if _has_attributes(lanelet.attributes, area.attributes):
-                points = [(float(p.x), float(p.y)) for p in lanelet.polygon2d()]
-                shapes.append(AreaShape("lanelet", int(lanelet.id), points))
+                # polygon3d() is polygon2d()'s outline, point for point, with
+                # the heights.
+                points: list[tuple[float, float]] = []
+                heights: list[float] = []
+                for p in lanelet.polygon3d():
+                    points.append((float(p.x), float(p.y)))
+                    heights.append(float(p.z))
+                shapes.append(AreaShape("lanelet", int(lanelet.id), points, heights))
         return shapes
     for polygon in lanelet_map.polygonLayer:
         if _polygon_matches(polygon, area):
-            points = [(float(p.x), float(p.y)) for p in polygon]
-            shapes.append(AreaShape("polygon", int(polygon.id), points))
+            corners: list[tuple[float, float]] = []
+            levels: list[float] = []
+            for p in polygon:
+                corners.append((float(p.x), float(p.y)))
+                levels.append(float(p.z))
+            shapes.append(AreaShape("polygon", int(polygon.id), corners, levels))
     return shapes
 
 

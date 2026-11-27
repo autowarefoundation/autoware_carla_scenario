@@ -295,6 +295,15 @@ class CompoundPolygon2d:
         raise NotImplementedError()
 
 
+# Its 3D twin (ConstLanelet.polygon3d()): the same points, with their heights.
+class CompoundPolygon3d:
+    def __len__(self) -> int:
+        raise NotImplementedError()
+
+    def __iter__(self) -> Generator[ConstPoint3d]:
+        raise NotImplementedError()
+
+
 class ConstLanelet:
     @property
     def id(self) -> int:
@@ -327,6 +336,9 @@ class ConstLanelet:
         raise NotImplementedError()
 
     def polygon2d(self) -> CompoundPolygon2d:
+        raise NotImplementedError()
+
+    def polygon3d(self) -> CompoundPolygon3d:
         raise NotImplementedError()
 
 
