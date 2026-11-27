@@ -43,6 +43,16 @@ def test_the_heading_picks_the_lane_running_its_way(roads: tuple) -> None:
     assert [s.lanelet_id for s in stops] == [W_IN1, W_IN1, W_IN2]
 
 
+def test_a_first_point_alone_on_its_lanelet_is_one_stop_not_two(
+    roads: tuple,
+) -> None:
+    """Its only sample on ``W_IN1``, the start is where it leaves it too: one
+    stop, not the same pose twice, a first leg of no length (#2592)."""
+    stops = match_track(_track(-1.75, -61.0, -47.0, 0.0), *roads)
+    assert [s.lanelet_id for s in stops] == [W_IN1, W_IN2]
+    assert stops[0].s == pytest.approx(49.0, abs=0.1)
+
+
 def test_a_point_off_the_road_is_left_out(roads: tuple) -> None:
     track = _track(-1.75, -100.0, -70.0, 0.0) + [(-60.0, 40.0, 0.0)]
     stops = match_track(track, *roads)

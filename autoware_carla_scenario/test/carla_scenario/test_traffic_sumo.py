@@ -4168,6 +4168,7 @@ def _mesoscopic(
         **options.pop("mesoscopic", {}),
     }
     ego_published = options.pop("ego_published", True)
+    npc_attributes = options.pop("npc_attributes", {})
     config = SumoBackendConfig(
         scenario_vehicles="sumo",
         ambient=AmbientTrafficConfig(
@@ -4190,6 +4191,7 @@ def _mesoscopic(
         )
     )
     npc = _FakeActor(_carla_transform(-80.0, 5.25, 0.0), "npc", "vehicle.npc")
+    npc.attributes.update(npc_attributes)
     ego = _FakeActor(_carla_transform(-110.0, 1.75, 0.0), str(EGO_ROLE_NAME))
     world = _FakeWorld([npc, ego])
     entity = _LeavingEntity(npc, "npc")
@@ -4288,6 +4290,85 @@ def test_a_mesoscopic_vehicle_takes_its_manoeuvres_as_far_as_it_can(
     finally:
         backend.close()
     assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
+
+
+@needs_sumo
+def test_an_entitys_own_overrides_outlast_a_mesoscopic_round_trip(
+    crossroads: Path, tmp_path: Path, meso_engine: str
+) -> None:
+    """Overrides given the entity alone -- before it left SUMO, and while it
+    was mesoscopic, which was a silent no-op -- are its own again once it is
+    back: re-added, it departs with its type's, and the run's draw (#2592)."""
+    from autoware_carla_scenario.traffic.parameters import Spread, VehicleParameters
+
+    backend, world, entity, _ego = _mesoscopic(crossroads, tmp_path, meso_engine)
+    (sumo_id,) = backend._driven
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        backend.override_entity_parameters(
+            world, VehicleParameters(reaction_time_s=Spread(1.7)), entity
+        )
+        assert tc.vehicle.getTau(sumo_id) == pytest.approx(1.7)
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        backend.override_entity_parameters(
+            world, VehicleParameters(accel=Spread(1.5)), entity
+        )
+        assert backend.require_microscopic(entity, world)
+        for i in range(3):
+            backend.tick(world, i * 0.05)
+        assert sumo_id in tc.vehicle.getIDList()
+        assert tc.vehicle.getTau(sumo_id) == pytest.approx(1.7)
+        assert tc.vehicle.getAccel(sumo_id) == pytest.approx(1.5)
+    finally:
+        backend.close()
+    assert backend._own_overrides == {}
+
+
+@needs_sumo
+@pytest.mark.parametrize("on_call", [True, False])
+def test_an_emergency_vehicle_is_as_on_duty_back_from_the_mesoscopic_model(
+    crossroads: Path, tmp_path: Path, meso_engine: str, on_call: bool
+) -> None:
+    """Re-added, its bluelight device and speed mode were its type's: on a
+    call, SUMO's vehicles no longer made way for it; off duty, they did, and
+    it went through every red light (the device's speed mode 7, #2592)."""
+    from autoware_carla_scenario.traffic.sumo.backend import EMERGENCY_REACTION_DIST_M
+
+    backend, world, entity, _ego = _mesoscopic(
+        crossroads,
+        tmp_path,
+        meso_engine,
+        npc_attributes={"base_type": "van", "special_type": "emergency"},
+    )
+    (sumo_id,) = backend._driven
+    tc = backend._traci
+    reach = "device.bluelight.reactiondist"
+    try:
+        backend.tick(world, 0.0)
+        if on_call:
+            backend.set_emergency(entity, True)
+            entity.in_emergency = True  # type: ignore[attr-defined]
+        mode = int(tc.vehicle.getSpeedMode(sumo_id))
+        assert mode == (15 if on_call else 31)
+        expected = EMERGENCY_REACTION_DIST_M if on_call else 0.0
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == pytest.approx(expected)
+        _tick_until(
+            backend,
+            world,
+            lambda: entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC,
+        )
+        assert backend.require_microscopic(entity, world)
+        for i in range(3):
+            backend.tick(world, i * 0.05)
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == pytest.approx(expected)
+        assert int(tc.vehicle.getSpeedMode(sumo_id)) == mode
+    finally:
+        backend.close()
 
 
 @needs_sumo

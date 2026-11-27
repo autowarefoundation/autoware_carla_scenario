@@ -142,6 +142,10 @@ def match_track(
     ]
     for i, cand in enumerate(chosen):
         last = i + 1 == len(chosen)
+        if i == 0 and not last:
+            # The start, already the first stop: where it leaves a lanelet
+            # it alone is on is that very pose, a leg of no length (#2592).
+            continue
         if last or chosen[i + 1].lanelet.id != cand.lanelet.id:
             stops.append(Lanelet2Pose(lanelet_id=int(cand.lanelet.id), s=float(cand.s)))
     return stops

@@ -378,7 +378,15 @@ class HybridTrafficBackend(TrafficManagerBackend):
             return
         config = self._hybrid.mesoscopic
         ahead = config.horizon_s > 0.0
-        background = {int(actor.id) for actor in self._background.values()}
+        # A background vehicle released to an adversity is driven by the
+        # scenario now: a focus point, as the sumo backend's CARLA-driven
+        # vehicles are, and never a candidate -- sent out of CARLA, it would
+        # be destroyed under the adversity driving it (#2592).
+        background = {
+            int(actor.id)
+            for actor in self._background.values()
+            if int(actor.id) not in self._released
+        }
         focus: list[tuple[float, float]] = []
         focus_velocities: list[tuple[float, float]] = []
         for actor in world.get_actors().filter("vehicle.*"):
@@ -399,6 +407,8 @@ class HybridTrafficBackend(TrafficManagerBackend):
         for handle, actor in list(self._background.items()):
             if self._spawned_at(handle, frame) is not None:
                 continue  # not in the world's snapshot yet: decided next time
+            if int(actor.id) in self._released:
+                continue  # driven by the scenario: a focus point (above)
             # Destroyed by the TrafficManager or the server: read at the
             # origin, it would be moved into the mesoscopic model, and brought
             # back later as a live vehicle (#2245).

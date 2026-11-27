@@ -543,6 +543,11 @@ class SumoTrafficBackend(TrafficBackend):
         #: the vehicle overrides given it while CARLA drove it, layered (the
         #: one given last wins): drawn for it when SUMO drives it again.
         self._released_overrides: dict[str, VehicleParameters] = {}
+        #: SUMO id of a scenario's vehicle -> the vehicle overrides given it
+        #: alone (override_entity_parameters), layered (the one given last
+        #: wins): drawn for it again each time it departs into SUMO, after
+        #: the run's, so a mesoscopic round trip keeps them (#2592).
+        self._own_overrides: dict[str, VehicleParameters] = {}
         #: SUMO id -> the speed (m/s) set_desired_speed() last held it at.
         self._commanded: dict[str, float] = {}
         #: SUMO id -> the entity SUMO drives.
@@ -803,10 +808,16 @@ class SumoTrafficBackend(TrafficBackend):
         sets: in SUMO when SUMO drives it, else through the TrafficManager."""
         sumo_id = self._id_of(entity)
         released = self._handed.get(id(entity))
+        meso_id = self._meso_id_of(entity) if sumo_id is None else None
         if sumo_id is None and released is not None and self._running:
             # Released: CARLA drives it now; drawn for it at resume().
             self._keep_released_overrides(released[0], overrides)
+            self._keep_own_overrides(released[0], overrides)
+        elif meso_id is not None:
+            # Mesoscopic: drawn for it when it departs into SUMO again.
+            self._keep_own_overrides(meso_id, overrides)
         elif sumo_id is not None:
+            self._keep_own_overrides(sumo_id, overrides)
             if self._is_bicycle(sumo_id):
                 logger.warning(
                     "SUMO: %s is a bicycle, which rides as traffic.bicycles "
@@ -947,6 +958,15 @@ class SumoTrafficBackend(TrafficBackend):
         given before, for when SUMO drives it again."""
         previous = self._released_overrides.get(sumo_id)
         self._released_overrides[sumo_id] = (
+            overrides if previous is None else previous.overridden_by(overrides)
+        )
+
+    def _keep_own_overrides(self, sumo_id: str, overrides: VehicleParameters) -> None:
+        """Keep *overrides*, given the scenario's vehicle *sumo_id* alone,
+        over those it was given before, for each time it departs into SUMO
+        (:meth:`_apply_parameters`)."""
+        previous = self._own_overrides.get(sumo_id)
+        self._own_overrides[sumo_id] = (
             overrides if previous is None else previous.overridden_by(overrides)
         )
 
@@ -1669,6 +1689,7 @@ class SumoTrafficBackend(TrafficBackend):
                 pass
         self._handed_ambient = {}
         self._released_overrides = {}
+        self._own_overrides = {}
         for entity in self._driven.values():
             actor = getattr(entity, "actor", None)
             if actor is not None:
@@ -4615,6 +4636,11 @@ class SumoTrafficBackend(TrafficBackend):
                 tc.vehicle.setWidth(sumo_id, self._meso_widths[sumo_id])
             if vehicle.speed_cap is not None:
                 tc.vehicle.setSpeed(sumo_id, vehicle.speed_cap)
+            if vehicle.type_id == EMERGENCY_TYPE:
+                # Off duty, as it first joined (_add_vehicle): re-added, its
+                # device sounds and its speed mode is the device's 7 (#2592).
+                tc.vehicle.setParameter(sumo_id, _BLUELIGHT_REACTION, "0")
+                tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_DEFAULT)
         except Exception as exc:  # noqa: BLE001 - one vehicle must not end the run
             # The scenario's own vehicle is worth a line; SUMO's traffic is not.
             log = logger.warning if entity is not None else logger.debug
@@ -4637,6 +4663,11 @@ class SumoTrafficBackend(TrafficBackend):
             else:
                 tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
                 self._driven[sumo_id] = entity
+            # On a call, its siren sounded again, as when it joined (_join).
+            if self._emergency_ids.get(id(entity)) == sumo_id and getattr(
+                entity, "in_emergency", False
+            ):
+                self._sound_siren(sumo_id, entity, True)
             self._mark_fidelity(entity, SimulationFidelity.MICROSCOPIC)
             logger.info("SUMO: %s is microscopic again; back in CARLA", sumo_id)
         self._level_changes[1] += 1
@@ -4986,7 +5017,8 @@ class SumoTrafficBackend(TrafficBackend):
         parameters = self.vehicle_parameters
         draws = bool(parameters.set_fields())
         sublane = self._config.lateral_resolution_m is not None
-        if draws or sublane:
+        own = self._own_overrides
+        if draws or sublane or own:
             for sumo_id in self._departed_ids():
                 if sumo_id in self._external:  # CARLA's side drives those
                     continue
@@ -4994,6 +5026,11 @@ class SumoTrafficBackend(TrafficBackend):
                     self._no_sidestep_standing(sumo_id)
                 if draws:
                     self._draw_vehicle(sumo_id, parameters)
+                if sumo_id in own:
+                    # Its own over the run's: lost to the draw above on
+                    # every departure -- back from the mesoscopic model among
+                    # them -- otherwise (#2592).
+                    self._draw_vehicle(sumo_id, own[sumo_id])
         overrides = self._pedestrian_overrides
         if overrides is not None:
             for person in self._traci.simulation.getDepartedPersonIDList():
