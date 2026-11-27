@@ -42,6 +42,7 @@ from typing import IO, Any, Optional, Sequence
 import numpy as np
 import numpy.typing as npt
 
+from ..coordinate.projection import LOCAL_XY
 from ..perception_fault import perception_faults
 from ..t4_settings import t4_lidar_points
 from ..trajectory_recorder import TrajectoryRecorder
@@ -128,7 +129,7 @@ class _LiveRecorder(TrajectoryRecorder):
 
 
 class LiveT4Scene:
-    """The run's history as a T4Scene, rows 0.1 s apart, as it runs.
+    """The run's history as a T4Scene, rows ``step_s`` apart, as it runs.
 
     Args:
         history_rows: Rows a scene holds, the current one included.
@@ -490,7 +491,10 @@ def _local_map(log: _Log, lanelet2_path: Path) -> Optional[_Map]:
         )
         return None
     path = lanelet2_path.resolve()
-    return _read_map(path, None, "local_cartesian", (path.stat().st_mtime_ns, None))
+    # Every point at its local tags as it is read, so the resource, the lanes
+    # and the route graph (which places the points there again, a no-op) are
+    # all in that frame: not a projection of the auxiliary lat/lon.
+    return _read_map(path, None, LOCAL_XY, (path.stat().st_mtime_ns, None))
 
 
 def _manager_map() -> Optional[_Map]:

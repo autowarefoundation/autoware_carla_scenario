@@ -9,7 +9,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import lanelet2
 import numpy as np
@@ -25,11 +25,12 @@ from autoware_carla_scenario.t4_scene import (
 )
 from autoware_carla_scenario.t4_scene.__main__ import main
 from autoware_carla_scenario.t4_scene._proto import t4_scene_pb2 as pb
-from autoware_carla_scenario.t4_scene.convert import _stop_lines
 from autoware_carla_scenario.t4_scene.map_resource import (
     CENTERLINE_INVERTED_TAG,
     resource_digest,
 )
+from autoware_carla_scenario.utils.light_lanes import light_lanes
+from autoware_carla_scenario.utils.stop_line import regulatory_element_stop_lines
 
 DATA = Path(__file__).resolve().parents[3] / "data"
 OSM = DATA / "nishishinjuku.osm"
@@ -563,6 +564,25 @@ def test_a_record_that_cannot_be_used_is_refused_with_its_line(
 # -- objects ----------------------------------------------------------------
 
 
+def test_one_of_carla_s_bicycles_is_a_bicycle(tmp_path: Path) -> None:
+    """As WOSAC tells a cyclist from the same log: by its blueprint (#2573)."""
+    from autoware_carla_scenario.constants import CARLA_BICYCLE_BLUEPRINTS
+
+    bike = {**CAR, "id": 4, "type_id": CARLA_BICYCLE_BLUEPRINTS[0]}
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        CAR,
+        bike,
+        _tick(100, _state(1, 0.0, 0.0), _state(2, 10.0, 5.0), _state(4, -4.0, 2.0)),
+    )
+    values = trajectory_log_to_t4_scene(
+        log, with_map=False
+    ).scene.annotations.values.boxes
+    assert [track.value for track in values.track_ids.values] == ["2", "4"]
+    assert list(_numeric(values.labels)) == [1, 6]
+
+
 def test_objects_are_boxes_in_the_map_frame(tmp_path: Path) -> None:
     log = _write_log(
         tmp_path / "Run.trajectory.jsonl",
@@ -746,6 +766,73 @@ def test_a_second_ego_role_actor_is_a_road_user(tmp_path: Path) -> None:
 
 
 # -- the map and its lights ---------------------------------------------------
+
+
+class _StopLine(NamedTuple):
+    """Where a lanelet a traffic light governs stops its traffic: where the
+    tests place a light's stop waypoint."""
+
+    lanelet_id: int
+    #: The ids of the traffic light regulatory elements governing it.
+    traffic_lights: tuple[int, ...]
+    #: The stop line as (S, 2, 2) segments in the map frame.
+    segments: np.ndarray
+    #: The lanelet's heading there (radians).
+    heading: float
+
+
+def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
+    """Every lanelet a traffic light governs, and its stop line: its traffic
+    light regulatory element's, else the lanelet's end."""
+    governed = []
+    for lanelet in lanelet_map.laneletLayer:
+        elements = [
+            element
+            for element in lanelet.regulatoryElements
+            if "subtype" in element.attributes
+            and element.attributes["subtype"] == "traffic_light"
+        ]
+        centerline = np.array([(p.x, p.y) for p in lanelet.centerline])
+        if not elements or len(centerline) < 2:
+            continue
+        line = next(
+            (
+                found[0]
+                for element in elements
+                if (found := regulatory_element_stop_lines(element, set()))
+            ),
+            None,
+        )
+        ends: list[Any] = (
+            [lanelet.leftBound[-1], lanelet.rightBound[-1]]
+            if line is None or len(line) < 2
+            else list(line)
+        )
+        points = np.array([(p.x, p.y) for p in ends])
+        direction = centerline[-1] - centerline[-2]
+        governed.append(
+            _StopLine(
+                lanelet.id,
+                tuple(element.id for element in elements),
+                np.stack([points[:-1], points[1:]], axis=1),
+                math.atan2(direction[1], direction[0]),
+            )
+        )
+    return governed
+
+
+def test_the_lanes_carry_the_elements_a_stop_line_s_lanelet_is_governed_by(
+    fixture_map: tuple[Any, tuple[float, float]],
+) -> None:
+    """The scene's lights are matched through light_lanes()' elements, which
+    are those of every lanelet a traffic light governs."""
+    lanelet_map = fixture_map[0]
+    elements = light_lanes(lanelet_map).elements
+    lines = _stop_lines(lanelet_map)
+    assert lines
+    assert {line.lanelet_id: line.traffic_lights for line in lines} == {
+        lanelet_id: ids for lanelet_id, ids in elements.items() if ids
+    }
 
 
 @pytest.fixture(scope="module")

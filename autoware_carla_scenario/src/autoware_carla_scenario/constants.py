@@ -32,7 +32,7 @@ EGO_ROLES = ("ego", "hero")
 
 # CARLA's bicycles: the vehicle blueprints whose ``base_type`` is ``bicycle``.
 # The trajectory log keeps an actor's blueprint, not its ``base_type``, so a
-# reader of it (wosac) tells a cyclist by these; the SUMO backend mirrors a
+# reader of it (wosac, t4_scene) tells a cyclist by these; the SUMO backend mirrors a
 # SUMO bicycle as one of them by default.
 CARLA_BICYCLE_BLUEPRINTS = (
     "vehicle.bh.crossbike",

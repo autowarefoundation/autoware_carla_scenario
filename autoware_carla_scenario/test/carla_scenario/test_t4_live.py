@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -505,3 +506,46 @@ def test_the_route_keeps_the_lanelets_just_passed() -> None:
     ]  # noqa: SLF001
     ahead = np.array([[x, 0.0] for x in np.arange(61.0, 80.0, 2.0)])
     assert live._route_along(graph, ahead, np.array([61.0, 0.0])) == [3, 4, 5, 6, 7, 8]  # noqa: SLF001
+
+
+_OSM = Path(__file__).resolve().parents[3] / "data" / "nishishinjuku.osm"
+
+
+def test_a_map_set_s_lanelet2_is_read_in_its_local_frame() -> None:
+    """The resource, the lanes and the route graph all in the frame of the
+    file's ``local_x``/``local_y`` tags, not a projection of its lat/lon
+    (#2573)."""
+    import xml.etree.ElementTree as ET
+
+    tags = [
+        (float(x.attrib["v"]), float(y.attrib["v"]))
+        for node in ET.parse(_OSM).getroot().iter("node")
+        if (x := node.find("tag[@k='local_x']")) is not None
+        and (y := node.find("tag[@k='local_y']")) is not None
+    ]
+    low, high = np.min(tags, axis=0), np.max(tags, axis=0)
+
+    live = _run(2)
+    live.use_map(_OSM)
+    loaded = live._loaded_map()  # noqa: SLF001
+    assert loaded is not None and loaded.route is not None
+    assert live.map_resource is loaded.resource
+
+    def inside(points: np.ndarray) -> bool:
+        return bool(np.all((points >= low - 1.0) & (points <= high + 1.0)))
+
+    resource = ET.fromstring(loaded.resource.data)
+    resource_xy = np.array(
+        [
+            (
+                float(node.find("tag[@k='local_x']").attrib["v"]),  # type: ignore[union-attr]
+                float(node.find("tag[@k='local_y']").attrib["v"]),  # type: ignore[union-attr]
+            )
+            for node in resource.iter("node")
+        ]
+    )
+    assert inside(resource_xy)
+    assert inside(np.concatenate(loaded.lanes.outlines))
+    assert inside(loaded.route._centres.reshape(-1, 2))  # noqa: SLF001
+    # The resource keeps each node where its tags put it.
+    assert np.allclose(np.sort(resource_xy, axis=0), np.sort(tags, axis=0))

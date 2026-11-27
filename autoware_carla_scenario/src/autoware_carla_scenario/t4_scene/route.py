@@ -63,6 +63,11 @@ class RouteGraph:
         self._centres = np.asarray(centres, dtype=np.float64).reshape(-1, _STATIONS, 2)
         self._successors = successors
         self._neighbours = neighbours
+        # Each resampled centreline's box: the polyline is its stations joined
+        # by straight segments, and the stations include both ends, so the
+        # box of the stations bounds every point of it.
+        self._low = self._centres.min(axis=1)  # [L, 2]
+        self._high = self._centres.max(axis=1)
         steps = np.diff(self._centres, axis=1)
         self._unit_steps = steps / np.maximum(
             np.linalg.norm(steps, axis=-1, keepdims=True), 1e-9
@@ -137,7 +142,7 @@ class RouteGraph:
         ]
         if not known:
             return None
-        distance, _, _ = _segment_distance(
+        distance, _ = _segment_distance(
             np.asarray(xy[:2], dtype=np.float64)[None],
             self._centres[[i for _, i in known]],
         )
@@ -163,19 +168,19 @@ class RouteGraph:
         pinned = [start_id] if start_id in self._index else []
         if len(route) < 2 or not self.ids:
             return pinned  # type: ignore[return-value]
-        # Only lanelets the route can touch: a box around it, grown by the offset.
+        # Only lanelets the route can touch: those whose centreline's box
+        # overlaps the route's, grown by the offset.  Not a station in the
+        # route's box: a long lanelet's stations are tens of metres apart, and
+        # a short route between two of them would find no lanelet.
         low = route.min(axis=0) - _MAX_OFFSET_M
         high = route.max(axis=0) + _MAX_OFFSET_M
         near = np.flatnonzero(
-            np.any(
-                np.all((self._centres >= low) & (self._centres <= high), axis=-1),
-                axis=-1,
-            )
+            np.all((self._low <= high) & (self._high >= low), axis=-1)
         )
         if not len(near):
             return pinned  # type: ignore[return-value]
         heading = _unit_tangents(route)
-        distance, segment, _ = _segment_distance(route, self._centres[near])  # [R, L]
+        distance, segment = _segment_distance(route, self._centres[near])  # [R, L]
         step = self._unit_steps[near]
         rows = np.arange(len(near))
         walk = _Walk(self, route)
@@ -241,9 +246,7 @@ class _Walk:
         off = self._off.get(lanelet_id)
         if off is None:
             index = self._graph._index[lanelet_id]
-            distance, _, _ = _segment_distance(
-                self._route, self._graph._centres[[index]]
-            )
+            distance, _ = _segment_distance(self._route, self._graph._centres[[index]])
             off = self._off[lanelet_id] = np.flatnonzero(distance[:, 0] > _MAX_OFFSET_M)
         after = off[np.searchsorted(off, start) :]
         return int(after[0]) - start if len(after) else len(self._route) - start
@@ -309,21 +312,17 @@ def _resample(points: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
 
 def _segment_distance(
     points: npt.NDArray[np.float64], lines: npt.NDArray[np.float64]
-) -> tuple[npt.NDArray[Any], ...]:
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.intp]]:
     """Distance from each of ``[R, 2]`` *points* to each of ``[L, P, 2]``
-    *lines*, the segment it falls on and the nearest point.  To the segments,
-    not the stations: a long lanelet's stations can be ~7 m apart."""
+    *lines*, and the segment it falls on.  To the segments, not the stations:
+    a long lanelet's stations can be tens of metres apart."""
     start, step = lines[:, :-1], np.diff(lines, axis=1)  # [L, S, 2]
     length2 = np.maximum((step**2).sum(-1), 1e-12)
     offset = points[:, None, None, :] - start[None]  # [R, L, S, 2]
     t = np.clip((offset * step[None]).sum(-1) / length2[None], 0.0, 1.0)
     gap = np.linalg.norm(offset - t[..., None] * step[None], axis=-1)  # [R, L, S]
     segment = gap.argmin(axis=-1)
-    pick = segment[..., None]
-    lanes = np.arange(lines.shape[0])[None, :]
-    picked_t = np.take_along_axis(t, pick, axis=-1)[..., 0]
-    nearest = start[lanes, segment] + picked_t[..., None] * step[lanes, segment]
-    return np.take_along_axis(gap, pick, axis=-1)[..., 0], segment, nearest
+    return np.take_along_axis(gap, segment[..., None], axis=-1)[..., 0], segment
 
 
 def _unit_tangents(lines: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:

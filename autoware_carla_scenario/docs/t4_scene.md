@@ -139,7 +139,7 @@ always has the map it names beside it.
 | `timestamps_ns`, `frame_indices` | One row every `--step` seconds (default 0.1 s, a multiple of the 0.05 s tick) from the first tick to the last: nanoseconds since the first tick, and the CARLA frame of each row |
 | `current_index` | `--current-index` (default 0: the whole run is the recorded future) |
 | `ego` | The actor whose role is `ego` or `hero`, its motion in the contract's 3D fields, all in the scene's axes: `poses_3d` at its `base_link`, `velocities_3d` of its `base_link` (below), `angular_velocities_3d` (rad/s, from the ticks' `angular_velocity`); the devkit derives the planar pose, velocity and longitudinal speed from them, and refuses the legacy `poses`, `velocities`, `accelerations`, `longitudinal_speeds` and `angular_velocities`, which are left unset. Then `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
-| `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
+| `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `bicycle` 6 for CARLA's bicycle blueprints, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
 | `traffic_lights` | One group per traffic light regulatory element of the map, its one element the round lamp of the CARLA light it shows: colour (red 1, yellow 2, green 3, else unknown 0), shape circle, status on (off for CARLA's `Off`, else unknown), confidence 1. A consumer derives each lanelet's state from the map, as for any source |
 | `map` | The `MapResource`'s SHA-256, `scope` full, with elevation, `map_id` `lanelet2-sha256:{the .osm file's SHA-256}` |
 | `routes` | With the map, the lanelets the ego drove along, in order, one route (no `preferred_lane_ids`, no `timestamp_ns`) that every row's `indices` entry points at: its `base_link` on the rows it is on, a point a metre, walked along the map's lane graph as a live scene's road ahead is (`RouteGraph.match`: straight on, through a junction's branch, across a lane change). None when the ego hardly moved or drove on no lanelet, or with `--no-route` |
@@ -156,7 +156,9 @@ What the log does not hold is left out, never made up:
 - **Other road users' turn indicators** are in the log but not in the scene:
   the contract has them for the ego only.
 - **A vehicle's class** is `vehicle`: the log has its blueprint, not the
-  `base_type` that says car, truck or bus.
+  `base_type` that says car, truck or bus.  CARLA's bicycles are the
+  exception: their blueprints are known (`constants.CARLA_BICYCLE_BLUEPRINTS`,
+  as WOSAC tells a cyclist), so they are `bicycle` (6).
 - **A light's bulbs** beyond its one round lamp: CARLA's light has one state.
 - **The route the ego was given** -- the scenario's waypoints, or the one
   Autoware planned -- is not in the log: the scene's route is the one it
