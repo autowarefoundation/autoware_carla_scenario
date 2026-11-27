@@ -51,6 +51,17 @@ def test_every_shipped_case_is_a_valid_config(pattern: str) -> None:
         assert config.expect == expected
 
 
+@pytest.mark.parametrize("case", ["lane_change_fail/left", "lane_change_fail/right"])
+def test_a_refused_change_is_driven_long_enough_to_have_happened(case: str) -> None:
+    """#2253: at 1 km/h for 1.5 s no lane change could have completed, so the
+    refused cases passed whatever the ego did; they now drive at a speed and
+    for as long as a change that is allowed does (``lane_change/*``)."""
+    cfg = run._compose_config(case, [])
+    allowed = run._compose_config(case.replace("lane_change_fail", "lane_change"), [])
+    assert cfg.scenario.timeout_seconds >= allowed.scenario.timeout_seconds
+    assert cfg.ego.initial_speed_kmh >= 20.0
+
+
 @pytest.mark.parametrize("expect", ["success", "fail"])
 def test_a_known_outcome_is_accepted(expect: str) -> None:
     assert LaneChangeConfig(expect=expect).expect == expect
@@ -236,17 +247,75 @@ class TestLaneChangeConditions:
 
     def test_fail_does_not_fail_on_the_spawn_lanelet(self, nishishinjuku: None) -> None:
         passes, fails = _setup("right", "fail")
-        assert [c.label for c in passes] == ["scenario_timeout"]
-        assert [c.label for c in fails] == ["ego_target_lane_sticky"]
-        assert _first_result(fails[0], SPAWN) is None
+        assert [c.label for c in passes] == ["ego_kept_its_lane"]
+        assert [c.label for c in fails] == [
+            "ego_target_lane_sticky",
+            "ego_left_its_lane",
+            "scenario_timeout",
+        ]
+        # Driven along the spawn lanelet before the timeout: nothing fires.
+        for condition in [*passes, *fails]:
+            assert _first_result(condition, SPAWN) is None
+
+    def test_fail_passes_at_its_timeout_in_its_own_lane(
+        self, nishishinjuku: None
+    ) -> None:
+        """#2253: ``expect=fail`` passed on its timeout whatever the ego did;
+        it passes only with the ego still in its own lane then."""
+        (kept,), _fails = _setup("right", "fail")
+        timeout = LaneChangeConfig().timeout_seconds
+        ego = _Ego()
+        assert kept.check(ego.on(SPAWN, 5.0), timeout - 0.05) is None
+        result = kept.check(ego.on(SPAWN, 6.0), timeout)
+        assert result is not None
+        # A lanelet that continues the spawn lanelet is its own lane too.
+        mm = MapManager.get_instance()
+        following = int(
+            mm.routing_graph.following(mm.lanelet_map.laneletLayer[SPAWN], False)[0].id
+        )
+        assert kept.check(ego.on(following, 1.0), timeout + 0.05) is not None
+
+    def test_fail_does_not_pass_at_its_timeout_off_its_own_lane(
+        self, nishishinjuku: None
+    ) -> None:
+        passes, fails = _setup("right", "fail")
+        (kept,) = passes
+        target, _left_lane, timeout_condition = fails
+        beside = lane_beside(SPAWN, "right")
+        assert beside is not None
+        timeout = LaneChangeConfig().timeout_seconds
+        ego = _Ego()
+        world = ego.on(beside, 5.0)
+        assert kept.check(world, timeout) is None
+        # The timeout fails it then, as the lane beside already had.
+        assert timeout_condition.check(world, timeout) is not None
+        assert target.check(world, timeout) is not None
+
+    def test_fail_fails_once_the_ego_has_left_its_own_lane(
+        self, nishishinjuku: None
+    ) -> None:
+        """Off its own lanes for ``LEAVING_LANE_SECONDS`` -- here into the lane
+        beside, which the target check catches as well -- the run fails."""
+        from autoware_carla_scenario.examples.lane_change import LEAVING_LANE_SECONDS
+
+        _passes, fails = _setup("right", "fail")
+        left_lane = fails[1]
+        beside = lane_beside(SPAWN, "right")
+        assert beside is not None
+        ego = _Ego()
+        assert left_lane.check(ego.on(SPAWN, 5.0), 0.0) is None
+        assert left_lane.check(ego.on(beside, 5.0), 1.0) is None
+        result = left_lane.check(ego.on(beside, 6.0), 1.0 + LEAVING_LANE_SECONDS)
+        assert result is not None
 
     @pytest.mark.parametrize("expect", ["success", "fail"])
     def test_its_own_timeout_keeps_the_default_off(
         self, nishishinjuku: None, expect: str
     ) -> None:
-        """``expect=fail`` registers its timeout as a pass condition, and that
-        bounds the run as much as ``expect=success``'s fail one: a default
-        fail timeout would fail the run before it could pass (#2382)."""
+        """Both register a timeout of their own that bounds the run -- the fail
+        one; ``expect=fail``'s pass condition holds it only beside the ego
+        being in its own lane -- so no default fail timeout is added, which
+        would fail an ``expect=fail`` run before it could pass (#2382)."""
         from autoware_carla_scenario.scenario_runner import _register_default_timeout
 
         scenario = _set_up("right", expect)

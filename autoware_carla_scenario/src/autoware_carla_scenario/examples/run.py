@@ -2865,6 +2865,150 @@ def check_scenario_maps(
         raise RunConfigError(f"{prefix}{refusal}")
 
 
+#: The ``scenario`` keys a built-in scenario names a lanelet by, by scenario
+#: name: each is checked against the resolved map (:func:`config_lanelet_ids`)
+#: beside the ego's, unless the scenario's ``kind`` is one that does not read
+#: it.  ``adversity``'s NPC (or pedestrian) lanelet, which ``nade`` ignores.
+_SCENARIO_LANELET_KEYS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "adversity": (("npc_lanelet_id", ("nade",)),),
+}
+
+
+def config_lanelet_ids(cfg: DictConfig) -> list[tuple[str, int]]:
+    """The lanelet ids *cfg* names, each with its key, in the order given.
+
+    The ego's -- ``ego.spawn_lanelet_id``, ``ego.goal_lanelet_id`` and
+    ``ego.waypoint_lanelet_ids[<i>]`` -- and a built-in scenario's own
+    (:data:`_SCENARIO_LANELET_KEYS`).  Each is read as building the run reads
+    it (:func:`_lanelet_id`); one that is absent or null is left out.
+
+    Raises:
+        ValueError: naming the key, when a value is not a lanelet id.
+    """
+    named: list[tuple[str, int]] = []
+    ego_cfg = cfg.get("ego")
+    if isinstance(ego_cfg, (DictConfig, Mapping)):
+        for key in ("spawn_lanelet_id", "goal_lanelet_id"):
+            value = ego_cfg.get(key)
+            if value is not None:
+                named.append((f"ego.{key}", _lanelet_id(f"ego.{key}", value)))
+        for i, lanelet_id in enumerate(_waypoint_lanelet_ids(ego_cfg)):
+            named.append((f"ego.waypoint_lanelet_ids[{i}]", lanelet_id))
+    scenario = cfg.get("scenario")
+    if isinstance(scenario, (DictConfig, Mapping)):
+        keys = _SCENARIO_LANELET_KEYS.get(str(scenario.get("name") or ""), ())
+        for key, ignored_by in keys:
+            if str(scenario.get("kind") or "") in ignored_by:
+                continue
+            value = scenario.get(key)
+            if value is not None:
+                named.append((f"scenario.{key}", _lanelet_id(f"scenario.{key}", value)))
+    return named
+
+
+#: The lanelet ids of each Lanelet2 file :func:`map_lanelet_ids` scanned, by
+#: path, with the file's size and modification time: a batch's cases, and a
+#: sweep's, share one map.
+_MAP_LANELET_IDS: dict[str, tuple[int, int, frozenset[int]]] = {}
+
+
+def map_lanelet_ids(lanelet2_path: object) -> frozenset[int] | None:
+    """The ids of the lanelets of the Lanelet2 file *lanelet2_path*, or ``None``.
+
+    Read off the ``.osm`` as XML -- each ``relation`` tagged ``type=lanelet``
+    -- not loaded with Lanelet2: no projection, no routing graph, nothing the
+    run loads again, so the check costs a scan of the file, once a file
+    (:data:`_MAP_LANELET_IDS`).  ``None`` when *lanelet2_path* is not a path
+    (``None``: the config names no Lanelet2 map), there is no such file, it
+    does not parse, or it has no lanelet at all (not a Lanelet2 map this can read):
+    nothing to check against, and the run reports the map as it always did.
+    """
+    if not isinstance(lanelet2_path, (str, Path)):
+        return None
+    path = Path(lanelet2_path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = str(path.resolve())
+    cached = _MAP_LANELET_IDS.get(key)
+    if (
+        cached is not None
+        and cached[0] == stat.st_size
+        and cached[1] == stat.st_mtime_ns
+    ):
+        return cached[2]
+    import xml.etree.ElementTree as ElementTree  # noqa: PLC0415
+
+    ids: set[int] = set()
+    try:
+        for _event, element in ElementTree.iterparse(str(path), events=("end",)):
+            if element.tag == "relation":
+                for tag in element.iter("tag"):
+                    if tag.get("k") == "type" and tag.get("v") == "lanelet":
+                        try:
+                            ids.add(int(element.get("id") or ""))
+                        except ValueError:
+                            pass
+                        break
+                element.clear()
+            elif element.tag in ("node", "way"):
+                element.clear()
+    except (OSError, ElementTree.ParseError):
+        logger.debug("could not scan %s for its lanelets", path, exc_info=True)
+        return None
+    if not ids:
+        return None
+    found = frozenset(ids)
+    _MAP_LANELET_IDS[key] = (stat.st_size, stat.st_mtime_ns, found)
+    return found
+
+
+def check_config_lanelets(
+    configs: list[DictConfig],
+    map_paths: Any,
+    labels: list[str] | None = None,
+) -> None:
+    """Refuse a case naming a lanelet that is not on the map it resolved.
+
+    Each lanelet id a case names (:func:`config_lanelet_ids`) is looked up
+    among the lanelets of *map_paths*' Lanelet2 file (:func:`map_lanelet_ids`),
+    once the map is resolved and before anything starts: a config written for
+    another map -- the shipped ``adversity`` cases, on Town10HD_Opt -- would
+    otherwise fail, or place its actors on whatever lanelet has that id, only
+    once CARLA is up (#2253).  A map with no Lanelet2 file this can read is
+    not checked.
+
+    Raises:
+        RunConfigError: naming the case, the missing ids with their keys, and
+            the map.
+    """
+    lanelet2_path = getattr(map_paths, "lanelet2_path", None)
+    known = map_lanelet_ids(lanelet2_path)
+    if known is None:
+        return
+    names = labels if labels is not None else []
+    for i, cfg in enumerate(configs):
+        try:
+            named = config_lanelet_ids(cfg)
+        except ValueError as exc:
+            raise RunConfigError(str(exc)) from exc
+        missing = [
+            (key, lanelet_id) for key, lanelet_id in named if lanelet_id not in known
+        ]
+        if not missing:
+            continue
+        prefix = f"{names[i]}: " if i < len(names) else ""
+        listed = ", ".join(f"{key}={lanelet_id}" for key, lanelet_id in missing)
+        map_name = getattr(map_paths, "name", None)
+        raise RunConfigError(
+            f"{prefix}no lanelet of map {map_name!r} ({lanelet2_path}) has the "
+            f"id {listed}: the config names lanelets of another map.  Run it "
+            "on the map its lanelet ids were written for (map=<group>), or "
+            "name lanelets of this one"
+        )
+
+
 def check_batch_configs(
     configs: list[DictConfig],
     labels: list[str] | None = None,
@@ -3258,6 +3402,8 @@ def run_batch(
     check_odd(_odd_spec(first_cfg), typecheck_mode(first_cfg))
 
     map_paths = resolve_map_paths(first_cfg.map)
+    # Every lanelet a case names is one of this map's (#2253).
+    check_config_lanelets(configs, map_paths, labels)
     # The commit a branch resolved to, for the batch's crash reports (#2460).
     crash_report.note_run(map_paths=map_paths)
 
@@ -4382,6 +4528,8 @@ def _run_scenario(
     check_odd(_odd_spec(cfg), typecheck_mode(cfg))
 
     map_paths = resolve_map_paths(cfg.map)
+    # Every lanelet the config names is one of this map's (#2253).
+    check_config_lanelets([cfg], map_paths)
     # The commit a branch resolved to and the scenario's package, for the
     # run's crash reports (#2460).
     crash_report.note_run(map_paths=map_paths, scenario=scenario)

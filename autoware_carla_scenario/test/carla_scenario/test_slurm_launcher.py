@@ -356,6 +356,11 @@ def test_each_slurm_task_makes_the_recordings_a_local_batch_makes(
 #: are set differently (``FAKE_SCENARIO_OVERRIDES``).
 _SECOND = "adversity/brake_check"
 
+#: What :data:`_SECOND` is composed with to run on the default map: it is
+#: written for Town10HD_Opt (``scenario.required_map``, #2253), but its
+#: lanelets are on this map too, and no case of these batches drives.
+_SECOND_HERE = ["scenario.required_map=null"]
+
 
 def _two_case_batch(
     env: SimpleNamespace, name: str, overrides: list[str]
@@ -406,7 +411,7 @@ def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
         "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS", raising=False
     )
     fake_slurm.monkeypatch.setenv(
-        "FAKE_SCENARIO_OVERRIDES", json.dumps({_SECOND: second_case})
+        "FAKE_SCENARIO_OVERRIDES", json.dumps({_SECOND: [*_SECOND_HERE, *second_case]})
     )
     local_status, local = _two_case_batch(fake_slurm, "local", [])
     local_out = capsys.readouterr().out
@@ -456,7 +461,15 @@ def test_a_task_of_a_batch_without_the_record_decides_from_its_own_cases(
     the batch-level settings from its own cases, as tasks did then."""
     fake_slurm.monkeypatch.setenv(
         "FAKE_SCENARIO_OVERRIDES",
-        json.dumps({_SECOND: ["++t4scene.enabled=true", "++t4scene.step_s=0.2"]}),
+        json.dumps(
+            {
+                _SECOND: [
+                    *_SECOND_HERE,
+                    "++t4scene.enabled=true",
+                    "++t4scene.step_s=0.2",
+                ]
+            }
+        ),
     )
     fake_slurm.monkeypatch.setattr(
         fake_slurm.run, "batch_settings_cases", lambda *_a, **_k: None
@@ -1002,7 +1015,7 @@ def test_the_check_passes_cases_with_the_same_map_set_alike(
     same = ["++map.lanelet2_path=/m.osm", "++map.projector_type=utm"]
     first = run._compose_config(_CONCRETE, [*same, "++map.directory="])
     second = run._compose_config(
-        _SECOND, [*same, "++map.no_3d_model_lanelet_ids=[1,2]"]
+        _SECOND, [*same, *_SECOND_HERE, "++map.no_3d_model_lanelet_ids=[1,2]"]
     )
     run.check_batch_configs([first, second])
 

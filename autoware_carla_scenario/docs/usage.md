@@ -1392,8 +1392,8 @@ Tests ego vehicle lane change maneuvers. Can test both successful lane changes a
 |--------|-----------|-----------------|-------------------|
 | `lane_change/left` | left | success | `10.0` |
 | `lane_change/right` | right | success | `10.0` |
-| `lane_change_fail/left` | left | fail (no lane a change is allowed into) | `1.5` |
-| `lane_change_fail/right` | right | fail (no lane a change is allowed into) | `1.5` |
+| `lane_change_fail/left` | left | fail (no lane a change is allowed into) | `10.0` |
+| `lane_change_fail/right` | right | fail (no lane a change is allowed into) | `10.0` |
 
 A refused change's lanelet has no lane on that side a change is allowed into
 (the routing graph's `left` / `right`, which `has_adjacent` asks about), but
@@ -1414,7 +1414,7 @@ crossing into it fails the run
 - Sets all traffic lights to GREEN
 - Immediately registers a LaneChangeAction
 - Derives the target lane from the current spawn position and direction
-- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`, failing that its `adjacentLeft` / `adjacentRight`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there
+- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`, failing that its `adjacentLeft` / `adjacentRight`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there and with the ego still in its own lane (the spawn lanelet or one that continues it, through junctions), and fails once the ego has been off its own lane for 0.2 s (#2253)
 - Checks via an EntityLanePositionCondition per target lanelet, any of them, latched (not by OpenDRIVE road and lane IDs)
 
 #### Traffic Light Compliance
@@ -1556,7 +1556,8 @@ by `scenario.kind`. Each case and its full parameter table are in
 Unlike the other examples these are concrete cases on Town10HD_Opt: run them
 with `map=town10hd_opt` (`uv run scenario scenario=adversity/brake_check
 map=town10hd_opt`). On the default map their lanelet ids name other lanelets
-or none.
+or none, so each names its map, `scenario.required_map: Town10HD_Opt`, and is
+refused before anything starts on any other `map.name` (#2253).
 
 | Config | `kind` | The adversity |
 |--------|--------|---------------|

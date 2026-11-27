@@ -10,7 +10,15 @@ ones: each case names its lanelets, on Town10HD_Opt.
 Run them with `map=town10hd_opt`. A scenario config cannot select the map
 group itself -- Hydra refuses an `override /map` from the scenario group, which
 the framework composes before `map` -- so without it a case runs on the default
-map, Nishi-Shinjuku, where its lanelet ids name other lanelets or none.
+map, Nishi-Shinjuku, where its lanelet ids name other lanelets or none. So
+each case names the map it was written for, `scenario.required_map:
+Town10HD_Opt`, and a run, a batch, a sweep, `scenario-expand` or the viewer's
+sweep resolver composed on any other `map.name` is refused before anything
+starts, with the `map=<group>` to give (#2253). A config of your own placed on
+another map sets its `map.name` there, or `null` for none. Any run is also
+refused before it starts when a lanelet id it names -- the ego's spawn, goal
+or waypoints, an adversity's `scenario.npc_lanelet_id` -- is not a lanelet of
+the Lanelet2 map it resolved.
 
 ```bash
 uv run scenario scenario=adversity/cut_in map=town10hd_opt

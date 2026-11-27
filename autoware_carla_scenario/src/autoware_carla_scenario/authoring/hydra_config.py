@@ -80,7 +80,9 @@ every ``map`` key, and the package is run with ``map=<own_map_group>``
 the default one, when ``map=<own_map_group>`` is left out -- is refused before
 anything starts (:func:`own_map_mismatch`, :func:`scenario_map_refusal`), on
 every path that composes it: a run, a batch, a sweep, ``scenario-expand``, the
-viewer's sweep resolver and ``scenario-odd route``.
+viewer's sweep resolver and ``scenario-odd route``.  So is a built-in
+scenario's config written for one map's lanelet ids, which says so with
+``scenario.required_map`` (:func:`required_map_refusal`), on any other map.
 
 Excluded lanelets
 -----------------
@@ -123,10 +125,12 @@ __all__ = [
     "dump_map_group_config",
     "effective_no_3d_model_lanelet_ids",
     "map_group_no_3d_model_lanelet_ids",
+    "map_groups_named",
     "dump_scenario_config",
     "own_map_group",
     "own_map_mismatch",
     "param_override_key",
+    "required_map_refusal",
     "run_map_group",
     "scenario_map_refusal",
     "slot_lanelet_key",
@@ -612,9 +616,14 @@ def scenario_map_refusal(
     (:func:`~autoware_carla_scenario.registry.load_scenario_plugins`);
     the composed ``map`` is compared with it by :func:`own_map_mismatch`.  A
     scenario with no registered document, or one on a built-in group, is not
-    refused; neither is one whose document cannot be loaded, which its builder
-    refuses with its own message.  Nothing is resolved, fetched or read but
-    the document.
+    refused for it; neither is one whose document cannot be loaded, which its
+    builder refuses with its own message.  Nothing is resolved, fetched or
+    read but the document.
+
+    A built-in scenario's config that names the map its lanelet ids were
+    written for, ``scenario.required_map`` (the shipped ``adversity`` cases',
+    on Town10HD_Opt), is refused first on any other map
+    (:func:`required_map_refusal`, #2253).
 
     Args:
         cfg: The composed config (a ``DictConfig`` or a dict).
@@ -630,6 +639,9 @@ def scenario_map_refusal(
     scenario_name = (cfg.get("scenario") or {}).get("name")
     if not scenario_name:
         return None
+    required = required_map_refusal(cfg)
+    if required is not None:
+        return required
     key = str(scenario_name)
     loaded = {} if documents is None else documents
     if key not in loaded:
@@ -649,6 +661,93 @@ def scenario_map_refusal(
         f"{mismatch}.  Run it with map={run_map_group(document)}, the map "
         "group its package ships"
     )
+
+
+def required_map_refusal(cfg: Any) -> str | None:
+    """Say why *cfg* is refused for its ``scenario.required_map``, or ``None``.
+
+    A scenario config whose lanelet ids are one map's -- the shipped
+    ``adversity`` cases are placed on Town10HD_Opt -- names that map's
+    ``map.name`` as ``scenario.required_map``.  It cannot select the map group
+    itself (see the module docstring), so a run that leaves ``map=<group>``
+    out composes the default map, where those ids name other lanelets or none
+    (#2253).  The composed ``map.name`` is compared with it as
+    :func:`own_map_mismatch` compares a document's: stripped, exactly.  No
+    ``scenario.required_map`` (absent, null or blank) is no requirement.
+    Nothing is resolved, fetched or read but the ``map`` groups' files, for
+    the group to suggest.
+
+    Returns:
+        The refusal, naming the scenario, the map it requires, the composed
+        ``map.name`` and the ``map=<group>`` to run it with, or ``None``.
+    """
+    scenario = cfg.get("scenario") or {}
+    try:
+        value = scenario.get("required_map")
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    required = str(value).strip()
+    if not required:
+        return None
+    name = _map_value(cfg.get("map"), "name")
+    if name == required:
+        return None
+    label = str(scenario.get("name") or "")
+    kind = scenario.get("kind")
+    if kind is not None:
+        label = f"{label} ({kind})"
+    groups = map_groups_named(required)
+    if groups:
+        hint = "Run it with " + " or ".join(f"map={group}" for group in groups)
+    else:
+        hint = f"Run it on a map group whose map.name is {required!r}"
+    return (
+        f"scenario {label!r} requires map {required!r} (scenario.required_map: "
+        f"its lanelet ids are that map's), but map.name is {name!r}.  {hint}"
+    )
+
+
+def map_groups_named(name: str) -> list[str]:
+    """The ``map`` groups whose ``map.name`` is *name*, sorted.
+
+    The framework's groups, and when none of them is, every scenario
+    package's (:func:`~autoware_carla_scenario.registry.get_conf_dirs`), as
+    :func:`_map_group_file` searches them.  Each file is read as written,
+    nothing composed; one that does not load is skipped.
+    """
+    found = _map_groups_named_in(_FRAMEWORK_CONF_DIR / "map", name)
+    if found:
+        return found
+    from ..registry import get_conf_dirs, load_scenario_plugins  # noqa: PLC0415
+
+    load_scenario_plugins()
+    for conf_dir in get_conf_dirs():
+        for group in _map_groups_named_in(Path(conf_dir) / "map", name):
+            if group not in found:
+                found.append(group)
+    return sorted(found)
+
+
+def _map_groups_named_in(directory: Path, name: str) -> list[str]:
+    """The groups in *directory* whose ``map.name`` is *name*, sorted."""
+    if not directory.is_dir():
+        return []
+    groups: list[str] = []
+    for path in sorted(directory.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            _logger.debug("map group %s did not load", path, exc_info=True)
+            continue
+        if not isinstance(data, dict):
+            continue
+        nested = data.get("map")
+        section: dict[Any, Any] = nested if isinstance(nested, dict) else data
+        if str(section.get("name") or "").strip() == name:
+            groups.append(path.stem)
+    return groups
 
 
 def build_map_group_config(document: ScenarioDocument) -> dict[str, Any] | None:

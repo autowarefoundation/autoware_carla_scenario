@@ -3,12 +3,18 @@ scenario:
   name: lane_change
   direction: right
   expect: fail
-  timeout_seconds: 1.5
+  # As long as lane_change/*'s window for the change: the run passes once it
+  # has run out with the ego still in its own lane (#2253).
+  timeout_seconds: 10.0
 
 ego:
-  initial_speed_kmh: 1.0
+  # Driving, as the ego of a lane change would be: refused at 1 km/h, no
+  # change could have happened anyway.
+  initial_speed_kmh: 20.0
   spawn_lanelet_id: 5
-  spawn_s: 0.0
+  # Off the lanelet's start, which can sit on the seam between two
+  # OpenDRIVE roads and resolve to the one the ego is not on.
+  spawn_s: 5.0
   # Up the road from the spawn; every swept case replaces it.
   goal_lanelet_id: 119
 
