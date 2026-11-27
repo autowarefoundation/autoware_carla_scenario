@@ -1855,7 +1855,12 @@ object). An attribute whose probe has none is **open**: it could take any
 value, and the ODD's own three-valued evaluation decides, exactly as it does
 for buckets outside the ODD. An OpenODD attribute derived from others is
 worked out from their values on the lanelet, and is open while one of them
-is.
+is. A categorical defined by expressions names no attribute it derives from,
+so a route counts it as decided by the map when the map works its value out
+on some lanelet the route drives on (a speed class from the `speed_limit`
+tag, say), and not when it is open on every one (the default ODD's rain
+intensity, which only the weather decides). Open on some of them, it is
+reported as **undetermined** (below).
 
 What the lanelet forms read, and where that differs from the run:
 
