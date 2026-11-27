@@ -28,6 +28,7 @@ built in a temporary directory and moved into place only once the checks pass.
 from __future__ import annotations
 
 import logging
+import secrets
 import shutil
 import subprocess
 import sys
@@ -630,6 +631,22 @@ def _build_wheelhouse(
         ) from exc
 
 
+def _staging_dir(parent: Path, prefix: str) -> Path:
+    """Create a new, empty directory in *parent* named *prefix* and a random
+    suffix, as ``tempfile.mkdtemp`` does, but with a plain ``mkdir``: its
+    mode is the umask's (``0o777 & ~umask``), not mkdtemp's 0700.  The
+    staging directories are moved into place as the package and its
+    wheelhouse, which must be as readable as any directory their owner
+    creates (#2582)."""
+    while True:
+        path = parent / f"{prefix}{secrets.token_hex(4)}"
+        try:
+            path.mkdir()
+        except FileExistsError:
+            continue
+        return path
+
+
 def _put_in_place(
     parent: Path,
     target: Path,
@@ -784,15 +801,17 @@ def export_package(
     # The staging directory is a *sibling* of the target, not a directory
     # inside one: a path dependency is locked relative to the package, so
     # staging one level deeper and then moving would leave a lockfile whose
-    # relative paths no longer resolve.
-    staging = Path(
-        tempfile.mkdtemp(prefix=f".{names['package_name']}.export-", dir=str(parent))
-    )
-    wheelhouse_staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{names['package_name']}_wheelhouse.-", dir=str(parent)
+    # relative paths no longer resolve.  So a scaffold's holder directory
+    # (scaffold.generator) cannot be used here; both are made with a plain
+    # mkdir instead (:func:`_staging_dir`), with the umask's mode (#2582).
+    staging = _staging_dir(parent, f".{names['package_name']}.export-")
+    try:
+        wheelhouse_staging = _staging_dir(
+            parent, f".{names['package_name']}_wheelhouse.-"
         )
-    )
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
     log = ""
     built: Optional[Wheelhouse] = None

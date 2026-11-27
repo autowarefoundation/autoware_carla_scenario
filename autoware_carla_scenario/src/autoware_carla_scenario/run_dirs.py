@@ -28,7 +28,6 @@ __all__ = [
     "asks_for_no_job",
     "is_multirun_mode_override",
     "lanelet_sweeper_requested_in_argv",
-    "multirun_dir",
     "multirun_requested_in_argv",
     "reserve_timestamped_dir",
     "sets_hydra_key",
@@ -113,11 +112,6 @@ def timestamped_dir(root: str, now: datetime) -> str:
     date = f"{now.year:04d}-{now.month:02d}-{now.day:02d}"
     time = f"{now.hour:02d}-{now.minute:02d}-{now.second:02d}"
     return f"{root}/{date}/{time}"
-
-
-def multirun_dir(now: datetime) -> str:
-    """``multirun/{date}/{time}`` of *now* (:func:`timestamped_dir`)."""
-    return timestamped_dir("multirun", now)
 
 
 def reserve_timestamped_dir(

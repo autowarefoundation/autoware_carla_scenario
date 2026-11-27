@@ -2,7 +2,8 @@
 
 :class:`RerunConversion` is one log's conversion, :func:`latest` keeps the last
 conversion of each recording, and :func:`report` is the summary a run prints of
-them; :func:`_draw_radius_argument` is the converter's keyword for the radius
+them, in the lines :func:`summary_lines` makes, which ``batch_report`` prints
+a batch's with too (#2582); :func:`_draw_radius_argument` is the converter's keyword for the radius
 a recording draws in.  :mod:`.rerun`, which converts the logs, re-exports them
 under the names they had there (#2124): free of the converter, the thread
 pool and the Rerun SDK, they are compiled by the library check
@@ -24,6 +25,7 @@ __all__ = [
     "report",
     "rerun_errors",
     "strict_coverage_refusal",
+    "summary_lines",
 ]
 
 
@@ -71,6 +73,22 @@ def latest(conversions: list[RerunConversion]) -> list[RerunConversion]:
     return list(last.values())
 
 
+def summary_lines(
+    written: int, total: int, failures: list[tuple[str, str, str]]
+) -> list[str]:
+    """The Rerun lines of a run's summary: *written* of *total* recordings
+    written, then one line per failure in *failures*, each
+    ``(mark, label, error)`` (*mark* ``FAILED`` or ``SKIPPED``).  What
+    :func:`report` and ``batch_report.print_summary`` both print."""
+    lines = [
+        f"Rerun recordings: {written}/{total} "
+        "written (open one with: rerun <file.rrd>)"
+    ]
+    for mark, label, error in failures:
+        lines.append(f"  [{mark}] {label}: {error}")
+    return lines
+
+
 def report(conversions: list[RerunConversion]) -> str:
     """One line on *conversions*, then one per failure, for a run's summary.
 
@@ -79,15 +97,12 @@ def report(conversions: list[RerunConversion]) -> str:
     """
     conversions = latest(conversions)
     failed = [c for c in conversions if not c.ok]
-    lines = [
-        f"Rerun recordings: {len(conversions) - len(failed)}/{len(conversions)} "
-        "written (open one with: rerun <file.rrd>)"
+    failures = [
+        ("SKIPPED" if c.skipped else "FAILED", c.label, f"{c.error}") for c in failed
     ]
-    lines.extend(
-        f"  [{'SKIPPED' if c.skipped else 'FAILED'}] {c.label}: {c.error}"
-        for c in failed
+    return "\n".join(
+        summary_lines(len(conversions) - len(failed), len(conversions), failures)
     )
-    return "\n".join(lines)
 
 
 def _draw_radius_argument(draw_radius_m: Optional[float]) -> dict[str, float]:

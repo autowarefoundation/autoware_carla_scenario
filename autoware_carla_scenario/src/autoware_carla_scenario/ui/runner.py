@@ -27,7 +27,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO
 
-from ..run_dirs import multirun_dir as _multirun_dir  # noqa: F401  (its old name)
 from ..run_dirs import reserve_timestamped_dir
 from ..utils.process_group import signal_group
 from .case_paths import _override_label
@@ -547,7 +546,7 @@ def _reserve_multirun_dir(base: Path, now: datetime) -> str:
 
     Created with ``mkdir``, which fails when it exists, so a run started in
     the same second as another (a CLI sweep, another viewer's run) never
-    shares it (#1359): the first gets :func:`_multirun_dir`'s ``{time}``, the
+    shares it (#1359): the first gets ``{time}``, the
     next ``{time}-1``, then ``{time}-2``, and so on, as a batch's output
     directory does: the shared
     :func:`~autoware_carla_scenario.run_dirs.reserve_timestamped_dir`, which

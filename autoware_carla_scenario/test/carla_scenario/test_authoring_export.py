@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from collections.abc import Iterator
@@ -1906,30 +1907,83 @@ class TestExportRefusals:
         assert list(tmp_path.iterdir()) == []
 
 
+@pytest.fixture
+def stubbed_export(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """package_export with its lock, checks and wheelhouse stubbed out."""
+    import autoware_carla_scenario.authoring.package_export as module
+
+    def _lock(root: Path) -> str:
+        (root / "uv.lock").write_text("# stub\n", encoding="utf-8")
+        return ""
+
+    def _wheelhouse(_root: Path, destination: Path, **_: Any) -> Any:
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "stub-0.1.0-py3-none-any.whl").write_text("")
+        return module.Wheelhouse(root=destination, distribution="stub", version="0.1.0")
+
+    monkeypatch.setattr(module, "_lock", _lock)
+    monkeypatch.setattr(module, "_verify_sync", lambda _root: "")
+    monkeypatch.setattr(module, "_run_tests", lambda _root: (True, ""))
+    monkeypatch.setattr(module, "build_wheelhouse", _wheelhouse)
+    monkeypatch.setattr(module, "_check_lock", lambda _root: "")
+    return module
+
+
+class TestExportPermissions:
+    """An exported package and its wheelhouse are as readable as any directory
+    their owner makes, not mkdtemp's 0700 (#2582)."""
+
+    @pytest.fixture(params=[0o022, 0o027, 0o077])
+    def umask(self, request: pytest.FixtureRequest) -> Iterator[int]:
+        mask: int = request.param
+        previous = os.umask(mask)
+        try:
+            yield mask
+        finally:
+            os.umask(previous)
+
+    def test_the_package_and_wheelhouse_have_the_umasks_mode(
+        self, tmp_path: Path, umask: int, stubbed_export: Any
+    ) -> None:
+        result = export_package(new_document(), tmp_path, dev_mode=True)
+        assert result.wheelhouse is not None
+        expected = 0o777 & ~umask
+        assert stat.S_IMODE(result.root.stat().st_mode) == expected
+        assert stat.S_IMODE(result.wheelhouse.root.stat().st_mode) == expected
+        assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+            [result.root.name, result.wheelhouse.root.name]
+        )
+
+    def test_a_forced_re_export_has_the_umasks_mode_too(
+        self, tmp_path: Path, umask: int, stubbed_export: Any
+    ) -> None:
+        export_package(new_document(), tmp_path, dev_mode=True)
+        result = export_package(new_document(), tmp_path, dev_mode=True, force=True)
+        assert result.wheelhouse is not None
+        expected = 0o777 & ~umask
+        assert stat.S_IMODE(result.root.stat().st_mode) == expected
+        assert stat.S_IMODE(result.wheelhouse.root.stat().st_mode) == expected
+
+    def test_a_staging_directory_is_new_and_has_the_umasks_mode(
+        self, tmp_path: Path, umask: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.package_export as module
+
+        tokens = iter(["taken", "taken", "free"])
+        monkeypatch.setattr(module.secrets, "token_hex", lambda _n: next(tokens))
+        (tmp_path / ".pkg.export-taken").mkdir(mode=0o700)
+        made = module._staging_dir(tmp_path, ".pkg.export-")
+        assert made == tmp_path / ".pkg.export-free"
+        assert stat.S_IMODE(made.stat().st_mode) == 0o777 & ~umask
+        assert list(made.iterdir()) == []
+
+
 class TestForcedReExport:
     """A forced re-export replaces the earlier one only once it succeeded (#2579)."""
 
     @pytest.fixture
-    def stubbed(self, monkeypatch: pytest.MonkeyPatch) -> Any:
-        import autoware_carla_scenario.authoring.package_export as module
-
-        def _lock(root: Path) -> str:
-            (root / "uv.lock").write_text("# stub\n", encoding="utf-8")
-            return ""
-
-        def _wheelhouse(_root: Path, destination: Path, **_: Any) -> Any:
-            destination.mkdir(parents=True, exist_ok=True)
-            (destination / "stub-0.1.0-py3-none-any.whl").write_text("")
-            return module.Wheelhouse(
-                root=destination, distribution="stub", version="0.1.0"
-            )
-
-        monkeypatch.setattr(module, "_lock", _lock)
-        monkeypatch.setattr(module, "_verify_sync", lambda _root: "")
-        monkeypatch.setattr(module, "_run_tests", lambda _root: (True, ""))
-        monkeypatch.setattr(module, "build_wheelhouse", _wheelhouse)
-        monkeypatch.setattr(module, "_check_lock", lambda _root: "")
-        return module
+    def stubbed(self, stubbed_export: Any) -> Any:
+        return stubbed_export
 
     @staticmethod
     def _mark_previous(tmp_path: Path) -> tuple[Path, Path]:

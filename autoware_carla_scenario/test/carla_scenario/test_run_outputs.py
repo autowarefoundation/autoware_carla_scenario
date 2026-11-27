@@ -23,6 +23,7 @@ from autoware_carla_scenario.run_outputs import (
     run_output_paths,
     run_output_stems,
     run_outputs_exist,
+    run_scratch_paths,
 )
 from autoware_carla_scenario.scenario_runner import _run_file_stem
 from autoware_carla_scenario.slurm import manifest
@@ -100,6 +101,50 @@ def test_a_left_metrics_recording_is_the_runs_own(tmp_path: Path) -> None:
 
     assert not left.exists()
     assert run_output_stems(tmp_path, None) == set()
+
+
+def test_the_scratch_names_are_the_ones_rerun_lidar_writes(tmp_path: Path) -> None:
+    # rerun_lidar.merge_into and extract_sensors write through these (#2582).
+    assert run_scratch_paths(tmp_path, STEM) == [
+        tmp_path / f".{STEM}.rrd.merging",
+        tmp_path / f".{STEM}.sensors.rrd.extracting",
+    ]
+    assert run_outputs.merging_path(tmp_path / "X.rrd") == tmp_path / ".X.rrd.merging"
+    assert run_outputs.extracting_path(tmp_path / "X.sensors.rrd") == (
+        tmp_path / ".X.sensors.rrd.extracting"
+    )
+    assert rerun_lidar.merging_path is run_outputs.merging_path
+    assert rerun_lidar.extracting_path is run_outputs.extracting_path
+
+
+def test_a_killed_merges_scratch_files_are_removed(tmp_path: Path) -> None:
+    # A run killed during `rerun rrd merge` or `rerun rrd filter` (a SLURM
+    # timeout's SIGKILL, which no `finally` survives) leaves its scratch file
+    # behind; a case run again under the stem removes it, and leaves another
+    # stem's alone (#2582).
+    _write_outputs(tmp_path, STEM)
+    for path in run_scratch_paths(tmp_path, STEM):
+        path.write_bytes(b"RRF2")
+    others = run_scratch_paths(tmp_path, f"{STEM}-1")
+    for path in others:
+        path.write_bytes(b"RRF2")
+
+    remove_run_outputs(tmp_path, STEM)
+
+    assert not any(path.exists() for path in run_scratch_paths(tmp_path, STEM))
+    assert all(path.exists() for path in others)
+
+
+def test_a_scratch_file_is_no_runs_output(tmp_path: Path) -> None:
+    # Hidden and ending in no run suffix: no scanner reads a run in one, so a
+    # directory holding only another stem's scratch files has no run.
+    for path in run_scratch_paths(tmp_path, STEM):
+        assert not path.name.endswith(run_outputs.RUN_SUFFIXES)
+        path.write_bytes(b"RRF2")
+    assert run_output_stems(tmp_path, None) == set()
+    assert not run_outputs_exist(tmp_path, STEM)
+    assert _run_file_stem(tmp_path, STEM) == STEM
+    assert case_paths._stems_in(tmp_path) == []
 
 
 def test_the_log_and_recording_path_rule_is_run_outputs_s() -> None:

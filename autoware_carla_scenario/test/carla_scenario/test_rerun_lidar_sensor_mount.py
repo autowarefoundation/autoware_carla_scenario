@@ -14,7 +14,7 @@ from typing import Any, Optional, Union
 
 import pytest
 
-from autoware_carla_scenario import rerun_lidar, rerun_sensor_mount
+from autoware_carla_scenario import rerun_lidar, rerun_sensor_mount, run_outputs
 from autoware_carla_scenario.entity import carla_driver_entity
 from autoware_carla_scenario.rerun_sensor_mount import chunk_entities
 
@@ -200,7 +200,15 @@ def test_extract_sensors_does_what_it_did_before_the_split(
         assert sensors.exists()
         args = (tmp_path / "filter_args.txt").read_text().splitlines()
         drops = [arg for arg in expected for arg in ("--drop-entity", arg)]
-        assert args == [*drops, str(recording), "-o", args[-1]]
+        # Through run_outputs' scratch name, which remove_run_outputs
+        # removes when a killed run leaves it (#2582).
+        assert args == [
+            *drops,
+            str(recording),
+            "-o",
+            str(run_outputs.extracting_path(sensors)),
+        ]
+        assert args[-1] == str(tmp_path / ".S.sensors.rrd.extracting")
     assert recording.read_bytes() == b"RRD"
     assert not list(tmp_path.glob(".*"))
 
