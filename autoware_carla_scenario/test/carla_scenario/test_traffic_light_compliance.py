@@ -115,9 +115,24 @@ class TestControls:
             RED_LIGHT_DURATION_S,
         )
 
-        scenario = _set_up(TrafficLightComplianceConfig(light_switch_delay_seconds=7.5))
+        scenario = _set_up(
+            TrafficLightComplianceConfig(
+                light_switch_delay_seconds=7.5, timeout_seconds=9.0
+            )
+        )
 
         assert scenario.measure(RED_LIGHT_DURATION_S, MagicMock()) == 7.5
+
+    def test_the_pass_and_the_config_share_the_departure_check(self) -> None:
+        from autoware_carla_scenario.examples.configs import (
+            GREEN_DEPARTURE_CHECK_SECONDS,
+        )
+
+        scenario = _set_up(TrafficLightComplianceConfig(light_switch_delay_seconds=2.0))
+        (passed,) = scenario._pass_conditions
+        assert f"'duration_seconds': {2.0 + GREEN_DEPARTURE_CHECK_SECONDS}" in str(
+            passed.get_details()
+        )
 
     def test_the_timeout_can_count_from_the_green_light(self) -> None:
         def timeout(config: TrafficLightComplianceConfig) -> float:

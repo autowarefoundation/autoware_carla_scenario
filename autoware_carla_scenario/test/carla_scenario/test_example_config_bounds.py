@@ -23,6 +23,7 @@ from omegaconf import OmegaConf
 from autoware_carla_scenario.examples import run
 from autoware_carla_scenario.examples.configs import (
     CUT_IN_SIDES,
+    GREEN_DEPARTURE_CHECK_SECONDS,
     TURN_DIRECTIONS,
     AdversityConfig,
     CutInConfig,
@@ -48,9 +49,9 @@ POSITIVE_FIELDS: list[tuple[type, str]] = [
     (TrafficLightComplianceConfig, "light_switch_delay_seconds"),
     (TrafficLightComplianceConfig, "moving_speed_kmh"),
     (TrafficLightComplianceConfig, "departure_speed_kmh"),
-    (TrafficLightComplianceConfig, "timeout_after_green_seconds"),
     (TrafficLightComplianceConfig, "standstill_seconds"),
     (LaneChangeConfig, "timeout_seconds"),
+    (PedestrianDartOutConfig, "pedestrian_ahead_m"),
     (PedestrianDartOutConfig, "trigger_distance_m"),
     (PedestrianDartOutConfig, "walk_speed_ms"),
     (PedestrianDartOutConfig, "timeout_seconds"),
@@ -82,6 +83,24 @@ NOT_NEGATIVE_FIELDS: list[tuple[type, str]] = [
     (AdversityConfig, "ego_speed_kmh"),
     (AdversityConfig, "nade_cooldown"),
 ]
+
+
+#: The other settings a field above is built with, where its bound depends
+#: on them: a traffic-light timeout counted from the green leaves
+#: ``timeout_seconds`` and the delay free of each other (#2586).
+_WITH: dict[tuple[type, str], dict[str, Any]] = {
+    (TrafficLightComplianceConfig, "timeout_seconds"): {
+        "timeout_after_green_seconds": 1.0
+    },
+    (TrafficLightComplianceConfig, "light_switch_delay_seconds"): {
+        "timeout_after_green_seconds": 1.0
+    },
+}
+
+
+def _build(cls: type, key: str, value: Any) -> Any:
+    """*cls* with *key* set to *value*, and the settings it is built with."""
+    return cls(**{**_WITH.get((cls, key), {}), key: value})
 
 
 def _message(key: str, rest: str) -> str:
@@ -119,7 +138,7 @@ def test_a_negative_value_is_refused(cls: type, key: str, value: float) -> None:
     ids=[f"{c.__name__}.{k}" for c, k in POSITIVE_FIELDS],
 )
 def test_a_small_positive_value_is_accepted(cls: type, key: str, value: float) -> None:
-    assert getattr(cls(**{key: value}), key) == value
+    assert getattr(_build(cls, key, value), key) == value
 
 
 @pytest.mark.parametrize("value", [0.0, 1e-6, 25.0])
@@ -161,7 +180,6 @@ OPTIONAL_FIELDS: list[tuple[type, str]] = [
 
 #: Finite, of either sign: a position along a lanelet, before or after a point.
 FINITE_FIELDS: list[tuple[type, str]] = [
-    (PedestrianDartOutConfig, "pedestrian_ahead_m"),
     (CutInConfig, "npc_ahead_m"),
 ]
 
@@ -178,6 +196,7 @@ NUMBER_FIELDS: list[tuple[type, str]] = [
     *NOT_NEGATIVE_FIELDS,
     *FINITE_FIELDS,
     *NOT_ZERO_FIELDS,
+    (TrafficLightComplianceConfig, "timeout_after_green_seconds"),
     (TrafficLightComplianceConfig, "stop_zone_min_m"),
     (TrafficLightComplianceConfig, "stop_zone_max_m"),
     (AdversityConfig, "nade_probability"),
@@ -232,7 +251,75 @@ def test_null_is_refused_where_nothing_is_optional(cls: type, key: str) -> None:
 )
 def test_an_int_is_a_number(cls: type, key: str) -> None:
     """Hydra reads ``scenario.<key>=1`` as an int, not a float."""
-    assert getattr(cls(**{key: 1}), key) == 1
+    assert getattr(_build(cls, key, 1), key) == 1
+
+
+# ---------------------------------------------------------------------------
+# A traffic-light timeout no run can pass before (#2586)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [*POSITIVE_BAD, True, "1"], ids=repr)
+def test_a_timeout_after_green_not_positive_is_refused(value: Any) -> None:
+    with pytest.raises(ValueError, match=_message("timeout_after_green_seconds", "")):
+        TrafficLightComplianceConfig(timeout_after_green_seconds=value)
+
+
+@pytest.mark.parametrize("value", [1e-6, 0.3, GREEN_DEPARTURE_CHECK_SECONDS])
+def test_a_timeout_after_green_by_the_departure_check_is_refused(
+    value: float,
+) -> None:
+    """The run passes only once the ego has pulled away 0.5 s after the green."""
+    with pytest.raises(
+        ValueError,
+        match=r"^scenario\.timeout_after_green_seconds \(.*\) must be above 0\.5 s",
+    ):
+        TrafficLightComplianceConfig(timeout_after_green_seconds=value)
+
+
+@pytest.mark.parametrize("value", [0.51, 1, 1000.0])
+def test_a_timeout_after_green_past_the_departure_check_is_accepted(
+    value: float,
+) -> None:
+    config = TrafficLightComplianceConfig(timeout_after_green_seconds=value)
+    assert config.timeout_after_green_seconds == value
+
+
+@pytest.mark.parametrize(
+    ("delay", "timeout"), [(8.0, 8.0), (8.0, 8.5), (3.0, 1.0), (7.5, 8.0)]
+)
+def test_a_timeout_by_the_departure_check_is_refused(
+    delay: float, timeout: float
+) -> None:
+    """``TrafficLightComplianceConfig(light_switch_delay_seconds=8.0,
+    timeout_seconds=8.0)`` times out before it can pass, and so every run fails."""
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"^scenario\.timeout_seconds \({timeout}\) must be above "
+            rf"scenario\.light_switch_delay_seconds \({delay}\) plus 0\.5 s"
+        ),
+    ):
+        TrafficLightComplianceConfig(
+            light_switch_delay_seconds=delay, timeout_seconds=timeout
+        )
+
+
+def test_a_timeout_past_the_departure_check_is_accepted() -> None:
+    config = TrafficLightComplianceConfig(
+        light_switch_delay_seconds=8.0, timeout_seconds=8.51
+    )
+    assert config.timeout_seconds == 8.51
+
+
+def test_a_timeout_after_green_frees_the_timeout_from_the_delay() -> None:
+    """``timeout_seconds`` is ignored then: the shipped 8 s, a drawn 8 s delay."""
+    config = TrafficLightComplianceConfig(
+        light_switch_delay_seconds=8.0,
+        timeout_seconds=8.0,
+        timeout_after_green_seconds=5.0,
+    )
+    assert config.timeout_seconds == 8.0
 
 
 @pytest.mark.parametrize("value", [True, "3", 2.5], ids=repr)

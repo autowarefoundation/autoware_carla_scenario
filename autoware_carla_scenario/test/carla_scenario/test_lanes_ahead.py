@@ -392,13 +392,21 @@ class TestLeftLanesAhead:
 # ---------------------------------------------------------------------------
 
 
-def _cut_in_setup(config: CutInConfig, goal: Lanelet2Pose | None = None) -> Any:
-    """A ``CutInScenario`` after ``setup()``, CARLA and the map stubbed.
+def _beside_on_the_synthetic_map(lanelet_id: int, side: str) -> int | None:
+    """``lane_beside`` as the synthetic map is drawn: B1 on A1's left.
 
-    *goal* is the one its ``EgoConfig`` is given, as ``ego.goal_lanelet_id``
-    gives one.
-    """
-    from autoware_carla_scenario import EgoConfig, Lanelet2Pose, SpawnTransform
+    Its lanelets share points, not boundaries, so the routing graph gives
+    none of them a neighbour."""
+    return B1 if (lanelet_id, side) == (A1, "left") else None
+
+
+def _cut_in_scenario(
+    config: CutInConfig,
+    goal: Lanelet2Pose | None = None,
+    spawn: Lanelet2Pose = Lanelet2Pose(lanelet_id=A1, s=5.0),
+) -> Any:
+    """A ``CutInScenario`` before ``setup()``, its client stubbed."""
+    from autoware_carla_scenario import EgoConfig, SpawnTransform
     from autoware_carla_scenario.examples import cut_in
 
     import typesafe_carla.carla as carla
@@ -409,12 +417,27 @@ def _cut_in_setup(config: CutInConfig, goal: Lanelet2Pose | None = None) -> Any:
             vehicle_type="vehicle.mini.cooper",
             goal_pose=goal,
         ),
-        spawn_pose=Lanelet2Pose(lanelet_id=A1, s=5.0),
+        spawn_pose=spawn,
         config=config,
     )
     scenario.set_client(MagicMock(), 8000)
+    return scenario
+
+
+def _cut_in_setup(config: CutInConfig, goal: Lanelet2Pose | None = None) -> Any:
+    """A ``CutInScenario`` after ``setup()``, CARLA and the map stubbed.
+
+    *goal* is the one its ``EgoConfig`` is given, as ``ego.goal_lanelet_id``
+    gives one.
+    """
+    from autoware_carla_scenario.examples import cut_in
+
+    scenario = _cut_in_scenario(config, goal)
     stub = MagicMock()
     with (
+        unittest.mock.patch.object(
+            cut_in, "lane_beside", side_effect=_beside_on_the_synthetic_map
+        ),
         unittest.mock.patch.object(scenario, "_setup_ego_spawn", return_value=stub),
         unittest.mock.patch.object(cut_in, "snap_to_carla_road", return_value=stub),
         unittest.mock.patch.object(cut_in, "VehicleEntity"),
@@ -488,6 +511,43 @@ class TestCutInFailConditions:
             CutInConfig(npc_lanelet_id=B1, leaving_lane_seconds=0.5)
         )
         assert fails[1].get_details()["required_duration_seconds"] == 0.5
+
+
+class TestCutInNpcLanelet:
+    """The NPC starts on the lane beside the ego's on ``side``, or the setup
+    refuses it: from anywhere else it never enters the ego's lane (#2586)."""
+
+    def _refused(self, config: CutInConfig) -> str:
+        from autoware_carla_scenario.examples import cut_in
+
+        scenario = _cut_in_scenario(config)
+        with (
+            unittest.mock.patch.object(
+                cut_in, "lane_beside", side_effect=_beside_on_the_synthetic_map
+            ),
+            pytest.raises(ValueError) as refused,
+        ):
+            scenario.setup()
+        return str(refused.value)
+
+    def test_the_lane_beside_is_taken(self, loaded: None) -> None:
+        assert _cut_in_setup(CutInConfig(npc_lanelet_id=B1)).goal_pose is not None
+
+    def test_another_lanelet_is_refused(self, loaded: None) -> None:
+        message = self._refused(CutInConfig(npc_lanelet_id=B2))
+        assert message == (
+            f"scenario.npc_lanelet_id ({B2}) must be the lanelet beside the "
+            f"ego's spawn lanelet {A1} on scenario.side (left): that is "
+            f"lanelet {B1}"
+        )
+
+    def test_the_default_lanelet_is_refused(self, loaded: None) -> None:
+        assert "scenario.npc_lanelet_id (0)" in self._refused(CutInConfig())
+
+    def test_a_side_with_no_lane_is_refused(self, loaded: None) -> None:
+        message = self._refused(CutInConfig(npc_lanelet_id=B1, side="right"))
+        assert message.startswith(f"scenario.npc_lanelet_id ({B1}) must be")
+        assert message.endswith("on scenario.side (right): it has no lane on that side")
 
 
 class TestCutInPassCondition:
@@ -609,6 +669,24 @@ class TestCutInOnTheFixtureMap:
             assert goal.lanelet_id == goal_lanelet
             assert goal.lanelet_id in lanes_ahead_before_junction(spawn, reach)
             assert 0.0 < goal.s < lanelet_length(goal_lanelet)
+
+    def test_the_shipped_cases_start_on_the_lane_beside(self) -> None:
+        # cut_in/left and cut_in/right's fixed cases.
+        assert lane_beside(EGO_LANELET, "left") == NPC_LANELET
+        assert lane_beside(NPC_LANELET, "right") == EGO_LANELET
+
+    def test_the_wrong_side_is_refused(self) -> None:
+        # cut_in/left with scenario.side=right: 19 is on 20's left (#2586).
+        scenario = _cut_in_scenario(
+            CutInConfig(npc_lanelet_id=NPC_LANELET, side="right"),
+            spawn=Lanelet2Pose(lanelet_id=EGO_LANELET, s=5.0),
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"^scenario\.npc_lanelet_id \(19\) must be the lanelet beside "
+            r"the ego's spawn lanelet 20 on scenario\.side \(right\)",
+        ):
+            scenario.setup()
 
     def test_not_in_the_lane_beside(self) -> None:
         beside_next = lanelets_ahead(NPC_LANELET, 1000.0)[1]

@@ -57,7 +57,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 | Fail on any collision of the ego | on: `fail_on_any_collision` (off: only a collision with NPC1, `hit_cut_in_vehicle`) |
 | Fail on leaving the lanes ahead | on: `fail_on_leaving_lane` |
 | The lanes ahead reach | 1000 m from the start of the matched lanelet: `lanes_ahead_m` |
-| Off them for | 0.2 s: `leaving_lane_seconds` (0: the first tick off) |
+| Off them for | 0.2 s: `leaving_lane_seconds` |
 
 ## Staying on the lanes ahead
 
