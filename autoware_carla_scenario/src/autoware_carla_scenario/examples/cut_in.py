@@ -79,6 +79,7 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.coordinate import (
     MapManager,
+    lane_beside,
     lanelets_beside,
     lanes_ahead_before_junction as lanes_ahead_before_junction,
 )
@@ -96,6 +97,38 @@ _CHANGE_TOWARDS_EGO: dict[str, LaneChangeDirection] = {
     "left": LaneChangeDirection.RIGHT,
     "right": LaneChangeDirection.LEFT,
 }
+
+
+def on_any_lanelet(
+    entity: EntityRole, lanelets: list[int], lanelet_label: str, label: str
+) -> BaseCondition:
+    """*entity* is on one of *lanelets*: an ``EntityLanePositionCondition``
+    per lanelet, labelled *lanelet_label* followed by its ID, under an
+    ``OrCondition`` labelled *label* when there is more than one.  The
+    position tested is the vehicle's centre, its CARLA location.
+
+    Raises:
+        ValueError: If *lanelets* is empty.
+    """
+    if len(lanelets) == 0:
+        raise ValueError(f"{label}: no lanelets to be on")
+    # Appended one by one, and chosen by if/else: Codon gives neither a list
+    # comprehension nor a conditional expression the base class's type.
+    on_lanes: list[BaseCondition] = []
+    for lanelet in lanelets:
+        on_lanes.append(
+            EntityLanePositionCondition(
+                entity,
+                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
+                label=f"{lanelet_label}{lanelet}",
+            )
+        )
+    on_any: BaseCondition
+    if len(on_lanes) == 1:
+        on_any = on_lanes[0]
+    else:
+        on_any = OrCondition(on_lanes, label=label)
+    return on_any
 
 
 def left_lanes_ahead(
@@ -120,22 +153,12 @@ def left_lanes_ahead(
 
     *seconds* of zero or less fails on the first tick off them.
     """
-    # Appended one by one, and chosen by if/else: Codon gives neither a list
-    # comprehension nor a conditional expression the base class's type.
-    on_lanes: list[BaseCondition] = []
-    for lanelet in ego_lanes_ahead(lanelet_id, distance_m):
-        on_lanes.append(
-            EntityLanePositionCondition(
-                EGO_ROLE_NAME,
-                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
-                label=f"ego_on_lanelet_{lanelet}",
-            )
-        )
-    on_any: BaseCondition
-    if len(on_lanes) == 1:
-        on_any = on_lanes[0]
-    else:
-        on_any = OrCondition(on_lanes, label="ego_on_its_lanes")
+    on_any = on_any_lanelet(
+        EGO_ROLE_NAME,
+        ego_lanes_ahead(lanelet_id, distance_m),
+        "ego_on_lanelet_",
+        "ego_on_its_lanes",
+    )
     if seconds <= 0.0:
         return NotCondition(on_any, label="ego_left_its_lane", holds_when_pending=True)
     return PersistentCondition(
@@ -242,21 +265,12 @@ def npc_in_lanes_ahead(lanelet_id: int, distance_m: float) -> BaseCondition:
     ``OrCondition`` when there is more than one, latched by a
     ``StickyCondition``: the NPC has cut in once it has been on any of them.
     """
-    # Appended one by one, and chosen by if/else, as in left_lanes_ahead.
-    on_lanes: list[BaseCondition] = []
-    for lanelet in lanes_ahead_before_junction(lanelet_id, distance_m):
-        on_lanes.append(
-            EntityLanePositionCondition(
-                CUT_IN_ROLE,
-                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
-                label=f"npc_on_lanelet_{lanelet}",
-            )
-        )
-    on_any: BaseCondition
-    if len(on_lanes) == 1:
-        on_any = on_lanes[0]
-    else:
-        on_any = OrCondition(on_lanes, label="npc_in_ego_lane")
+    on_any = on_any_lanelet(
+        CUT_IN_ROLE,
+        lanes_ahead_before_junction(lanelet_id, distance_m),
+        "npc_on_lanelet_",
+        "npc_in_ego_lane",
+    )
     return StickyCondition(on_any, label="npc_in_ego_lane_sticky")
 
 
@@ -289,6 +303,24 @@ class CutInScenario(BaseScenario):
             raise ValueError(
                 f"scenario.side must be one of {', '.join(CUT_IN_SIDES)}, "
                 f"not {cfg.side!r}"
+            )
+
+        # The NPC changes lanes towards the ego from `side`: started on any
+        # other lanelet than the one beside the ego's there, it never enters
+        # the ego's lane, and every run fails on the timeout (#2586).
+        beside = lane_beside(spawn.lanelet_id, cfg.side)
+        there = "it has no lane on that side"
+        if beside is not None:
+            beside_id: int = beside
+            if beside_id == cfg.npc_lanelet_id:
+                there = ""
+            else:
+                there = f"that is lanelet {beside_id}"
+        if there:
+            raise ValueError(
+                f"scenario.npc_lanelet_id ({cfg.npc_lanelet_id}) must be the "
+                f"lanelet beside the ego's spawn lanelet {spawn.lanelet_id} on "
+                f"scenario.side ({cfg.side}): {there}"
             )
 
         # The ego is sent down its lane -- the goal an ego that plans its own

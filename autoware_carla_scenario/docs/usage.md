@@ -1473,7 +1473,7 @@ finite and at least 0, got nan`).
 - Sets all traffic lights to GREEN
 - Registers a TurnAction when `turn_direction` is set -- `left`, `right` or `straight` (sets the ego's path through the junction via the TrafficManager); none when it is `null`
 - Pass condition: the ego has been on every OpenDRIVE road of the route's lanelets that are not in a junction, any lane of each (a StickyCondition per road, under an AndCondition when there are several)
-- Fail conditions: timeout, ego destroyed, speed below threshold
+- Fail conditions: timeout; speed below `min_speed_kmh` (after `speed_check_delay_seconds`); with `turn_indicator_before_m` and a `turn_direction` of `left` or `right`, the indicator of the turn not shown near the junction for `turn_indicator_grace_seconds`, or not shown at all before entering it; the `steering_reversals` metric reaching `max_steering_reversals`, and the `turn_indicator_changes` metric reaching `max_turn_indicator_changes`
 
 #### Lane Change
 
@@ -1521,8 +1521,8 @@ Tests that the ego vehicle correctly stops at a red light and proceeds after gre
 | Parameter | Type | Default | Shipped | Description |
 |-----------|------|---------|---------|-------------|
 | `scenario.light_switch_delay_seconds` | float | `3.0` | `5.0` | Delay before switching red to green |
-| `scenario.timeout_seconds` | float | `5.0` | `8.0` | Maximum scenario duration; ignored when `timeout_after_green_seconds` is set |
-| `scenario.timeout_after_green_seconds` | float \| null | null | — | The timeout counted from the green instead: `light_switch_delay_seconds` plus this, in place of `timeout_seconds`, overrides included. `null` uses `timeout_seconds` |
+| `scenario.timeout_seconds` | float | `5.0` | `8.0` | Maximum scenario duration; ignored when `timeout_after_green_seconds` is set. Must be above `light_switch_delay_seconds` plus 0.5 s (`GREEN_DEPARTURE_CHECK_SECONDS`), when the run can first pass |
+| `scenario.timeout_after_green_seconds` | float \| null | null | — | The timeout counted from the green instead: `light_switch_delay_seconds` plus this, in place of `timeout_seconds`, overrides included. Must be above 0.5 s (`GREEN_DEPARTURE_CHECK_SECONDS`). `null` uses `timeout_seconds` |
 | `scenario.stop_line_distance_m` | float \| null | null | — | Moves the ego along its lane so that its front bumper starts this many metres before the stop line ahead. `null` leaves the spawn pose as it is |
 | `scenario.stop_zone_min_m` | float | `0.0` | `0.0` | Near end of the stop zone: metres before the stop line, as the `stop_line_distance_m` measure reads it |
 | `scenario.stop_zone_max_m` | float | `3.0` | `3.0` | Far end of the stop zone; standing still farther back until the green fails the run |

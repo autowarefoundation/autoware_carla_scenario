@@ -44,13 +44,11 @@ from autoware_carla_scenario import (
     BaseScenario,
     EgoConfig,
     ElapsedTimeCondition,
-    EntityLanePositionCondition,
     GroundProjectionConfig,
     LaneChangeAction,
     LaneChangeDirection,
     Lanelet2Pose,
     NotCondition,
-    OrCondition,
     StickyCondition,
     TickTiming,
     TimeoutCondition,
@@ -65,8 +63,8 @@ from autoware_carla_scenario.coordinate import (
     lanes_ahead_before_junction as lanes_ahead_before_junction,
 )
 
-from .configs import LaneChangeConfig
-from .cut_in import ego_lanes_ahead, left_lanes_ahead
+from .configs import CutInConfig, LaneChangeConfig
+from .cut_in import ego_lanes_ahead, left_lanes_ahead, on_any_lanelet
 
 logger = logging.getLogger(__name__)
 
@@ -80,16 +78,21 @@ _DIRECTION_MAP: dict[str, LaneChangeDirection] = {
 #: the next junction well before it.
 TARGET_LANES_AHEAD_M = 1000.0
 
+#: The cut-in scenario's defaults, which the ``expect=fail`` lane keeping
+#: below shares.
+_CUT_IN_DEFAULTS = CutInConfig()
+
 #: ``expect=fail``: how far ahead of the spawn lanelet the ego's own lanes are
-#: followed (m): the spawn lanelet and every lanelet that continues it,
-#: through junctions (:func:`~.cut_in.ego_lanes_ahead`), well past what the
-#: ego drives before its timeout.
-OWN_LANES_AHEAD_M = 1000.0
+#: followed (m), ``CutInConfig.lanes_ahead_m``'s default: the spawn lanelet
+#: and every lanelet that continues it, through junctions
+#: (:func:`~.cut_in.ego_lanes_ahead`), well past what the ego drives before
+#: its timeout.
+OWN_LANES_AHEAD_M: float = _CUT_IN_DEFAULTS.lanes_ahead_m
 
 #: ``expect=fail``: how long the ego has to be off its own lanes before the
-#: run fails (s), as ``CutInConfig.leaving_lane_seconds``: a tick or two off
-#: at a seam between lanelets is not leaving them.
-LEAVING_LANE_SECONDS = 0.2
+#: run fails (s), ``CutInConfig.leaving_lane_seconds``'s default: a tick or
+#: two off at a seam between lanelets is not leaving them.
+LEAVING_LANE_SECONDS: float = _CUT_IN_DEFAULTS.leaving_lane_seconds
 
 
 def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
@@ -104,31 +107,21 @@ def lane_change_target(lanelet_id: int, direction: str) -> BaseCondition:
     with no lane on that side in its direction), a lane change has nowhere to
     end: the condition never holds.
     """
-    # Appended one by one, and chosen by if/else: Codon gives neither a list
-    # comprehension nor a conditional expression the base class's type.
-    on_lanes: list[BaseCondition] = []
-    for lanelet in lane_change_target_lanelets(
-        lanelet_id, direction, TARGET_LANES_AHEAD_M
-    ):
-        on_lanes.append(
-            EntityLanePositionCondition(
-                EGO_ROLE_NAME,
-                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
-                label=f"ego_on_lanelet_{lanelet}",
-            )
-        )
+    targets = lane_change_target_lanelets(lanelet_id, direction, TARGET_LANES_AHEAD_M)
+    # Chosen by if/else: Codon does not give a conditional expression the
+    # base class's type.
     on_any: BaseCondition
-    if not on_lanes:
+    if len(targets) == 0:
         # Pending on every check: a logical NOT of a condition that always holds.
         on_any = NotCondition(
             AlwaysTrueCondition(label="no_lane_beside"),
             label="ego_target_lane",
             holds_when_pending=True,
         )
-    elif len(on_lanes) == 1:
-        on_any = on_lanes[0]
     else:
-        on_any = OrCondition(on_lanes, label="ego_target_lane")
+        on_any = on_any_lanelet(
+            EGO_ROLE_NAME, targets, "ego_on_lanelet_", "ego_target_lane"
+        )
     return StickyCondition(on_any, label="ego_target_lane_sticky")
 
 
@@ -140,22 +133,12 @@ def on_own_lanes(lanelet_id: int, distance_m: float) -> BaseCondition:
     when there is more than one; not latched, so it holds only while the ego
     is on one of them.
     """
-    # Appended one by one, and chosen by if/else, as in lane_change_target.
-    on_lanes: list[BaseCondition] = []
-    for lanelet in ego_lanes_ahead(lanelet_id, distance_m):
-        on_lanes.append(
-            EntityLanePositionCondition(
-                EGO_ROLE_NAME,
-                Lanelet2Pose(lanelet_id=lanelet, s=0.0),
-                label=f"ego_on_own_lanelet_{lanelet}",
-            )
-        )
-    on_any: BaseCondition
-    if len(on_lanes) == 1:
-        on_any = on_lanes[0]
-    else:
-        on_any = OrCondition(on_lanes, label="ego_on_own_lanes")
-    return on_any
+    return on_any_lanelet(
+        EGO_ROLE_NAME,
+        ego_lanes_ahead(lanelet_id, distance_m),
+        "ego_on_own_lanelet_",
+        "ego_on_own_lanes",
+    )
 
 
 class LaneChangeScenario(BaseScenario):

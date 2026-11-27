@@ -73,7 +73,7 @@ from autoware_carla_scenario import (
 from autoware_carla_scenario.failure import FailureCategory
 from autoware_carla_scenario.measures import bumpers_of, stop_line_distance_between
 
-from .configs import TrafficLightComplianceConfig
+from .configs import GREEN_DEPARTURE_CHECK_SECONDS, TrafficLightComplianceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -483,8 +483,9 @@ class TrafficLightComplianceScenario(BaseScenario):
 
     The scenario:
 
-    1. Snaps a Lanelet2 pose to the CARLA road surface for the ego spawn.
-    2. Enables autopilot so the ego drives via the traffic manager.
+    1. Snaps a Lanelet2 pose to the CARLA road surface for the ego spawn
+       (moved along its lane to ``stop_line_distance_m`` first, when set).
+    2. Registers the red phase as its own measure, :data:`RED_LIGHT_DURATION_S`.
     3. Sets every traffic light to **red** (frozen) using
        :class:`TrafficSignalAction`.
     4. Registers a :class:`TrafficSignalAction` with
@@ -492,8 +493,12 @@ class TrafficLightComplianceScenario(BaseScenario):
        the configured delay.
     5. Registers pass and fail conditions on where the ego stops against the
        stop line (:class:`StopLineWatch`): it must not cross it on red, must
-       stand still in the stop zone before the green, and then pull away.
+       stand still in the stop zone before the green, and then pull away
+       (from :data:`~.configs.GREEN_DEPARTURE_CHECK_SECONDS` after the green).
     6. Registers a :class:`TimeoutCondition` as a fail-safe.
+
+    The ego drives itself (``ego.entity``): the scenario neither drives it
+    nor enables autopilot.
     """
 
     _config: TrafficLightComplianceConfig
@@ -575,7 +580,9 @@ class TrafficLightComplianceScenario(BaseScenario):
         )
 
         # 2) Verify ego pulled away after green phase
-        green_check_time = cfg.light_switch_delay_seconds + 0.5
+        green_check_time = (
+            cfg.light_switch_delay_seconds + GREEN_DEPARTURE_CHECK_SECONDS
+        )
         departure_speed_kmh = (
             cfg.moving_speed_kmh
             if cfg.departure_speed_kmh is None

@@ -47,7 +47,7 @@ from autoware_carla_scenario import (
     WalkStraightAction,
     to_carla_world,
 )
-from autoware_carla_scenario.coordinate import road_traffic_rule
+from autoware_carla_scenario.coordinate import lanelet_length, road_traffic_rule
 
 from .configs import PedestrianDartOutConfig
 
@@ -146,9 +146,20 @@ class PedestrianDartOutScenario(BaseScenario):
             raise ValueError("pedestrian_dart_out needs an ego spawn pose")
 
         crossing_s = spawn.s + cfg.pedestrian_ahead_m
-        beyond = Lanelet2Pose(
-            lanelet_id=spawn.lanelet_id, s=crossing_s + cfg.pass_beyond_m
-        )
+        beyond_s = crossing_s + cfg.pass_beyond_m
+        # Both on the spawn lanelet: a pass point past its end would be
+        # clamped onto the end, nearer the crossing -- within _PASS_RADIUS_M
+        # of it, the run passes before the ego reaches the pedestrian (#2586).
+        length = lanelet_length(spawn.lanelet_id)
+        if beyond_s > length:
+            raise ValueError(
+                f"the pass point, ego.spawn_s ({spawn.s}) + "
+                f"scenario.pedestrian_ahead_m ({cfg.pedestrian_ahead_m}) + "
+                f"scenario.pass_beyond_m ({cfg.pass_beyond_m}) = {beyond_s:.2f} m, "
+                f"is past the end of the spawn lanelet {spawn.lanelet_id} "
+                f"({length:.2f} m long)"
+            )
+        beyond = Lanelet2Pose(lanelet_id=spawn.lanelet_id, s=beyond_s)
         # An ego that plans its own route is sent past the crossing.
         if self.goal_pose is None:
             self.goal_pose = beyond

@@ -140,3 +140,89 @@ def test_the_right_hand_kerb_of_the_old_case_was_the_oncoming_lane(
 
     old = Lanelet2Pose(lanelet_id=20, s=40.0, t=-3.0)
     assert _road_lanelets_at(old) == [28]
+
+
+# ---------------------------------------------------------------------------
+# The pass point stays on the spawn lanelet (#2586)
+# ---------------------------------------------------------------------------
+
+
+class _PastTheCheck(Exception):
+    """Raised where setup() goes on to spawn the ego: the check passed."""
+
+
+def _set_up(config: PedestrianDartOutConfig, lanelet_id: int, s: float) -> None:
+    """Run ``PedestrianDartOutScenario.setup()`` up to the ego's spawn."""
+    import unittest.mock
+    from unittest.mock import MagicMock
+
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario import EgoConfig, Lanelet2Pose, SpawnTransform
+    from autoware_carla_scenario.examples.pedestrian_dart_out import (
+        PedestrianDartOutScenario,
+    )
+
+    scenario = PedestrianDartOutScenario(
+        EgoConfig(
+            spawn_location=SpawnTransform(carla.Transform(carla.Location())),
+            vehicle_type="vehicle.mini.cooper",
+        ),
+        spawn_pose=Lanelet2Pose(lanelet_id=lanelet_id, s=s),
+        config=config,
+    )
+    scenario.set_client(MagicMock(), 8000)
+    with unittest.mock.patch.object(
+        scenario, "_setup_ego_spawn", side_effect=_PastTheCheck
+    ):
+        scenario.setup()
+
+
+def test_the_fixed_case_keeps_its_pass_point_on_the_lanelet(
+    nishishinjuku: None,
+) -> None:
+    cfg = run._compose_config("pedestrian_dart_out/pedestrian_dart_out", [])
+    config = PedestrianDartOutConfig(
+        pedestrian_ahead_m=float(cfg.scenario.pedestrian_ahead_m),
+        pass_beyond_m=float(cfg.scenario.pass_beyond_m),
+    )
+    with pytest.raises(_PastTheCheck):
+        _set_up(config, int(cfg.ego.spawn_lanelet_id), float(cfg.ego.spawn_s))
+
+
+def test_a_pass_point_at_the_lanelets_end_is_taken(nishishinjuku: None) -> None:
+    from autoware_carla_scenario.coordinate import lanelet_length
+
+    length = lanelet_length(19)
+    config = PedestrianDartOutConfig(
+        pedestrian_ahead_m=length - 15.0, pass_beyond_m=10.0
+    )
+    with pytest.raises(_PastTheCheck):
+        _set_up(config, 19, 5.0)
+
+
+def test_a_pass_point_past_the_lanelets_end_is_refused(nishishinjuku: None) -> None:
+    """On lanelet 19 (127.77 m), 120 m ahead put the pass point, clamped onto
+    the end, 2.77 m past the crossing: the run passed before the ego reached
+    the pedestrian."""
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^the pass point, ego\.spawn_s \(5\.0\) \+ "
+            r"scenario\.pedestrian_ahead_m \(120\.0\) \+ "
+            r"scenario\.pass_beyond_m \(10\.0\) = 135\.00 m, is past the end of "
+            r"the spawn lanelet 19 \(127\.77 m long\)$"
+        ),
+    ):
+        _set_up(PedestrianDartOutConfig(pedestrian_ahead_m=120.0), 19, 5.0)
+
+
+@pytest.mark.parametrize("value", [-10.0, 0.0])
+def test_a_crossing_not_ahead_of_the_spawn_is_refused(value: float) -> None:
+    """At -10 m the pass point was the ego's own spawn: it passed on the first
+    tick."""
+    with pytest.raises(
+        ValueError,
+        match=r"^scenario\.pedestrian_ahead_m must be finite and positive",
+    ):
+        PedestrianDartOutConfig(pedestrian_ahead_m=value)
