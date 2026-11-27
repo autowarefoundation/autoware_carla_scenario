@@ -200,7 +200,7 @@ class _Node(BaseModel):
 
 
 def _sweep_params(
-    fields: tuple[FieldSpec, ...], params: dict[str, Any]
+    fields: Optional[tuple[FieldSpec, ...]], params: dict[str, Any]
 ) -> dict[str, Any]:
     """*params* as the sweeper takes them: filled and typed as the compiler
     would (#2281).
@@ -220,12 +220,21 @@ def _sweep_params(
 
     A value that does not convert -- a misspelt flag, a word in a number
     field -- is left as written: the validator names it, and the sweeper
-    refuses it.  So is a ``${...}`` reference, which Hydra resolves.  Keys
-    the spec does not know are kept too.
+    refuses it.  So is a ``${...}`` reference, which Hydra resolves.
+
+    Keys the spec does not know are dropped, as the validator warns they
+    will be (#2579): the sweeper's ``parse_constraint`` and
+    ``parse_binding`` refuse an unknown key, so a stale or misspelt one
+    would break the sweep a validated document exports.  With no spec
+    (*fields* ``None``, an unknown type the validator refuses) there is
+    nothing to tell them by, and *params* are kept as written.
     """
     from .compiler import _coerce_one  # noqa: PLC0415 -- compiler imports models
 
-    out = dict(params)
+    if fields is None:
+        return dict(params)
+    known = {spec.name for spec in fields}
+    out = {key: value for key, value in params.items() if key in known}
     for spec in fields:
         value = out.get(spec.name)
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -278,7 +287,7 @@ class ConstraintNode(_Node):
 
         spec = get_constraint_spec(self.type)
         out: dict[str, Any] = {"type": self.type}
-        out.update(_sweep_params(spec.fields if spec else (), self.params))
+        out.update(_sweep_params(spec.fields if spec else None, self.params))
         if not self.constraints:
             return out
         if spec is not None and spec.kind == "wrapper":
@@ -325,7 +334,7 @@ class BindingRef(_Node):
 
         spec = get_binding_spec(self.type)
         fixed = dict(spec.fixed) if spec else {}
-        params = _sweep_params(spec.fields if spec else (), self.params)
+        params = _sweep_params(spec.fields if spec else None, self.params)
         return {"type": self.type, **params, **fixed}
 
 
@@ -596,10 +605,6 @@ class ConditionNode(_Node):
         """Return the stored choice for the lanelet parameter *field*."""
         return self.searches.get(field)
 
-    def ensure_search(self, field: str) -> LaneletChoice:
-        """Return the choice for *field*, attaching a pinned one if absent."""
-        return _ensure_search(self, field)
-
     def walk(self) -> "list[ConditionNode]":
         """Return this node followed by every descendant, depth first."""
         found = [self]
@@ -744,10 +749,6 @@ class ActionNode(_Node):
     def search(self, field: str) -> Optional[LaneletChoice]:
         """Return the stored choice for the lanelet parameter *field*."""
         return self.searches.get(field)
-
-    def ensure_search(self, field: str) -> LaneletChoice:
-        """Return the choice for *field*, attaching a pinned one if absent."""
-        return _ensure_search(self, field)
 
     def vertex_condition(self, vertex: int) -> Optional[VertexCondition]:
         """Return the waypoint condition on *vertex* (counted from 1), if any."""

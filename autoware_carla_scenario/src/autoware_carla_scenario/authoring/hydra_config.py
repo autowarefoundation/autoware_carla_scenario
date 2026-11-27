@@ -422,15 +422,9 @@ def map_group_no_3d_model_lanelet_ids(group: str) -> list[int] | None:
     path = _map_group_file(name)
     if path is None:
         return None
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        _logger.debug("map group %s: %s did not load", name, path, exc_info=True)
+    section = _map_group_section(path)
+    if section is None:
         return None
-    if not isinstance(data, dict):
-        return None
-    nested = data.get("map")
-    section: dict[Any, Any] = nested if isinstance(nested, dict) else data
     ids = section.get("no_3d_model_lanelet_ids")
     if ids is None:
         return []
@@ -730,21 +724,30 @@ def map_groups_named(name: str) -> list[str]:
     return sorted(found)
 
 
+def _map_group_section(path: Path) -> dict[Any, Any] | None:
+    """The settings a map group file at *path* holds: its ``map`` section,
+    or the whole file when it has none; ``None`` for a file that does not
+    load or holds no mapping."""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        _logger.debug("map group %s did not load", path, exc_info=True)
+        return None
+    if not isinstance(data, dict):
+        return None
+    nested = data.get("map")
+    return nested if isinstance(nested, dict) else data
+
+
 def _map_groups_named_in(directory: Path, name: str) -> list[str]:
     """The groups in *directory* whose ``map.name`` is *name*, sorted."""
     if not directory.is_dir():
         return []
     groups: list[str] = []
     for path in sorted(directory.glob("*.yaml")):
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError):
-            _logger.debug("map group %s did not load", path, exc_info=True)
+        section = _map_group_section(path)
+        if section is None:
             continue
-        if not isinstance(data, dict):
-            continue
-        nested = data.get("map")
-        section: dict[Any, Any] = nested if isinstance(nested, dict) else data
         if str(section.get("name") or "").strip() == name:
             groups.append(path.stem)
     return groups

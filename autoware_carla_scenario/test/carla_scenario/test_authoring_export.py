@@ -1906,6 +1906,95 @@ class TestExportRefusals:
         assert list(tmp_path.iterdir()) == []
 
 
+class TestForcedReExport:
+    """A forced re-export replaces the earlier one only once it succeeded (#2579)."""
+
+    @pytest.fixture
+    def stubbed(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        import autoware_carla_scenario.authoring.package_export as module
+
+        def _lock(root: Path) -> str:
+            (root / "uv.lock").write_text("# stub\n", encoding="utf-8")
+            return ""
+
+        def _wheelhouse(_root: Path, destination: Path, **_: Any) -> Any:
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "stub-0.1.0-py3-none-any.whl").write_text("")
+            return module.Wheelhouse(
+                root=destination, distribution="stub", version="0.1.0"
+            )
+
+        monkeypatch.setattr(module, "_lock", _lock)
+        monkeypatch.setattr(module, "_verify_sync", lambda _root: "")
+        monkeypatch.setattr(module, "_run_tests", lambda _root: (True, ""))
+        monkeypatch.setattr(module, "build_wheelhouse", _wheelhouse)
+        monkeypatch.setattr(module, "_check_lock", lambda _root: "")
+        return module
+
+    @staticmethod
+    def _mark_previous(tmp_path: Path) -> tuple[Path, Path]:
+        """Export once and mark both directories, to tell them apart later."""
+        result = export_package(new_document(), tmp_path, dev_mode=True)
+        assert result.wheelhouse is not None
+        package, wheelhouse = result.root, result.wheelhouse.root
+        (package / "PREVIOUS").write_text("package", encoding="utf-8")
+        (wheelhouse / "PREVIOUS").write_text("wheelhouse", encoding="utf-8")
+        return package, wheelhouse
+
+    @staticmethod
+    def _assert_previous_intact(
+        tmp_path: Path, package: Path, wheelhouse: Path
+    ) -> None:
+        assert (package / "PREVIOUS").read_text(encoding="utf-8") == "package"
+        assert (wheelhouse / "PREVIOUS").read_text(encoding="utf-8") == "wheelhouse"
+        assert (package / "pyproject.toml").is_file()
+        assert (wheelhouse / "stub-0.1.0-py3-none-any.whl").is_file()
+        assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+            [package.name, wheelhouse.name]
+        )
+
+    def test_a_failed_lock_check_keeps_the_previous_export(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stubbed: Any
+    ) -> None:
+        package, wheelhouse = self._mark_previous(tmp_path)
+
+        def _refuse(_root: Path) -> str:
+            raise PackageExportError("lock no longer matches")
+
+        monkeypatch.setattr(stubbed, "_check_lock", _refuse)
+        with pytest.raises(PackageExportError):
+            export_package(new_document(), tmp_path, dev_mode=True, force=True)
+        self._assert_previous_intact(tmp_path, package, wheelhouse)
+
+    def test_a_failed_move_keeps_the_previous_export(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stubbed: Any
+    ) -> None:
+        package, wheelhouse = self._mark_previous(tmp_path)
+        real_move = stubbed.shutil.move
+
+        def _move(source: str, destination: str) -> Any:
+            if Path(destination) == wheelhouse:
+                raise OSError("disk full")
+            return real_move(source, destination)
+
+        monkeypatch.setattr(stubbed.shutil, "move", _move)
+        with pytest.raises(OSError, match="disk full"):
+            export_package(new_document(), tmp_path, dev_mode=True, force=True)
+        self._assert_previous_intact(tmp_path, package, wheelhouse)
+
+    def test_a_successful_one_replaces_it_and_keeps_no_backup(
+        self, tmp_path: Path, stubbed: Any
+    ) -> None:
+        package, wheelhouse = self._mark_previous(tmp_path)
+        export_package(new_document(), tmp_path, dev_mode=True, force=True)
+        assert not (package / "PREVIOUS").exists()
+        assert not (wheelhouse / "PREVIOUS").exists()
+        assert (package / "pyproject.toml").is_file()
+        assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+            [package.name, wheelhouse.name]
+        )
+
+
 class TestCarlaClient:
     """The client is typesafe_carla, a plain dependency of the framework."""
 

@@ -20,7 +20,7 @@ IR** -- a `ScenarioDocument` stored as YAML -- which the framework compiles into
 the *existing* runtime primitives:
 
 ```
-ScenarioDocument -> ScenarioCompiler -> BaseAction / BaseCondition -> BaseScenario
+ScenarioDocument -> compile_document -> BaseAction / BaseCondition -> BaseScenario
 ```
 
 There is no editor-only runtime. Every action a document names is built by
@@ -1294,7 +1294,7 @@ not needing to know which Python the target runs before exporting.
 | What | Pinned by |
 | --- | --- |
 | `autoware-carla-scenario` | exact version, or an exact commit SHA (see [How the framework is pinned](#how-the-framework-is-pinned)) |
-| `typesafe-carla` | the framework's own requirement (`>=0.8.1,<0.9`), locked in `uv.lock` like everything else |
+| `typesafe-carla` | the framework's own requirement (`>=0.8.7,<0.9`), locked in `uv.lock` like everything else |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Where it installs | `[tool.uv] required-environments`: Linux x86_64 and aarch64 under every interpreter the wheelhouse is built for, so `uv.lock` never picks a release that lacks a wheel or an sdist for one of them |
@@ -1339,6 +1339,12 @@ The exporter builds into a temporary directory and runs `uv lock`, then
 **If locking, verification or the wheelhouse fails, nothing is written** -- a
 package whose dependencies never resolved, or that no environment can install,
 is not a successful export.
+
+A forced re-export (`force`) replaces an earlier one only once it has
+succeeded: the earlier package and wheelhouse are moved aside, the new ones
+moved in and their lock checked, and the earlier ones removed last. If the
+check fails, or a move does, the new ones are removed and the earlier ones
+moved back as they were.
 
 The manifest records only values that were actually observed:
 

@@ -40,6 +40,7 @@ from typing import Any, Optional
 from ..templating import code_environment
 from ..text_escape import toml_string
 from .framework_pin import Pin, PinResolutionError, resolve_framework_pin
+from .framework_pin import _installed_version
 from .hydra_config import (
     dump_map_group_config,
     dump_scenario_config,
@@ -217,16 +218,6 @@ def _required_environments() -> list[str]:
         for machine in _REQUIRED_MACHINES
         for python in pythons
     ]
-
-
-def _editor_version() -> Optional[str]:
-    """Return the framework version that generated the package."""
-    from importlib import metadata  # noqa: PLC0415
-
-    try:
-        return metadata.version("autoware-carla-scenario")
-    except metadata.PackageNotFoundError:  # pragma: no cover - always installed
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +398,7 @@ def _build_manifest(
         "autoware_carla_scenario": pin.manifest(),
         "dependencies": {pin.distribution: pin.manifest()},
         "generated_by": {
-            "editor_version": _editor_version(),
+            "editor_version": _installed_version(),
             "generated_at": utc_timestamp(),
         },
         "files": files,
@@ -639,6 +630,79 @@ def _build_wheelhouse(
         ) from exc
 
 
+def _put_in_place(
+    parent: Path,
+    target: Path,
+    wheelhouse_target: Path,
+    staging: Path,
+    wheelhouse_staging: Optional[Path],
+    *,
+    check_lock: bool,
+) -> str:
+    """Move a staged export to *target* (and its wheelhouse, if it has one,
+    to *wheelhouse_target*), replacing what an earlier export left there,
+    and check its lock (:func:`_check_lock`) when *check_lock*.  Returns the
+    check's log.
+
+    All or nothing (#2579): what is there already is moved aside, into a
+    directory in *parent* (a rename on the same filesystem), not removed, and
+    is removed only once the new export is in place and its lock checked.  On
+    any exception on the way -- a lock that does not sync, an ``OSError``
+    while moving -- what this export put in place is removed and the earlier
+    export moved back, so a failed re-export leaves the previous one as it
+    was.  A previous wheelhouse is not kept beside a new export that has
+    none: it would sit stale wheels next to a manifest that says the package
+    has no wheelhouse at all.
+    """
+    backup: Optional[Path] = None
+    #: Paths whose earlier content is out of the way (moved aside, or there
+    #: was none): whatever is found there on a rollback is this export's.
+    cleared: list[Path] = []
+    #: (where it was, where it is now) for each earlier directory moved aside.
+    moved_aside: list[tuple[Path, Path]] = []
+    log = ""
+    try:
+        for existing in (target, wheelhouse_target):
+            if existing.exists():
+                if backup is None:
+                    backup = Path(
+                        tempfile.mkdtemp(
+                            prefix=f".{target.name}.previous-", dir=str(parent)
+                        )
+                    )
+                aside = backup / existing.name
+                existing.rename(aside)
+                moved_aside.append((existing, aside))
+            cleared.append(existing)
+        shutil.move(str(staging), str(target))
+        if wheelhouse_staging is not None:
+            shutil.move(str(wheelhouse_staging), str(wheelhouse_target))
+        if check_lock:
+            log += _check_lock(target)
+    except BaseException:
+        for path in cleared:
+            if path.exists():
+                shutil.rmtree(path, ignore_errors=True)
+        restored = True
+        for original, aside in moved_aside:
+            try:
+                aside.rename(original)
+            except OSError:
+                restored = False
+                logger.exception(
+                    "Could not move the previous export back to %s; it is "
+                    "kept in %s",
+                    original,
+                    backup,
+                )
+        if backup is not None and restored:
+            shutil.rmtree(backup, ignore_errors=True)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup, ignore_errors=True)
+    return log
+
+
 def export_package(
     document: ScenarioDocument,
     destination: str | Path,
@@ -678,7 +742,9 @@ def export_package(
         PackageExportError: If the document is invalid, its id cannot name a
             package of its own (``scenario_id_problem``), the framework cannot be
             pinned immutably, the destination is occupied, or locking or
-            verification failed.  Nothing is left at *destination* in that case.
+            verification failed.  Nothing this export made is left at
+            *destination* in that case, and with *force* what an earlier
+            export left there is as it was (:func:`_put_in_place`).
     """
     report = validate_document(document)
     if not report.ok:
@@ -780,29 +846,14 @@ def export_package(
 
         _strip_build_output(staging)
 
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.move(str(staging), str(target))
-        if built is not None:
-            if wheelhouse_target.exists():
-                shutil.rmtree(wheelhouse_target)
-            shutil.move(str(wheelhouse_staging), str(wheelhouse_target))
-        elif wheelhouse_target.exists():
-            # An earlier export left one and this one has none to put there.
-            # Leaving it would sit stale wheels next to a fresh manifest that
-            # says the package has no wheelhouse at all.
-            shutil.rmtree(wheelhouse_target)
-
-        if locked:
-            try:
-                log += _check_lock(target)
-            except PackageExportError:
-                # Both are already in place; an export that cannot be synced
-                # must not be left behind looking finished -- and a wheelhouse
-                # left there would also block the next export without `force`.
-                shutil.rmtree(target, ignore_errors=True)
-                shutil.rmtree(wheelhouse_target, ignore_errors=True)
-                raise
+        log += _put_in_place(
+            parent,
+            target,
+            wheelhouse_target,
+            staging,
+            wheelhouse_staging if built is not None else None,
+            check_lock=locked,
+        )
     except PackageExportError as exc:
         exc.log = f"{exc.log}\n{log}" if exc.log else log
         raise
