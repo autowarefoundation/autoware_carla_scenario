@@ -62,6 +62,18 @@ def test_the_pin_wins_a_tie_for_the_first_lanelet() -> None:
     assert _fork().match(mouth, start_id=2) == [2]
 
 
+def test_a_short_route_between_a_long_lanelet_s_stations_is_on_it() -> None:
+    # A 400 m lanelet's stations are 21 m apart: none is near these points,
+    # which lie on its centreline between two of them (#2573).
+    graph = RouteGraph([7], _line((0.0, 0.0), (400.0, 0.0))[None], {}, {})
+    stations = graph._centres[0, :, 0]
+    short = np.array([[x, 0.0] for x in np.arange(45.0, 60.0, 1.0)])
+    assert not np.any((stations >= 45.0 - 2.5) & (stations <= 59.0 + 2.5))
+    assert graph.match(short) == [7]
+    # Beside it, but farther than the offset: still on no lanelet.
+    assert graph.match(short + [0.0, 3.0]) == []
+
+
 def test_the_nearest_route_lanelet_is_found_within_reach() -> None:
     graph = _fork()
     assert graph.nearest([1, 2, 3], np.array([15.0, 0.5])) == 1

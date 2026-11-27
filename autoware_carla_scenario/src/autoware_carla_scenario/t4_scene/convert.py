@@ -19,7 +19,8 @@ before it keeps the origin's velocity, and has no angular velocity to write).
 What the log does not hold is left out, not invented: the ego's acceleration
 and steering, the route it was given (the scene's is the one it drove) and a
 goal; a vehicle's
-class beyond ``vehicle`` (the log has its blueprint, not its ``base_type``);
+class beyond ``vehicle``, but for CARLA's bicycles (the log has its blueprint,
+not its ``base_type``);
 a light's bulbs beyond its one round lamp's colour.
 A tick the log does not have (it skips a tick without road users) is a row
 whose ego, objects and lights are unavailable, never an interpolated one.
@@ -30,7 +31,6 @@ from __future__ import annotations
 import functools
 import hashlib
 import logging
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,7 +41,7 @@ import numpy.typing as npt
 import orjson
 
 from ..atomic_file import write_bytes_atomically
-from ..constants import FIXED_DELTA_SECONDS
+from ..constants import CARLA_BICYCLE_BLUEPRINTS, FIXED_DELTA_SECONDS
 from ..perception_fault import PerceivedCategory, PerceptionFault, t4_label
 from ..rerun import TRAJECTORY_SUFFIX
 from ..run_outputs import T4SCENE_MAP_SUFFIX, T4SCENE_SUFFIX
@@ -89,6 +89,7 @@ MAP_SUFFIX = T4SCENE_MAP_SUFFIX
 
 #: The contract's object categories this module writes (``Annotations.labels``).
 _VEHICLE = 1
+_BICYCLE = 6
 _PEDESTRIAN = 7
 #: The contract's bulb colours (``TrafficLights.element_colors``) of CARLA's
 #: light states; any other (``Off``, ``Unknown``) is UNKNOWN, 0.
@@ -403,26 +404,13 @@ def _register_in_map_frame(target: Any) -> None:
     )
 
 
-class _StopLine(NamedTuple):
-    """Where a lanelet a traffic light governs stops its traffic."""
-
-    lanelet_id: int
-    #: The ids of the traffic light regulatory elements governing it.
-    traffic_lights: tuple[int, ...]
-    #: The stop line as (S, 2, 2) segments in the map frame.
-    segments: npt.NDArray[np.float64]
-    #: The lanelet's heading there (radians).
-    heading: float
-
-
 class _Map(NamedTuple):
     """A run's map, ready for its scenes: the resource, the source file's
-    SHA-256, the stop lines of the lanelets its lights govern and the
-    lanelets a light's stop waypoint is looked up on."""
+    SHA-256, the OpenDRIVE signals its traffic lights switch and the lanelets
+    a light's stop waypoint is looked up on."""
 
     resource: pb.MapResource
     digest: str
-    stop_lines: tuple[_StopLine, ...]
     #: The OpenDRIVE signals each traffic light regulatory element switches,
     #: by the controller named after it (``Controller_TL_{id}``, the
     #: Lanelet2-to-OpenDRIVE convention ``TrafficSignalAction`` follows);
@@ -458,10 +446,11 @@ def _read_map(
 
 
 def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:
-    """A loaded Lanelet2 map, ready for scenes: its resource, the stop lines of
-    the lanelets its lights govern, and -- with the OpenDRIVE *network* -- the
-    signals each light's controller switches.  *digest* names its source."""
-    stop_lines = tuple(_stop_lines(lanelet_map))
+    """A loaded Lanelet2 map, ready for scenes: its resource, its lanelets as
+    a light's stop waypoint is looked up on, and -- with the OpenDRIVE
+    *network* -- the signals each traffic light regulatory element's
+    controller switches.  *digest* names its source."""
+    lanes = light_lanes(lanelet_map)
     signals: dict[int, tuple[str, ...]] = {}
     if network is not None:
         from ..utils.traffic_light import (  # noqa: PLC0415
@@ -469,7 +458,8 @@ def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:
             lanelet2_traffic_light_id_to_opendrive_controller_id,
         )
 
-        for element_id in {i for line in stop_lines for i in line.traffic_lights}:
+        # Every element a lanelet carries, once: those are the lights' ids.
+        for element_id in {i for ids in lanes.elements.values() for i in ids}:
             controller = lanelet2_traffic_light_id_to_opendrive_controller_id(
                 network, element_id
             )
@@ -477,9 +467,7 @@ def map_of(lanelet_map: Any, digest: str, network: Any = None) -> _Map:
                 signals[element_id] = tuple(
                     get_signal_ids_for_controller(network, controller)
                 )
-    return _Map(
-        map_resource(lanelet_map), digest, stop_lines, signals, light_lanes(lanelet_map)
-    )
+    return _Map(map_resource(lanelet_map), digest, signals, lanes)
 
 
 def _load_map(
@@ -528,48 +516,6 @@ def _load_map(
     return loaded
 
 
-def _stop_lines(lanelet_map: Any) -> list[_StopLine]:
-    """Every lanelet a traffic light governs, and its stop line: its traffic
-    light regulatory element's, else the lanelet's end."""
-    from ..utils.stop_line import regulatory_element_stop_lines  # noqa: PLC0415
-
-    governed = []
-    for lanelet in lanelet_map.laneletLayer:
-        elements = [
-            element
-            for element in lanelet.regulatoryElements
-            if "subtype" in element.attributes
-            and element.attributes["subtype"] == "traffic_light"
-        ]
-        centerline = np.array([(p.x, p.y) for p in lanelet.centerline])
-        if not elements or len(centerline) < 2:
-            continue
-        line = next(
-            (
-                found[0]
-                for element in elements
-                if (found := regulatory_element_stop_lines(element, set()))
-            ),
-            None,
-        )
-        ends: list[Any] = (
-            [lanelet.leftBound[-1], lanelet.rightBound[-1]]
-            if line is None or len(line) < 2
-            else list(line)
-        )
-        points = np.array([(p.x, p.y) for p in ends])
-        direction = centerline[-1] - centerline[-2]
-        governed.append(
-            _StopLine(
-                lanelet.id,
-                tuple(element.id for element in elements),
-                np.stack([points[:-1], points[1:]], axis=1),
-                math.atan2(direction[1], direction[0]),
-            )
-        )
-    return governed
-
-
 def _element_lights(log: _Log, loaded: _Map, frame: _MapFrame) -> dict[int, int]:
     """The CARLA light (its id) each traffic light regulatory element shows.
 
@@ -610,6 +556,17 @@ def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
         # as passed.
         passed = log.result.get("passed") is True
         metadata.tags.append("result:passed" if passed else "result:failed")
+
+
+def _label(type_id: str) -> int:
+    """The contract's category of a road user of blueprint *type_id*: a
+    walker a pedestrian, one of CARLA's bicycles a bicycle (as WOSAC tells a
+    cyclist, ``CARLA_BICYCLE_BLUEPRINTS``), any other vehicle a vehicle."""
+    if type_id.startswith("walker."):
+        return _PEDESTRIAN
+    if type_id in CARLA_BICYCLE_BLUEPRINTS:
+        return _BICYCLE
+    return _VEHICLE
 
 
 def _fill_ego(
@@ -730,13 +687,7 @@ def _fill_annotations(
         centres, headings, angles = box_poses(frame, states, actors)
         extents = np.array([a.extent for a in actors]).reshape(-1, 3)
         dimensions = 2.0 * extents[:, [1, 0, 2]]  # (width, length, height)
-        labels = np.array(
-            [
-                _PEDESTRIAN if a.type_id.startswith("walker.") else _VEHICLE
-                for a in actors
-            ],
-            dtype=np.int64,
-        )
+        labels = np.array([_label(a.type_id) for a in actors], dtype=np.int64)
         for n, actor_id in enumerate(ids):
             fault = faults.get(int(actor_id))
             if fault is None:

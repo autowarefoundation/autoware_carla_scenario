@@ -2018,7 +2018,7 @@ Detects lanelets that do not have a matching 3D ground model in CARLA. Useful fo
 
 1. Reads the map configuration YAML and resolves its map files the way `uv run scenario` does (see [Input YAML Requirements](#input-yaml-requirements))
 2. Connects to the CARLA server and loads the map -- installing the OpenDRIVE first when `map.overwrite_xodr` is set, by name otherwise -- and, for a map that carries no OpenDRIVE, reads it back out of the loaded world into the map cache, as a run does
-3. For each lanelet's center point, casts a vertical ray (upward and downward from estimated z) to detect ground geometry
+3. For each lanelet's center point, casts one downward ray from `--ray-upper` above its estimated z, `--ray-upper` + `--ray-lower` long, to detect ground geometry
 4. Reports lanelets where the ray does not hit any 3D surface
 5. Writes the detected IDs to the YAML configuration's `no_3d_model_lanelet_ids` field
 

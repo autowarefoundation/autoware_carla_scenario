@@ -36,9 +36,9 @@ Coordinate systems
 Lanelet2 (MGRS absolute):  x = East, y = North, z = Up
 CARLA world (left-hand):   x = East, y = South, z = Up
 
-    carla_x =   (mgrs_x - mgrs_offset_x)
-    carla_y = -(mgrs_y - mgrs_offset_y)
-    carla_z =   mgrs_z - z_offset
+A map point's plan position is converted as a run converts it
+(:func:`~autoware_carla_scenario.coordinate.transform.map_xy_to_carla`: the
+MGRS offset subtracted, y flipped); its height is ``z - z_offset``.
 """
 
 from __future__ import annotations
@@ -69,6 +69,7 @@ from autoware_carla_scenario.coordinate.snap import (
 from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s as _interpolate_at_s_4,
 )
+from autoware_carla_scenario.coordinate.transform import map_xy_to_carla
 from autoware_carla_scenario.maps import (
     MapCacheError,
     MapPaths,
@@ -207,8 +208,7 @@ def detect_no_3d_model_lanelets(
         mgrs_x, mgrs_y, mgrs_z, _ = _interpolate_at_s_4(points, s_mid)
 
         # MGRS -> CARLA world coordinates
-        carla_x = mgrs_x - mgrs_offset[0]
-        carla_y = -(mgrs_y - mgrs_offset[1])
+        carla_x, carla_y = map_xy_to_carla(mgrs_x, mgrs_y, mgrs_offset)
         on_lanelet_z = mgrs_z - z_offset
         spawn_z = _nearest_spawn_z(spawn_points, carla_x, carla_y, on_lanelet_z)
         carla_z = spawn_z if spawn_z is not None else on_lanelet_z
