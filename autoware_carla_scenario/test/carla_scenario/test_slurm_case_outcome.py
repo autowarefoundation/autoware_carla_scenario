@@ -43,6 +43,7 @@ from autoware_carla_scenario.slurm.manifest import (
 )
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
+from .test_gate_unrecorded import slurm_unrecorded
 from .test_slurm_records import _returns_or_stops, _written_back
 
 # -- The oracles: how the outcome was read as a dict -----------------------------
@@ -752,14 +753,12 @@ def test_the_cases_to_run_again(tmp_path: Path, name: str, content: bytes) -> No
 
 @pytest.mark.parametrize(("name", "content"), _CONTENTS, ids=_IDS)
 def test_the_gate_s_unrecorded_cases(tmp_path: Path, name: str, content: bytes) -> None:
-    from autoware_carla_scenario.gate.evaluate import _slurm_unrecorded
-
     layout = _batch(tmp_path, content)
     old = _old_record(content)
     recorded = (
         old is not None and _old_verdict(old) is not None and not old.get("errored")
     )
-    assert _slurm_unrecorded(layout.batch_dir) == ([] if recorded else ["s#2"], 3)
+    assert slurm_unrecorded(layout.batch_dir) == ([] if recorded else ["s#2"], 3)
 
 
 @pytest.mark.parametrize(("name", "content"), _CONTENTS, ids=_IDS)
@@ -876,7 +875,6 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
     where it does not: a RecursionError, which reading the outcome as a
     ``dict`` let through too -- but for the viewer's session reader, which
     skips it as unreadable (#2543)."""
-    from autoware_carla_scenario.gate.evaluate import _slurm_unrecorded
     from autoware_carla_scenario.ui import slurm_launch
     from autoware_carla_scenario.ui.cases import _slurm_entries
 
@@ -890,7 +888,7 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
         for stopping in (
             lambda: cli._status(layout),
             lambda: unfinished_cases(layout),
-            lambda: _slurm_unrecorded(layout.batch_dir),
+            lambda: slurm_unrecorded(layout.batch_dir),
             lambda: slurm_launch.batch_status(layout.batch_dir),
         ):
             with pytest.raises(RecursionError):
@@ -910,7 +908,7 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
         for read in (
             lambda: cli._status(layout),
             lambda: unfinished_cases(layout),
-            lambda: _slurm_unrecorded(layout.batch_dir),
+            lambda: slurm_unrecorded(layout.batch_dir),
             lambda: slurm_launch.batch_status(layout.batch_dir),
             lambda: _slurm_entries(layout.batch_dir),
         ):
@@ -928,7 +926,7 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
     )
     assert unfinished_cases(layout, failed=True) == []
     assert missing_cases(layout) == []
-    assert _slurm_unrecorded(layout.batch_dir) == ([], 3)
+    assert slurm_unrecorded(layout.batch_dir) == ([], 3)
     status = slurm_launch.batch_status(layout.batch_dir)
     assert status is not None
     assert status["cases"][1]["state"] == "passed"

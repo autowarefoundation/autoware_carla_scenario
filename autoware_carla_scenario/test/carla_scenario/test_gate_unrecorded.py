@@ -8,7 +8,8 @@ holds a gate record or a run's result (``_has_gate_record``,
 stem (``_recorded_at_stem``), a local batch's unrecorded cases
 (``_summary_cases``), a SLURM batch's (``_slurm_unrecorded``, read from its
 manifest as a ``dict`` reads it; now ``gate.unrecorded``'s ``_slurm_cases``
-over the typed ``Manifest.cases()``, #2394), a sweep's given-up jobs
+over the typed ``Manifest.cases()``, #2394, whose one-value wrapper was
+removed as dead code, #2563), a sweep's given-up jobs
 (``_errored_jobs``) and its jobs that never started (``_unstarted_jobs``),
 and what ``_scan_batches()``, ``unrecorded_cases()`` and
 ``batch_read_errors()`` make of them.
@@ -161,10 +162,12 @@ def old_slurm_cases(directory: Path) -> tuple[list[str], int, str | None]:
     return found[0], found[1], None
 
 
-def _slurm_cases(directory: Path) -> tuple[list[str], int] | str:
+def slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
     """What evaluate._scan_batches() reads of a SLURM batch
     (``_slurm_cases``): its unrecorded cases and how many it has, or why its
-    manifest cannot be read."""
+    manifest cannot be read.  Looked up at each call, so a test that patches
+    ``gate.unrecorded._slurm_cases`` (test_slurm_manifest_record's
+    ``_old_reading``) reads through the patch."""
     names, total, why = unrecorded._slurm_cases(directory)
     return (names, total) if why is None else why
 
@@ -643,9 +646,7 @@ def _compare_tree(root: Path) -> None:
         _same(_old_has_gate_record, evaluate._has_gate_record, path)
         _same(_old_has_result, evaluate._has_result, path)
         _same(_old_summary_unrecorded, _summary_unrecorded, path)
-        _same(_old_slurm_unrecorded, evaluate._slurm_unrecorded, path)
-        _same(_old_slurm_unrecorded, unrecorded._slurm_unrecorded, path)
-        _same(_old_slurm_unrecorded, _slurm_cases, path)
+        _same(_old_slurm_unrecorded, slurm_unrecorded, path)
         _same(_old_errored_jobs, evaluate._errored_jobs, path)
         _same(_old_unstarted_jobs, evaluate._unstarted_jobs, path)
         _same(_old_scan_batches, evaluate._scan_batches, path)
@@ -816,7 +817,6 @@ def test_evaluate_re_exports_the_checked_scans() -> None:
         "_unstarted_jobs",
         "_scan_batches",
         "_slurm_cases",
-        "_slurm_unrecorded",
     ):
         assert getattr(evaluate, name) is getattr(unrecorded, name), name
     assert evaluate._summary_cases is unrecorded._summary_cases
@@ -880,9 +880,7 @@ _PASSED = json.dumps(
 
 
 def _compare_slurm(directory: Path) -> None:
-    _same(_old_slurm_unrecorded, evaluate._slurm_unrecorded, directory)
-    _same(_old_slurm_unrecorded, unrecorded._slurm_unrecorded, directory)
-    _same(_old_slurm_unrecorded, _slurm_cases, directory)
+    _same(_old_slurm_unrecorded, slurm_unrecorded, directory)
     _same(_old_scan_batches, evaluate._scan_batches, directory.parent)
 
 
@@ -909,7 +907,7 @@ def test_every_slurm_case_is_read_as_before(tmp_path: Path) -> None:
         if stem != "missing":
             (directory / f"{stem}{GATE_RECORD_SUFFIX}").write_text("{}", "utf-8")
     _compare_slurm(directory)
-    found = evaluate._slurm_unrecorded(directory)
+    found = slurm_unrecorded(directory)
     assert not isinstance(found, str)
     # A false label falls back to the scenario, and a false scenario to the
     # index; a stem names a record only as a string of its own.
@@ -948,7 +946,7 @@ def test_a_slurm_case_without_an_index_is_named_as_before(
     directory = _slurm_batch(tmp_path / "runs" / "batch", [{"index": 0}, case], {})
     _compare_slurm(directory)
     manifest = BatchLayout(directory).manifest
-    assert evaluate._slurm_unrecorded(directory) == (
+    assert slurm_unrecorded(directory) == (
         f"{manifest}: a case without an index ({case!r})"
     )
 

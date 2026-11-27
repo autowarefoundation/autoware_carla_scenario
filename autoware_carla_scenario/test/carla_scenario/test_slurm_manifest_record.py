@@ -56,7 +56,7 @@ from autoware_carla_scenario.slurm.manifest import (
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
 from . import test_slurm_follow
-from .test_gate_unrecorded import old_slurm_cases
+from .test_gate_unrecorded import old_slurm_cases, slurm_unrecorded
 from .test_slurm_batch_readers import old_reading
 from .test_slurm_records import _written_back
 
@@ -643,7 +643,6 @@ def _script_inputs(layout: BatchLayout) -> list[str]:
 
 def _readers(layout: BatchLayout) -> dict[str, Callable[[], Any]]:
     """Each reader of the batch's manifest, as a call."""
-    from autoware_carla_scenario.gate.evaluate import _slurm_unrecorded
     from autoware_carla_scenario.ui import slurm_launch
 
     batch = str(layout.batch_dir)
@@ -670,7 +669,7 @@ def _readers(layout: BatchLayout) -> dict[str, Callable[[], Any]]:
         "resubmit-target": lambda: collect_mod.resubmit_target(
             layout, layout.read_manifest()
         ),
-        "gate": lambda: _slurm_unrecorded(layout.batch_dir),
+        "gate": lambda: slurm_unrecorded(layout.batch_dir),
         "script-inputs": lambda: _script_inputs(layout),
         "job-script": lambda: submit.job_script(
             layout, layout.read_manifest(), settings, 0
@@ -862,10 +861,8 @@ def test_what_the_readers_make_of_a_manifest_as_a_submitter_writes_it(
 def test_the_gate_names_a_case_without_an_index_as_python_shows_it(
     tmp_path: Path, cases: str, message: str
 ) -> None:
-    from autoware_carla_scenario.gate.evaluate import _slurm_unrecorded
-
     pristine = _batch(tmp_path, _manifest(_V1, cases=cases).encode())
-    assert _slurm_unrecorded(pristine.batch_dir) == f"{pristine.manifest}: {message}"
+    assert slurm_unrecorded(pristine.batch_dir) == f"{pristine.manifest}: {message}"
 
 
 # -- The typed accessors --------------------------------------------------------------
