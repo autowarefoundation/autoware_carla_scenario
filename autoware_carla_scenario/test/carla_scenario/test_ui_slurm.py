@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -834,6 +835,35 @@ def test_a_batch_whose_manifest_is_not_an_object_is_not_a_slurm_batch(
     assert slurm_launch.batch_status(batch) is None
     response = client.get("/api/slurm/2026-10-19/12-00-00/status")
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("manifest", ["linked", "slurm-linked", "not-an-object"])
+def test_a_batch_its_slurm_api_refuses_shows_no_slurm_panel(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str
+) -> None:
+    """#2602: the session page shows the SLURM panel only for a batch whose
+    status the panel's API answers; else it would poll "Not a SLURM batch"
+    for ever.  The batch is still one, by its summary."""
+    batch = _manifest_batch(tmp_path)
+    (batch / "batch_results.json").write_text("[]")
+    _fake_squeue(tmp_path, monkeypatch, "")
+    url = "/session/batch/2026-10-19/12-00-00"
+    assert 'id="slurm-panel"' in client.get(url).text
+    outside = tmp_path / "outside"
+    shutil.copytree(batch / "slurm", outside)
+    if manifest == "linked":
+        (batch / "slurm" / "manifest.json").unlink()
+        (batch / "slurm" / "manifest.json").symlink_to(outside / "manifest.json")
+    elif manifest == "slurm-linked":
+        shutil.rmtree(batch / "slurm")
+        (batch / "slurm").symlink_to(outside)
+    else:
+        (batch / "slurm" / "manifest.json").write_text("[]")
+    scanner.clear_cache()
+    assert client.get("/api/slurm/2026-10-19/12-00-00/status").status_code == 404
+    page = client.get(url)
+    assert page.status_code == 200
+    assert 'id="slurm-panel"' not in page.text
 
 
 @pytest.mark.parametrize(
