@@ -20,6 +20,7 @@ from ..constants import FIXED_DELTA_SECONDS
 from .base import (
     CameraSensorBase,
     CameraSensorConfig,
+    FrameSchedule,
     drain,
     frame_rate_text,
     frame_ticks,
@@ -362,8 +363,11 @@ class CarlaCameraSensor(CameraSensorBase):
     _frame_queue: queue.Queue[carla.Image]
     _on_frame: Optional[Callable[[carla.Image], None]]
     _interval_ticks: int
+    #: The newest frame :meth:`latest_image` has taken from the queue.
     _newest: Optional[carla.Image]
-    _anchor: int
+    #: When :meth:`latest_image` waits for a frame, and whether
+    #: :attr:`_newest` is too old to hand out.
+    _schedule: FrameSchedule
     #: Moved on by :meth:`destroy`, under :attr:`_generation_lock`: a
     #: listener is bound to the generation it was attached in, and hands on
     #: nothing once that is not the current one (#2323).
@@ -381,12 +385,9 @@ class CarlaCameraSensor(CameraSensorBase):
         self._sensor = None
         self._frame_queue = queue.Queue(maxsize=2)
         self._interval_ticks = sensor_interval_ticks(1.0 / config.fps)
-        #: The newest frame :meth:`latest_image` has taken from the queue.
         self._newest = None
-        #: The simulator frame the next frame is counted from: the newest one's,
-        #: the frame a frame due did not come by, or the tick before the first
-        #: call, taken as the attach; -1 before the first call.
-        self._anchor = -1
+        # Counted from the later of the newest frame and the attach.
+        self._schedule = FrameSchedule(self._interval_ticks, count_from_attach=True)
         self._generation = 0
         self._generation_lock = threading.Lock()
 
@@ -495,7 +496,7 @@ class CarlaCameraSensor(CameraSensorBase):
         # new: neither the newest nor one still queued (#2265).
         drain(self._frame_queue)
         self._newest = None
-        self._anchor = -1
+        self._schedule.reset()
         logger.info("CarlaCameraSensor destroyed")
 
     @property
@@ -513,6 +514,9 @@ class CarlaCameraSensor(CameraSensorBase):
         In synchronous mode no frame arrives while the world is not ticking,
         so this waits, up to :data:`_FRAME_TIMEOUT` seconds, only when a frame
         is due by *frame*: :attr:`frame_interval_ticks` after the newest one.
+        When none comes, no read waits again until a frame does (one already
+        queued is still taken): a camera that stopped delivering costs one
+        wait, not one a read (#2571, as the LiDAR's #2018).
         Otherwise it answers at once with the newest frame queued, which may
         be from an earlier tick: its own frame says which.  ``None`` when
         nothing rendered within the last interval arrived -- an older frame
@@ -522,11 +526,11 @@ class CarlaCameraSensor(CameraSensorBase):
         so a camera rendering every tick waits for that tick's frame, and one
         rendering less often waits for none (#2228).
         """
-        if self._anchor < 0:
-            self._anchor = frame - 1
+        schedule = self._schedule
+        schedule.start(frame)
         deadline = time.monotonic() + _FRAME_TIMEOUT
         self._take_queued()
-        while self._anchor + self._interval_ticks <= frame:
+        while schedule.due(frame):
             remaining = deadline - time.monotonic()
             try:
                 self._keep(
@@ -536,26 +540,21 @@ class CarlaCameraSensor(CameraSensorBase):
                 )
             except queue.Empty:
                 logger.warning("no camera frame for frame %d in time; skipped", frame)
-                # Count the next one from here, not wait for this one again.
-                self._anchor = frame
+                # Not waited for again, on every read, until a frame comes:
+                # counting the next one from here (#951) still waited on
+                # every read of a camera that stopped (#2571).
+                schedule.miss(frame)
                 break
             self._take_queued()
         newest = self._newest
-        if newest is None:
+        if newest is None or not schedule.fresh(frame):
             return None
-        rendered = int(newest.frame)
-        if rendered <= frame - self._interval_ticks:
-            return None
-        return rendered, _bgr(newest)
+        return int(newest.frame), _bgr(newest)
 
     def _keep(self, image: "carla.Image") -> None:
         """Make *image* the newest frame, unless a later one already is."""
-        rendered = int(image.frame)
-        newest = self._newest
-        if newest is None or rendered >= int(newest.frame):
+        if self._schedule.keep(int(image.frame)):
             self._newest = image
-        if rendered > self._anchor:
-            self._anchor = rendered
 
     def _take_queued(self) -> None:
         """Move every frame already queued into :attr:`_newest`; never waits."""
@@ -596,15 +595,6 @@ class CarlaCameraSensor(CameraSensorBase):
             except queue.Empty:
                 break
         return _bgr(image)
-
-    # ------------------------------------------------------------------
-    # CARLA-specific helpers
-    # ------------------------------------------------------------------
-
-    @property
-    def sensor_actor(self) -> Optional["carla.Actor"]:
-        """Return the underlying CARLA sensor actor, or ``None``."""
-        return self._sensor
 
 
 def _bgr(

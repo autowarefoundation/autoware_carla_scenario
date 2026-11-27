@@ -33,7 +33,7 @@ import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from ..seed import check_seed, check_whole_number, resolve_seed
-from .base import drain, put_dropping_oldest, sensor_tick_s
+from .base import FrameSchedule, drain, put_dropping_oldest, sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
 if TYPE_CHECKING:
@@ -207,15 +207,13 @@ class CarlaLidarSensor:
     #: sensor's id, when the config gives no ``noise_seed``; ``None`` when it
     #: does, whose noise is the seed's alone.
     _noise_stream: Optional[int]
-    #: The frame a sweep due did not come by in time, until a sweep comes; -1
-    #: otherwise.  While set, no sweep is waited for: a sensor that stopped
-    #: delivering costs one wait, not one a read (#2018).
-    _missed: int
-    #: The frame of the first :meth:`latest_sweep` since attaching; -1 before
-    #: it.  Taken as the tick after the attach, the first sweep is due an
-    #: interval after the attach, one tick less than an interval after it
-    #: (:meth:`_due`, #2228).
-    _first_read: int
+    #: When :meth:`latest_sweep` waits for a sweep, and whether
+    #: :attr:`_newest` is too old to hand out: a sweep is due an interval after
+    #: the newest, or, before any, an interval after the attach, taken as the
+    #: tick before the first read (#2228); one due that did not come is not
+    #: waited for again until a sweep comes (#2018).  Its ``first_read`` also
+    #: counts the weather noise's frames (:meth:`_noise_frame`).
+    _schedule: FrameSchedule
     #: Moved on by :meth:`destroy`, under :attr:`_generation_lock`: a
     #: listener is bound to the generation it was attached in, and queues
     #: nothing once that is not the current one (#2323).
@@ -242,8 +240,7 @@ class CarlaLidarSensor:
             if config.noise_seed is not None
             else _stream_of(sensor_id if sensor_id else _mount_key(config))
         )
-        self._missed = -1
-        self._first_read = -1
+        self._schedule = FrameSchedule(ticks)
         self._generation = 0
         self._generation_lock = threading.Lock()
 
@@ -369,8 +366,7 @@ class CarlaLidarSensor:
         drain(self._sweeps)
         self._newest = None
         self._weathered_frame = -1
-        self._missed = -1
-        self._first_read = -1
+        self._schedule.reset()
 
     def latest_sweep(
         self, frame: int
@@ -395,11 +391,11 @@ class CarlaLidarSensor:
         <autoware_carla_scenario.sensor.carla_camera.CarlaCameraSensor.latest_image>`
         counts its first frame (#2228).
         """
-        if self._first_read < 0:
-            self._first_read = frame
+        schedule = self._schedule
+        schedule.start(frame)
         deadline = time.monotonic() + _SWEEP_TIMEOUT
         self._take_queued()
-        while self._due(frame):
+        while schedule.due(frame):
             remaining = deadline - time.monotonic()
             try:
                 self._keep(
@@ -411,13 +407,13 @@ class CarlaLidarSensor:
                 logger.warning("no LiDAR sweep for frame %d in time; skipped", frame)
                 # Not waited for again, on every read, until a sweep comes
                 # (#2018): with a sweep every tick, counting the next one
-                # from here, as the camera does (#951), would still wait on
-                # every read.
-                self._missed = frame
+                # from here, as the camera did (#951, #2571), would still
+                # wait on every read.
+                schedule.miss(frame)
                 break
             self._take_queued()
         newest = self._newest
-        if newest is None or newest[0] <= frame - self._interval_ticks:
+        if newest is None or not schedule.fresh(frame):
             return None
         if newest[0] != frame:
             logger.debug("LiDAR swept frame %d for frame %d", newest[0], frame)
@@ -471,13 +467,13 @@ class CarlaLidarSensor:
     def _noise_frame(self, frame: int) -> int:
         """The frame the weather noise of a sweep taken on *frame* is drawn for.
 
-        Counted from the first read since attaching (:attr:`_first_read`),
+        Counted from the first read since attaching (:attr:`_schedule`),
         not the server's frame: that keeps counting across runs on a reused
         server (a soft world reset), so the same seed and scenario would
         draw different noise (#2499).  Offset by an interval, so it is never
         negative: a sweep kept is less than an interval older than the read.
         """
-        return max(frame - self._first_read + self._interval_ticks, 0)
+        return max(frame - self._schedule.first_read + self._interval_ticks, 0)
 
     def _weather(self, world: "carla.World") -> Optional[LidarWeather]:
         """*world*'s rain and fog now; ``None`` when reading them failed."""
@@ -493,28 +489,12 @@ class CarlaLidarSensor:
             fog_density_scale=self._config.fog_density_scale,
         )
 
-    def _due(self, frame: int) -> bool:
-        """Whether a sweep newer than the newest one is due by *frame*: an
-        interval after the newest, or, before any, an interval after the
-        attach, the tick before the first read (:attr:`_first_read`) -- unless
-        one due has not come since (:attr:`_missed`), which is not waited for
-        again."""
-        if self._missed >= 0:
-            return False
-        newest = self._newest
-        if newest is None:
-            return self._first_read - 1 + self._interval_ticks <= frame
-        return newest[0] + self._interval_ticks <= frame
-
     def _keep(
         self, sweep: Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
     ) -> None:
         """Make *sweep* the newest, unless a later one already is."""
-        newest = self._newest
-        if newest is None or sweep[0] >= newest[0]:
+        if self._schedule.keep(sweep[0]):
             self._newest = sweep
-            # The sensor delivers again: its next sweep is waited for.
-            self._missed = -1
 
     def _take_queued(self) -> None:
         """Move every sweep already queued into :attr:`_newest`; never waits."""

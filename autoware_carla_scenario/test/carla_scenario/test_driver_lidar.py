@@ -443,7 +443,7 @@ def test_attached_again_the_first_read_waits_for_no_sweep(
     assert lidar.latest_sweep(10) is not None
     assert lidar.latest_sweep(12) is None  # missed: the sensor stopped
     lidar.destroy()
-    assert lidar._newest is None and lidar._missed == -1  # noqa: SLF001
+    assert lidar._newest is None and lidar._schedule.missed == -1  # noqa: SLF001
     _attached(lidar, weather)
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 5.0)
     started = time.monotonic()

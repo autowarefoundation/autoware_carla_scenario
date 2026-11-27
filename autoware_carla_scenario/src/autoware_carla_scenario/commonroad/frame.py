@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import find_actor_in_world
+from ..t4_settings import category_of
 from ..utils.clearance import (
     HIDDEN_BELOW_M,
     actor_box_centre,
@@ -28,16 +29,6 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 __all__ = ["Frame", "read_frame", "to_commonroad"]
-
-#: The CommonRoad kind of a CARLA vehicle's ``base_type``.
-_KINDS = {
-    "car": "car",
-    "van": "car",
-    "truck": "truck",
-    "bus": "bus",
-    "motorcycle": "motorcycle",
-    "bicycle": "bicycle",
-}
 
 #: One road user, as the worker's ``Actor`` reads it.
 ActorState = dict[str, Any]
@@ -65,14 +56,14 @@ def to_commonroad(x: float, y: float) -> tuple[float, float]:
 
 
 def _kind(actor: "carla.Actor") -> str:
-    type_id = str(actor.type_id)
-    if type_id.startswith("walker."):
-        return "pedestrian"
+    """*actor*'s CommonRoad kind: its T4 category (:func:`category_of`),
+    whose names are the worker's -- ``pedestrian`` for a walker, a vehicle's
+    from its ``base_type``, else ``car`` (its wheels are not read)."""
     try:
-        base = str(actor.attributes.get("base_type", "")).lower()
+        base = str(actor.attributes.get("base_type", ""))
     except Exception:
         base = ""
-    return _KINDS.get(base, "car")
+    return category_of(str(actor.type_id), base)
 
 
 @dataclass(frozen=True)

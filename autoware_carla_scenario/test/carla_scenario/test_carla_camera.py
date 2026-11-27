@@ -386,6 +386,45 @@ def test_a_due_frame_that_never_comes_costs_one_wait(
     assert time.monotonic() - started < 0.5
 
 
+@pytest.mark.parametrize("fps", [20.0, 10.0])
+def test_a_stalled_camera_is_waited_for_once_not_on_every_read(
+    monkeypatch: pytest.MonkeyPatch, fps: float
+) -> None:
+    """A camera that stops after frame 10, read every policy step (every 2nd
+    tick): the read on 12 waits for the frame due and misses it; no read
+    after it waits again until a frame comes -- at 20 fps every read had a
+    frame due, at 10 fps every second one (#2571, the LiDAR's #2018)."""
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 0.01)
+    waits: list[int] = []
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=fps)
+    )
+    real_get = sensor._frame_queue.get
+    reading = [0]
+
+    def get(block: bool = True, timeout: float | None = None) -> object:
+        if block:
+            waits.append(reading[0])
+        return real_get(block, timeout)
+
+    monkeypatch.setattr(sensor._frame_queue, "get", get)
+    sensor._on_sensor_data(_rendered(10, 10))  # type: ignore[arg-type]
+    reading[0] = 10
+    assert sensor.latest_image(10) is not None
+    for tick in range(12, 31, 2):
+        reading[0] = tick
+        assert sensor.latest_image(tick) is None
+    assert waits == [12]
+    # Delivering again, its next frame due is waited for again.
+    sensor._on_sensor_data(_rendered(32, 32))  # type: ignore[arg-type]
+    reading[0] = 32
+    latest = sensor.latest_image(32)
+    assert latest is not None and latest[0] == 32
+    reading[0] = 34
+    assert sensor.latest_image(34) is None
+    assert waits == [12, 34]
+
+
 def test_latest_image_keeps_the_newest_frame_however_they_arrive() -> None:
     sensor = _sensor()
     sensor._frame_queue = queue.Queue()

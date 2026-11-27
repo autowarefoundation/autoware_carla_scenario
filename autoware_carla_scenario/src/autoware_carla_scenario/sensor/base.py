@@ -122,6 +122,99 @@ def drain(items: queue.Queue[_Item]) -> None:
             return
 
 
+class FrameSchedule:
+    """When a sensor read on a simulator frame waits for its next data, and
+    when the newest it has is too old to hand out: the rules the camera's
+    :meth:`~.carla_camera.CarlaCameraSensor.latest_image` and the LiDAR's
+    :meth:`~.carla_lidar.CarlaLidarSensor.latest_sweep` share (#2571).
+
+    It keeps frame numbers only; the sensor keeps the data of
+    :attr:`newest`, which :meth:`keep` tells it to replace.
+
+    * **Due**: data newer than the newest is due by a frame an interval after
+      the newest; before any, an interval after the attach, taken as the tick
+      before the first read (:meth:`start`, #2228): CARLA first fires an
+      interval after the attach (``sensor_tick`` counts from the spawn).
+    * **Missed**: once due data has not come in time (:meth:`miss`), nothing
+      is waited for again until data comes (:meth:`keep`): a sensor that
+      stopped delivering costs one wait, not one a read (#2018).
+    * **Fresh**: the newest is handed out only while it is less than an
+      interval old; an older one would be stale.
+
+    Args:
+        interval_ticks: The ticks from one firing to the next, at least 1.
+        count_from_attach: Whether the attach also bounds the count once data
+            came: due an interval after the later of the newest and the
+            attach.  The camera's (its frames counted from one anchor, the
+            later of the two); the LiDAR counts from the newest alone.  The
+            two differ only for data taken more than a tick before the first
+            read.
+    """
+
+    interval_ticks: int
+    #: The frame of the newest data kept; -1 before any.
+    newest: int
+    #: The frame of the first read since the attach (:meth:`start`); -1
+    #: before it.
+    first_read: int
+    #: The frame due data did not come by in time, until data comes; -1
+    #: otherwise.  While set, nothing is due.
+    missed: int
+    _count_from_attach: bool
+
+    def __init__(self, interval_ticks: int, count_from_attach: bool = False) -> None:
+        self.interval_ticks = interval_ticks
+        self._count_from_attach = count_from_attach
+        self.newest = -1
+        self.first_read = -1
+        self.missed = -1
+
+    def reset(self) -> None:
+        """Start over, as before the attach: the sensor was destroyed."""
+        self.newest = -1
+        self.first_read = -1
+        self.missed = -1
+
+    def start(self, frame: int) -> None:
+        """Note a read on *frame*: the first since the attach is
+        :attr:`first_read`."""
+        if self.first_read < 0:
+            self.first_read = frame
+
+    def due(self, frame: int) -> bool:
+        """Whether data newer than the newest is due by *frame*, and so
+        waited for."""
+        if self.missed >= 0:
+            return False
+        attach = self.first_read - 1
+        if self.newest < 0:
+            last = attach
+        elif self._count_from_attach and attach > self.newest:
+            last = attach
+        else:
+            last = self.newest
+        return last + self.interval_ticks <= frame
+
+    def keep(self, frame: int) -> bool:
+        """Note data taken on *frame*: whether it is the newest now (none
+        later was kept), which then is waited for no more."""
+        if self.newest >= 0 and frame < self.newest:
+            return False
+        self.newest = frame
+        # The sensor delivers again: its next data is waited for.
+        self.missed = -1
+        return True
+
+    def miss(self, frame: int) -> None:
+        """Note that the data due by *frame* did not come in time: none is
+        waited for again until some comes."""
+        self.missed = frame
+
+    def fresh(self, frame: int) -> bool:
+        """Whether the newest data, on *frame*, is less than an interval old."""
+        return self.newest >= 0 and self.newest > frame - self.interval_ticks
+
+
 @dataclass(frozen=True)
 class CameraSensorConfig:
     """Simulator-agnostic camera configuration.
@@ -226,7 +319,8 @@ class CameraSensorConfig:
 class CameraSensorBase(ABC):
     """Abstract base for camera sensors attached to a CARLA actor.
 
-    Subclasses must implement :meth:`attach` and :meth:`destroy`.
+    Subclasses must implement :meth:`attach`, :meth:`destroy` and
+    :meth:`get_image`.
 
     Args:
         config: Camera configuration dataclass.
