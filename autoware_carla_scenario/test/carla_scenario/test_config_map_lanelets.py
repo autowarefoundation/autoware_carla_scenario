@@ -389,6 +389,14 @@ class TestGlobSelection:
 
 
 class TestExpandSelection:
+    @pytest.fixture(autouse=True)
+    def _map_from_anywhere(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The default map's lanelet2_path is relative to the working directory,
+        # and a map that cannot be read makes the lanelet check pass every
+        # case (map_fit.map_lanelet_ids): name the map by its absolute path, so
+        # these tests hold wherever pytest is started from.
+        monkeypatch.setenv("NISHISHINJUKU_LANELET2_PATH", str(_OSM))
+
     def test_a_glob_s_scenario_off_the_map_is_skipped(
         self, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
     ) -> None:
