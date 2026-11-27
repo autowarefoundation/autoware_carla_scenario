@@ -156,7 +156,10 @@ def map_lanelet_ids(lanelet2_path: object) -> frozenset[int] | None:
     path = Path(lanelet2_path)
     try:
         stat = path.stat()
-    except OSError:
+    except OSError as error:
+        # A relative path is read against the working directory: say so, as
+        # the check then passes every lanelet (#2253).
+        logger.debug("Not checking lanelet ids against %s: %s", path, error)
         return None
     key = str(path.resolve())
     cached = _MAP_LANELET_IDS.get(key)
