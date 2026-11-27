@@ -103,8 +103,8 @@ import lanelet2.geometry
 
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
+from .coordinate.stacked import STACKED_HEIGHT_TOLERANCE_M
 from .coordinate.transform import (
-    _STACKED_HEIGHT_TOLERANCE,
     _project_with_height,
     carla_xy_to_map,
     lanelets_beside,
@@ -811,7 +811,7 @@ def _at_the_egos_level(
     ego: _Vehicle, running: list[tuple[int, float, float]]
 ) -> list[tuple[int, float, float]]:
     """Of *running* (``(lanelet, angle, d2)``), those at the ego's level: no
-    more than ``_STACKED_HEIGHT_TOLERANCE`` farther from its height than the
+    more than ``STACKED_HEIGHT_TOLERANCE_M`` farther from its height than the
     nearest, their centreline's height at its foot read as
     :func:`~autoware_carla_scenario.coordinate.transform.on_lanelet` reads it.
     Lanelets overlapping on one level -- a junction's -- all stay; of lanes
@@ -832,7 +832,7 @@ def _at_the_egos_level(
     nearest = min(heights)
     level: list[tuple[int, float, float]] = []
     for i in range(len(running)):
-        if heights[i] <= nearest + _STACKED_HEIGHT_TOLERANCE:
+        if heights[i] <= nearest + STACKED_HEIGHT_TOLERANCE_M:
             level.append(running[i])
     return level
 
@@ -1162,7 +1162,7 @@ class _FrameMemo:
     frame: Optional[_LaneFrame] = None
     front: float = 0.0
     #: The ego's height when the frame was built: one that has since climbed
-    #: or dropped more than ``_STACKED_HEIGHT_TOLERANCE`` -- placed on the
+    #: or dropped more than ``STACKED_HEIGHT_TOLERANCE_M`` -- placed on the
     #: deck over or under where it was -- is looked for again (#1595).
     z: float = 0.0
     generation: int = -1
@@ -1197,7 +1197,7 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         kept is not None
         and _FRAME_MEMO.generation == _LINES.generation
         and _FRAME_MEMO.front == ego.front
-        and abs(ego.z - _FRAME_MEMO.z) <= _STACKED_HEIGHT_TOLERANCE
+        and abs(ego.z - _FRAME_MEMO.z) <= STACKED_HEIGHT_TOLERANCE_M
         and kept.still_the_egos(ego)
     ):
         return kept
@@ -1208,7 +1208,7 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         and _FRAME_MEMO.generation == _LINES.generation
         and math.hypot(ego.x - nowhere[0], ego.y - nowhere[1]) < _NOWHERE_M
         and _angle_between(ego.yaw, nowhere[2]) < math.radians(_NOWHERE_DEG)
-        and abs(ego.z - nowhere[3]) <= _STACKED_HEIGHT_TOLERANCE
+        and abs(ego.z - nowhere[3]) <= STACKED_HEIGHT_TOLERANCE_M
     ):
         return None
     frame: Optional[_LaneFrame] = None

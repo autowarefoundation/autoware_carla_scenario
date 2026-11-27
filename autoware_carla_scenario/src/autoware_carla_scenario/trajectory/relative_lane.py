@@ -104,6 +104,8 @@ def _heading_at(points: list[tuple[float, float]], s: float) -> float:
 
 def _point_at(points: list[tuple[float, float]], s: float) -> tuple[float, float]:
     """The centreline point at arc length *s* (clamped to the centreline)."""
+    # Kept apart from the other centreline interpolations (#2545): see
+    # ``coordinate.stacked.height_at``.
     travelled = 0.0
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         span = math.hypot(x1 - x0, y1 - y0)
