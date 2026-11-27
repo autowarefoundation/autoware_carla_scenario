@@ -2026,8 +2026,10 @@ whose result JSON is unreadable or has no boolean `passed` (a missing key,
   each failed case, an errored one with `(errored: <exception>)`, and the
   process exits 1. A single run that raises exits 1 with the traceback, as
   before.
-- `launcher=slurm` with `--no-wait` exits 0 once the batch is submitted; its
-  verdict is what `scenario-slurm wait` or `scenario-slurm collect` exit with.
+- `launcher=slurm` with `--no-wait` exits 0 once the batch and its collect
+  job are submitted (non-zero when the collect job could not be submitted;
+  [SLURM](slurm.md)); its verdict is what `scenario-slurm wait` or
+  `scenario-slurm collect` exit with.
   Interrupted while it waits, it cancels the array and exits with the verdict
   of what it collects (`launcher.cancel_on_interrupt`, the default), or exits 130
   and leaves the array running.

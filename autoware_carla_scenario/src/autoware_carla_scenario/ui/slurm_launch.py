@@ -78,6 +78,7 @@ from .slurm_options import (  # noqa: F401
     check_sbatch_value,
     check_setup_line,
     check_time,
+    parse_count,
 )
 
 # The options and the command line, imported by name: Codon imports no module
@@ -146,11 +147,16 @@ class SlurmOptions(_SlurmOptions):
             value = None if raw is None else str(raw).strip() or None
             if value is None:
                 return None
-            try:
-                parsed = kind(value)
-            except ValueError as exc:
-                what = "a whole number" if kind is int else "a number"
-                raise ValueError(f"{key} must be {what}, not {value!r}") from exc
+            if kind is int:
+                # As a resubmit reads its counts (#2601).
+                parsed: Any = parse_count(value)
+                if parsed is None:
+                    raise ValueError(f"{key} must be a whole number, not {value!r}")
+            else:
+                try:
+                    parsed = kind(value)
+                except ValueError as exc:
+                    raise ValueError(f"{key} must be a number, not {value!r}") from exc
             check_at_least(key, parsed, 0 if kind is float else 1)
             return parsed
 

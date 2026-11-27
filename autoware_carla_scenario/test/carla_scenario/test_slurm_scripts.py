@@ -386,6 +386,69 @@ def test_the_batch_layout_is_the_checked_batch_paths() -> None:
         layout.other = 1  # type: ignore[attr-defined]
 
 
+def test_a_percent_in_the_batch_directory_reaches_sbatch_escaped(
+    tmp_path: Path,
+) -> None:
+    """#2601: sbatch expands ``%`` over the whole ``--output`` filename."""
+    layout = BatchLayout(tmp_path / "out 50%a" / "b")
+    settings = SlurmSettings.from_mapping({})
+    logs = str(layout.logs).replace("%", "%%")
+    command = scripts.sbatch_command(layout, settings, Path("/job.sh"), 2)
+    assert f"--output={logs}/%A_%a.out" in command
+    inputs = scripts.ScriptInputs(
+        cwd=str(tmp_path),
+        python="/usr/bin/python3",
+        env={},
+        batch_dir_relative=None,
+    )
+    collect = scripts._collect_command(
+        layout, inputs, settings, "7", Path("/collect.sh")
+    )
+    assert f"--output={logs}/collect-%j.out" in collect
+
+
+def test_a_backslash_in_the_batch_directory_is_refused(tmp_path: Path) -> None:
+    """#2601: any ``\\`` turns sbatch's ``--output`` patterns off."""
+    layout = BatchLayout(tmp_path / "a\\b")
+    settings = SlurmSettings.from_mapping({})
+    with pytest.raises(ValueError, match="backslash"):
+        scripts.sbatch_command(layout, settings, Path("/job.sh"), 2)
+    # With remote_cwd the output goes to /tmp first: nothing to refuse.
+    remote = SlurmSettings.from_mapping({"remote_cwd": "work", "python": "python3"})
+    assert scripts.sbatch_command(layout, remote, Path("/job.sh"), 2)
+
+
+def test_a_backslash_in_the_batch_directory_is_refused_before_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omegaconf import OmegaConf
+
+    sbatch: list[list[str]] = []
+
+    def run_sbatch(command: list[str]) -> str:
+        sbatch.append(command)
+        return "1"
+
+    monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
+    monkeypatch.setattr(submit, "max_array_size", lambda: 1000)
+    output_dir = tmp_path / "a\\b"
+    with pytest.raises(ValueError, match="backslash"):
+        submit.submit_batch(
+            scenario_names=["s"],
+            cases=[("s", [])],
+            labels=["s#1"],
+            case_overrides=[[]],
+            configs=[OmegaConf.create({"launcher": {}})],
+            scenario_classes=["Scenario"],
+            overrides=[],
+            expand=False,
+            output_dir=output_dir,
+            wait=False,
+        )
+    assert not BatchLayout(output_dir).manifest.exists()
+    assert sbatch == []
+
+
 if __name__ == "__main__":
     with pytest.MonkeyPatch.context() as patch:
         _GOLDEN.parent.mkdir(parents=True, exist_ok=True)

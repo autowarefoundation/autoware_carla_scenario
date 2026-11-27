@@ -20,6 +20,7 @@ So is a case whose outcome holds no verdict -- no ``result`` object, a
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,6 @@ from .records import JsonMembers
 __all__ = [
     "RecordedResult",
     "collect",
-    "missing_cases",
     "recorded_verdict",
     "stale_reason",
     "unfinished_cases",
@@ -502,17 +502,6 @@ def _no_verdict_message(layout: BatchLayout, case: int, target: str) -> str:
     )
 
 
-def missing_cases(layout: BatchLayout) -> list[int]:
-    """The cases of the batch no task has recorded an outcome for, each as
-    the manifest holds its index (:meth:`.manifest.ManifestCase.index_value`)."""
-    manifest = layout.read_manifest()
-    missing: list[int] = []
-    for case in manifest.cases():
-        if layout.read_result(case.index()) is None:
-            missing.append(case.index_value())
-    return missing
-
-
 def unfinished_cases(layout: BatchLayout, *, failed: bool = False) -> list[int]:
     """The cases to run again: without an outcome, with one that holds no
     verdict, one that raised on every attempt (``ERROR``) or a stale one
@@ -548,7 +537,8 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
             first.
     """
     manifest = layout.read_manifest()
-    target = resubmit_target(layout, manifest)
+    # Quoted for the copy-paste hints, as follow's and submit's are (#2601).
+    target = shlex.quote(resubmit_target(layout, manifest))
     labels: list[str] = []
     results: list[RecordedResult] = []
     errored: list[int] = []

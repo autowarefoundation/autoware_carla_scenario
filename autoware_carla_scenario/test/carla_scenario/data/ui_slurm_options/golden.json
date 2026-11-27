@@ -353,25 +353,7 @@
   "int-bool": "ValueError: array_parallelism must be a whole number, not 'True'",
   "int-float": "ValueError: array_parallelism must be a whole number, not '1.5'",
   "int-negative": "ValueError: array_parallelism must be at least 1",
-  "int-underscore": {
-   "fields": {
-    "array_parallelism": 10,
-    "cases_per_task": null,
-    "env": {},
-    "gres": null,
-    "mem": null,
-    "partition": null,
-    "python": null,
-    "remote_cwd": null,
-    "setup": [],
-    "start_stagger_seconds": null,
-    "time": null
-   },
-   "overrides": [
-    "launcher=slurm",
-    "launcher.array_parallelism=10"
-   ]
-  },
+  "int-underscore": "ValueError: array_parallelism must be a whole number, not '1_0'",
   "int-word": "ValueError: cases_per_task must be a whole number, not 'two'",
   "int-zero": "ValueError: cases_per_task must be at least 1",
   "mem-bad": "ValueError: mem '12 G' has characters sbatch does not take",

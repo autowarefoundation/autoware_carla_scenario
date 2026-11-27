@@ -39,8 +39,8 @@ extra_sbatch_args: []
 # also recorded when the batch is submitted and set again in the job, so a
 # resubmit from another shell runs with them too; `setup` runs next (module
 # load, source a venv), then `env` is set. A name with TOKEN, SECRET, KEY,
-# PASSWORD or CREDENTIAL in it is recorded only when named exactly here or in
-# `env`, not through a `*`.
+# PASSWORD, PASSWD, CREDENTIAL or DSN in it is recorded only when named exactly
+# here or in `env`, not through a `*`.
 # null: ALL, and PATH, LD_LIBRARY_PATH, PYTHONPATH, PYTHONHOME, VIRTUAL_ENV,
 # CONDA_PREFIX, CARLA_*, AUTOWARE_*, ONEPLANNER_*, TYPESAFE_CARLA_*,
 # GLIBC_TUNABLES, MALLOC_*, CUDA_HOME, CUDA_PATH, CUDAToolkit_ROOT -- or, with

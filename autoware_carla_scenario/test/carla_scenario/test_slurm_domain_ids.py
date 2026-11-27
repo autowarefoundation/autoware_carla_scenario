@@ -165,3 +165,39 @@ def test_the_worker_re_exports_the_checked_functions() -> None:
     # The library check compiles slurm.ports (#2124).
     assert worker._env_domain_id is ports._env_domain_id
     assert worker._take_domain is ports._take_domain
+
+
+def test_only_the_first_case_outside_the_chunk_takes_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2601: the Rerun and canvas cases another task runs were moved to this
+    task's ROS domains, which it then held (and recorded) for its whole life;
+    the first case's still are, as the queue's Autoware launcher is its."""
+    asked: dict[str, Any] = {}
+
+    def overrides(cfg: Any, slot: Any, domains: Any = None) -> dict[str, Any]:
+        asked[cfg] = domains
+        return {}
+
+    class _Run:
+        @staticmethod
+        def _compose_config(scenario: str, overrides: list[str]) -> str:
+            return scenario
+
+    monkeypatch.setattr(worker, "worker_overrides", overrides)
+    monkeypatch.setattr(worker, "_check_same_config", lambda *a: None)
+    manifest: Any = {
+        "cases": [{"scenario": f"case-{i}", "overrides": []} for i in range(5)]
+    }
+    domains = object()
+    found = worker._batch_configs(
+        _Run(),
+        manifest,
+        {"first_case": 0, "rerun_cases": [1, 3], "canvas_case": 4},
+        [3],
+        ["own-3"],
+        object(),  # type: ignore[arg-type]
+        domains,  # type: ignore[arg-type]
+    )
+    assert found == {0: "case-0", 1: "case-1", 3: "own-3", 4: "case-4"}
+    assert asked == {"case-0": domains, "case-1": None, "case-4": None}

@@ -307,13 +307,18 @@ as something else:
   one meant as minutes. Quote it: `time: "12:00:00"`, `time: "90"`; on the
   command line `launcher.time=12:00:00` is text already, and minutes are
   quoted for Hydra: `launcher.time="'90'"`. The run panel quotes it itself.
+  It is one of `sbatch --time`'s forms (minutes, minutes:seconds,
+  hours:minutes:seconds, days-hours, days-hours:minutes,
+  days-hours:minutes:seconds, or `UNLIMITED`), checked before anything is
+  written, as the run panel checks it: `launcher.time=12h` is refused.
 - The other text keys are text or a number, not a boolean, a list or a mapping;
   `extra_sbatch_args`, `env_passthrough` and `setup` are lists (or one
   string) of non-blank text, without a null or blank item; `env` is a mapping
   (or null, no variables) whose values are text or a number, not null or a
   boolean (quote one: `FLAG: "true"`).
 - `extra_sbatch_args` may not send the batch to another cluster
-  (`--clusters`, `--cluster`, `-M`, in any spelling: `--clusters=x`, `-Mx`):
+  (`--clusters`, `--cluster`, `-M`, in any spelling: `--clusters=x`, `-Mx`,
+  `-vMx`):
   `squeue`, `scancel` and the collect job's dependency ask the default
   cluster, so following, `resubmit`'s check that the batch is not running,
   and `cancel` would miss it. Should `sbatch` report a cluster all the same
@@ -371,7 +376,8 @@ then `launcher.python` in the directory the batch was submitted from, so a
 A driver policy's variables belong on `env_passthrough` (a pattern:
 `launcher.env_passthrough=[...]` replaces the list) or in `launcher.env`. No
 token or credential is on the default list, and a name with `TOKEN`,
-`SECRET`, `KEY`, `PASSWORD` or `CREDENTIAL` in it (in any case) is not
+`SECRET`, `KEY`, `PASSWORD`, `PASSWD`, `CREDENTIAL` or `DSN` in it (in any
+case) is not
 recorded through a pattern (`AUTOWARE_*`) either -- only when
 `env_passthrough` names it exactly, or `launcher.env` sets it: the manifest
 and the job scripts holding the values are files in the batch's output

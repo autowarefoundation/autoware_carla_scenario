@@ -1245,8 +1245,10 @@ async def slurm_action(
             # SlurmOptions.from_request reads it (#2183).
             text = "" if value is None else str(value).strip()
             if text:
-                # is_index() first: int() refuses more than 4300 digits.
-                if not is_index(text) or int(text) < 1:
+                # Read as the run panel reads its counts (#2601): 2, "2" or
+                # 2.0, not "+3" or 2.5.
+                count = slurm_launch.parse_count(text)
+                if count is None or count < 1:
                     return JSONResponse(
                         status_code=400,
                         content={
@@ -1254,7 +1256,7 @@ async def slurm_action(
                             "output": f"{key} must be a positive integer",
                         },
                     )
-                args.extend([f"--{key.replace('_', '-')}", str(int(text))])
+                args.extend([f"--{key.replace('_', '-')}", str(count)])
         args.append("--no-wait")
     if action == "collect":
         # Exit 1 is "collected, a case failed" only when collect wrote its

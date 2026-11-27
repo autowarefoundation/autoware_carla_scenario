@@ -21,9 +21,10 @@ from autoware_carla_scenario.ui.slurm_launch import SlurmOptions
 
 
 @pytest.mark.parametrize("key", ["array_parallelism", "cases_per_task"])
-@pytest.mark.parametrize("value", [0, "0", " 0 ", -1, "-1"])
+@pytest.mark.parametrize("value", [0, "0", " 0 ", -1, "-1", 0.0, "0.0"])
 def test_the_run_panel_refuses_a_count_below_one(key: str, value: Any) -> None:
-    # JSON's 0 read as an unset field (`data.get(key) or ""`).
+    # JSON's 0 read as an unset field (`data.get(key) or ""`); 0.0 is the
+    # whole number 0, as a resubmit reads it (#2601).
     with pytest.raises(ValueError) as caught:
         SlurmOptions.from_request({key: value})
     assert str(caught.value) == f"{key} must be at least 1"
@@ -33,7 +34,6 @@ def test_the_run_panel_refuses_a_count_below_one(key: str, value: Any) -> None:
     ("value", "shown"),
     [
         (2.5, "2.5"),
-        (0.0, "0.0"),
         ("2.5", "2.5"),
         ("1e3", "1e3"),
         ("two", "two"),
@@ -254,6 +254,8 @@ def test_the_message_names_the_keys() -> None:
         ["--cluster", "other"],
         ["--nice=10", "-M", "other"],
         ["-Mother"],
+        ["-vMother"],
+        ["-v", "-vM", "other"],
         "--clusters=a,b",
     ],
 )
@@ -276,11 +278,59 @@ def test_extra_sbatch_args_may_not_name_another_cluster(args: Any) -> None:
 
 def test_extra_sbatch_args_that_only_look_like_a_cluster_are_kept() -> None:
     settings = SlurmSettings.from_mapping(
-        {"extra_sbatch_args": ["--cluster-constraint=x", "-m", "block", "--mem=1M"]}
+        {
+            "extra_sbatch_args": [
+                "--cluster-constraint=x",
+                "-m",
+                "block",
+                "--mem=1M",
+                # #2601: a group's M after a letter taking a value is that value.
+                "-pMain",
+                "-vJM",
+            ]
+        }
     )
     assert settings.extra_sbatch_args == (
         "--cluster-constraint=x",
         "-m",
         "block",
         "--mem=1M",
+        "-pMain",
+        "-vJM",
     )
+
+
+@pytest.mark.parametrize("time", ["12h", "1:2", "tomorrow", "01:00:00x"])
+def test_launcher_time_must_be_an_sbatch_time(time: str) -> None:
+    """#2601: refused before the manifest and the job script are written,
+    not by sbatch after; the run panel's check is this one."""
+    from autoware_carla_scenario.ui.slurm_options import check_time
+
+    with pytest.raises(ValueError, match=re.escape("launcher.time is sbatch's --time")):
+        SlurmSettings.from_mapping({"time": time})
+    with pytest.raises(ValueError, match=re.escape("time is sbatch's --time")):
+        check_time(time)
+
+
+@pytest.mark.parametrize("time", ["90", "1:30", "168:00:00", "2-00", "unlimited", ""])
+def test_launcher_time_takes_every_sbatch_time(time: str) -> None:
+    assert SlurmSettings.from_mapping({"time": time}).time == (time or None)
+
+
+def test_the_run_panel_checks_what_the_launcher_checks() -> None:
+    """#2601: one variable-name pattern, one sbatch --time pattern, one
+    trailing-backslash rule, not a copy of each in the run panel."""
+    from autoware_carla_scenario.slurm import settings
+    from autoware_carla_scenario.ui import slurm_launch, slurm_options
+
+    assert slurm_options._ENV_NAME is settings._ENV_NAME_PATTERN
+    assert slurm_options._TIME is settings._TIME_PATTERN
+    assert slurm_launch._ENV_NAME is settings._ENV_NAME_PATTERN
+    assert slurm_launch._TIME is settings._TIME_PATTERN
+    for line in ("a \\", "a \\\\\\"):
+        with pytest.raises(ValueError, match="ends in a backslash"):
+            slurm_options.check_setup_line(line)
+        with pytest.raises(ValueError, match="ends in a backslash"):
+            SlurmSettings.from_mapping({"setup": [line]})
+    slurm_options.check_setup_line("a \\\\")
+    assert SlurmSettings.from_mapping({"setup": ["a \\\\"]}).setup == ("a \\\\",)
