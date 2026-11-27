@@ -1018,9 +1018,21 @@ Whatever the author is doing when that answer lands carries across it
 was typed, and a change made in another field in the meantime -- a lanelet
 picked on the map included -- is posted again from the new form rather than
 lost with the old one -- unless it was a choice in a list the new form no
-longer offers, when the server's value stands and nothing is posted. That needs the answer to show the same form again: a
-change still waiting its 200 ms when the author moves on to another object
-(opens another card, adds or removes one) is still lost.
+longer offers, when the server's value stands and nothing is posted.
+
+A change still waiting its 200 ms when the author moves on to another object
+(opens another card, adds or removes one, picks a place on the map) is saved
+first: before any request that replaces the inspector or the editor body is
+sent, every form holding such a change is posted at once, its answer not
+swapped in (`swap: 'none'`), and the request goes only once those posts are
+answered (#2348). The form's own debounced post is then dropped. Behind a
+click that opens another card the canvas still shows the document as it was,
+until the next edit re-renders it. The forms on the page still name the
+revision before those saves; when the answer was the very next revision, the
+page sends that revision instead, so a row button checked strictly (below) is
+not refused by the save its own click caused. If one of those posts fails the
+click goes nowhere and the failure is shown; if the server refuses the value,
+it is posted again as an ordinary edit, so the reason is shown as an edit's is.
 
 A form posts **all** of its fields, so one rendered from an older copy of the
 draft would put back whatever was changed since. Each draft therefore has a

@@ -3017,6 +3017,250 @@ class TestKeyboardNavigation:
         ]
 
 
+_FLUSH_HARNESS = r"""
+'use strict';
+const source = require('fs').readFileSync(process.argv[process.argv.length - 1], 'utf8');
+const start = source.indexOf('  var CLIENT_ID');
+const end = source.indexOf('  var REQUEST_ERROR_ATTR');
+if (start < 0 || end < 0 || end < start) throw new Error('edits-across-a-swap block not found');
+
+function listeners() {
+  const on = {};
+  return {
+    on,
+    addEventListener(type, fn) { (on[type] = on[type] || []).push(fn); },
+    removeEventListener(type, fn) { on[type] = (on[type] || []).filter((f) => f !== fn); },
+  };
+}
+function fire(target, type, detail) {
+  const event = { type, detail, prevented: false, preventDefault() { this.prevented = true; } };
+  (target.on[type] || []).slice().forEach((fn) => fn(event));
+  return event;
+}
+
+class FormData {
+  constructor(entries) { this.entries = Object.entries(entries); }
+  has(k) { return this.entries.some((e) => e[0] === k); }
+  get(k) { const e = this.entries.find((x) => x[0] === k); return e ? e[1] : null; }
+  getAll(k) { return this.entries.filter((e) => e[0] === k).map((e) => e[1]); }
+  set(k, v) { this.entries = this.entries.filter((e) => e[0] !== k); this.entries.push([k, String(v)]); }
+}
+
+const body = Object.assign(listeners(), { id: 'body', isConnected: true, contains: () => true });
+function node(id, parent) {
+  return Object.assign(listeners(), {
+    id, parent, isConnected: true,
+    contains(other) { for (let n = other; n; n = n.parent) if (n === this) return true; return false; },
+    getAttribute(name) { return name === 'hx-post' ? this.post || null : null; },
+    closest(sel) {
+      for (let n = this; n; n = n.parent) if (sel === '[hx-post]' && n.post) return n;
+      return null;
+    },
+  });
+}
+const form = Object.assign(node('form', body), { post: '/draft/d/scenario' });
+const field = Object.assign(node('field', form), { tagName: 'TEXTAREA', type: 'textarea', name: 'description', form });
+const card = node('card', body);
+const rowButton = Object.assign(node('row-button', body), { post: '/draft/d/signal-group/1/delete' });
+const inspector = node('inspector', body);
+const editorBody = node('editor-body', body);
+
+const docOn = listeners();
+const doc = Object.assign(docOn, { body, activeElement: body, querySelectorAll: () => [] });
+
+// Enough of DOMParser for an editor body: its revision, and its refusal.
+class DOMParser {
+  parseFromString(text) {
+    return {
+      querySelector(sel) {
+        if (sel === 'input[name="draft_revision"]') {
+          const m = /name="draft_revision" value="(\d+)"/.exec(text);
+          return m ? { value: m[1] } : null;
+        }
+        if (sel === '[data-edit-refused]') return /data-edit-refused/.test(text) ? {} : null;
+        throw new Error('selector not modelled: ' + sel);
+      },
+    };
+  }
+}
+
+const log = [];
+const flushes = [];   // [{ctx, answer(status, text)}]
+const htmx = {
+  config: {},
+  // As htmx does: `htmx:confirm` first, which may hold the request back and
+  // send it later through `issueRequest`; then the request, answered by the
+  // harness through `flushes`.
+  ajax(verb, path, ctx) {
+    const send = (resolve) => {
+      const config = { headers: {}, elt: ctx.source, verb: 'post', path,
+        formData: new FormData({ description: 'typed', draft_revision: '7' }) };
+      fire(body, 'htmx:configRequest', config);
+      fire(body, 'htmx:beforeSend', { elt: ctx.source, requestConfig: config });
+      log.push('ajax ' + path + ' sent ' + config.formData.get('draft_revision') +
+        (ctx.swap ? ' swap:' + ctx.swap : ''));
+      flushes.push({ ctx, answer(status, text) {
+        const detail = { elt: ctx.source, target: ctx.target, successful: status < 400,
+          requestConfig: config, xhr: { status, responseText: text } };
+        fire(ctx.source, 'htmx:afterRequest', detail);
+        fire(body, 'htmx:afterRequest', detail);
+        resolve();
+      } });
+    };
+    return new Promise((resolve) => {
+      const held = fire(body, 'htmx:confirm', { elt: ctx.source, target: ctx.target || editorBody,
+        verb: 'post', path, issueRequest() { send(() => {}); } }).prevented;
+      if (held) resolve(); else send(resolve);
+    });
+  },
+};
+new Function('document', 'window', source.slice(start, end))(doc, { htmx, DOMParser, setTimeout });
+
+const tick = () => new Promise((r) => setImmediate(r));
+// The debounced post of the change typed last, sent: nothing is pending.
+function unsentGone() { fire(body, 'htmx:configRequest', { headers: {}, elt: form }); }
+function typed() { (docOn.on.change || []).forEach((fn) => fn({ target: field })); }
+function navigate(elt, target, cause) {
+  return fire(body, 'htmx:confirm', { elt, target, verb: 'get', path: '/x',
+    triggeringEvent: { type: cause || 'click' },
+    issueRequest(confirmed) { log.push('navigate ' + elt.id + ' confirmed=' + confirmed); } });
+}
+const saved = '<input type="hidden" name="draft_revision" value="8">';
+
+(async () => {
+  const out = {};
+
+  // A change, then a click on a card before its debounced post.
+  typed();
+  out.held = navigate(card, inspector).prevented;
+  await tick();
+  out.flushedWith = flushes.length && flushes[0].ctx;
+  // The debounced post fires while the flush is on its way: dropped.
+  out.debouncedDropped = navigate(form, editorBody, 'change').prevented;
+  out.beforeAnswer = log.splice(0);
+  flushes.shift().answer(200, saved);
+  await tick(); await tick();
+  out.afterAnswer = log.splice(0);
+
+  // A form still showing revision 7 names the one the flush made.
+  const later = { headers: {}, elt: rowButton, formData: new FormData({ draft_revision: '7' }) };
+  fire(body, 'htmx:configRequest', later);
+  out.rewritten = later.formData.get('draft_revision');
+  out.clientHeader = !!later.headers['X-Editor-Client'];
+
+  // Typing after a flush, without a navigation, is posted as usual.
+  typed();
+  navigate(card, inspector);
+  await tick();
+  typed();
+  flushes.shift().answer(200, saved.replace('8', '9'));
+  await tick(); await tick();
+  out.laterChangeHeld = navigate(form, editorBody, 'change').prevented;
+  log.splice(0);
+  unsentGone();
+
+  // Nothing pending: the navigation goes as it is.
+  out.nothingPending = navigate(card, inspector).prevented;
+  // A request that replaces neither panel does not flush.
+  typed();
+  out.otherTarget = navigate(card, { id: 'export-result' }).prevented;
+
+  // A flush that fails stops the navigation.
+  navigate(rowButton, editorBody);
+  await tick();
+  flushes.shift().answer(409, 'Changed elsewhere');
+  await tick(); await tick();
+  out.failed = log.splice(0);
+
+  // A refused value is posted again as an edit, and the navigation stopped.
+  typed();
+  navigate(card, inspector);
+  await tick();
+  flushes.shift().answer(200, '<div data-edit-refused>bad</div>');
+  await tick(); await tick();
+  out.refusedRepost = flushes.length === 1 && flushes[0].ctx.source === form && !flushes[0].ctx.swap;
+  out.refused = log.splice(0);
+
+  out.flushedWith = out.flushedWith && {
+    source: out.flushedWith.source.id, target: out.flushedWith.target.id, swap: out.flushedWith.swap };
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+class TestPendingChangeBeforeNavigating:
+    """A change still in its 200 ms debounce is saved before a navigation (#2348).
+
+    Clicking another card swaps only ``#inspector``, so the form holding the
+    change left the page before its post was sent. ``editor.js`` now posts it
+    first, with ``swap: 'none'``, sends the navigation once it is answered, and
+    drops the debounced post. Checked against a stub DOM and a stub htmx.
+    """
+
+    _SCRIPT = Path(editor_app.__file__).parent / "static" / "editor.js"
+
+    def test_a_refused_edit_is_marked(self, client: TestClient, draft_id: str) -> None:
+        # How the script tells a refused flush from a saved one: the answer
+        # is not swapped in, so it is read for this mark.
+        refused = client.post(
+            f"/draft/{draft_id}/scenario", data={"scenario_id": "Not An Id!"}
+        )
+        assert refused.status_code == 200
+        assert "data-edit-refused" in refused.text
+        saved = client.post(f"/draft/{draft_id}/scenario", data={"title": "Fine"})
+        assert "data-edit-refused" not in saved.text
+
+    def test_the_change_is_posted_before_the_navigation(self) -> None:
+        import json
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is not installed")
+        run = subprocess.run(
+            [node, "-e", _FLUSH_HARNESS, str(self._SCRIPT)],
+            capture_output=True,
+            text=True,
+            timeout=_HANG_S,
+            check=True,
+        )
+        result = json.loads(run.stdout)
+        # The click waits; the form is posted on its own, swapping nothing.
+        assert result["held"] is True
+        assert result["flushedWith"] == {
+            "source": "form",
+            "target": "form",
+            "swap": "none",
+        }
+        # Its debounced post is not sent as well.
+        assert result["debouncedDropped"] is True
+        assert result["beforeAnswer"] == ["ajax /draft/d/scenario sent 7 swap:none"]
+        # Only once the flush is answered is the navigation sent, and an
+        # `hx-confirm` question on it is still asked.
+        assert result["afterAnswer"] == ["navigate card confirmed=false"]
+        # A row button rendered before the flush names the revision it made,
+        # so its strict check does not refuse the click that caused it.
+        assert result["rewritten"] == "8"
+        # A change typed after a flush is posted by its own debounce.
+        assert result["laterChangeHeld"] is False
+        assert result["clientHeader"] is True
+        assert result["nothingPending"] is False
+        assert result["otherTarget"] is False
+        # A second flush, answered with revision 9, moved every revision the
+        # page has seen on to 9: the flushes below send that.
+        # A failed flush stops the navigation; its error is shown as any
+        # other request's (showRequestError, on the form's own event).
+        assert result["failed"] == ["ajax /draft/d/scenario sent 9 swap:none"]
+        # A refused value is posted again as an ordinary edit, whose answer
+        # shows why; the navigation does not happen.
+        assert result["refusedRepost"] is True
+        assert result["refused"] == [
+            "ajax /draft/d/scenario sent 9 swap:none",
+            "ajax /draft/d/scenario sent 9",
+        ]
+
+
 class TestScenarioMap:
     """The places panel: every lanelet a scenario names, drawn once.
 
