@@ -101,10 +101,16 @@ what others are about to take:
 - `CUDA_VISIBLE_DEVICES` is read as `nvidia-smi`'s indices or UUIDs. Where
   SLURM renumbers a job's GPUs from 0, set `gpus: device=N` to the host's index
   instead.
-- `CUDA_VISIBLE_DEVICES` does not limit what docker gives a container: with
-  `gpus: all` it still gets every GPU of the host, while only the visible ones
-  are checked. A GPU that `device=` or a count names and that is not visible
-  is refused. Under SLURM, prefer `auto` or `device=N`.
+- With `CUDA_VISIBLE_DEVICES` set, `gpus: all` (and `auto` with
+  `gpu_memory_mb: 0`) gives the container the visible GPUs alone, by the
+  UUIDs `nvidia-smi` gives them (`--gpus device=GPU-...`, or
+  `--gpus '"device=GPU-a,GPU-b"'` for several), not `--gpus all`, so a SLURM
+  job's container stays within the job's GPUs (#2584) even where the job
+  renumbers them. A MIG instance (`MIG-...`) is passed on as given; an entry
+  that names no GPU (`-1`, `NoDevFiles`) is left out, and with none visible
+  the container gets no GPU. Without `CUDA_VISIBLE_DEVICES`, they pass
+  `--gpus all`. A GPU that `device=` or a count names and that is not visible
+  is refused.
 
 ## Containers
 
@@ -166,7 +172,8 @@ The settings every container backend shares:
   refused, use `none`). `auto` is the GPU the preparer placed the backend on,
   and it places one only when it asks for GPU memory: with `gpu_memory_mb: 0`
   there is no placement, and `auto` passes `--gpus all`, every GPU, as `all`
-  does (`none` gives it none). With `gpu_memory_mb` above 0, `gpus` must say
+  does -- every visible one, under `CUDA_VISIBLE_DEVICES`
+  ([Resources](#resources)) -- (`none` gives it none). With `gpu_memory_mb` above 0, `gpus` must say
   which GPUs docker gives the container ([Resources](#resources));
 - `pull` is `missing`, `always` or `never`;
 - `startup_timeout_s` (and ARDY's `timeout_s`) is a finite number of seconds

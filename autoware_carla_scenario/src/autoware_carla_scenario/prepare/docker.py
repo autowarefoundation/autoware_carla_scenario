@@ -30,6 +30,7 @@ from ..utils.owner_label import owner_alive
 from ..utils.owner_label import owner_value as _owner
 from ..value_text import shown
 from . import BackendError, Resources
+from .host import visible_gpu_devices
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,9 @@ class DockerSettings:
             backend that asks for GPU memory (``resources.gpu_memory_mb``
             above 0, and the host checked): ``"auto"`` with none
             (``gpu_memory_mb: 0``) passes ``--gpus all``, every GPU, as
-            ``"all"`` does; ``"none"`` passes none.  Any other value is
+            ``"all"`` does -- under ``CUDA_VISIBLE_DEVICES``, the visible
+            ones alone, by UUID (``--gpus device=GPU-...``, #2584);
+            ``"none"`` passes none.  Any other value is
             checked on the GPUs docker gives the container: every one for
             ``"all"``, those listed for ``device=``, and the first *N* for a
             count *N* (docker's ``--gpus N``).
@@ -394,7 +397,11 @@ class DockerBackend:
             f"{NAME_LABEL}={self.name}",
             "--publish",
             f"127.0.0.1:{self._port}:{settings.container_port}",
-            *_gpu_args(settings.gpus, gpu),
+            *_gpu_args(
+                settings.gpus,
+                gpu,
+                visible_gpu_devices() if _every_gpu(settings.gpus, gpu) else None,
+            ),
         ]
         for key, value in settings.env.items():
             argv += ["--env", f"{key}={value}"]
@@ -782,12 +789,39 @@ def _unchecked_gpus(backend: str, gpus: str) -> str:
     )
 
 
-def _gpu_args(gpus: str, placed: Optional[int]) -> list[str]:
+def _every_gpu(gpus: str, placed: Optional[int]) -> bool:
+    """Whether a ``gpus`` setting gives the container every GPU: ``all`` (or
+    ``count=all``), or ``auto`` placed on none (``gpu_memory_mb: 0``)."""
+    text = gpus.strip()
+    if text == _AUTO:
+        return placed is None
+    return _gpu_request(text)[0] == _ALL
+
+
+def _gpu_args(
+    gpus: str, placed: Optional[int], visible: Optional[list[str]] = None
+) -> list[str]:
     """``docker run``'s ``--gpus`` for a ``gpus`` setting, read as
-    :func:`_gpu_request` reads it: around its surrounding spaces (#2263)."""
+    :func:`_gpu_request` reads it: around its surrounding spaces (#2263).
+
+    *visible* is the GPUs this process may use (:func:`visible_gpu_devices`,
+    ``CUDA_VISIBLE_DEVICES``), or ``None`` for every one: a setting that
+    gives the container every GPU (:func:`_every_gpu`) gives it those alone,
+    not ``--gpus all`` -- the GPUs a SLURM job was not allocated with them
+    (#2584) -- and none when there are none.  A list of several is quoted, as
+    docker takes it (``"device=GPU-a,GPU-b"``): an argument of its own, with
+    no shell to take the quotes off.
+    """
     text = gpus.strip()
     if text == _NONE:
         return []
+    if visible is not None and _every_gpu(text, placed):
+        if not visible:
+            return []
+        devices = ",".join(visible)
+        if len(visible) == 1:
+            return ["--gpus", f"device={devices}"]
+        return ["--gpus", f'"device={devices}"']
     if text == _AUTO:
         return ["--gpus", "all" if placed is None else f"device={placed}"]
     return ["--gpus", text]

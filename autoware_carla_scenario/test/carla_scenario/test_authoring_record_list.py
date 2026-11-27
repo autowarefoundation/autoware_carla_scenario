@@ -390,3 +390,23 @@ def test_a_non_ascii_digit_names_no_row_and_no_record(
     _merge_records("nade", "adversities", records, {"²": {"probability": 0.5}})
     assert records == [{"location": "any", "probability": 0.1}]
     assert "no record '²' of nade.adversities" in caplog.text
+
+
+@pytest.mark.parametrize("override", [0.5, "high", True, [0.5]])
+def test_an_override_of_a_record_that_is_no_mapping_is_refused(override: Any) -> None:
+    """#2584: ``...adversities.0=0.5``, the sub-field left out, was dropped
+    without a word, where a node's override that is no mapping is refused."""
+    records = _records({"location": "any", "probability": 0.1})
+    with pytest.raises(ValueError) as error:
+        _merge_records("nade", "adversities", records, {"0": override})
+    assert str(error.value) == (
+        "scenario.param_overrides.nade.adversities.0 must be a mapping of "
+        f"fields to values, got {override!r}"
+    )
+    assert records == [{"location": "any", "probability": 0.1}]
+
+
+def test_a_null_override_of_a_record_is_skipped() -> None:
+    records = _records({"location": "any", "probability": 0.1})
+    _merge_records("nade", "adversities", records, {"0": None})
+    assert records == [{"location": "any", "probability": 0.1}]

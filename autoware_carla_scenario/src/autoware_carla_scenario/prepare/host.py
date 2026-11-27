@@ -21,6 +21,7 @@ __all__ = [
     "HostResources",
     "assign_gpus",
     "probe_host",
+    "visible_gpu_devices",
 ]
 
 
@@ -286,6 +287,56 @@ def _visible(gpus: tuple[Gpu, ...]) -> tuple[Gpu, ...]:
                 if gpu not in chosen:
                     chosen.append(gpu)
     return tuple(chosen)
+
+
+def visible_gpu_devices() -> Optional[list[str]]:
+    """The GPUs ``CUDA_VISIBLE_DEVICES`` lets this process use, as ``docker
+    run --gpus device=`` names them, or ``None`` when it is unset (every GPU).
+
+    Read as :func:`probe_host` reads it (:func:`_visible`), by index or UUID,
+    and named by the UUID ``nvidia-smi`` gives each: the docker daemon runs
+    outside the job, so an index -- which a SLURM job's cgroup may renumber
+    from 0 -- could name another GPU of the host, where a UUID names the same
+    one everywhere (#2584).  A MIG instance (``MIG-...``), which
+    ``nvidia-smi --query-gpu`` does not list, is passed on as given, as is
+    every entry without ``nvidia-smi``: docker reads an index, a UUID or a
+    MIG UUID.  What names no GPU (``-1``, ``NoDevFiles``) is left out.  An
+    empty list is no GPU.
+    """
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return None
+    gpus = _gpus()
+    devices: list[str] = []
+    for item in visible.split(","):
+        item = item.strip()
+        if gpus:
+            found = _visible_one(gpus, item)
+            if found is not None:
+                item = found.uuid
+            elif not item.startswith("MIG-"):
+                continue
+        elif not (
+            (item.isascii() and item.isdigit())
+            or item.startswith("GPU-")
+            or item.startswith("MIG-")
+        ):
+            continue
+        if item not in devices:
+            devices.append(item)
+    return devices
+
+
+def _visible_one(gpus: tuple[Gpu, ...], item: str) -> Optional[Gpu]:
+    """The GPU of *gpus* that a ``CUDA_VISIBLE_DEVICES`` entry names, by
+    index or UUID (prefix), as :func:`_visible` matches them; ``None`` if
+    none."""
+    if not item:
+        return None
+    for gpu in gpus:
+        if item == str(gpu.index) or gpu.uuid.startswith(item):
+            return gpu
+    return None
 
 
 def _available_memory_mb() -> int:

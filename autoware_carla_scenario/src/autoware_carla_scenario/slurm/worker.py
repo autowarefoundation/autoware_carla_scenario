@@ -825,16 +825,15 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             ],
             rerun=rerun,
         )
-        cooldown = run._cooldown_seconds(first_cfg)
 
         task.update(state="running")
         with queue:
+            # The queue cools down between consecutive cases, as a local
+            # batch's does: after it resets the world the case before left,
+            # in the next case's run_all() (#2584).
             for position, (case, cfg, timeout) in enumerate(
                 zip(cases, configs, timeouts)
             ):
-                if position > 0 and cooldown > 0:
-                    # Between consecutive cases, as a local batch's queue waits.
-                    time.sleep(cooldown)
                 index = int(case["index"])
                 stem = str(case["stem"])
                 layout.result(index).unlink(missing_ok=True)

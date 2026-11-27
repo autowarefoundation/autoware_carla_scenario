@@ -264,11 +264,23 @@ class ScenarioQueue:
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
                 or *world_reset* is neither ``"reload"`` nor ``"soft"``, or
-                *timeout_seconds* is not positive and finite.
+                *timeout_seconds* is not positive and finite, or
+                *overwrite_xodr* is set without both *xodr_path* and
+                *map_name*.
         """
         # Refused before the server is made, not once each case has spawned
         # its ego -- and on every retry -- where it is registered (#2287).
         check_run_timeout(timeout_seconds, key="timeout_seconds")
+        # Refused before the server is made too, not once start() has
+        # launched CARLA and connected a runner to it (#2584): a CARLA town,
+        # whose OpenDRIVE is derived, has no xodr_path to install.
+        if overwrite_xodr and (xodr_path is None or map_name is None):
+            raise ValueError(
+                "overwrite_xodr requires both xodr_path and map_name: the "
+                "source is xodr_path and the install target is derived from "
+                "map_name. Leave overwrite_xodr off to load the map by name "
+                "and keep the OpenDRIVE CARLA ships."
+            )
         if server is not None:
             self._server = server
             self._owns_server = False
@@ -359,15 +371,22 @@ class ScenarioQueue:
         Raises:
             ValueError: *timeout_seconds* is not positive and finite; the
                 scenario is not added.
+            Exception: Whatever preparing its backends raised, after the queue
+                started (``InsufficientResourcesError``, ``BackendError``);
+                the scenario is not added, and the queue is as it was (#2584).
         """
         if timeout_seconds is not None:
             check_run_timeout(timeout_seconds, key="timeout_seconds")
-        self._scenarios.append(scenario)
         if self._backends is not None and self._runner is not None:
             # Added after the queue started (a SLURM task's cases join one at
-            # a time): what it needs starts now, before it runs.
+            # a time): what it needs starts now, before it runs -- and before
+            # it is queued, so that a preparation that raises leaves no
+            # scenario queued without its timeout, case and stem (#2584).
             preparer: BackendPreparer = self._backends
             preparer.prepare_scenarios([scenario], log_dir=self._output_dir)
+        # Nothing below raises: the scenario and what it was added with are
+        # queued together.
+        self._scenarios.append(scenario)
         if timeout_seconds is not None:
             self._timeouts[id(scenario)] = timeout_seconds
         if case is not None:
@@ -496,6 +515,8 @@ class ScenarioQueue:
             last_error: Optional[Exception] = None
             last_message = ""
             for attempt in range(max_attempts):
+                # Whether this attempt reset the world a run left.
+                reset = False
                 try:
                     # Recovery wait before a retry, ahead of its restart and
                     # reset.  (Between consecutive scenarios the cooldown
@@ -552,11 +573,17 @@ class ScenarioQueue:
                         # stop (#2067).
                         self._runner.reset_world(type(scenario).__name__, strict=True)
                         self._world_dirty = False
+                        reset = True
                     # Cooldown between consecutive scenarios, after the reset
                     # of the world the one before left: the server finishes
                     # its cleanup (and settles after the reload) before the
-                    # next scenario connects.
-                    if attempt == 0 and i > 0 and self._cooldown_seconds > 0:
+                    # next scenario connects.  The one before may have run in
+                    # an earlier run_all(): a SLURM task runs its cases one
+                    # run_all() each, so a first case that resets the world
+                    # the last call left cools down after it too (#2584).
+                    # None before the first case on a fresh world (a started
+                    # or restarted server's).
+                    if attempt == 0 and (i > 0 or reset) and self._cooldown_seconds > 0:
                         _wait_with_progress(
                             self._cooldown_seconds, desc="CARLA cooldown"
                         )
@@ -758,15 +785,15 @@ class ScenarioQueue:
                 self._map_name or "",
                 timeout=self._server.timeout,
             )
-        if self._overwrite_xodr:
-            if self._xodr_path is None or self._map_name is None:
-                raise ValueError(
-                    "overwrite_xodr requires both xodr_path and map_name: the "
-                    "source is xodr_path and the install target is derived from "
-                    "map_name. Leave overwrite_xodr off to load the map by name "
-                    "and keep the OpenDRIVE CARLA ships."
-                )
-            self._runner.load_map_by_overwriting_xodr(self._xodr_path, self._map_name)
+        install_xodr = self._xodr_path
+        install_name = self._map_name
+        if (
+            self._overwrite_xodr
+            and install_xodr is not None
+            and install_name is not None
+        ):
+            # Both are there: __init__ refused the flag without them.
+            self._runner.load_map_by_overwriting_xodr(install_xodr, install_name)
         elif self._map_name is not None:
             self._runner.load_map_by_name(self._map_name)
 
