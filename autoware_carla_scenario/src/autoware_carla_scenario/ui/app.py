@@ -1191,7 +1191,7 @@ def _has_slurm_panel(directory: Path) -> bool:
         return False
     try:
         BatchLayout(directory, own_files=True).read_manifest()
-    except (FileNotFoundError, ValueError, OSError):
+    except (FileNotFoundError, ValueError, OSError, RecursionError):
         return False
     return True
 

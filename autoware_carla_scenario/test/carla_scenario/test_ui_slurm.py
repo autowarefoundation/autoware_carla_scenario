@@ -837,7 +837,9 @@ def test_a_batch_whose_manifest_is_not_an_object_is_not_a_slurm_batch(
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("manifest", ["linked", "slurm-linked", "not-an-object"])
+@pytest.mark.parametrize(
+    "manifest", ["linked", "slurm-linked", "not-an-object", "nested-too-deep"]
+)
 def test_a_batch_its_slurm_api_refuses_shows_no_slurm_panel(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str
 ) -> None:
@@ -857,8 +859,12 @@ def test_a_batch_its_slurm_api_refuses_shows_no_slurm_panel(
     elif manifest == "slurm-linked":
         shutil.rmtree(batch / "slurm")
         (batch / "slurm").symlink_to(outside)
-    else:
+    elif manifest == "not-an-object":
         (batch / "slurm" / "manifest.json").write_text("[]")
+    else:
+        # Deeper than json.loads() recurses: a RecursionError, which must
+        # not break the session page (as ui.cases._read_json, #2543).
+        (batch / "slurm" / "manifest.json").write_text("[" * 100000)
     scanner.clear_cache()
     assert client.get("/api/slurm/2026-10-19/12-00-00/status").status_code == 404
     page = client.get(url)
