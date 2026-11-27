@@ -69,6 +69,11 @@ class UniformDistribution:
         """A value of the distribution, from *rng*."""
         return rng.uniform(self.low, self.high)
 
+    def truncated(self, low: float, high: float) -> UniformDistribution:
+        """The distribution inside ``[low, high]`` (``low < high``, both within
+        its own bounds)."""
+        return UniformDistribution(low=low, high=high)
+
 
 @dataclass(frozen=True)
 class NormalDistribution:
@@ -89,6 +94,12 @@ class NormalDistribution:
         return _STANDARD.cdf((self.high - self.mean) / self.std) - _STANDARD.cdf(
             (self.low - self.mean) / self.std
         )
+
+    def truncated(self, low: float, high: float) -> NormalDistribution:
+        """The distribution inside ``[low, high]`` (``low < high``, both within
+        its own bounds): this normal truncated there.  Where its :meth:`mass`
+        is 0 it draws at a bound."""
+        return NormalDistribution(mean=self.mean, std=self.std, low=low, high=high)
 
     def draw(self, rng: random.Random) -> float:
         """A value of the distribution, from *rng*: drawn uniformly between the

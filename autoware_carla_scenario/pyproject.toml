@@ -88,6 +88,16 @@ dependencies = [
     # 0.47.1's default ODD follows tier4/taxonomy's devel after v0.3.0
     # (road_surface_condition's `gravel` is `gravel_covered`).
     "openodd-py>=0.47.1",
+    # The SMT solver behind `sweep.relations` (sweeper/relations.py): relations
+    # between drawn parameters ("the ego is faster than the lead") are checked
+    # for satisfiability, each parameter's range is narrowed to the values the
+    # relations leave, and a draw is checked against them. Wheels for Linux
+    # x86_64 and aarch64, every Python 3.10+ (py3-none). At most 4.15.4: from
+    # 4.15.5 on (4.15.8, 4.16, 5.x) the aarch64 wheel is built for glibc 2.38
+    # (manylinux_2_38; 4.15.5-4.15.7 have no Linux wheel), newer than the
+    # Debian bookworm scenario image's 2.36, which then compiles Z3 from
+    # source and fails; 4.13-4.15.4's is manylinux_2_34.
+    "z3-solver>=4.13,<4.15.5",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",

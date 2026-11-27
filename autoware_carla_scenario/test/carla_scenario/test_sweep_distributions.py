@@ -287,6 +287,8 @@ def test_a_drawn_key_may_not_be_set_by_an_override_or_a_binding(
             0,
             "",
             [],
+            None,
+            None,
         )
 
 

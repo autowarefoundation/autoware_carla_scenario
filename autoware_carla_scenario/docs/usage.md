@@ -801,6 +801,94 @@ number from 0 to 2^31 - 1. A key drawn from a distribution may
 not be set by a binding, a route match, the ODD sample or an override of the
 run: the run would follow that value while the sweep said it was drawn.
 
+#### Relations between parameters (Z3)
+
+A distribution draws one parameter on its own, so it cannot say "the ego is
+faster than the car it follows". `sweep.relations` can: a list of
+expressions over the config's keys, which every case meets. They are solved
+with the SMT solver [Z3](https://github.com/Z3Prover/z3)
+(`autoware_carla_scenario.sweeper.relations`):
+
+```yaml
+sweep:
+  constraints:
+    ego.spawn_lanelet_id: [...]          # the map's part, as before
+    ego.initial_speed_kmh:
+      - {type: uniform, low: 20.0, high: 60.0}
+    scenario.lead_speed_kmh:
+      - {type: uniform, low: 10.0, high: 50.0}
+    scenario.gap_m:
+      - {type: normal, mean: 30.0, std: 10.0, low: 5.0}
+  bindings:
+    scenario.npc_lanelet_id: {type: adjacent, side: left}
+  relations:
+    - ego.initial_speed_kmh > scenario.lead_speed_kmh + 5
+    - scenario.gap_m >= (ego.initial_speed_kmh - scenario.lead_speed_kmh) / 3.6 * 2
+    - scenario.npc_lanelet_id not in [19, 27]
+    - scenario.weather != "rain" or ego.initial_speed_kmh < 40
+  samples: 10
+```
+
+The relations apply **after** the sweep is expanded. The map's part --
+which lanelets, what lies beside them, where the stop line is -- stays the
+constraints' and bindings'; each case they expand to (a lanelet, a route
+match, an ODD sample) then holds its values, and the relations are solved
+over them. A key a relation names is
+
+- a parameter drawn from a distribution: a real number the relations solve
+  for; or
+- a value of the case: what the case sets (a binding, a route match, the ODD
+  sample, an override of the run), else the scenario config's own value
+  (`scenario.lead_speed_kmh: 30` in the scenario's YAML). It is a constant of
+  that case: a number (an int such as a lanelet ID, or a float), a string (an
+  enum's name too) or a bool. A key the case and the config hold nothing for
+  (null, a list, a mapping, a missing key) is refused, naming the relation.
+
+An expression is made of keys (`a.b.c`), numbers, strings, `True`, `False`,
+`+ - * /`, `abs()`, `min()`, `max()`, the comparisons `< <= > >= == !=`
+(chained too: `0 < a.x < b.y`), `in [...]` and `not in [...]` (a list of
+literals), and `and`, `or`, `not`; a bool key is a condition of its own. `<
+<= > >=` and arithmetic take numbers; `==`, `!=` and `in` take values of one
+type. It is parsed, never run as Python.
+
+For each case:
+
+1. Z3 checks that the relations can hold with the case's values and within
+   the distributions' bounds. When they cannot, the case is dropped; the log
+   says how many were, and for the first which relations conflict (Z3's
+   unsat core). A sweep with no case left is an error. Relations over the
+   case's values alone are therefore a filter of cases
+   (`scenario.npc_lanelet_id not in [19, 27]`). Relations naming only drawn
+   parameters are checked before the map loads, so `scenario-expand` refuses
+   them at once.
+2. Each related parameter's range is narrowed to the values the relations
+   leave it (Z3 minimising and maximising it). This removes no solution, so
+   it only makes the next step faster.
+3. Values are drawn from the distributions, truncated to those ranges, until
+   a draw meets every relation: the values follow the distributions
+   **conditioned on the relations** (uniform `x`, `y` on `[0, 1]` with `x >
+   y` draws `x` with mean 2/3). Each case still runs `sweep.samples` times.
+4. If 1000 draws meet none (an equality, which a continuous draw meets with
+   probability 0, or a very narrow region), the related parameters are drawn
+   one after another, in key order, each within what the relations leave it
+   given those drawn before it. Every case still meets the relations, but the
+   values are no longer exactly the conditioned distribution, and a warning
+   says so.
+
+The related parameters are drawn together from a seed of their own, made like
+a distribution's; a parameter in no relation draws exactly what it drew
+without relations, so adding a relation moves only the values it relates.
+Relations are linear in practice: a product of two drawn parameters is
+non-linear, which Z3 may not decide (an error), and whose ranges are then not
+narrowed. A relation that does not parse, holds something else than the
+shapes above, gives an operand the wrong type (`ego.initial_speed_kmh ==
+"fast"`; a string where the case's value is a number), or a
+`sweep.relations` with nothing to expand (no constraints, route or ODD
+sample) is refused, naming the item (`sweep.relations[1]`).
+
+A map quantity the case does not hold as a value (a lanelet's length, its
+speed limit) cannot be named: the constraints only select lanelets by it.
+
 ### Resume from a Specific Scenario
 
 When running large batches, you can skip already-completed scenarios.

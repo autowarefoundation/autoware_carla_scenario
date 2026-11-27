@@ -35,6 +35,15 @@ sweep:
       - {type: uniform, low: 0.5, high: 3.0}
   samples: 6
   ```
+- **`relations`** relates the parameters of each expanded case, solved with Z3: a list of expressions such as `ego.initial_speed_kmh > scenario.lead_speed_kmh + 5` or `scenario.npc_lanelet_id not in [19, 27]` (keys, numbers, strings, bools, `+ - * /`, `abs/min/max`, `< <= > >= == !=`, `in [...]`, `and/or/not`). They apply after the constraints and bindings expand the sweep: a key is a drawn parameter (solved for) or a value of the case -- what a binding, route, ODD sample or override sets, else the scenario config's own value. Each case's draws are conditioned on them; a case they cannot hold for is dropped (so relations over values alone filter cases), and relations over drawn parameters alone that conflict are refused before the map loads. Map semantics (adjacent lanes, stop lines, lengths) stay with constraints and bindings (`docs/usage.md`, "Relations between parameters (Z3)"). Prefer a relation over a derived parameter only when both parameters should vary; a value fully determined by others is better computed in the scenario:
+  ```yaml
+  constraints:
+    ego.initial_speed_kmh: [{type: uniform, low: 20, high: 60}]
+    scenario.lead_speed_kmh: [{type: uniform, low: 10, high: 50}]
+  relations:
+    - ego.initial_speed_kmh > scenario.lead_speed_kmh + 5
+  samples: 10
+  ```
 - **`bindings`** maps a config key to a binding; it is applied to each pick. Picks that end as the same case once their bindings are applied run once.
 - **`exclude`** drops a case by the values it *ends up with* after its bindings (a constraint only sees the pick, not where a walk-back moves a spawn):
   ```yaml
