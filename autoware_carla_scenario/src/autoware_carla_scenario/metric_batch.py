@@ -45,6 +45,7 @@ from . import metrics as _metrics
 from .metrics import (
     BUILT_IN_METRICS,
     COMMONROAD_METRICS,
+    reset_ego_motion,
     set_importance_sampling_weight,
     track_ego_motion,
 )
@@ -198,7 +199,7 @@ def _replay(
     held_motion = _metrics._MOTION[0]  # noqa: SLF001
     held_weight = _metrics._RUN["weight"]  # noqa: SLF001
     try:
-        _metrics._MOTION[0] = _metrics._Motion()  # noqa: SLF001
+        reset_ego_motion()
         _metrics._use_map(world, carla_map)  # type: ignore[arg-type]  # noqa: SLF001
         for frame in frames:
             world.show(frame)

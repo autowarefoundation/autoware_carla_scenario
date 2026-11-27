@@ -61,6 +61,7 @@ from autoware_carla_scenario.metrics import (
 )
 from autoware_carla_scenario.measures import BUILT_IN_MEASURES
 from autoware_carla_scenario.odd import load_odd_binding, scenario_measure
+from autoware_carla_scenario.utils.polygon import point_in_box
 
 from ._fake_world import ActorsById
 
@@ -817,11 +818,11 @@ def test_a_box_of_no_area_holds_only_the_points_on_it() -> None:
     point = [(1.0, 2.0)] * 4
     segment = [(0.0, 0.0), (4.0, 0.0), (4.0, 0.0), (0.0, 0.0)]
 
-    assert metrics._inside((1.0, 2.0), point)  # noqa: SLF001
-    assert not metrics._inside((1.0, 2.5), point)  # noqa: SLF001
-    assert metrics._inside((2.0, 0.0), segment)  # noqa: SLF001
-    assert not metrics._inside((6.0, 0.0), segment)  # noqa: SLF001
-    assert not metrics._inside((2.0, 1.0), segment)  # noqa: SLF001
+    assert point_in_box((1.0, 2.0), point)
+    assert not point_in_box((1.0, 2.5), point)
+    assert point_in_box((2.0, 0.0), segment)
+    assert not point_in_box((6.0, 0.0), segment)
+    assert not point_in_box((2.0, 1.0), segment)
 
 
 # ---------------------------------------------------------------------------
@@ -1666,6 +1667,133 @@ def test_an_earlier_failure_stands() -> None:
     # What the metric found is in the run's statuses, and among what else held.
     assert failed.failure.also_triggered == ["fail[0](hit)"]
     assert [s.label for s in result.condition_statuses] == ["fail[0](hit)"]
+
+
+def _hit_on_the_last_tick(ticks: int = 4) -> list[tuple[float, _World]]:
+    """Frames a tick apart, timed as the runner's clock sums them: the ego's
+    box first touches another car's on the last one."""
+    apart, hit = _car(2, (10.0, 0.0)), _car(2, (4.5, 0.0))
+    worlds: list[tuple[float, _World]] = []
+    t = 0.0
+    for k in range(ticks):
+        worlds.append((t, _world(hit if k == ticks - 1 else apart)))
+        t += 0.05
+    return worlds
+
+
+def test_a_pass_wins_its_tick_over_a_metric_ng() -> None:
+    """#2590: the ego reaches its goal on the tick its box first touches
+    another car's.  A live CollisionCondition would leave the run passed
+    (pass is checked first), and so does the metric."""
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    worlds = _hit_on_the_last_tick()
+    end = worlds[-1][0]
+    passed = ScenarioResult(passed=True, message="reached goal", elapsed_seconds=end)
+    result = _judged_run(
+        MetricCondition(COLLISION_ANY, label="hit"), result=passed, worlds=worlds
+    )
+
+    assert result is passed and result.passed and result.failure is None
+    assert result.elapsed_seconds == end
+    # What the metric found is in the run's statuses all the same.
+    (status,) = result.condition_statuses
+    assert status.label == "fail[0](hit)" and status.satisfied
+    assert status.details["first_ng_at"] == end
+
+
+def test_a_metric_ng_a_tick_before_the_pass_fails_the_run() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    worlds = _hit_on_the_last_tick()
+    # The run passed a tick after the touch: 0.05 s later, summed as the
+    # runner's clock does.
+    end = worlds[-1][0] + 0.05
+    passed = ScenarioResult(passed=True, message="reached goal", elapsed_seconds=end)
+    result = _judged_run(
+        MetricCondition(COLLISION_ANY, label="hit"), result=passed, worlds=worlds
+    )
+
+    assert not result.passed
+    assert result.elapsed_seconds == worlds[-1][0]
+    assert result.failure.condition == "fail[0](hit)"
+
+
+def test_a_live_failure_wins_its_tick_over_a_metric_ng() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+    from autoware_carla_scenario.failure import Failure, FailureCategory
+
+    worlds = _hit_on_the_last_tick()
+    end = worlds[-1][0]
+    failed = ScenarioResult(
+        passed=False,
+        message="live",
+        elapsed_seconds=end,
+        failure=Failure("fail[1](live)", FailureCategory.COLLISION, end, "live"),
+    )
+    result = _judged_run(
+        MetricCondition(COLLISION_ANY, label="hit"), result=failed, worlds=worlds
+    )
+
+    assert result is failed and failed.failure is not None
+    assert failed.failure.condition == "fail[1](live)"
+    assert failed.failure.also_triggered == ["fail[0](hit)"]
+
+
+def test_the_other_conditions_that_held_are_in_registration_order() -> None:
+    """#2590: a metric condition registered before the live ones is listed
+    before them, as the Failure docstring says, not after."""
+    from autoware_carla_scenario.conditions import ScenarioResult
+    from autoware_carla_scenario.failure import Failure, FailureCategory
+
+    apart, hit = _car(2, (10.0, 0.0)), _car(2, (4.5, 0.0))
+    worlds = [
+        (0.0, _world(apart)),
+        (1.0, _world(hit)),
+        (2.0, _world(hit)),
+        (3.0, _world(hit)),
+    ]
+    # fail[0] the metric; the run failed by fail[3] at 0.5 s, fail[2] held.
+    failed = ScenarioResult(
+        passed=False,
+        message="live",
+        elapsed_seconds=0.5,
+        failure=Failure(
+            "fail[3](c)",
+            FailureCategory.OTHER,
+            0.5,
+            "live",
+            also_triggered=["fail[2](b)"],
+        ),
+    )
+    result = _judged_run(
+        MetricCondition(COLLISION_ANY, label="hit"), result=failed, worlds=worlds
+    )
+
+    assert result.failure.condition == "fail[3](c)"
+    assert result.failure.also_triggered == ["fail[0](hit)", "fail[2](b)"]
+
+
+def test_a_metric_allowed_no_ng_time_says_when_it_went_ng() -> None:
+    """#2590: with ``max_ng_seconds=0`` the last frame alone fails the run,
+    though it counts no NG time: the message says when, not "for 0.00s in
+    total (more than 0.00s)"."""
+    condition = MetricCondition(COLLISION_ANY, label="hit")
+    result = condition.judge([0.0, 1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0], 3.0)
+
+    assert result is not None and result.elapsed_seconds == 3.0
+    assert result.message == (
+        "collision_any greater than or equal 1.000 NG at 3.00s (worst 1.000)"
+    )
+    assert condition.get_details()["ng_seconds"] == 0.0
+
+    allowed = MetricCondition(COLLISION_ANY, max_ng_seconds=0.5, label="hit")
+    result = allowed.judge([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 1.0, 1.0], 3.0)
+    assert result is not None
+    assert result.message == (
+        "collision_any greater than or equal 1.000 for 2.00s in total "
+        "(more than 0.50s; first at 1.00s, worst 1.000)"
+    )
 
 
 def test_the_runner_records_frames_and_judges_after_the_loop() -> None:

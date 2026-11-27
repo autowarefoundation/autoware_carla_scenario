@@ -510,9 +510,20 @@ class MyScenario(BaseScenario):
 Judged after the run, a metric condition neither ends a run early nor
 composes: `PersistentCondition`, `NotCondition`, `AndCondition`,
 `OrCondition` and `StickyCondition` refuse one (`max_ng_seconds` is how long
-it must hold), and so does `register_pass_condition`. A run that passed, or
-failed later than the metric did, fails on the metric: the earliest wins, its
-failure records the condition, when and what it found. Every metric
+it must hold), and so does `register_pass_condition`. A run that passed or
+failed later than the metric did fails on the metric: the earliest wins, its
+failure records the condition, when and what it found. On the tick the run
+ended, the run's own outcome stands, as it does for the live conditions,
+which check pass before fail: a metric NG on the tick a pass condition held
+(the ego reached its goal as its box first touched another car) leaves the
+run passed, and one on the tick a live fail condition held leaves that its
+failure, the metric among the other conditions that held
+(`also_triggered`, in the order they were registered). With the default
+`max_ng_seconds=0` its message says when it went NG
+(`collision_any greater than or equal 1.000 NG at 3.00s (worst 1.000)`);
+with NG time allowed, how much there was
+(`... for 0.40s in total (more than 0.30s; first at 2.10s, worst ...)`).
+Every metric
 condition's status in the result says what it found: `ng_seconds`, when it
 first went NG (`first_ng_at`) and its most critical value (`worst`: the
 lowest under a `<` or `<=` rule, the highest over a `>` or `>=` one, the

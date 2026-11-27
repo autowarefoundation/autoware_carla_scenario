@@ -72,10 +72,10 @@ from .utils.clearance import HIDDEN_BELOW_M, actor_vertical_span, level_gap
 from .utils.polygon import (
     Box,
     Point,
-    cross,
+    box_distance,
+    boxes_meet,
     ground_box,
-    point_segment_distance,
-    segments_cross,
+    segment_meets_box,
 )
 
 if TYPE_CHECKING:
@@ -333,68 +333,6 @@ class Metric:
 # ---------------------------------------------------------------------------
 
 
-def _inside(point: Point, box: Box) -> bool:
-    """Whether *point* is in the convex *box* or on its edge.
-
-    A box of no area (a road user whose extent read as zero: a point, or a
-    segment) holds only the points on it (#1997): every side's cross product
-    is zero for it, which would otherwise hold every point on the line.
-    """
-    sign = 0.0
-    for i in range(len(box)):
-        side = cross(box[i], box[(i + 1) % len(box)], point)
-        if abs(side) <= 1e-12:
-            continue
-        if sign == 0.0:
-            sign = side
-        elif (side > 0.0) != (sign > 0.0):
-            return False
-    if sign == 0.0:
-        # Every side is in line with the point: the box is a point or a
-        # segment (or the point is a corner of a box that is); on it or not.
-        for i in range(len(box)):
-            if point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
-                return True
-        return False
-    return True
-
-
-def _edges(box: Box) -> list[tuple[Point, Point]]:
-    return [(box[i], box[(i + 1) % len(box)]) for i in range(len(box))]
-
-
-def _segment_meets_box(a: Point, b: Point, box: Box) -> bool:
-    if _inside(a, box) or _inside(b, box):
-        return True
-    for c, d in _edges(box):
-        if segments_cross(a, b, c, d):
-            return True
-    return False
-
-
-def _boxes_meet(one: Box, other: Box) -> bool:
-    for a, b in _edges(one):
-        if _segment_meets_box(a, b, other):
-            return True
-    # One wholly inside the other.
-    return _inside(other[0], one)
-
-
-def _box_distance(one: Box, other: Box) -> float:
-    """Metres between two boxes on the ground; ``0.0`` when they meet."""
-    if _boxes_meet(one, other):
-        return 0.0
-    one_edges, other_edges = _edges(one), _edges(other)
-    best = math.inf
-    for p in one:
-        for a, b in other_edges:
-            best = min(best, point_segment_distance(p, a, b))
-    for p in other:
-        for a, b in one_edges:
-            best = min(best, point_segment_distance(p, a, b))
-    return best
-
-
 def _centre(box: Box) -> Point:
     return (
         sum(p[0] for p in box) / len(box),
@@ -491,7 +429,7 @@ class _Frame:
         ground, and across the height between them when it is on another
         level of road; ``0.0`` when they meet."""
         return math.hypot(
-            _box_distance(self.ego_box, self.others[i]), self.others_gap[i]
+            box_distance(self.ego_box, self.others[i]), self.others_gap[i]
         )
 
 
@@ -735,11 +673,11 @@ def _collision_bits(frame: _Frame) -> int:
             # Its height above or below the ego's level is in the clearance.
             if frame.clearance(i) > 0.0:
                 continue
-            if _segment_meets_box(box[0], box[1], other):
+            if segment_meets_box(box[0], box[1], other):
                 frame.hits |= _FRONT
-            elif _segment_meets_box(box[2], box[3], other):
+            elif segment_meets_box(box[2], box[3], other):
                 frame.hits |= _REAR
-            elif _boxes_meet(box, other):
+            elif boxes_meet(box, other):
                 frame.hits |= _LATERAL
         frame.collisions_read = True
     return frame.hits

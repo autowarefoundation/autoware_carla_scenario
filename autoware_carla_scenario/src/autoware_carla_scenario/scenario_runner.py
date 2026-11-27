@@ -487,7 +487,8 @@ def _judge_metrics(
 ) -> ScenarioResult:
     """Judge the run's MetricConditions on the metrics of the frames it
     recorded, computed now, on the run's map (still loaded); the run's result,
-    failed by the first that fails when it fails earlier than the run did.
+    failed by the first that fails when it fails earlier than the run ended
+    (:func:`_merge_metric_verdicts`).
 
     The metrics, and each condition's NG frames, go into the run's
     *trajectory* log (its :class:`TrajectoryRecorder`), for its Rerun
@@ -607,15 +608,21 @@ def _merge_metric_verdicts(
     """The run's *result* once its MetricConditions are judged
     (:func:`_judge_metrics`): failed by *first*, the earliest failing one
     (its index, the condition and its verdict; ``None`` when none failed),
-    when it fails earlier than the run did, or a run that passed; otherwise
+    when it fails earlier than the run ended -- passed or failed; otherwise
     the run's own result, its statuses of the conditions *judged_labels*
     names now from *statuses*, and those that held added to its failure's
-    other conditions."""
+    other conditions, in the order they were registered.
+
+    On the tick the run ended the run's own outcome stands, as it does for
+    the live conditions, which check pass before fail (docs/tutorial.md): a
+    metric NG on the tick a pass condition held leaves the run passed, and
+    one on the tick a live fail condition held leaves that its failure
+    (#2590).  "Earlier" is by over ``1e-9`` s, the runner's tick tolerance
+    (ElapsedTimeCondition, MetricCondition): a frame's time is the tick's
+    ``elapsed``, a verdict's past ``max_ng_seconds`` a sum from it."""
     if first is not None:
         earliest: tuple[int, BaseCondition, ScenarioResult] = first
-        if not (
-            not result.passed and result.elapsed_seconds <= earliest[2].elapsed_seconds
-        ):
+        if earliest[2].elapsed_seconds < result.elapsed_seconds - 1e-9:
             i, condition, verdict = earliest
             return ScenarioResult(
                 passed=False,
@@ -637,10 +644,21 @@ def _merge_metric_verdicts(
     failure = result.failure
     if failure is not None:
         also = failure.also_triggered
-        # One at a time, as extend() took them: a label is added once.
+        # In registration order, as _failure() lists them (the Failure
+        # docstring), not the metrics after the live ones (#2590); a label is
+        # listed once, and one the statuses do not name is kept, last.
+        held = set(also)
+        ordered: list[str] = []
         for s in statuses:
-            if s.label in judged_labels and s.satisfied and s.label not in also:
-                also.append(s.label)
+            if s.label == failure.condition or s.label in ordered:
+                continue
+            if s.label in held or (s.label in judged_labels and s.satisfied):
+                ordered.append(s.label)
+        for label in also:
+            if label not in ordered:
+                ordered.append(label)
+        also.clear()
+        also.extend(ordered)
     return result
 
 

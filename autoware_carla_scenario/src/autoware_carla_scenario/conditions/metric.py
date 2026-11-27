@@ -237,12 +237,21 @@ class MetricCondition(BaseCondition):
             self._last_message = ""
             return None
         unit = f" {self._unit}" if self._unit else ""
-        message = (
-            f"{self._metric} {self._comparison.rule.text} "
-            f"{self._comparison.value:.3f}{unit} for {ng:.2f}s in total "
-            f"(more than {self._max_ng_seconds:.2f}s; first at {first:.2f}s, "
-            f"worst {worst:.3f}{unit})"
-        )
+        rule = f"{self._metric} {self._comparison.rule.text} "
+        if self._max_ng_seconds == 0.0:
+            # No NG time is allowed: the first NG frame fails the run, however
+            # little time it counts (none, the last frame's), so say when it
+            # was, not a total "more than 0.00s" it need not exceed (#2590).
+            message = (
+                f"{rule}{self._comparison.value:.3f}{unit} NG at {first:.2f}s "
+                f"(worst {worst:.3f}{unit})"
+            )
+        else:
+            message = (
+                f"{rule}{self._comparison.value:.3f}{unit} for {ng:.2f}s in total "
+                f"(more than {self._max_ng_seconds:.2f}s; first at {first:.2f}s, "
+                f"worst {worst:.3f}{unit})"
+            )
         self._last_message = message
         return ScenarioResult(passed=True, message=message, elapsed_seconds=failed_at)
 
