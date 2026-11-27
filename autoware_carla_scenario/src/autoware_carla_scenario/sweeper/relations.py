@@ -617,17 +617,22 @@ def _z3_formula(
         options = [_z3_value(z3, o.value) for o in tree.options]
         if tree.negated == negate:
             return z3.Or(*[item == o for o in options])
-        if relax:
+        # Only a real's "not one of" is relaxed: a string's or bool's is exact.
+        if relax and z3.is_arith(item):
             return z3.BoolVal(True)
         return z3.And(*[item != o for o in options])
     if isinstance(tree, _Compare):
         op = _NEGATED[tree.op] if negate else tree.op
-        if relax:
+        left = _z3_term(z3, tree.left, env)
+        right = _z3_term(z3, tree.right, env)
+        # Only a comparison of reals has a closure to relax to; one of
+        # strings or bools stays exact.
+        if relax and z3.is_arith(left):
             relaxed = _RELAXED[op]
             if relaxed is None:
                 return z3.BoolVal(True)
             op = relaxed
-        return _COMPARE[op](_z3_term(z3, tree.left, env), _z3_term(z3, tree.right, env))
+        return _COMPARE[op](left, right)
     if isinstance(tree, (_Key, _Lit)):
         # A bool key or literal.
         value = _z3_term(z3, tree, env)
@@ -815,30 +820,40 @@ class RelationSolver:
         self, case: _Case, keys: Sequence[str], fixed: Mapping[str, float]
     ) -> dict[str, tuple[float, float]]:
         """Each of *keys*: the interval the relations leave it, with the
-        *fixed* values and within its distribution's bounds -- every bound
-        from one ``Optimize`` in box mode (each objective on its own)."""
+        *fixed* values and within its distribution's bounds.  One
+        ``Optimize`` holds the relations; each bound is one objective of its
+        own (``push``/``pop``).  Not Z3's box mode, which several objectives
+        could share: z3 4.15 answers it with wrong bounds."""
         z3 = _z3()
         opt = z3.Optimize()
-        opt.set(priority="box")
         opt.set("timeout", 10_000)
         opt.add(*case.relaxed, *case.bounds)
         for key, value in fixed.items():
             opt.add(case.env[key] == z3.RealVal(_exact(value)))
-        handles = {
-            key: (opt.minimize(case.env[key]), opt.maximize(case.env[key]))
-            for key in keys
-        }
-        solved = opt.check() == z3.sat
+
+        def bound(key: str, sense: str) -> float | None:
+            opt.push()
+            try:
+                handle = (
+                    opt.minimize(case.env[key])
+                    if sense == "min"
+                    else opt.maximize(case.env[key])
+                )
+                # Non-linear, or timed out: no bound of the relations'.
+                if opt.check() != z3.sat:
+                    return None
+                return _as_float(z3, handle.value())
+            finally:
+                opt.pop()
+
         ranges: dict[str, tuple[float, float]] = {}
         for key in keys:
+            least = bound(key, "min")
+            most = bound(key, "max")
             low = self.distributions[key].low
             high = self.distributions[key].high
-            if solved:
-                # Non-linear, or timed out: the distribution's own bounds.
-                least = _as_float(z3, handles[key][0].value())
-                most = _as_float(z3, handles[key][1].value())
-                low = low if least is None else max(low, least)
-                high = high if most is None else min(high, most)
+            low = low if least is None else max(low, least)
+            high = high if most is None else min(high, most)
             # Rounding can leave a pinned key's bounds a hair apart, crossed.
             ranges[key] = (low, max(high, low))
         return ranges

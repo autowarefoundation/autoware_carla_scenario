@@ -174,6 +174,23 @@ def test_ranges_are_narrowed_to_what_the_relations_leave() -> None:
     assert solver._case({}).ranges == {"a.x": (8.0, 10.0), "a.y": (0.0, 2.0)}
 
 
+def test_a_range_no_relation_bounds_keeps_the_distribution_s() -> None:
+    # Z3's box mode (several objectives in one Optimize) answered this with
+    # a.x in [0, 0] on z3 4.15; each bound is optimised on its own instead.
+    solver = RelationSolver(
+        parse_relations(["scenario.weather != 'rain' or a.x < 20", "a.y <= a.x"]),
+        {"a.x": UniformDistribution(0.0, 100.0), "a.y": UniformDistribution(0.0, 50.0)},
+    )
+    assert solver._case({"scenario.weather": "clear"}).ranges == {
+        "a.x": (0.0, 100.0),
+        "a.y": (0.0, 50.0),
+    }
+    assert solver._case({"scenario.weather": "rain"}).ranges == {
+        "a.x": (0.0, 20.0),
+        "a.y": (0.0, 20.0),
+    }
+
+
 def test_a_parameter_in_no_relation_draws_as_without_relations() -> None:
     with_relations = expand_sweep(_sweep([f"{_EGO} > {_LEAD}"]), None, scenario="s")
     without = expand_sweep(_sweep([]), None, scenario="s")
