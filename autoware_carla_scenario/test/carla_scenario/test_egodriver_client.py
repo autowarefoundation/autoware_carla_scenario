@@ -708,14 +708,21 @@ def test_a_carla_driver_interface_policy_sees_the_configured_mount() -> None:
 def test_a_start_session_that_times_out_leaves_no_session_on_the_policy() -> None:
     """A start whose deadline passes while the policy's ``on_session_start`` runs
     still opened the session on the server: the failure path closes it, so the
-    same uuid starts again (#2575)."""
+    same uuid starts again (#2575).
+
+    ``on_session_start`` blocks until the client has given up (and sent its
+    close), rather than sleeping a fixed time: the client's deadline covers the
+    version handshake too, so a short sleep against a short deadline would fail
+    on a slow runner whenever the handshake alone ran out the clock.
+    """
     import threading
-    import time
 
     from carla_driver_interface.driver import BaseDriver, DriveResult
     from carla_driver_interface.server import serving
 
-    started = threading.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
 
     class _Slow(BaseDriver):
         name = "slow"
@@ -725,8 +732,9 @@ def test_a_start_session_that_times_out_leaves_no_session_on_the_policy() -> Non
 
         def on_session_start(self, session) -> None:  # noqa: ANN001
             if self.slow:
-                time.sleep(1.0)
-                started.set()
+                entered.set()
+                release.wait(timeout=30.0)
+                finished.set()
 
         def drive(self, ctx) -> DriveResult:  # noqa: ANN001
             return DriveResult(trajectory_in_rig=Trajectory.empty())
@@ -735,13 +743,17 @@ def test_a_start_session_that_times_out_leaves_no_session_on_the_policy() -> Non
     with serving(policy, port=0, host="127.0.0.1") as port:
         address = f"127.0.0.1:{port}"
         client = EgoDriverGrpcClient(
-            DriverClientConfig(address=address, timeout_s=0.3, random_seed=1)
+            DriverClientConfig(address=address, timeout_s=2.0, random_seed=1)
         )
-        with pytest.raises(grpc.RpcError) as raised:
-            client.start_session("uuid-1", "scene")
+        try:
+            with pytest.raises(grpc.RpcError) as raised:
+                client.start_session("uuid-1", "scene")
+        finally:
+            release.set()
         assert raised.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+        assert entered.is_set(), "the deadline passed before the server started"
         assert client.session_uuid is None
-        assert started.wait(timeout=10.0)
+        assert finished.wait(timeout=30.0)
 
         policy.slow = False
         again = EgoDriverGrpcClient(
