@@ -249,6 +249,63 @@ def test_the_anchor_moves_no_faster_than_the_vehicle_could(policy):
             previous = current
 
 
+@pytest.mark.parametrize("period_s", [0.05, 0.1, 0.2, 0.5])
+def test_the_anchor_rate_limit_covers_the_time_since_the_last_step(policy, period_s):
+    """`driver.policy_timestep_s` is any multiple of 0.05 s, not always 0.1 s.
+
+    Scaling the jerk limit by the horizon step instead let the anchor lag at
+    half the limit at a 0.2 s period and allowed twice the jerk at 0.05 s.
+    """
+    jerk = CONFIG.limits.plan_jerk_limit()
+    period_us = int(round(period_s * 1e6))
+    memory = _RolloutMemory()
+    assert policy._plausible_acceleration(0.0, memory, TIME_NOW_US) == pytest.approx(0.0)
+    anchored = policy._plausible_acceleration(-3.9, memory, TIME_NOW_US + period_us)
+    assert anchored == pytest.approx(-jerk * period_s, abs=1e-6)
+    assert memory.anchor_time_us == TIME_NOW_US + period_us
+
+
+@pytest.mark.parametrize(
+    "elapsed_us, interval_s",
+    [
+        (0, CONFIG.horizon.step_s),  # the same step again
+        (-100_000, CONFIG.horizon.step_s),  # time ran backwards
+        (5_000_000, 1.0),  # a long pause is capped
+    ],
+)
+def test_an_implausible_interval_falls_back_or_is_capped(policy, elapsed_us, interval_s):
+    jerk = CONFIG.limits.plan_jerk_limit()
+    memory = _RolloutMemory()
+    policy._plausible_acceleration(0.0, memory, TIME_NOW_US)
+    anchored = policy._plausible_acceleration(-3.9, memory, TIME_NOW_US + elapsed_us)
+    assert anchored == pytest.approx(max(-3.9, -jerk * interval_s), abs=1e-6)
+
+
+def test_without_a_previous_time_the_anchor_moves_one_horizon_step(policy):
+    jerk = CONFIG.limits.plan_jerk_limit()
+    memory = _RolloutMemory()
+    policy._plausible_acceleration(0.0, memory)  # no time recorded
+    anchored = policy._plausible_acceleration(-3.9, memory, TIME_NOW_US)
+    assert anchored == pytest.approx(-jerk * CONFIG.horizon.step_s, abs=1e-6)
+
+
+def test_drive_rate_limits_over_the_step_time_and_a_new_session_forgets_it():
+    driver = EgoPolicy()
+    jerk = driver.config.limits.plan_jerk_limit()
+    driver.on_session_start(session("timed"))
+    driver.drive(context(accel_mps2=0.0, uuid="timed"))  # no route: still anchors
+    memory = driver._memory("timed")
+    assert memory.anchor_time_us == TIME_NOW_US
+
+    driver.drive(context(accel_mps2=-3.9, time_now_us=TIME_NOW_US + 200_000, uuid="timed"))
+    assert memory.anchor_accel_mps2 == pytest.approx(-jerk * 0.2, abs=1e-6)
+
+    # A new episode on the same uuid starts with no anchor and no time.
+    driver.on_session_start(session("timed"))
+    fresh = driver._memory("timed")
+    assert fresh.anchor_time_us is None and fresh.anchor_accel_mps2 is None
+
+
 # ---------------------------------------------------------------------------
 # Traffic lights, end to end through the policy
 # ---------------------------------------------------------------------------

@@ -272,4 +272,6 @@ it, the policy deadlocks at the first red light it stops for:
 inside the margin holds the vehicle where it stands rather than behind it, so
 the rule stays satisfiable (`docs/RULES.md`, `stop_on_red`), and CARLA's
 finite-differenced acceleration is confined to the physical envelope before it
-anchors the plan.
+anchors the plan, and moves no faster than the jerk limit over the time since
+the previous step (whatever `driver.policy_timestep_s` is; at most 1 s, and one
+0.1 s horizon step when there is no previous step to measure from).
