@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from autoware_carla_scenario import run_dirs
 from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import runner
 from autoware_carla_scenario.ui.models import RunProgress
@@ -31,7 +32,9 @@ from autoware_carla_scenario.ui.models import RunProgress
 def test_the_multirun_dir_is_what_strftime_makes(now: datetime) -> None:
     # The f-string the runner used to build it with: the same string, with
     # zero-padded fields (years before 1000 differ between Pythons' strftime).
-    assert runner._multirun_dir(now) == f"multirun/{now:%Y-%m-%d}/{now:%H-%M-%S}"
+    assert run_dirs.timestamped_dir("multirun", now) == (
+        f"multirun/{now:%Y-%m-%d}/{now:%H-%M-%S}"
+    )
 
 
 def test_a_job_writes_both_streams_to_its_log_in_order(tmp_path: Path) -> None:

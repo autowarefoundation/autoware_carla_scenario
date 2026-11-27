@@ -31,7 +31,13 @@ the ODD archive, openodd's ``ODD_ARCHIVE_SUFFIX``, which
 a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
 :func:`recording_path`, :func:`sensors_recording_path`), so that the checked
 ``ui.web_viewer_paths`` shares it with ``rerun`` and ``rerun_lidar``, which
-re-export it under the names they had.
+re-export it under the names they had.  So do the names of the scratch files
+``rerun_lidar`` merges a run's sensors into its recording and takes them out
+of one through (:func:`run_scratch_paths`, #2582): hidden and no run's output,
+but a run killed during that merge leaves one, which
+:func:`remove_run_outputs` removes with the run's outputs.  The scratch
+directory of ``rerun.convert_outputs`` (``.rerun-convert-*``) is not: it is
+made with ``mkdtemp`` for a whole directory's conversion, not one stem's.
 
 Free of imports beyond ``pathlib``, ``shutil`` and the gate's record (whose
 :data:`~autoware_carla_scenario.gate.record.GATE_RECORD_SUFFIX` it lists, and
@@ -49,7 +55,9 @@ from .gate.record import GATE_RECORD_SUFFIX
 __all__ = [
     "COVERAGE_SUFFIX",
     "ENVIRONMENT_SUFFIX",
+    "EXTRACTING_SUFFIX",
     "LOCK_SUFFIX",
+    "MERGING_SUFFIX",
     "METRICS_SUFFIX",
     "ODD_ARCHIVE_SUFFIX",
     "RECORDING_SUFFIX",
@@ -63,8 +71,11 @@ __all__ = [
     "TRAJECTORY_SUFFIX",
     "WOSAC_AGENTS_SUFFIX",
     "WOSAC_SUFFIX",
+    "extracting_path",
+    "merging_path",
     "recording_path",
     "run_output_paths",
+    "run_scratch_paths",
     "wosac_agents_path",
     "run_outputs_exist",
     "remove_run_outputs",
@@ -105,6 +116,14 @@ T4SCENE_MAP_SUFFIX = ".t4scene.map.pb"
 WOSAC_SUFFIX = ".wosac.pb"
 #: The agents and time grid of that rollout: ``{stem}.wosac.json``.
 WOSAC_AGENTS_SUFFIX = ".wosac.json"
+
+#: What the Rerun SDK's CLI writes a recording merged into the run's recording
+#: to before it replaces that recording: ``.{stem}.rrd.merging``
+#: (:func:`merging_path`).
+MERGING_SUFFIX = ".merging"
+#: What it writes the sensors taken out of a recording to before they are put
+#: in place: ``.{stem}.sensors.rrd.extracting`` (:func:`extracting_path`).
+EXTRACTING_SUFFIX = ".extracting"
 
 #: The files a run writes as ``{stem}{suffix}``.
 RUN_FILE_SUFFIXES: tuple[str, ...] = (
@@ -186,6 +205,35 @@ def sensors_recording_path(directory: Path, stem: str) -> Path:
     return Path(directory) / f"{stem}{SENSORS_SUFFIX}"
 
 
+def merging_path(recording: Path) -> Path:
+    """The scratch file ``rerun_lidar.merge_into`` merges into *recording*
+    (``X.rrd``) through: ``.X.rrd.merging`` beside it."""
+    path = Path(recording)
+    return path.with_name(f".{path.name}{MERGING_SUFFIX}")
+
+
+def extracting_path(sensors: Path) -> Path:
+    """The scratch file ``rerun_lidar.extract_sensors`` writes *sensors*
+    (``X.sensors.rrd``) through: ``.X.sensors.rrd.extracting`` beside it."""
+    path = Path(sensors)
+    return path.with_name(f".{path.name}{EXTRACTING_SUFFIX}")
+
+
+def run_scratch_paths(directory: Path, stem: str) -> list[Path]:
+    """The scratch files a run named *stem* writes in *directory* while its
+    sensors are merged into its recording or taken out of it
+    (:func:`merging_path`, :func:`extracting_path`).  Each is replaced or
+    removed when the Rerun SDK's CLI is done; one is left only by a process
+    killed during that call (a SLURM timeout's SIGKILL).  Not a run's output:
+    hidden, and ending in none of :data:`RUN_SUFFIXES`, so that
+    :func:`run_output_stems` and the viewer read no run in one; but
+    :func:`remove_run_outputs` removes them."""
+    return [
+        merging_path(directory / f"{stem}{RECORDING_SUFFIX}"),
+        extracting_path(directory / f"{stem}{SENSORS_SUFFIX}"),
+    ]
+
+
 def run_output_paths(directory: Path, stem: str) -> list[Path]:
     """Every path a run named *stem* writes in *directory*: the files of
     :data:`RUN_FILE_SUFFIXES`, then the directories of
@@ -210,10 +258,11 @@ def remove_run_outputs(directory: Path, stem: str) -> None:
     """Remove what a run named *stem* left in *directory*: every path of
     :func:`run_output_paths`, its T4 dataset directory included -- the T4
     writer refuses a directory already holding a dataset, so a case run again
-    under *stem* would otherwise record none and keep the last attempt's.  A
-    symlink is unlinked, never what it points to; the outputs of any other
-    stem are left alone."""
-    for path in run_output_paths(directory, stem):
+    under *stem* would otherwise record none and keep the last attempt's --
+    and the scratch files of a merge or extraction it was killed during
+    (:func:`run_scratch_paths`).  A symlink is unlinked, never what it points
+    to; the outputs of any other stem are left alone."""
+    for path in run_output_paths(directory, stem) + run_scratch_paths(directory, stem):
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
         else:

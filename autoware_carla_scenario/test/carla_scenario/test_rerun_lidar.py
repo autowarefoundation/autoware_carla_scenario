@@ -378,6 +378,30 @@ def test_the_sweeps_are_merged_into_the_runs_recording(
     assert sorted(p.name for p in tmp_path.iterdir()) == ["Run-1.rrd", "cli"]
 
 
+def test_a_merge_writes_through_run_outputs_scratch_name(
+    tmp_path: Path, fake_cli: Path
+) -> None:
+    # The name remove_run_outputs removes when a killed run leaves it (#2582).
+    from autoware_carla_scenario import run_outputs
+    from autoware_carla_scenario.rerun_lidar import merge_into
+
+    fake_cli.write_text(
+        "#!/bin/sh\n"
+        '[ "$1 $2" = "rrd merge" ] || exit 2\n'
+        'printf "%s" "$6" > "$(dirname "$6")/scratch-name"\n'
+        'cat "$3" "$4" > "$6"\n'
+    )
+    recording = tmp_path / "Run-1.rrd"
+    lidar = tmp_path / "Run-1.sensors.rrd"
+    recording.write_bytes(b"RUN")
+    lidar.write_bytes(b"+LIDAR")
+    merge_into(recording, lidar)
+    scratch = (tmp_path / "scratch-name").read_text()
+    assert scratch == str(run_outputs.merging_path(recording))
+    assert scratch == str(tmp_path / ".Run-1.rrd.merging")
+    assert not Path(scratch).exists()
+
+
 def test_a_converter_merges_a_runs_sweeps_once_its_log_is_converted(
     tmp_path: Path, fake_cli: Path
 ) -> None:

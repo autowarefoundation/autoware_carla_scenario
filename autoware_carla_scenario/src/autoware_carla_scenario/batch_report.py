@@ -19,6 +19,7 @@ from typing import Any, Collection, Mapping, Protocol, Sequence  # noqa: UP035
 
 from .atomic_file import write_text_atomically
 from .failure import Failure
+from .rerun_report import summary_lines
 
 __all__ = [
     "BATCH_RESULTS",
@@ -365,12 +366,12 @@ def print_summary(
         ]
         if recorded:
             written = sum(1 for i in recorded if i not in failed_recordings)
-            print(  # noqa: T201
-                f"Rerun recordings: {written}/{len(recorded)} written "
-                "(open one with: rerun <file.rrd>)"
-            )
-            for i in sorted(failed_recordings):
-                print(f"  [FAILED] {names[i]}: {failed_recordings[i]}")  # noqa: T201
+            failures = [
+                ("FAILED", names[i], failed_recordings[i])
+                for i in sorted(failed_recordings)
+            ]
+            for line in summary_lines(written, len(recorded), failures):
+                print(line)  # noqa: T201
 
         print(thin)  # noqa: T201
         errors = f", {len(errored)} errored" if errored else ""

@@ -129,4 +129,3 @@ def test_the_old_names_are_the_shared_ones() -> None:
     assert run._is_multirun_mode_override is run_dirs.is_multirun_mode_override
     assert run._multirun_requested_in_argv is run_dirs.multirun_requested_in_argv
     assert run._sets_hydra_key is run_dirs.sets_hydra_key
-    assert runner._multirun_dir is run_dirs.multirun_dir
