@@ -28,7 +28,7 @@
 
   {% elif selected_kind == 'action' %}
     {% set spec = get_action_spec(target.type) %}
-    <form hx-post="/draft/{{ draft.id }}/action/{{ target.id }}"
+    <form hx-post="/draft/{{ draft.id }}/action/{{ target.id }}" novalidate
           hx-trigger="change delay:200ms, submit" hx-target="#editor-body" hx-swap="innerHTML">
       <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <p class="ed-kicker">{{ spec.category if spec else 'Action' }}</p>
@@ -129,7 +129,7 @@
         departs vertex {{ gate_owner[1].vertex }} when it holds.
       </p>
     {% endif %}
-    <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}"
+    <form hx-post="/draft/{{ draft.id }}/condition/{{ target.id }}" novalidate
           hx-trigger="change delay:200ms, submit" hx-target="#editor-body" hx-swap="innerHTML">
       <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <p class="ed-kicker">{{ spec.category if spec else 'Predicate' }}</p>
@@ -157,7 +157,7 @@
 
   {% elif selected_kind == 'constraint' %}
     {% set spec = get_constraint_spec(target.type) %}
-    <form hx-post="/draft/{{ draft.id }}/constraint/{{ target.id }}"
+    <form hx-post="/draft/{{ draft.id }}/constraint/{{ target.id }}" novalidate
           hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
       <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <input type="hidden" name="selected" value="{{ constraint_owner or selected }}">

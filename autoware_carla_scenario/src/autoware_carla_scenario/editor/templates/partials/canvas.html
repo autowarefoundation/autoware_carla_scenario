@@ -30,6 +30,7 @@
       <summary class="ed-add-btn is-action" title="Add an action">{{ ic.icon('plus', 12) }} action</summary>
       <form hx-post="/draft/{{ draft.id }}/action" hx-target="#editor-body" hx-swap="innerHTML"
             class="ed-add-form">
+        <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
         <input type="hidden" name="actor" value="{{ actor }}">
         {% if phase %}<input type="hidden" name="phase" value="{{ phase }}">{% endif %}
         <select name="type_id" class="ed-input-xs" style="flex:1" aria-label="Action type">

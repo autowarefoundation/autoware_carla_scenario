@@ -12,7 +12,7 @@
 {% macro gate_row(action, gate, index, draft, selected, document) %}
   <div class="ed-gate">
     <div class="ed-gate-head">
-      <form hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}"
+      <form hx-post="/draft/{{ draft.id }}/action/{{ action.id }}/advance/{{ index }}" novalidate
             hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
             class="ed-gate-vertex">
         <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
@@ -67,7 +67,7 @@
     <details class="ed-add">
       <summary class="ed-add-btn" title="Add a waypoint condition">{{ ic.icon('plus', 11) }} waypoint condition</summary>
       <form hx-post="/draft/{{ draft.id }}/condition" hx-target="#editor-body" hx-swap="innerHTML"
-            class="ed-add-form">
+            class="ed-add-form" novalidate>
         <input type="hidden" name="slot" value="advance:{{ action.id }}">
         <input type="number" name="vertex" min="1" step="1" value="{{ ns.free }}"
                class="ed-input-xs" aria-label="Vertex" title="Vertex, counted from 1" style="width:4.5em">

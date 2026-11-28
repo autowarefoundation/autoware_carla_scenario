@@ -658,14 +658,23 @@ async def update_entity(
 
 
 @router.post("/draft/{draft_id}/entity/{entity_id}/delete", response_class=HTMLResponse)
-def delete_entity(request: Request, draft_id: str, entity_id: str) -> HTMLResponse:
-    """Delete an entity together with its actions and conditions."""
+async def delete_entity(
+    request: Request, draft_id: str, entity_id: str
+) -> HTMLResponse:
+    """Delete an entity together with its actions and conditions.
+
+    The button names its revision: entity ids are reused (the lowest free
+    ``npcN``), so a stale tab's click would delete the actor that took the
+    id since (#2632).
+    """
+    form = dict(await request.form())
     service = _service(request)
     return _apply(
         request,
         draft_id,
         "scenario",
         lambda doc: service.delete_entity(doc, entity_id),
+        form=form,
     )
 
 
@@ -691,6 +700,7 @@ async def set_lanelet_mode(request: Request, draft_id: str) -> HTMLResponse:
         draft_id,
         slot_key.rpartition(".")[0],
         lambda doc: service.set_lanelet_mode(doc, slot_key, mode),
+        form=form,
     )
 
 
@@ -722,7 +732,7 @@ async def add_constraint(request: Request, draft_id: str) -> HTMLResponse:
         service.add_constraint(document, slot_key, type_id, parent_id)
         return service.require_slot(document, slot_key).owner_id
 
-    return _apply(request, draft_id, slot_key.rpartition(".")[0], _add)
+    return _apply(request, draft_id, slot_key.rpartition(".")[0], _add, form=form)
 
 
 @router.post("/draft/{draft_id}/constraint/{node_id}", response_class=HTMLResponse)
@@ -775,6 +785,7 @@ async def add_action(request: Request, draft_id: str) -> HTMLResponse:
         draft_id,
         "scenario",
         lambda doc: service.add_action(doc, type_id, actor, phase).id,
+        form=form,
     )
 
 

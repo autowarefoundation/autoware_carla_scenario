@@ -1147,9 +1147,11 @@
    *
    * A flush that fails stops the navigation, its failure shown as any other's,
    * and the field keeps what was typed, still a change not posted: the next
-   * navigation tries it again. One the server refuses (a value it cannot
-   * take) is posted again as an ordinary edit, so its reason is shown where
-   * an edit's always is.
+   * navigation tries it again. So does one htmx would not send because the
+   * browser found its form invalid (`htmx:validation:halted`, #2632): the
+   * inspector forms are `novalidate`, but one that is not is not dropped.
+   * One the server refuses (a value it cannot take) is posted again as an
+   * ordinary edit, so its reason is shown where an edit's always is.
    * ------------------------------------------------------------------- */
 
   var inFlight = [];     // elements whose request is on its way
@@ -1239,16 +1241,25 @@
     revisionNow[sent] = made.value;
   }
 
+  // Keep the changes *held* as changes not posted yet, and stop the
+  // navigation: the next one posts them again.
+  function keep(held) {
+    held.forEach(function (el) {
+      if (el.isConnected && unsent.indexOf(el) < 0) unsent.push(el);
+    });
+    return false;
+  }
+
   // Whether the navigation may go on after *owner*'s flush, which posted
-  // the changes *held*, was *answer*ed.
-  function flushed(owner, answer, held) {
-    if (!answer) return true;               // not sent: its form had left
-    if (!answer.successful) {               // shown by showRequestError
-      held.forEach(function (el) {
-        if (el.isConnected && unsent.indexOf(el) < 0) unsent.push(el);
-      });
-      return false;
+  // the changes *held*, was *answer*ed -- or *halted* unsent by the
+  // browser's constraint validation, which is no sign its form had left.
+  function flushed(owner, answer, held, halted) {
+    if (halted) {                           // #2632: a failure, not a send
+      if (owner.reportValidity) owner.reportValidity();
+      return keep(held);
     }
+    if (!answer) return true;               // not sent: its form had left
+    if (!answer.successful) return keep(held);  // shown by showRequestError
     var page = parsed(answer.xhr && answer.xhr.responseText);
     if (page && page.querySelector('[data-edit-refused]')) {
       window.htmx.ajax('POST', owner.getAttribute('hx-post'), { source: owner });
@@ -1261,16 +1272,21 @@
   function flush(owner) {
     return new Promise(function (resolve) {
       var answer = null;
+      var halted = false;
       var held = unsent.filter(function (el) { return ownerOf(el) === owner; });
       function heard(event) {
         // Its own debounced post targets `#editor-body`; the flush, itself.
         if (event.detail && event.detail.target === owner) answer = event.detail;
       }
+      // htmx sends no form the browser finds invalid, and answers nothing.
+      function stopped() { halted = true; }
       function done() {
         owner.removeEventListener('htmx:afterRequest', heard);
-        resolve(flushed(owner, answer, held));
+        owner.removeEventListener('htmx:validation:halted', stopped);
+        resolve(flushed(owner, answer, held, halted));
       }
       owner.addEventListener('htmx:afterRequest', heard);
+      owner.addEventListener('htmx:validation:halted', stopped);
       window.htmx.ajax('POST', owner.getAttribute('hx-post'),
         { source: owner, target: owner, swap: 'none' }).then(done, done);
       // After the call, which runs the flush's own `htmx:confirm`.
