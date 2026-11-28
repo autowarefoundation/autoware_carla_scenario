@@ -176,7 +176,6 @@ __all__ = [
     "READ_ONLY_ABC",
     "STR_FORMAT",
     "FrameworkUnion",
-    "find_none_misuses",
     "frozen_dataclasses",
     "framework_unions",
     "is_none_misuse",
@@ -1053,19 +1052,6 @@ def _mypy_paths(paths: list[Path], scratch: Path) -> dict[str, Path]:
             raise NoneCheckSkipped(f"could not link {path} for mypy: {exc}") from None
         given[str(scratch / relative)] = path
     return given
-
-
-def find_none_misuses(
-    paths: list[Path], timeout: float = 600.0
-) -> list[NoneFinding] | None:
-    """What mypy reports of a ``None`` misused in the modules *paths*.
-
-    ``None`` when there is no verdict (:func:`run_none_check` says why).
-    """
-    try:
-        return run_none_check(paths, timeout)
-    except NoneCheckSkipped:
-        return None
 
 
 def _mypy_command() -> list[str]:

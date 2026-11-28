@@ -19,12 +19,21 @@ import pytest
 from autoware_carla_scenario.typecheck import carla_stubs, none_check
 from autoware_carla_scenario.typecheck.none_check import (
     NoneCheckSkipped,
-    find_none_misuses,
+    NoneFinding,
     mypy_available,
     run_none_check,
 )
 
 pytestmark = pytest.mark.skipif(not mypy_available(), reason="no mypy")
+
+
+def find_none_misuses(paths: list[Path]) -> list[NoneFinding] | None:
+    """What mypy reports of the modules *paths*, ``None`` with no verdict."""
+    try:
+        return run_none_check(paths)
+    except NoneCheckSkipped:
+        return None
+
 
 _MODULE = """
 from __future__ import annotations
@@ -198,7 +207,8 @@ def test_a_relative_search_path_entry_is_searched(
 
 
 def test_no_module_gives_no_verdict() -> None:
-    assert find_none_misuses([]) is None
+    with pytest.raises(NoneCheckSkipped, match="^no module to check$"):
+        run_none_check([])
 
 
 _DECLARATIONS = """

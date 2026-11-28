@@ -377,6 +377,44 @@ def test_a_flag_it_does_not_take_is_refused(
     assert captured.out == ""
 
 
+def test_an_unknown_scenario_name_fails_with_codon_or_without(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Exit 1 either way, never 2 for a missing Codon (#2605): nothing is to
+    # be compiled, so Codon is not even looked for.
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+
+    monkeypatch.setattr(cli, "find_supported_codon", _no_codon_lookup)
+    code = main(["scenario=cut_in/left", "scenario.name=acs_no_such_scenario"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "[FAILED] cut_in/left: unknown scenario name 'acs_no_such_scenario'" in out
+    assert "1 of 1 scenario config(s) failed the static check" in out
+
+
+def test_a_run_of_custom_builders_only_needs_no_codon(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.registry import (  # noqa: PLC0415
+        register_scenario_builder,
+        unregister_scenario,
+    )
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+
+    monkeypatch.setattr(cli, "find_supported_codon", _no_codon_lookup)
+    register_scenario_builder("acs_custom_builder_case", lambda *a, **k: None)  # type: ignore[arg-type]
+    try:
+        code = main(["scenario=cut_in/left", "scenario.name=acs_custom_builder_case"])
+    finally:
+        unregister_scenario("acs_custom_builder_case")
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    assert (
+        "cut_in/left: 'acs_custom_builder_case' has a custom builder: not checked"
+        in captured.out
+    )
+
+
 def test_hydra_overrides_are_passed_on(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

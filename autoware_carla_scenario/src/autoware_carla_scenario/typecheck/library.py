@@ -10,10 +10,10 @@ module at a time, as each is made to compile.  This file says which:
   called with a value of each parameter's annotated type, so their bodies
   are checked.
 * :data:`EXCLUDED`: every other module, with the reason it is not compiled.
-  :data:`NOT_YET_CHECKED` marks one that could be: moving it into
-  :data:`CHECKED` is a matter of making its source compile.  "imports X"
-  names what keeps a module out: a package or a standard module Codon cannot
-  compile.
+  "imports X" names what keeps a module out: a package or a standard module
+  Codon cannot compile.  :data:`NOT_YET_CHECKED` is the reason to give a new
+  module that does not compile yet (no entry has it now): moving such a
+  module into :data:`CHECKED` is a matter of making its source compile.
 
 Every module of the package except ``typecheck/`` is in exactly one of the
 two (``test_typecheck_library.py``), so a new module needs an entry here.

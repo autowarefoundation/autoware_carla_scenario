@@ -38,10 +38,12 @@ uv run scenario-check scenario='lane_change/*' scenario.timeout_seconds=20
 overrides apply. `scenario='*'` is every config, like no `scenario=`; a
 package author checks only theirs (`scenario='my_package/*'`, about 15 s per
 config), as every built-in config takes minutes. It exits with 0 when every
-scenario passed, 1 when one failed (or its `controls:` are invalid: they are
-validated before Codon is looked for, so that is reported, exit 1, with Codon
-or without), and 2 when it could not run: there is no Codon compiler, no
-config matches `scenario=` (the message lists the
+scenario passed, 1 when one failed (or its `controls:` are invalid, or its
+`scenario.name` is no registered scenario: both are found before Codon is
+looked for, so that is reported, exit 1, with Codon or without), and 2 when
+it could not run: there is no Codon compiler for a config that needs
+compiling (a scenario with a custom builder is not compiled, so a run of
+only those needs none), no config matches `scenario=` (the message lists the
 configs), or an override names a key the config does not have
 (`scenario.timout_seconds=3` is reported with the closest key,
 `scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
@@ -737,7 +739,9 @@ calls its builder (`odd: OddDefinition = urban_odd()`). Every attribute's
 probe is then called with a world, and every condition must come from an
 attribute. The ODD's own modules have every function compiled as a
 scenario's do, with the same warning for one the check cannot call (compiled
-where the builder reaches it). The runner checks the ODD named by the `odd` key under the same
+where the builder reaches it), and the same refusals before the compile: a
+declared return type Codon does not enforce (#529) and the class rules
+(#587, #588). The runner checks the ODD named by the `odd` key under the same
 `typecheck` mode, and `scenario-odd check` does it without running anything:
 it exits with 0 when every ODD passed, 1 when one failed (a checker error is
 reported as `[FAILED] <odd>: checker error: ...`, its traceback on stderr, and
