@@ -26,6 +26,7 @@ from autoware_carla_scenario.authoring.builders import (
 from autoware_carla_scenario.authoring.compiler import BuildContext, compile_document
 from autoware_carla_scenario.authoring.models import (
     BindingRef,
+    ConstraintNode,
     LaneletChoice,
     ScenarioDocument,
 )
@@ -33,6 +34,7 @@ from autoware_carla_scenario.authoring.registry import FieldSpec
 from autoware_carla_scenario.authoring.validator import (
     ValidationReport,
     _check_binding,
+    _check_constraint,
     _Collector,
     _traffic_mean_bounds,
     validate_document,
@@ -40,6 +42,7 @@ from autoware_carla_scenario.authoring.validator import (
 from autoware_carla_scenario.coordinate.map_manager import MapManager
 from autoware_carla_scenario.coordinate.poses import Lanelet2Pose
 from autoware_carla_scenario.sweeper.bindings import parse_binding
+from autoware_carla_scenario.sweeper.constraints import parse_constraint
 
 from .test_play_motion import _write_motion
 
@@ -1390,3 +1393,134 @@ def test_a_constraint_item_that_is_no_mapping_is_shown_as_no_constraint(
         "The constraints do not parse: constraints[0]: A constraint must be a "
         f"mapping with a 'type' (- type: ...), got {shown}"
     ]
+
+
+# -- #2630: what the validator accepts, the sweep and the builders take -------
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    [
+        ("12", True),
+        (12, True),
+        ("any", True),
+        ("${map.some_lanelet_id}", True),
+        (" 12 ", False),
+        ("ANY", False),
+        ("-3", False),
+        ("12.5", False),
+    ],
+)
+def test_an_equals_constraint_takes_what_the_sweeper_takes(
+    value: Any, accepted: bool
+) -> None:
+    """An ``equals`` value is judged by the sweeper's EqualsConstraint, which
+    refuses a padded, negative or fractional id and any word but ``any``."""
+    node = ConstraintNode(type="equals", params={"value": value})
+    out = _Collector()
+    _check_constraint(out, "c", node)
+    errors = [(i.path, i.message) for i in out.issues if i.severity == "error"]
+    if accepted:
+        assert errors == []
+        parse_constraint(node.to_sweep_dict())
+    else:
+        assert errors == [
+            (
+                "c.value",
+                "Lanelet ID must be a lanelet ID or 'any': a lanelet id is a whole "
+                f"number or a string of digits, got {value!r}.",
+            )
+        ]
+        with pytest.raises(ValueError, match="equals.value"):
+            parse_constraint(node.to_sweep_dict())
+
+
+@pytest.mark.parametrize(
+    ("condition", "field"),
+    [
+        ({"type": "entity_count", "params": {"names": ["car", "ego"]}}, "names"),
+        ({"type": "entity_count", "params": {"names": True}}, "names"),
+        ({"type": "adversity_active", "params": {"names": {"a": 1}}}, "names"),
+        (
+            {"type": "area_distance", "params": {"entity": "car", "attributes": ["a"]}},
+            "attributes",
+        ),
+    ],
+)
+def test_a_text_field_refuses_a_value_that_is_no_text(
+    condition: dict[str, Any], field: str
+) -> None:
+    report = validate_document(_document(trigger=condition))
+    assert [i.path for i in report.errors] == [f"assertions.pass[0].{field}"], _errors(
+        report
+    )
+    assert report.errors[0].message.endswith(
+        f"must be text, got {condition['params'][field]!r}."
+    )
+
+
+@pytest.mark.parametrize("type_id", ["entity_count", "adversity_active"])
+def test_a_number_in_a_text_field_reaches_its_builds_helper_as_text(
+    type_id: str,
+) -> None:
+    """A text field handed to a ``builds`` helper is read through str(), as
+    one handed to the constructor is: a name written as a number builds."""
+    document = _document(trigger={"type": type_id, "params": {"names": 12}})
+    report = validate_document(document)
+    assert report.ok, _errors(report)
+    compiled = compile_document(document)
+    instantiate_condition(compiled.pass_conditions[0], BuildContext(scenario=None))
+
+
+@pytest.mark.parametrize(
+    ("condition", "field", "bad"),
+    [
+        (
+            {
+                "type": "temporary_stop",
+                "params": {"entity": "car", "stop_lanelets": [-1]},
+            },
+            "stop_lanelets",
+            -1,
+        ),
+        (
+            {"type": "entity_count", "params": {"lanelet_ids": [_LANELET, 0]}},
+            "lanelet_ids",
+            0,
+        ),
+        (
+            {"type": "adversity_active", "params": {"lanelet_ids": ["-1"]}},
+            "lanelet_ids",
+            -1,
+        ),
+    ],
+)
+def test_a_lanelet_list_refuses_an_id_that_is_not_positive(
+    condition: dict[str, Any], field: str, bad: int
+) -> None:
+    """As a single lanelet field does: such an id names no lanelet."""
+    report = validate_document(_document(trigger=condition))
+    spec = registry.get_condition_spec(condition["type"])
+    assert spec is not None
+    label = next(f.label for f in spec.fields if f.name == field)
+    assert [(i.path, i.message) for i in report.errors] == [
+        (
+            f"assertions.pass[0].{field}",
+            f"{label}: lanelet ids are positive, not {bad}.",
+        )
+    ]
+
+
+def test_a_routing_card_refuses_a_lanelet_path_through_no_lanelet() -> None:
+    """Built, lanelet -1 is a primitive the map does not have."""
+    paths = [
+        i.path
+        for i in validate_document(
+            _card("routing", "car", path_source="lanelets", lanelet_ids=[-1, _LANELET])
+        ).errors
+    ]
+    assert "actions[0].lanelet_ids" in paths
+    report = validate_document(
+        _card("routing", "car", path_source="lanelets", lanelet_ids=[_LANELET])
+    )
+    assert "actions[0].lanelet_ids" not in [i.path for i in report.errors]

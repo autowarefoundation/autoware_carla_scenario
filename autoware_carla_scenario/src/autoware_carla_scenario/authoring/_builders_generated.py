@@ -445,7 +445,7 @@ def build_entity_road_position_condition(
     params = compiled.params
     position = OpenDrivePose(
         s=0.0,
-        road_id=params["road_id"],
+        road_id=str(params["road_id"]),
         lane_id=params["lane_id"],
     )
     rules: list[Any] = []
@@ -631,8 +631,8 @@ def build_adversity_active_condition(
 
     params = compiled.params
     entities = entity_filter_from_fields(
-        names=params["names"],
-        kind=params["kind"],
+        names=str(params["names"]),
+        kind=str(params["kind"]),
         reference=params["reference"],
         min_distance_m=params["min_distance_m"],
         max_distance_m=params["max_distance_m"],
@@ -644,7 +644,7 @@ def build_adversity_active_condition(
         include_reference=params["include_reference"],
     )
     kinds = adversity_kinds_from_field(
-        kind=params["adversity"],
+        kind=str(params["adversity"]),
     )
     return AdversityActiveCondition(
         entities=entities,
@@ -718,9 +718,9 @@ def build_area_distance_condition(
 
     params = compiled.params
     area = map_area_from_fields(
-        ground=params["ground"],
+        ground=str(params["ground"]),
         lanelet_ids=params["lanelet_ids"],
-        attributes=params["attributes"],
+        attributes=str(params["attributes"]),
         relief_m=params["relief_m"],
     )
     return EntityAreaDistanceCondition(
@@ -768,8 +768,8 @@ def build_entity_count_condition(
 
     params = compiled.params
     entities = entity_filter_from_fields(
-        names=params["names"],
-        kind=params["kind"],
+        names=str(params["names"]),
+        kind=str(params["kind"]),
         reference=params["reference"],
         min_distance_m=params["min_distance_m"],
         max_distance_m=params["max_distance_m"],
@@ -1164,16 +1164,16 @@ def build_construction_zone_action(
 
     params = compiled.params
     settings = ConstructionSettings(
-        construction_type=params["construction_type"],
+        construction_type=str(params["construction_type"]),
         spacing=params["spacing"],
         work_zone_offset=params["work_zone_offset"],
         taper_length_in=params["taper_length_in"],
         taper_length_out=params["taper_length_out"],
-        taper_type=params["taper_type"],
+        taper_type=str(params["taper_type"]),
         warning_zone_length=params["warning_zone_length"],
         buffer_zone_length=params["buffer_zone_length"],
         termination_zone_length=params["termination_zone_length"],
-        side=params["side"],
+        side=str(params["side"]),
     )
     return ConstructionZoneAction(
         lanelet_id=params["lanelet_id"],
@@ -1411,12 +1411,12 @@ def build_urban_construction_zone_action(
     settings = ConstructionSettings(
         layout="urban",
         warning_sign_offset=2.0,
-        construction_type=params["construction_type"],
+        construction_type=str(params["construction_type"]),
         spacing=params["spacing"],
         warning_zone_length=params["warning_zone_length"],
         merge_distance=params["merge_distance"],
         merge_signs=params["merge_signs"],
-        side=params["side"],
+        side=str(params["side"]),
     )
     return ConstructionZoneAction(
         lanelet_id=params["lanelet_id"],
@@ -1527,7 +1527,7 @@ def build_traffic_sink_action(
 
     params = compiled.params
     constraints = constraints_from_text(
-        text=params["constraints"],
+        text=str(params["constraints"]),
     )
     return TrafficSinkAction(
         constraints=constraints,
@@ -1550,7 +1550,7 @@ def build_traffic_source_action(
 
     params = compiled.params
     constraints = constraints_from_text(
-        text=params["constraints"],
+        text=str(params["constraints"]),
     )
     return TrafficSourceAction(
         constraints=constraints,
@@ -1902,16 +1902,16 @@ def build_routing_action(
     assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
     params = compiled.params
     goal = authored_goal(
-        path_source=params["path_source"],
+        path_source=str(params["path_source"]),
         lanelet_id=params["goal_lanelet_id"],
         s=params["goal_s"],
     )
     waypoints = authored_waypoints(
-        path_source=params["path_source"],
+        path_source=str(params["path_source"]),
         lanelet_ids=params["waypoint_lanelet_ids"],
     )
     trajectory = authored_route(
-        path_source=params["path_source"],
+        path_source=str(params["path_source"]),
         vertices=params["vertices"],
         lanelet_ids=params["lanelet_ids"],
         speed_kmh=params["speed_kmh"],
@@ -1922,7 +1922,7 @@ def build_routing_action(
         advance=instantiate_advance_conditions(compiled, ctx),
     )
     time_reference = authored_timing(
-        time_domain=params["time_domain"],
+        time_domain=str(params["time_domain"]),
         scale=params["time_scale"],
         offset=params["time_offset"],
     )

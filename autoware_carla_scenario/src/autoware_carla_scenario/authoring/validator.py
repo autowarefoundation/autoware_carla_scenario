@@ -321,6 +321,32 @@ def _check_field(
                 f"{spec.label} must be a list of whole numbers.",
                 object_id,
             )
+        elif spec.kind == "lanelet_list":
+            # A lanelet id is positive, as a single lanelet field's is: an id
+            # of 0 or below names no lanelet, so the build fails on it or a
+            # filter silently matches nothing (#2630).  Said as the area card's
+            # check says it (MapArea.validate).
+            for item in value:
+                lanelet_id = int(str(item).strip())
+                if lanelet_id <= 0:
+                    out.error(
+                        f"{path}.{spec.name}",
+                        f"{spec.label}: lanelet ids are positive, not {lanelet_id}.",
+                        object_id,
+                    )
+                    break
+    elif spec.kind == "text":
+        # The compiler leaves text as the document wrote it and the builders
+        # read it through str(): a number reads as the text it was written
+        # as, but a list, a mapping or a YAML bool (``True`` for ``true``)
+        # does not, and a helper that parses the text would raise on one at
+        # setup (#2630).
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            out.error(
+                f"{path}.{spec.name}",
+                f"{spec.label} must be text, got {value!r}.",
+                object_id,
+            )
     elif spec.kind == "trajectory":
         try:
             parse_vertices(value)
@@ -891,8 +917,36 @@ def _check_constraint(out: _Collector, path: str, node: ConstraintNode) -> None:
             node.id,
         )
 
+    if node.type == "equals":
+        _check_equals_value(out, path, node)
+
     for index, child in enumerate(node.constraints):
         _check_constraint(out, f"{path}.constraints[{index}]", child)
+
+
+def _check_equals_value(out: _Collector, path: str, node: ConstraintNode) -> None:
+    """An ``equals`` constraint's value is one the sweeper's
+    :class:`~..sweeper.constraints.EqualsConstraint` takes (#2630): a lanelet
+    id, ``any`` or a ``${...}`` reference.  Read as the sweep config writes it
+    (:meth:`ConstraintNode.to_sweep_dict`), and judged by the constraint
+    itself, so the two cannot drift.  A value its field check refused has
+    been reported already.
+    """
+    where = f"{path}.value"
+    if any(i.severity == "error" and i.path == where for i in out.issues):
+        return
+    from ..sweeper.constraints import EqualsConstraint  # noqa: PLC0415
+
+    value = node.to_sweep_dict().get("value", "any")
+    try:
+        EqualsConstraint(value=value)
+    except ValueError as exc:
+        reason = str(exc).removeprefix("equals.value: ")
+        out.error(
+            where,
+            f"Lanelet ID must be a lanelet ID or 'any': {reason}.",
+            node.id,
+        )
 
 
 def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> None:
