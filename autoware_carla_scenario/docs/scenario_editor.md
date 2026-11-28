@@ -1050,7 +1050,10 @@ form that has left: the click goes nowhere and the change waits (#2632). The
 inspector forms whose fields carry a `min` or a `step` -- an entity's, an
 action's, a condition's, a constraint's, a waypoint condition's vertex -- are
 `novalidate`, as the gate's is (#2442), so the browser stops none of them: a
-value out of range is posted, and the server says why it was not taken.
+value out of range is posted, and the server says what is wrong with it --
+refusing it beside the form (a vertex below 1, a whole number with a fraction),
+or keeping it and flagging it in the validation report (a negative initial
+speed), as it does for one a script posts.
 
 A form posts **all** of its fields, so one rendered from an older copy of the
 draft would put back whatever was changed since. Each draft therefore has a

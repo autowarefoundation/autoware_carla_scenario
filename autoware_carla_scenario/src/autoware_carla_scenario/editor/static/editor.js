@@ -1149,9 +1149,9 @@
    * and the field keeps what was typed, still a change not posted: the next
    * navigation tries it again. So does one htmx would not send because the
    * browser found its form invalid (`htmx:validation:halted`, #2632): the
-   * inspector forms are `novalidate`, but one that is not is not dropped. One the server refuses (a value it cannot
-   * take) is posted again as an ordinary edit, so its reason is shown where
-   * an edit's always is.
+   * inspector forms are `novalidate`, but one that is not is not dropped.
+   * One the server refuses (a value it cannot take) is posted again as an
+   * ordinary edit, so its reason is shown where an edit's always is.
    * ------------------------------------------------------------------- */
 
   var inFlight = [];     // elements whose request is on its way
