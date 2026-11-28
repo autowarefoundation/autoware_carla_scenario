@@ -1293,15 +1293,16 @@ is given more road as it nears the end of its route; at a dead end, where
 there is none, it is stopped at the end of its road and waits there, as the
 mesoscopic model holds one, rather than arriving: SUMO would remove it and
 leave its CARLA actor driving on. A new route given before it gets there
-(`turn_at_junction`) drops the stop.
+(`turn_at_junction`) drops the stop. With the default the scenario's NPCs
+behave exactly as under the `traffic_manager` backend, while SUMO fills the
+rest of the road.
 
 **No teleports**: SUMO is started with `--time-to-teleport -1`, as its
 mesoscopic one is, so a vehicle held at the front of its lane (at a goal, a
 light, behind a stopped car) waits as long as it is held instead of being
 teleported down the road after SUMO's 300 s, which would make its CARLA actor
-jump. `--time-to-teleport` in `sumo_args` sets SUMO's own instead. With the default the
-scenario's NPCs behave exactly as under the `traffic_manager` backend, while
-SUMO fills the rest of the road.
+jump. A gridlock is not resolved either: its vehicles wait in it.
+`--time-to-teleport` in `sumo_args` sets SUMO's own instead.
 
 **How much of SUMO's traffic reaches CARLA**: an ambient vehicle is mirrored
 into CARLA while it is within `spawn_radius_m` of the ego, at most

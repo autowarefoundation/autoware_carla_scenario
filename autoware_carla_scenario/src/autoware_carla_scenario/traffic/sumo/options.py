@@ -110,13 +110,19 @@ def sumo_class_of(base_type: str, emergency: bool) -> tuple[str, str]:
 
 
 def _net_offset(net_file: Path) -> tuple[float, float]:
-    """The ``netOffset`` of *net_file*, read from its ``<location>``."""
+    """The ``netOffset`` of *net_file*, read from its ``<location>``
+    element.  The header comment netconvert writes before it (its
+    configuration, ``<edge-files .../>`` among it) is not the network: read
+    as its first ``<edge``, it ended the search before the offset (#2637)."""
     with net_file.open() as f:
         for line in f:
-            found = re.search(r'netOffset="([-\d.eE+]+),([-\d.eE+]+)"', line)
-            if found:
-                return float(found[1]), float(found[2])
-            if "<edge" in line:
+            stripped = line.lstrip()
+            if stripped.startswith("<location "):
+                found = re.search(r'netOffset="([-\d.eE+]+),([-\d.eE+]+)"', line)
+                if found:
+                    return float(found[1]), float(found[2])
+                break
+            if stripped.startswith("<edge "):
                 break
     return 0.0, 0.0
 

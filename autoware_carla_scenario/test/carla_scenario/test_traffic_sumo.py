@@ -1954,6 +1954,44 @@ def test_a_network_says_whether_it_drives_on_the_left(
 
 
 @needs_sumo
+def test_a_network_offset_is_read_past_netconverts_header(tmp_path: Path) -> None:
+    """#2637: the header comment netconvert writes (``<edge-files .../>``
+    among its configuration) ended the search for ``netOffset`` before the
+    network's ``<location>``: a ``net_path`` network with an offset was read
+    as having none, and every vehicle was put that far off."""
+    import subprocess
+
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+    from autoware_carla_scenario.traffic.sumo.options import _net_offset
+
+    (tmp_path / "net.nod.xml").write_text(
+        '<nodes><node id="a" x="1000.0" y="2000.0"/>'
+        '<node id="b" x="1100.0" y="2000.0"/></nodes>\n'
+    )
+    (tmp_path / "net.edg.xml").write_text(
+        '<edges><edge id="ab" from="a" to="b" numLanes="1"/></edges>\n'
+    )
+    subprocess.run(
+        [
+            network_module._binary("netconvert"),
+            "--node-files",
+            "net.nod.xml",
+            "--edge-files",
+            "net.edg.xml",
+            "--output-file",
+            "net.net.xml",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    text = (tmp_path / "net.net.xml").read_text()
+    assert '<edge-files value="net.edg.xml"/>' in text  # in the header comment
+    assert 'netOffset="-1000.00,-2000.00"' in text
+    assert _net_offset(tmp_path / "net.net.xml") == (-1000.0, -2000.0)
+
+
+@needs_sumo
 @pytest.mark.parametrize(
     ("sublane", "length_m"), [(True, 0.0), (True, 30.0), (False, 0.0)]
 )
