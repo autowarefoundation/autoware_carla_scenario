@@ -28,6 +28,7 @@ from starlette.convertors import Convertor, register_url_convertor
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
+from ..slurm.manifest import BatchLayout
 from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
 from . import cases, recordings, results, runner, scanner, slurm_launch
 from .case_paths import (
@@ -321,7 +322,9 @@ def parse_run_body(body: dict[str, Any]) -> RunBody:
     a string would otherwise be extended into the command one character at a
     time (#1500) -- and none may start with ``-``, a flag of ``scenario``
     rather than an override (:func:`check_extra_overrides`, #2440);
-    ``scenario`` a string, ``sweeper`` a string or null,
+    ``scenario`` a string that is not blank (the run panel sends a
+    whitespace-only field as ``""``, which would run ``scenario=``),
+    ``sweeper`` a string or null,
     ``launcher`` ``"local"``, ``"slurm"`` or null, ``slurm`` an object or
     null.  Other fields are ignored.
 
@@ -331,6 +334,10 @@ def parse_run_body(body: dict[str, Any]) -> RunBody:
     scenario = body.get("scenario", "*/*")
     if not isinstance(scenario, str):
         raise BodyError("scenario must be a string")
+    if not scenario.strip():
+        raise BodyError(
+            "scenario must not be blank: name the scenarios to run ('*/*' for all)"
+        )
     extra = body.get("extra_overrides")
     if extra is None:
         extra = []
@@ -423,8 +430,7 @@ async def session_detail(
             "total_count": total_count,
             "pending_count": pending_count,
             "page": "session",
-            "slurm": session_type == "batch"
-            and (directory / "slurm" / "manifest.json").is_file(),
+            "slurm": session_type == "batch" and _has_slurm_panel(directory),
         },
     )
 
@@ -875,9 +881,14 @@ def _parse_ref(ref: str) -> tuple[str, str, str] | None:
         return None
     session_type, date, time = parts
     directory = cases.session_dir(_base_path(), session_type, date, time)
-    # A single run's URL does not name a batch, nor a batch's a single run
-    # (#2543).
-    if directory is None or not cases.session_type_matches(directory, session_type):
+    # A session that does not exist is no ref, as it has no page
+    # (_session_dir_or_404); a single run's URL does not name a batch, nor a
+    # batch's a single run (#2543).
+    if (
+        directory is None
+        or not directory.is_dir()
+        or not cases.session_type_matches(directory, session_type)
+    ):
         return None
     return session_type, date, time
 
@@ -1163,16 +1174,34 @@ async def slurm_submission() -> dict[str, Any]:
     return out
 
 
+def _own_manifest(directory: Path) -> bool:
+    """Whether batch *directory* has a SLURM manifest of its own: one that is
+    a symbolic link, or under a ``slurm`` that is one, is none, as its
+    session page counts it (``cases._own_member``, #2543)."""
+    return cases._own_member(directory, "slurm", "manifest.json") is not None
+
+
+def _has_slurm_panel(directory: Path) -> bool:
+    """Whether batch *directory*'s page shows the SLURM panel: whether
+    :func:`slurm_status` answers for it -- a manifest of its own
+    (:func:`_own_manifest`, as :func:`_slurm_batch` asks) that
+    :func:`.slurm_launch.batch_status` can read. A panel shown for a batch
+    its own API refuses would poll "Not a SLURM batch" for ever."""
+    if not _own_manifest(directory):
+        return False
+    try:
+        BatchLayout(directory, own_files=True).read_manifest()
+    except (FileNotFoundError, ValueError, OSError, RecursionError):
+        return False
+    return True
+
+
 def _slurm_batch(date: str, time: str) -> Path:
-    """The directory of SLURM batch *date*/*time*, or 404: one whose manifest
-    is a symbolic link, or under a ``slurm`` that is one, is no batch, as
-    its session page counts it (``cases._own_member``, #2543); its panel
-    must not show what the link names either."""
+    """The directory of SLURM batch *date*/*time*, or 404: one without a
+    manifest of its own (:func:`_own_manifest`) is no batch; its panel must
+    not show what a link names either."""
     directory = cases.session_dir(_base_path(), "batch", date, time)
-    if (
-        directory is None
-        or cases._own_member(directory, "slurm", "manifest.json") is None
-    ):
+    if directory is None or not _own_manifest(directory):
         raise HTTPException(status_code=404, detail="Not a SLURM batch")
     return directory
 

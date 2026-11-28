@@ -303,12 +303,13 @@ def test_a_case_s_outcome_is_read_off_its_verdict() -> None:
 
 def _key_before_1721(scenario: str, overrides: list[str]) -> str | None:
     """``CaseResult.key``'s override part as ``ui.results`` built it before
-    it moved to ``ui.comparison.override_key`` (#1721)."""
+    it moved to ``ui.comparison.override_key`` (#1721), but for Hydra's own
+    overrides, which are left out with a leading ``+`` too (#2602)."""
     own = sorted(
         o.lstrip("+")
         for o in overrides
         if not o.lstrip("+").startswith(("odd_case=",))
-        and not o.startswith(("hydra.", "hydra/"))
+        and not o.lstrip("+").startswith(("hydra.", "hydra/"))
     )
     return f"{scenario}|" + "|".join(own) if own else None
 
@@ -393,3 +394,15 @@ def test_a_batch_s_scenarios_are_what_ui_app_read_of_its_summary() -> None:
     names = ["", ",", " , ", "a#0, b#1", "a#0,a#1", "x # 1 ,", *_labels(2386, 1000)]
     for name in names:
         assert comparison.batch_scenarios(name) == old(name), name
+
+
+@pytest.mark.parametrize(
+    "hydra", ["+hydra.job.name=x", "++hydra.verbose=true", "+hydra/launcher=slurm"]
+)
+def test_hydra_s_own_overrides_with_a_plus_are_no_part_of_the_key(
+    hydra: str,
+) -> None:
+    """#2602: Hydra's own overrides are left out of a case's key with a
+    leading ``+`` as without one, as the positional ones are."""
+    assert comparison.override_key("pkg/x", ["a=1", hydra]) == "pkg/x|a=1"
+    assert comparison.override_key("pkg/x", [hydra]) is None

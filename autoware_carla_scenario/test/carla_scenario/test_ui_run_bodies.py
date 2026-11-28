@@ -256,3 +256,37 @@ def test_the_slurm_command_refuses_a_flag_through_the_same_check() -> None:
     assert "a=-1" in slurm_options.build_command(
         ["scenario"], "a/b", ["a=-1"], "", slurm_options.SlurmOptions()
     )
+
+
+# ── A blank scenario (#2602) ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("scenario", ["", "   ", "\t\n"])
+@pytest.mark.parametrize("launcher", ["local", "slurm"])
+def test_a_run_with_a_blank_scenario_is_a_400(
+    started: list[Any],
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    launcher: str,
+) -> None:
+    """The run panel sends a whitespace-only field as ``""``: refused, not
+    started as ``scenario=`` to fail in Hydra."""
+    submitted: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+    monkeypatch.setattr(
+        slurm_launch, "start_submit", lambda command, base: submitted.append(command)
+    )
+    response = client.post(
+        "/api/run", json={"scenario": scenario, "launcher": launcher}
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["status"] == "error"
+    assert "scenario must not be blank" in body["message"]
+    assert started == [] and submitted == []
+    preview = client.post(
+        "/api/run/preview", json={"scenario": scenario, "launcher": launcher}
+    )
+    assert preview.status_code == 400
+    assert preview.json()["command"].startswith("# scenario must not be blank")
