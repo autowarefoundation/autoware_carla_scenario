@@ -60,6 +60,7 @@ from .scripts import REMOTE_EARLY_OUTPUT_DIR as REMOTE_EARLY_OUTPUT_DIR
 from .scripts import WORKER_MODULE as WORKER_MODULE
 from .scripts import ScriptInputs
 from .scripts import _expand_ranges as _expand_ranges
+from .scripts import _sbatch_output_dir
 from .scripts import _shell_path as _shell_path
 from .scripts import _write_script as _write_script
 from .scripts import relative_batch_dir as relative_batch_dir
@@ -154,10 +155,11 @@ def submit_batch(
         # A fresh batch only: a resubmit adds a submission to the existing
         # manifest (submit_cases), and never comes here.  Writing over another
         # batch's manifest would hand its tasks this batch's cases (#1223).
+        target = shlex.quote(str(output_dir))
         raise FileExistsError(
             f"{output_dir} already holds a SLURM batch ({layout.manifest}); "
             "a new batch needs a directory of its own (to run some of that "
-            f"batch's cases again: scenario-slurm resubmit {output_dir})"
+            f"batch's cases again: scenario-slurm resubmit {target})"
         )
 
     launchers = [
@@ -183,6 +185,9 @@ def submit_batch(
     remote: dict[str, Any] = {}
     if settings.remote_cwd is not None:
         remote["batch_dir_relative"] = relative_batch_dir(output_dir, cwd)
+    else:
+        # Refused before anything is written, not at sbatch (#2601).
+        _sbatch_output_dir(layout.logs)
     manifest: dict[str, Any] = {
         # Version 1 unless the jobs need what version 2 adds (remote_cwd).
         "version": MANIFEST_VERSION if remote else 1,

@@ -41,11 +41,12 @@ __all__ = ["after_submit", "follow"]
 def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     """Follow submission *index* to its end and collect (``wait``), or say
     how to; the exit status."""
+    target = shlex.quote(str(layout.batch_dir))
     submission = layout.submission_record(index)
     if submission is None:
         print(  # noqa: T201
             f"Error: the submission record {layout.submission(index)} cannot be "
-            f"read; see the batch with: scenario-slurm status {layout.batch_dir}",
+            f"read; see the batch with: scenario-slurm status {target}",
             file=sys.stderr,
         )
         return 1
@@ -54,7 +55,6 @@ def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> in
     if submission.is_true("collect_error"):
         return 1  # submit_cases said what failed, and how to collect
     cli = f"{shlex.quote(sys.executable)} -m {CLI_MODULE}"
-    target = shlex.quote(str(layout.batch_dir))
     job = submission.text("job_id")
     print(f"Submitted; not waiting (--no-wait). Job {job}.")  # noqa: T201
     if submission.is_true("collect_job_id"):
@@ -89,12 +89,14 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     (#1417, #1791): ``squeue -j None`` would read as a job that ended."""
     from .collect import collect  # noqa: PLC0415
 
+    # Quoted for the copy-paste hints (#2601).
+    target = shlex.quote(str(layout.batch_dir))
     submission = layout.submission_record(index)
     if submission is None:
         print(  # noqa: T201
             f"Error: the submission record {layout.submission(index)} is missing "
             "or cannot be read; collect the batch with: "
-            f"scenario-slurm collect {layout.batch_dir}",
+            f"scenario-slurm collect {target}",
             file=sys.stderr,
         )
         return 1
@@ -115,8 +117,8 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 + ("" if at is None else f" at {at}")
                 + ", and SLURM may have taken the job all the same. If "
                 "`squeue --me` lists it, collect the batch once it ends: "
-                f"scenario-slurm collect {layout.batch_dir}; if not, run its "
-                f"cases again: scenario-slurm resubmit {layout.batch_dir}" + refused,
+                f"scenario-slurm collect {target}; if not, run its "
+                f"cases again: scenario-slurm resubmit {target}" + refused,
                 file=sys.stderr,
             )
         elif sbatch_in_flight(submission):
@@ -124,7 +126,7 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 f"Error: submission {index} of this batch is being submitted "
                 "(sbatch has not returned yet), by another resubmit or the "
                 "viewer; try again once it has: "
-                f"scenario-slurm wait {layout.batch_dir}",
+                f"scenario-slurm wait {target}",
                 file=sys.stderr,
             )
         else:
@@ -132,7 +134,7 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 f"Error: submission {index} of this batch has no job: its "
                 "submitter stopped before sbatch returned, more than "
                 f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s ago, so the record is stale. "
-                f"See the batch with: scenario-slurm status {layout.batch_dir}",
+                f"See the batch with: scenario-slurm status {target}",
                 file=sys.stderr,
             )
         return 1
@@ -172,7 +174,7 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 if time.monotonic() - unknown_since > 10 * settings.poll_seconds:
                     print(  # noqa: T201
                         "[slurm] squeue keeps failing; stopped following. Collect "
-                        f"later with: scenario-slurm collect {layout.batch_dir}",
+                        f"later with: scenario-slurm collect {target}",
                         flush=True,
                     )
                     return 1
@@ -184,14 +186,14 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
             cancel_jobs([job])
             print(  # noqa: T201
                 f"\n[slurm] interrupted: cancelled job {job}. Run the cases that "
-                f"did not finish with: scenario-slurm resubmit {layout.batch_dir}",
+                f"did not finish with: scenario-slurm resubmit {target}",
                 flush=True,
             )
             _wait_until_gone(job, CANCEL_WAIT_SECONDS, settings.poll_seconds)
         else:
             print(  # noqa: T201
                 f"\n[slurm] stopped following job {job}, which goes on. Follow it "
-                f"again with: scenario-slurm wait {layout.batch_dir}",
+                f"again with: scenario-slurm wait {target}",
                 flush=True,
             )
             return 130

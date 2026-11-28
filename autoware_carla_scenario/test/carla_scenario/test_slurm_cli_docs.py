@@ -73,3 +73,41 @@ def test_the_slurm_and_autoware_docs_agree_on_tasks_sharing_a_node() -> None:
     from autoware_carla_scenario.autoware_stack import OWNER_LABEL  # noqa: PLC0415
 
     assert OWNER_LABEL == "autoware_carla_scenario.owner"
+
+
+def test_the_docs_name_every_sensitive_name_pattern() -> None:
+    """#2601: ``*PASSWD*`` and ``*DSN*`` were missing in docs/slurm.md and
+    the shipped launcher config."""
+    from autoware_carla_scenario.slurm.settings import SENSITIVE_NAME_PATTERNS
+
+    docs = " ".join(DOCS.read_text(encoding="utf-8").split())
+    sentence = docs.split("and a name with ", 1)[1].split(" in it", 1)[0]
+    config = (
+        Path(cli.__file__).resolve().parents[1]
+        / "examples"
+        / "conf"
+        / "launcher"
+        / "slurm.yaml"
+    ).read_text(encoding="utf-8")
+    comment = " ".join(
+        line.lstrip("# ") for line in config.splitlines() if line.startswith("#")
+    )
+    listed = comment.split("A name with ", 1)[1].split(" in it", 1)[0]
+    names = {pattern.strip("*") for pattern in SENSITIVE_NAME_PATTERNS}
+    assert set(re.findall(r"`([A-Z]+)`", sentence)) == names
+    assert set(re.findall(r"[A-Z]+", listed)) == names
+
+
+def test_usage_says_no_wait_fails_when_the_collect_job_is_not_submitted() -> None:
+    """#2601: docs/usage.md said ``--no-wait`` exits 0 once submitted, while
+    after_submit exits 1 when the collect job could not be submitted."""
+    usage = " ".join((DOCS.parent / "usage.md").read_text(encoding="utf-8").split())
+    line = usage.split("`launcher=slurm` with `--no-wait` exits 0", 1)[1]
+    assert (
+        line.split(";", 1)[0]
+        .strip()
+        .startswith(
+            "once the batch and its collect job are submitted (non-zero when the "
+            "collect job could not be submitted"
+        )
+    )

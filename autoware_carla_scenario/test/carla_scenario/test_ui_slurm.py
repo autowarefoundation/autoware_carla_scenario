@@ -1293,3 +1293,58 @@ def test_new_manifests_are_ordered_by_session_number(tmp_path: Path) -> None:
         "12-00-00-9",
         "12-00-00-10",
     ]
+
+
+@pytest.mark.parametrize(
+    ("value", "count"),
+    [
+        ("2", 2),
+        (2, 2),
+        (2.0, 2),
+        ("2.0", 2),
+        (" 3 ", 3),
+        ("02", 2),
+        ("+3", None),
+        ("1_000", None),
+        ("2.5", None),
+        (2.5, None),
+        ("-1", None),
+        ("1e3", None),
+        ("²", None),
+        ("1" * 19, None),
+    ],
+)
+def test_the_run_panel_and_a_resubmit_read_a_count_alike(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: Any,
+    count: int | None,
+) -> None:
+    """#2601: the panel took "+3" and "1_000" (int()), a resubmit refused
+    them; and both refused the 2.0 docs/slurm.md says a count takes."""
+    if count is None:
+        with pytest.raises(ValueError, match="must be a whole number|at least 1"):
+            SlurmOptions.from_request({"cases_per_task": value})
+    else:
+        assert SlurmOptions.from_request({"cases_per_task": value}).cases_per_task == (
+            count
+        )
+    _manifest_batch(tmp_path)
+    ran: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+
+    def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
+        ran.append(args)
+        return 0, ""
+
+    monkeypatch.setattr(slurm_launch, "run_cli", run_cli)
+    response = client.post(
+        "/api/slurm/2026-10-19/12-00-00/resubmit", json={"cases_per_task": value}
+    )
+    if count is None:
+        assert response.status_code == 400
+        assert ran == []
+    else:
+        assert response.status_code == 200 and response.json()["ok"]
+        assert ran[-1][-3:] == ["--cases-per-task", str(count), "--no-wait"]

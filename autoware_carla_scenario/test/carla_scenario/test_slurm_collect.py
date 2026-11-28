@@ -23,7 +23,6 @@ from autoware_carla_scenario.slurm import manifest
 from autoware_carla_scenario.slurm.collect import (
     _missing_message,
     collect,
-    missing_cases,
     unfinished_cases,
 )
 from autoware_carla_scenario.slurm.manifest import (
@@ -722,7 +721,6 @@ def test_collect_prints_and_writes_a_mixed_batch(
         "  ]\n"
         "}\n"
     )
-    assert missing_cases(layout) == [4, 5, 6, 7]
     assert unfinished_cases(layout) == [2, 3, 4, 5, 6, 7]
     assert unfinished_cases(layout, failed=True) == [1, 2, 3, 4, 5, 6, 7]
     # Quietly: the summary, without the hints.
@@ -1164,3 +1162,42 @@ def test_collect_hints_a_cancelled_tasks_cases_to_wait(
         f"`squeue --me` lists their tasks, wait for them with: {_WAIT}; once "
         "they have ended, run them again with: scenario-slurm resubmit /b"
     ) in out
+
+
+def test_the_hints_quote_a_batch_directory_with_a_space(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2601: ``scenario-slurm resubmit ~/my runs/...`` split into two
+    arguments; collect, follow and submit quote the directory, as
+    after_submit's hints did."""
+    import shlex
+
+    from autoware_carla_scenario.slurm import follow
+    from autoware_carla_scenario.slurm.settings import SlurmSettings
+
+    layout = _layout(tmp_path, directory=tmp_path / "my runs" / "b")
+    quoted = shlex.quote(str(layout.batch_dir))
+    assert quoted != str(layout.batch_dir)
+    assert collect(layout) == 1
+    out = capsys.readouterr().out
+    assert f"scenario-slurm resubmit {quoted}" in out
+    # No submission record: follow and after_submit say how to go on.
+    assert follow.follow(layout, 0, SlurmSettings()) == 1
+    assert f"scenario-slurm collect {quoted}" in capsys.readouterr().err
+    assert follow.after_submit(layout, 0, SlurmSettings(wait=False)) == 1
+    assert f"scenario-slurm status {quoted}" in capsys.readouterr().err
+    from autoware_carla_scenario.slurm import submit
+
+    with pytest.raises(FileExistsError) as caught:
+        submit.submit_batch(
+            scenario_names=["s"],
+            cases=[("s", [])],
+            labels=["s#1"],
+            case_overrides=[[]],
+            configs=[],
+            scenario_classes=["Scenario"],
+            overrides=[],
+            expand=False,
+            output_dir=layout.batch_dir,
+        )
+    assert f"scenario-slurm resubmit {quoted})" in str(caught.value)

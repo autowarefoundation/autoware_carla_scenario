@@ -32,7 +32,6 @@ from autoware_carla_scenario.slurm import follow as slurm_follow
 from autoware_carla_scenario.slurm.collect import (
     RecordedResult,
     collect,
-    missing_cases,
     unfinished_cases,
 )
 from autoware_carla_scenario.slurm.manifest import (
@@ -748,7 +747,6 @@ def test_the_cases_to_run_again(tmp_path: Path, name: str, content: bytes) -> No
     assert unfinished_cases(layout, failed=True) == (
         [1] if again or not verdict else []
     )
-    assert missing_cases(layout) == ([1] if old is None else [])
 
 
 @pytest.mark.parametrize(("name", "content"), _CONTENTS, ids=_IDS)
@@ -925,7 +923,6 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
         "  3 with a result (3 passed, 0 errored), 0 without\n"
     )
     assert unfinished_cases(layout, failed=True) == []
-    assert missing_cases(layout) == []
     assert slurm_unrecorded(layout.batch_dir) == ([], 3)
     status = slurm_launch.batch_status(layout.batch_dir)
     assert status is not None

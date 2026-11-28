@@ -624,9 +624,16 @@ def _batch_configs(
     """The configs of the cases *record* (the manifest's ``batch_settings``)
     names, by index: this task's own from *configs* (its cases, *chunk*), the
     others composed here as the task's own are, at this node's paths and on
-    this task's ports."""
+    this task's ports.
+
+    Of the others only the first case's are moved to the task's ROS domains
+    (*domains*): the queue's Autoware launcher is built from it, and is the
+    one the task's egos share only when it names the same domains as theirs.
+    The Rerun and canvas cases run nothing in a domain, so they take none,
+    which the task would otherwise hold for its whole life (#2601)."""
+    first = int(record.get("first_case", 0))
     wanted = {
-        int(record.get("first_case", 0)),
+        first,
         *map(int, record.get("rerun_cases", [])),
     }
     if record.get("canvas_case") is not None:
@@ -640,7 +647,7 @@ def _batch_configs(
         case = manifest["cases"][index]
         cfg = run._compose_config(case["scenario"], list(case["overrides"]))
         _check_same_config(case, cfg, manifest.get("cwd"))
-        worker_overrides(cfg, slot, domains)
+        worker_overrides(cfg, slot, domains if index == first else None)
         found[index] = cfg
     return found
 

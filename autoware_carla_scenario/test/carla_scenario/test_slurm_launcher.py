@@ -30,7 +30,7 @@ import pytest
 
 from autoware_carla_scenario.slurm import follow as slurm_follow
 from autoware_carla_scenario.slurm import status as slurm_status
-from autoware_carla_scenario.slurm.collect import missing_cases, unfinished_cases
+from autoware_carla_scenario.slurm.collect import unfinished_cases
 from autoware_carla_scenario.slurm.manifest import (
     BatchLayout,
     SubmissionRecord,
@@ -613,7 +613,6 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
         for i in range(6)
         if (record := layout.read_result(i)) is not None and record.errored
     ]
-    assert missing_cases(layout) == missing
     code = cli.main(["resubmit", str(batch), "--dry-run"])
     assert code == 0
     resubmitted = sorted([*missing, *errored])
@@ -626,7 +625,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
         local / "batch_results.json"
     ).read_bytes()
     # Only the cases that error whenever they run are left.
-    assert missing_cases(layout) == []
+    assert all(layout.read_result(i) is not None for i in range(6))
     errored_now = [i for i in range(6) if layout.read_result(i).errored]  # type: ignore[union-attr]
     assert unfinished_cases(layout) == errored_now
 
@@ -3175,7 +3174,6 @@ def test_a_result_or_task_status_that_is_not_an_object_is_none(
     task.write_text(content)
     assert layout.read_result(1) is None
     assert layout.read_task(0, 0) is None
-    assert missing_cases(layout) == [0, 1, 2]
     assert unfinished_cases(layout) == [0, 1, 2]
     assert collect(layout, quiet_hint=True) == 1
     summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
@@ -3604,7 +3602,7 @@ def test_a_result_with_no_verdict_is_an_error_not_a_pass(
     from autoware_carla_scenario.slurm.collect import collect
 
     layout = _with_case_1(tmp_path, record)
-    assert missing_cases(layout) == []
+    assert layout.read_result(1) is not None
     assert unfinished_cases(layout) == [1]
     assert unfinished_cases(layout, failed=True) == [1]
     assert collect(layout) == 1

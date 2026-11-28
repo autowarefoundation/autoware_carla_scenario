@@ -402,6 +402,27 @@ def _job_name(layout: BatchPaths, settings: SlurmSettings) -> str:
     return f"acs-{batch.parent.name}-{batch.name}"
 
 
+def _sbatch_output_dir(directory: Path) -> str:
+    """*directory* as the directory part of an ``sbatch --output`` pattern.
+
+    sbatch expands ``%`` patterns over the whole filename, so each ``%`` of
+    the directory is written ``%%``; and any ``\\`` in it turns expansion off
+    for the whole filename (every task would write one literal
+    ``%A_%a.out``), so a directory holding one is refused.
+
+    Raises:
+        ValueError: *directory* holds a ``\\``.
+    """
+    text = str(directory)
+    if "\\" in text:
+        raise ValueError(
+            f"launcher=slurm: the batch's output directory {text} holds a "
+            "backslash, which turns off sbatch's --output patterns (every task "
+            "would write the same log); choose a directory without one"
+        )
+    return text.replace("%", "%%")
+
+
 def _output_options(
     layout: BatchPaths, settings: SlurmSettings, name: str
 ) -> list[str]:
@@ -412,7 +433,7 @@ def _output_options(
     output there, and its script sends the output on to the batch's logs.
     """
     if settings.remote_cwd is None:
-        return [f"--output={layout.logs}/{name}"]
+        return [f"--output={_sbatch_output_dir(layout.logs)}/{name}"]
     early = REMOTE_EARLY_OUTPUT_DIR
     return [f"--chdir={early}", f"--output={early}/acs-slurm-%u-{name}"]
 

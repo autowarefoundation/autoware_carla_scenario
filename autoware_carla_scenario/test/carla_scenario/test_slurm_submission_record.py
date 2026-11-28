@@ -811,7 +811,7 @@ def _readers(layout: BatchLayout) -> dict[str, Callable[[], Any]]:
         "run-task": lambda: worker.run_task(layout.manifest, 0, 99),
         "missing-cases": lambda: [
             collect_mod._missing_message(layout, i, batch)
-            for i in collect_mod.missing_cases(layout)
+            for i in collect_mod.unfinished_cases(layout)
         ],
         "collect": lambda: collect_mod.collect(layout),
         "batch-status": lambda: _text(slurm_launch.batch_status(layout.batch_dir)),

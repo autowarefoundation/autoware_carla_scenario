@@ -19,7 +19,7 @@ it was read as a ``dict`` (the ``_old_*`` oracles below, the code that read
 it): what ``read_manifest`` gives for each key, as ``manifest[key]``,
 ``manifest.get(key)`` and ``key in manifest``; and, with the manifest read as
 a ``dict`` and the oracles in place of its checked readers, what ``status``,
-``collect``, ``resubmit --dry-run``, ``missing_cases``, ``unfinished_cases``,
+``collect``, ``resubmit --dry-run``, ``unfinished_cases``,
 ``resubmit_target``, the gate, the scripts' inputs, a task's start
 (``worker.run_task``, up to building its cases) and the viewer's batch status
 print, log, write and return.
@@ -28,6 +28,7 @@ print, log, write and return.
 from __future__ import annotations
 
 import json
+import shlex
 import re
 import logging
 import operator
@@ -349,15 +350,6 @@ def _old_resubmit_target(layout: BatchLayout, manifest: Any) -> str:
     return str(layout.batch_dir)
 
 
-def _old_missing_cases(layout: BatchLayout) -> list[int]:
-    manifest = layout.read_manifest()
-    return [
-        case["index"]
-        for case in manifest["cases"]
-        if layout.read_result(int(case["index"])) is None
-    ]
-
-
 def _old_unfinished_cases(layout: BatchLayout, *, failed: bool = False) -> list[int]:
     manifest = layout.read_manifest()
     chosen: list[int] = []
@@ -378,7 +370,8 @@ def _old_unfinished_cases(layout: BatchLayout, *, failed: bool = False) -> list[
 def _old_collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     """collect(), reading the manifest as a dict."""
     manifest = layout.read_manifest()
-    target = _old_resubmit_target(layout, manifest)
+    # Quoted for the copy-paste hints since #2601, as collect's is.
+    target = shlex.quote(_old_resubmit_target(layout, manifest))
     labels: list[str] = []
     results: list[Any] = []
     errored: list[int] = []
@@ -461,7 +454,6 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         patch.setattr(BatchLayout, "read_manifest", _old_read_manifest)
         patch.setattr(manifest_mod, "resubmit_target", _old_resubmit_target)
         patch.setattr(collect_mod, "resubmit_target", _old_resubmit_target)
-        patch.setattr(collect_mod, "missing_cases", _old_missing_cases)
         patch.setattr(collect_mod, "unfinished_cases", _old_unfinished_cases)
         patch.setattr(collect_mod, "collect", _old_collect)
         patch.setattr(cli, "unfinished_cases", _old_unfinished_cases)
@@ -663,7 +655,6 @@ def _readers(layout: BatchLayout) -> dict[str, Callable[[], Any]]:
         "resubmit-dry-wait": lambda: cli.main(
             ["resubmit", batch, "--dry-run", "--force", "--wait", "--cases", "0"]
         ),
-        "missing-cases": lambda: collect_mod.missing_cases(layout),
         "unfinished-cases": lambda: collect_mod.unfinished_cases(layout),
         "unfinished-failed": lambda: collect_mod.unfinished_cases(layout, failed=True),
         "resubmit-target": lambda: collect_mod.resubmit_target(
@@ -809,7 +800,6 @@ def test_what_the_readers_make_of_a_manifest_as_a_submitter_writes_it(
     pristine = _batch(tmp_path, _manifest(_V2).encode())
     seen = _run_readers(pristine, tmp_path, capsys, caplog)
     batch = tmp_path / "work" / "batch"
-    assert seen["missing-cases"][0] == _text(("returns", [1]))
     assert seen["unfinished-cases"][0] == _text(("returns", [1, 2]))
     assert seen["unfinished-failed"][0] == _text(("returns", [1, 2]))
     assert seen["resubmit-target"][0] == _text(("returns", "/submit/out/ü"))
@@ -1149,7 +1139,6 @@ def test_a_manifest_nested_deep_is_read_as_json_loads_reads_it(
     names = (
         "status",
         "collect-quiet",
-        "missing-cases",
         "unfinished-failed",
         "resubmit-target",
         "resubmit-dry",

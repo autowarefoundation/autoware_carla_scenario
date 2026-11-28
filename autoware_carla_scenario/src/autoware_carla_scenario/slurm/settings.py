@@ -236,6 +236,43 @@ def _check_time_is_text(value: Any) -> None:
     )
 
 
+#: sbatch's ``--time`` forms: ``minutes``, ``minutes:seconds``,
+#: ``hours:minutes:seconds`` (the leading field of any width: ``168:00:00``),
+#: ``days-hours``, ``days-hours:minutes`` and ``days-hours:minutes:seconds``;
+#: each field of any number of ASCII digits, as sbatch reads them
+#: (``time_str2secs``: ``1:2`` is a minute and two seconds), so that nothing
+#: sbatch takes is refused here.
+_TIME_PATTERN = re.compile(r"^[0-9]+(-[0-9]+)?(:[0-9]+){0,2}$")
+#: The ``--time`` that sets no limit, in any case (``unlimited``), and
+#: sbatch's ``-1``.
+_TIME_NO_LIMIT: tuple[str, ...] = ("UNLIMITED", "INFINITE", "-1")
+
+
+def _check_time_format(time: str | None, name: str) -> None:
+    """Refuse a *time* that is not sbatch's ``--time``, if set, naming it
+    *name* (``launcher.time``; the run panel's ``time``): before the batch's
+    manifest and job script are written, not by sbatch (#2601).
+
+    Raises:
+        ValueError: It is not.
+    """
+    if time is None or time.upper() in _TIME_NO_LIMIT:
+        return
+    if _TIME_PATTERN.fullmatch(time) is None:
+        raise ValueError(
+            f"{name} is sbatch's --time (minutes, minutes:seconds, "
+            "hours:minutes:seconds, days-hours, days-hours:minutes, "
+            f"days-hours:minutes:seconds or UNLIMITED), not {time!r}"
+        )
+
+
+def _ends_in_backslash(line: str) -> bool:
+    """Whether *line* ends in an unescaped backslash: the job script holds a
+    ``launcher.setup`` line as written, so it would run on into the script's
+    next line (#1893)."""
+    return (len(line) - len(line.rstrip("\\"))) % 2 == 1
+
+
 def _str_list(value: Any, name: str) -> tuple[str, ...]:
     """A list setting: a list of text, or one string as a list of one.
 
@@ -262,6 +299,28 @@ def _str_list(value: Any, name: str) -> tuple[str, ...]:
     return tuple(texts)
 
 
+#: sbatch's short options that take no argument: in a group of short options
+#: (``-vM x``, ``-vMx``) any other letter takes the rest of the group, or the
+#: next argument, as its value (``-k``'s value is optional: ``-kM`` gives it M).
+_SBATCH_SHORT_FLAGS: str = "HhOQsuVvW"
+
+
+def _names_clusters(arg: str) -> bool:
+    """Whether *arg* is ``--clusters``/``--cluster`` or a group of short
+    options holding ``-M`` (``-Mx``, ``-vMx``, ``-v -M x``'s ``-vM``)."""
+    name = arg.split("=", 1)[0]
+    if name in ("--clusters", "--cluster"):
+        return True
+    if not arg.startswith("-") or arg.startswith("--"):
+        return False
+    for letter in arg[1:]:
+        if letter == "M":
+            return True
+        if letter not in _SBATCH_SHORT_FLAGS:
+            return False  # the rest of the group is this option's value
+    return False
+
+
 def _check_no_clusters(args: tuple[str, ...]) -> None:
     """Refuse ``--clusters``/``--cluster``/``-M`` in ``extra_sbatch_args``.
 
@@ -271,8 +330,7 @@ def _check_no_clusters(args: tuple[str, ...]) -> None:
     and ``cancel`` miss it (#2247).
     """
     for arg in args:
-        name = arg.split("=", 1)[0]
-        if name in ("--clusters", "--cluster") or arg.startswith("-M"):
+        if _names_clusters(arg):
             raise ValueError(
                 f"launcher.extra_sbatch_args: {arg!r} submits to another "
                 "cluster (sbatch --clusters/-M), which launcher=slurm does not "
@@ -451,6 +509,7 @@ class SlurmSettings:
         for key in ("partition", "account", "qos", "time", "mem", "gres"):
             if key in data:
                 options[key] = _optional_str(data[key], key)
+        _check_time_format(options.get("time"), "launcher.time")
         for key in ("job_name", "python", "collect_mem", "port_lock_dir", "remote_cwd"):
             if key in data:
                 options[key] = _optional_str(data[key], key)
@@ -469,7 +528,7 @@ class SlurmSettings:
             # The job script holds each line as written: one ending in an
             # unescaped backslash would run on into the script's next line
             # (`set -u` with remote_cwd), as the run panel refuses (#1893).
-            if (len(line) - len(line.rstrip("\\"))) % 2:
+            if _ends_in_backslash(line):
                 raise ValueError(
                     f"launcher.setup line {line!r} ends in a backslash: write "
                     "each command on a line of its own"

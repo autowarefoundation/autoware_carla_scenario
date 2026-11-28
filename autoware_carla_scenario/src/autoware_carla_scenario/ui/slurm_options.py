@@ -16,6 +16,9 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from ..slurm.settings import _ENV_NAME_PATTERN as _ENV_NAME  # noqa: F401
+from ..slurm.settings import _TIME_PATTERN as _TIME  # noqa: F401
+from ..slurm.settings import _check_time_format, _ends_in_backslash, _is_env_name
 from .request_values import check_extra_overrides
 
 __all__ = [
@@ -27,21 +30,22 @@ __all__ = [
     "check_sbatch_value",
     "check_setup_line",
     "check_time",
+    "parse_count",
 ]
 
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-#: sbatch's ``--time`` forms: ``minutes``, ``minutes:seconds``,
-#: ``hours:minutes:seconds`` (the leading field of any width: ``168:00:00``),
-#: ``days-hours``, ``days-hours:minutes`` and ``days-hours:minutes:seconds``.
-_TIME = re.compile(r"^(\d+|\d+-\d{1,2})(:\d{2}){0,2}$")
-#: The ``--time`` that sets no limit, in any case (``unlimited``).
-_TIME_NO_LIMIT = ("UNLIMITED", "INFINITE")
+# _ENV_NAME and _TIME, the variable names and sbatch --time forms, are the
+# launcher's own (slurm.settings), which checks launcher.* the same (#2601).
 _SIMPLE = re.compile(r"^[A-Za-z0-9_.:/@+-]+$")
 #: A comma-separated list of :data:`_SIMPLE` words: what ``--partition``
 #: (``gpu,cpu``) and ``--gres`` (``gpu:1,shard:2``) take.
 _SIMPLE_LIST = re.compile(r"^[A-Za-z0-9_.:/@+-]+(,[A-Za-z0-9_.:/@+-]+)*$")
 #: The sbatch keys whose value may be such a list (``--mem`` takes one size).
 _LIST_KEYS = ("partition", "gres")
+#: A count as a field holds it: ASCII digits (``-`` first, for the message
+#: that says it is less than 1), and a fraction of zeros (``2.0``, what
+#: ``str()`` makes of JSON's ``2.0``); at most 18 digits, which an ``int``
+#: holds (#1964).
+_COUNT = re.compile(r"-?[0-9]{1,18}(?:\.0*)?")
 #: A path on the nodes (``launcher.remote_cwd``, ``launcher.python``).
 _NODE_PATH = re.compile(r"~?[A-Za-z0-9_.:/@+-]*")
 
@@ -95,7 +99,7 @@ def check_env(name: str, value: str, shown: str) -> None:
     Raises:
         ValueError: It is not.
     """
-    if not _ENV_NAME.fullmatch(name):
+    if not _is_env_name(name):
         raise ValueError(f"{name!r} is not an environment variable name")
     # The value becomes an OmegaConf string: `${` would be an
     # interpolation, not the text the job is to see.
@@ -113,14 +117,7 @@ def check_time(time: str | None) -> None:
     Raises:
         ValueError: It is not.
     """
-    if time is None or time.upper() in _TIME_NO_LIMIT:
-        return
-    if not _TIME.fullmatch(time):
-        raise ValueError(
-            "time is sbatch's --time (minutes, minutes:seconds, "
-            "hours:minutes:seconds, days-hours, days-hours:minutes, "
-            f"days-hours:minutes:seconds or UNLIMITED), not {time!r}"
-        )
+    _check_time_format(time, "time")
 
 
 def check_sbatch_value(key: str, value: str | None) -> None:
@@ -172,11 +169,26 @@ def check_setup_line(line: str) -> None:
     # The job script holds each line as written: a line ending in an
     # unescaped backslash would run on into the next line the script
     # has (`set -u`, say), not end where the field's line does.
-    if (len(line) - len(line.rstrip("\\"))) % 2:
+    if _ends_in_backslash(line):
         raise ValueError(
             f"setup line {line!r} ends in a backslash: write each command "
             "on one line"
         )
+
+
+def parse_count(text: str) -> int | None:
+    """*text*, a count field as text (stripped, not blank), as the whole
+    number it is: ``2``, ``2.0`` (JSON's ``2.0`` as ``str()`` writes it) or
+    ``"02"`` (``-1`` is -1); ``None`` when it is none (``2.5``, ``two``,
+    ``+3``, ``1_000``, ``1e3``).
+
+    The run panel's counts (``SlurmOptions.from_request()``) and a
+    resubmit's (``/api/slurm/.../resubmit``) are read with it, so each takes
+    what the other does (#2601).
+    """
+    if _COUNT.fullmatch(text) is None:
+        return None
+    return int(text.split(".", 1)[0])
 
 
 def check_at_least(key: str, value: float, minimum: int) -> None:
