@@ -2880,7 +2880,12 @@ the lane's own heading, which is the speed along the lane only there. CriMe
 plain numbers, so on a bend, where the headings either side of the ego
 straddle 0, it read a heading as much as 2pi off -- TTC <code>inf</code> and ALongReq
 <code>0</code> with a lead closing fast; the worker interpolates them unwrapped, for
-every CriMe measure that reads a lane's heading. CriMe
+every CriMe measure that reads a lane's heading. When the ego drives
+against the lane under it (overtaking through the oncoming lane, or the wrong
+way), CriMe's "ahead" along that lane is behind the ego, and a car coming at it
+head-on read TTC <code>inf</code> and ALongReq <code>0</code>; the worker reverses the frame's
+lanelets then, so the lane runs the ego's way and the frame reads as it would
+in a lane running the ego's way. CriMe
 0.4 also drops the sign of the other road user's velocity and acceleration
 along the lane, reading a braking lead as speeding up and a car coming the
 other way in the ego's lane as going its way; the worker reads TTC and
@@ -3043,8 +3048,10 @@ section and key names are strings and whose values JSON can carry (finite number
 non-empty tuple or list of non-empty strings (not a <code>str</code>): a bad value
 raises <code>ValueError</code>, naming the field, when the settings are built, not later
 in a run. A section or key CommonRoad-Reach's configuration does not have
-(<code>planning.size_grid</code> for <code>reachable_set.size_grid</code>) is refused by the worker
-as it starts, before the first frame. A timeout far past what <code>poll()</code> waits at once
+(<code>planning.size_grid</code> for <code>reachable_set.size_grid</code>), or one the worker sets
+itself for every reachable set (<code>planning.dt</code>, <code>planning.step_start</code>,
+<code>planning.steps_computation</code>, ...; <code>commonroad_metrics/README.md</code>), is
+refused by the worker as it starts, before the first frame. A timeout far past what <code>poll()</code> waits at once
 (about 25 days) is waited in pieces.</p>
 <p>AlpaSim's other metrics need more than the world, and are not metrics here:</p>
 <table>
@@ -3252,7 +3259,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 21:08:03 UTC"><span class="timeago" datetime="2026-11-27T21:08:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 21:08:03 UTC">2026-11-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 06:18:42 UTC"><span class="timeago" datetime="2026-11-28T06:18:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 06:18:42 UTC">2026-11-28</span>
   </span>
 
     
