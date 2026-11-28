@@ -29,7 +29,8 @@ def number_setting(key: str, value: Union[float, str], *, text: bool = False) ->
     ``float()`` would take as 1.0, and a quoted ``='1.5'`` as a string.  An
     int or a float is a number, and so is anything else ``float()`` reads
     but a bool or a string; a bool never is (``true`` is not 1), numpy's
-    ``bool_`` and a 0-d bool array included.  A string is
+    ``bool_`` and a 0-d bool array included, nor is an array of one or more
+    dimensions (``np.array([1.5])``), whatever numpy's version.  A string is
     read as the number it spells only with *text* -- the run's ``ego.*`` and
     ``entity.*`` numbers, a declarative scenario's spawn override and an
     authored card's field, which read ``'1.5'`` as 1.5 -- and refused
@@ -46,9 +47,14 @@ def number_setting(key: str, value: Union[float, str], *, text: bool = False) ->
         raise ValueError(f"{key} must be a number, got {shown(value)}")
     if TYPE_CHECKING:
         pass
-    elif getattr(getattr(value, "dtype", None), "kind", None) == "b":
+    elif getattr(getattr(value, "dtype", None), "kind", None) == "b" or (
+        # numpy's ndim is an int; a stand-in's (a mock's) is not (#1906).
+        isinstance(getattr(value, "ndim", 0), int) and getattr(value, "ndim", 0) != 0
+    ):
         # numpy's bool_ (or a 0-d bool array), which float() takes as 0 or 1,
-        # as seed.check_whole_number refuses it (#1900, #2507).
+        # as seed.check_whole_number refuses it (#1900, #2507); and an array
+        # of one element, which the numpy on Python 3.10 (2.2) still converts,
+        # as check_whole_number refuses it too (#1904, #2620).
         raise ValueError(f"{key} must be a number, got {shown(value)}")
     try:
         return float(value)

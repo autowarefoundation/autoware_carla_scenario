@@ -212,6 +212,42 @@ def test_where_the_maps_files_sit_is_not_part_of_it() -> None:
     )
 
 
+def test_where_the_traffic_backend_keeps_its_files_is_not_part_of_it() -> None:
+    """A SLURM node with a network cache of its own, another SUMO executable
+    or SUMO's floating car data recorded is one scenario (#2620); the
+    network and the demand the options name still tell scenarios apart."""
+    options = {"tm_port": 8100, "net_path": None, "route_path": None}
+    base = _config(traffic={"backend": "sumo", "options": options})
+    local = _config(
+        traffic={
+            "backend": "sumo",
+            "options": {
+                **options,
+                "cache_dir": "/scratch/node7/sumo",
+                "binary": "/opt/sumo/bin/sumo-gui",
+                "fcd_output": True,
+            },
+        }
+    )
+    assert scenario_hash(local, CLASS) == scenario_hash(base, CLASS)
+    for key in ("net_path", "route_path"):
+        changed = _config(
+            traffic={"backend": "sumo", "options": {**options, key: "a.xml"}}
+        )
+        assert scenario_hash(changed, CLASS) != scenario_hash(base, CLASS), key
+    # Only the backend's options: a `binary` elsewhere is the scenario's.
+    assert scenario_hash(
+        _config(scenario={"name": "cut_in", "binary": "a"}), CLASS
+    ) != scenario_hash(_config(scenario={"name": "cut_in", "binary": "b"}), CLASS)
+
+
+def test_an_odd_path_counts_as_written() -> None:
+    # Documented (module docstring, docs/wosac.md): the file is not read.
+    assert scenario_hash(_config(odd="odd.yaml"), CLASS) != scenario_hash(
+        _config(odd="/home/a/odd.yaml"), CLASS
+    )
+
+
 class _Scenario(BaseScenario):
     def setup(self) -> None: ...
 

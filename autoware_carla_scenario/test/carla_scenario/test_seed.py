@@ -440,3 +440,22 @@ def test_check_whole_number_refuses_an_array_of_one_element() -> None:
     for value in (np.array([5]), np.array([[7.0]])):
         with pytest.raises(ValueError, match=r"^x\.n must be a whole number"):
             check_whole_number("x.n", value)  # type: ignore[arg-type]
+
+
+def test_check_seed_names_its_key_for_an_integer_too_long_for_repr() -> None:
+    """YAML reads ``0xfff...`` unbounded; repr() of it raises (#2620)."""
+    from autoware_carla_scenario.seed import check_seed
+
+    for value in (10**5000, -(10**5000)):
+        with pytest.raises(ValueError, match=r"^x\.seed must .*an integer of about"):
+            check_seed("x.seed", value)
+
+
+def test_check_whole_number_names_its_key_for_a_signaling_nan() -> None:
+    """float(Decimal("sNaN")) raises a ValueError naming no key (#2620)."""
+    from decimal import Decimal
+
+    from autoware_carla_scenario.seed import check_whole_number
+
+    with pytest.raises(ValueError, match=r"^x\.n must be a whole number"):
+        check_whole_number("x.n", Decimal("sNaN"))  # type: ignore[arg-type]

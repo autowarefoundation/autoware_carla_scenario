@@ -161,7 +161,15 @@ same scenario run with the map at an absolute path, in another checkout or
 through `NISHISHINJUKU_XODR_PATH` has the same hash. The map is told by
 `map.name`, and by `map.source` and `map.pack`, which name a revision; what
 the files held is in each run's trajectory log, whose
-[`map`](trajectory_log.md#records) record has each map file's SHA-256. A
+[`map`](trajectory_log.md#records) record has each map file's SHA-256.
+Likewise, of `traffic.options`, where the traffic backend caches its SUMO
+networks on this machine (`cache_dir`), the SUMO executable it runs
+(`binary`) and whether it records SUMO's floating car data (`fcd_output`)
+are left out, so a SLURM node with a `cache_dir` of its own runs rollouts of
+the same scenario (#2620); `net_path` and `route_path` stay in, since the
+network and the demand they name are the scenario. `odd` is digested as
+written: an OpenODD file's path counts as written (its content is not read),
+so give every rollout one spelling of it, a registered name or one path. A
 number is digested by its value: a whole float as the integer it equals, so
 `scenario.timeout_seconds=15` and a YAML's `15.0` are one scenario (#2481).
 What drives the ego (`driver`, `autoware`, `ros2`) is the system

@@ -369,3 +369,25 @@ def test_the_trajectory_wrap_is_normalize_angle_deg() -> None:
     angles += [math.nextafter(k * 180.0, s) for k in range(-8, 9) for s in (-1e9, 1e9)]
     for angle in angles:
         assert _same(_wrap_degrees(angle), normalize_angle_deg(angle)), angle
+
+
+class _OneElementArray:
+    """An array of one element as the numpy on Python 3.10 (2.2) has it:
+    ``float()`` converts it, which newer numpy refuses (#1904)."""
+
+    ndim = 1
+
+    def __float__(self) -> float:
+        return 1.5
+
+
+@pytest.mark.parametrize("value", [_OneElementArray(), np.array([1.5])])
+def test_number_setting_refuses_an_array_of_one_element(value: Any) -> None:
+    # As seed.check_whole_number does, whatever numpy's version (#2620).
+    with pytest.raises(ValueError, match=r"^k must be a number"):
+        number_setting("k", value)
+
+
+def test_number_setting_takes_a_numpy_scalar() -> None:
+    assert number_setting("k", np.float64(1.5)) == 1.5
+    assert number_setting("k", np.array(2.5)) == 2.5  # type: ignore[arg-type]

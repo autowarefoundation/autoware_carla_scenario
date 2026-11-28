@@ -31,13 +31,16 @@ again before ``setup()``, by
 :meth:`~autoware_carla_scenario.ScenarioRunner.run_scenario` (to the
 scenario's ``random_seed``), so an action built in either place follows it.
 
-This module imports nothing but the standard library.
+This module imports nothing but the standard library and
+:mod:`.value_text`, which imports nothing else.
 """
 
 from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING, Optional
+
+from .value_text import shown
 
 __all__ = [
     "DEFAULT_SEED",
@@ -92,10 +95,12 @@ def check_whole_number(key: str, value: int) -> int:
     (``str(value)``) is given ``2``, never ``2.0``.
 
     Raises:
-        ValueError: naming *key*.
+        ValueError: naming *key*, and showing *value* through
+            :func:`~autoware_carla_scenario.value_text.shown`, which never
+            raises (#2620).
     """
     if isinstance(value, bool) or isinstance(value, str):
-        raise ValueError(f"{key} must be a whole number, got {value!r}")
+        raise ValueError(f"{key} must be a whole number, got {shown(value)}")
     if isinstance(value, int):
         return int(value)
     if TYPE_CHECKING:
@@ -107,14 +112,15 @@ def check_whole_number(key: str, value: int) -> int:
         # numpy's bool_ (or a 0-d bool array), which float() takes as 0 or
         # 1 (#1900); and an array of one element, which the numpy on Python
         # 3.10 (2.2) still converts (#1904).
-        raise ValueError(f"{key} must be a whole number, got {value!r}")
+        raise ValueError(f"{key} must be a whole number, got {shown(value)}")
     # A float, or a number that is no int (numpy's integers): float() takes
     # anything with __float__ or __index__, and refuses the rest (None, a
-    # list) with a TypeError.
+    # list) with a TypeError, and a signaling NaN (Decimal("sNaN")) with a
+    # ValueError of its own, naming no key (#2620).
     try:
         number = float(value)
-    except TypeError:
-        raise ValueError(f"{key} must be a whole number, got {value!r}")
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a whole number, got {shown(value)}")
     except OverflowError:
         # A number too big for a float, but no int (Fraction(10**400)), as
         # route.model's whole numbers refuse it (#1902).
@@ -123,9 +129,9 @@ def check_whole_number(key: str, value: int) -> int:
             f"{key} must be a whole number, got one too big for a float"
         ) from None
     if not math.isfinite(number):
-        raise ValueError(f"{key} must be finite, got {value!r}")
+        raise ValueError(f"{key} must be finite, got {shown(value)}")
     if math.floor(number) != number:
-        raise ValueError(f"{key} must be a whole number, got {value!r}")
+        raise ValueError(f"{key} must be a whole number, got {shown(value)}")
     return int(value)
 
 
@@ -135,15 +141,16 @@ def check_seed(key: str, seed: int) -> int:
     from 0 to :data:`MAX_SEED` (``2**31 - 1``), as the run's ``seed`` is.
 
     Raises:
-        ValueError: naming *key*.
+        ValueError: naming *key*, an integer too long for ``repr()``
+            (YAML reads ``0xfff...`` unbounded) included (#2620).
     """
     number = check_whole_number(key, seed)
     if number < 0:
-        raise ValueError(f"{key} must not be negative, got {seed!r}")
+        raise ValueError(f"{key} must not be negative, got {shown(seed)}")
     if number > MAX_SEED:
         raise ValueError(
             f"{key} must be at most {MAX_SEED} (2**31 - 1: seeds range over "
-            f"0..{MAX_SEED}, what CARLA and SUMO take), got {seed!r}"
+            f"0..{MAX_SEED}, what CARLA and SUMO take), got {shown(seed)}"
         )
     return number
 
