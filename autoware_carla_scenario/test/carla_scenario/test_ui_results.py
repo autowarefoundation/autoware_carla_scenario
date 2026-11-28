@@ -1461,3 +1461,19 @@ def test_the_compare_page_says_a_job_has_no_result_yet(
     assert "1/1 passed" in page.text
     assert "1 pending (no result yet)" in page.text
     assert "pending (not collected)" not in page.text
+
+
+@pytest.mark.parametrize("missing", ["single", "multirun"])
+def test_a_comparison_leaves_out_a_session_that_does_not_exist(
+    client: TestClient, tmp_path: Path, missing: str
+) -> None:
+    """#2602: a ref naming no directory is no session: two of them do not
+    make a "0/0 passed" comparison, and one does not join a real session's."""
+    gone = [f"{missing}/2026-10-18/01-00-00", f"{missing}/2026-10-18/02-00-00"]
+    page = client.get(f"/compare?s={gone[0]}&s={gone[1]}")
+    assert page.status_code == 200
+    assert 'id="regressions"' not in page.text and "0/0 passed" not in page.text
+    ref = _session(tmp_path, "10-00-00", [True, False, False, False])
+    page = client.get(f"/compare?s={ref}&s={gone[0]}")
+    assert page.status_code == 200
+    assert 'id="regressions"' not in page.text and "0/0 passed" not in page.text

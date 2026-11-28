@@ -66,7 +66,7 @@ def _own_override(override: str) -> bool:
     bare = override.lstrip("+")
     if any(bare.startswith(prefix) for prefix in POSITIONAL_OVERRIDES):
         return False
-    return not any(override.startswith(prefix) for prefix in HYDRA_PREFIXES)
+    return not any(bare.startswith(prefix) for prefix in HYDRA_PREFIXES)
 
 
 def override_key(scenario: str, overrides: list[str]) -> Optional[str]:

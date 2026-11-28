@@ -370,7 +370,7 @@ surface, but the helper modules are importable for tooling:
 |--------|-------------|
 | `ui.app` | FastAPI application object and route handlers. |
 | `ui.scanner` | Discover sessions / scenarios under `outputs/` and `multirun/`, build condition trees. |
-| `ui.runner` | Background `subprocess.run(["uv", "run", "scenario", ...])` orchestration with thread-safe progress. |
+| `ui.runner` | Background `subprocess.Popen(["uv", "run", "scenario", ...], start_new_session=True)` orchestration with thread-safe progress. |
 | `ui.sweep_resolver.resolve_sweep` | Resolve a sweep without launching CARLA. |
 | `ui.cases` | Which files are a session's cases: the stem each case's files share (a SLURM batch's manifest, or matched against `batch_results.json`). `session_dir` / `job_dir` / `contained` are the one check every path the viewer builds from a URL goes through: resolved, it must stay under `multirun/` or `outputs/`, else the route answers 404. |
 | `ui.results` | A session's cases with their case, coverage and metrics (`load_results`, `case_metrics`), the cases in an ODD cell, and sessions compared case by case and cell by cell (`compare`). |
@@ -378,8 +378,12 @@ surface, but the helper modules are importable for tooling:
 | `ui.comparison` | Sessions compared case by case and ODD cell by cell (`compare`, `default_axes`, `varying_attributes`, `METRICS`) on typed `ComparedCase` records, which `ui.results` builds from a case's coverage document (`CaseResult.compared`) and re-exports, and a case's outcome, scenario and key by overrides (`outcome_of`, `scenario_of`, `override_key`, `POSITIONAL_OVERRIDES`, `HYDRA_PREFIXES`); checked by the library check. |
 | `ui.drive_metrics` | The box gaps and the running metrics of the ego's ticks (`DriveMetrics`) that `ui.results.case_metrics` reads a trajectory log with; checked by the library check. |
 | `ui.slurm_launch` | Submitting a batch with `launcher=slurm` from the viewer (`build_command`, `start_submit`), a SLURM batch's progress (`batch_status`), and `scenario-slurm` run on it. |
+| `ui.slurm_case_state` | The state of one case of a SLURM batch and the message the viewer shows for it (`case_state`, `no_job_case_state`), which `ui.slurm_launch` reads off the batch's records; checked by the library check. |
 | `ui.slurm_options` | The `launcher.*` keys the viewer sets (`SlurmOptions`), the checks of each field (`check_*`), the Hydra overrides they become (`SlurmOptions.overrides`) and the `scenario` command line that submits the batch (`build_command`, given how `scenario` is started); `ui.slurm_launch` reads them off the run panel (`SlurmOptions.from_request`) and re-exports them. |
 | `ui.recordings` | A case's Rerun recording, made on demand with `autoware_carla_scenario_rerun` when installed, and where the Rerun web viewer is loaded from. |
+| `ui.recording_files` | How recordings and the copy of Rerun's web viewer are kept on disk: a cached recording's name (`cached_recording_name`), whether a recording is fresh, and putting a recording or a copy of the web viewer in place; `ui.recordings` re-exports it; checked by the library check. |
+| `ui.web_viewer_paths` | Where recordings and the copy of Rerun's web viewer are kept (`recording_path`, `web_viewer_cache_dir`) and which web viewer is used (`configured_viewer`, `local_package`, `cdn_url`); `ui.recordings` re-exports it; checked by the library check. |
+| `ui.request_values` | What the viewer reads off a request and links a session with (`_is_json_type`, `_session_ref`, `_attribute`, `wants_page`) and the check that a run's extra overrides are no flags (`check_extra_overrides`), which the local and SLURM launch paths share; `ui.app` re-exports it; checked by the library check. |
 | `ui.models` | Pydantic models (`SessionSummary`, `SessionItem`, `ConditionNode`, `ScenarioResultView`, `RunProgress`). |
 
 ## Scenario authoring (`autoware_carla_scenario.authoring`)
