@@ -461,6 +461,10 @@ def test_check_at_least_takes_a_finite_number_from_the_minimum() -> None:
         "1-12:30",  # days-hours:minutes
         "1-2:03:04",  # days-hours:minutes:seconds
         "14-00:00:00",
+        # Fields of any width, as sbatch reads them (time_str2secs, #2601).
+        "1:2",
+        "1-100",
+        "-1",
         "UNLIMITED",
         "unlimited",
         "Infinite",
@@ -485,8 +489,6 @@ def test_check_time_takes_every_sbatch_time_format(time: str) -> None:
         "1-",
         "-5",
         "1-2-3",
-        "1-100",
-        "1:2",
         "01:00:00x",
         "1:",
         ":30",

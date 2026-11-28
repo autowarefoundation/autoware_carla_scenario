@@ -238,10 +238,14 @@ def _check_time_is_text(value: Any) -> None:
 
 #: sbatch's ``--time`` forms: ``minutes``, ``minutes:seconds``,
 #: ``hours:minutes:seconds`` (the leading field of any width: ``168:00:00``),
-#: ``days-hours``, ``days-hours:minutes`` and ``days-hours:minutes:seconds``.
-_TIME_PATTERN = re.compile(r"^(\d+|\d+-\d{1,2})(:\d{2}){0,2}$")
-#: The ``--time`` that sets no limit, in any case (``unlimited``).
-_TIME_NO_LIMIT: tuple[str, ...] = ("UNLIMITED", "INFINITE")
+#: ``days-hours``, ``days-hours:minutes`` and ``days-hours:minutes:seconds``;
+#: each field of any number of ASCII digits, as sbatch reads them
+#: (``time_str2secs``: ``1:2`` is a minute and two seconds), so that nothing
+#: sbatch takes is refused here.
+_TIME_PATTERN = re.compile(r"^[0-9]+(-[0-9]+)?(:[0-9]+){0,2}$")
+#: The ``--time`` that sets no limit, in any case (``unlimited``), and
+#: sbatch's ``-1``.
+_TIME_NO_LIMIT: tuple[str, ...] = ("UNLIMITED", "INFINITE", "-1")
 
 
 def _check_time_format(time: str | None, name: str) -> None:

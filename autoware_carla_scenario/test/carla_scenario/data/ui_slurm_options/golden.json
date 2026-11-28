@@ -629,7 +629,25 @@
     "launcher.time='90'"
    ]
   },
-  "time-seconds-only": "ValueError: time is sbatch's --time (minutes, minutes:seconds, hours:minutes:seconds, days-hours, days-hours:minutes, days-hours:minutes:seconds or UNLIMITED), not '1:2'",
+  "time-seconds-only": {
+   "fields": {
+    "array_parallelism": null,
+    "cases_per_task": null,
+    "env": {},
+    "gres": null,
+    "mem": null,
+    "partition": null,
+    "python": null,
+    "remote_cwd": null,
+    "setup": [],
+    "start_stagger_seconds": null,
+    "time": "1:2"
+   },
+   "overrides": [
+    "launcher=slurm",
+    "launcher.time=1:2"
+   ]
+  },
   "time-unlimited": {
    "fields": {
     "array_parallelism": null,

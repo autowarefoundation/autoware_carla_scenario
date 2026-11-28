@@ -449,6 +449,11 @@ uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
 
 Without `remote_cwd` the batch is submitted and run exactly as before (a
 version 1 manifest).
+Its jobs' output then goes straight to the batch's `slurm/logs/`, named
+with sbatch's `--output` patterns (`%A_%a.out`): a `%` in the batch's
+directory is passed on as `%%`, and a directory holding a `\`, which turns
+those patterns off (every task would write one file), is refused before
+anything is written.
 
 A value that is a path may differ and still be the same config. That is the
 case when it is the submitting directory's path seen from the job's working

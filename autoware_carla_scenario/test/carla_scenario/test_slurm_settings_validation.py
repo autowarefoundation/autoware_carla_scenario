@@ -300,7 +300,9 @@ def test_extra_sbatch_args_that_only_look_like_a_cluster_are_kept() -> None:
     )
 
 
-@pytest.mark.parametrize("time", ["12h", "1:2", "tomorrow", "01:00:00x"])
+@pytest.mark.parametrize(
+    "time", ["12h", "tomorrow", "01:00:00x", "1:2:3:4", "1-2-3", "1::2", "-2", "\u0661"]
+)
 def test_launcher_time_must_be_an_sbatch_time(time: str) -> None:
     """#2601: refused before the manifest and the job script are written,
     not by sbatch after; the run panel's check is this one."""
@@ -312,7 +314,11 @@ def test_launcher_time_must_be_an_sbatch_time(time: str) -> None:
         check_time(time)
 
 
-@pytest.mark.parametrize("time", ["90", "1:30", "168:00:00", "2-00", "unlimited", ""])
+@pytest.mark.parametrize(
+    "time",
+    # sbatch's own reading (time_str2secs) takes fields of any width (#2601).
+    ["90", "1:30", "1:2", "168:00:00", "2-00", "1-2:3", "1-100", "unlimited", "-1", ""],
+)
 def test_launcher_time_takes_every_sbatch_time(time: str) -> None:
     assert SlurmSettings.from_mapping({"time": time}).time == (time or None)
 
