@@ -245,6 +245,25 @@ def test_a_vehicle_turns_where_it_is_told_to(
         model.set_route("w", ["B0C0"])
 
 
+def test_a_route_sumo_refuses_is_a_value_error_with_libsumo_loaded(
+    make: Callable[..., "SumoMesoscopicTraffic"],
+) -> None:
+    """#2637: importing libsumo (as the backend does) replaces
+    ``traci.exceptions.TraCIException`` with libsumo's class, while the
+    mesoscopic SUMO's TraCI connection raises traci's own: the refusal
+    escaped as a TraCIException, not the ValueError the model promises."""
+    import libsumo  # noqa: F401 - what the backend imports for its own SUMO
+
+    model = make(junction_control=False)
+    clock = _Clock(model)
+    model.add("v", ["A0B0", "B0C0"], now=0.0)
+    clock.run(1.0)
+    assert "v" in model
+    # Starts on its road, but A0B0 does not lead to C2C1.
+    with pytest.raises(ValueError, match="SUMO refused the route"):
+        model.set_route("v", ["A0B0", "C2C1"])
+
+
 def test_a_vehicle_taken_out_may_go_back_in_at_once(
     make: Callable[..., "SumoMesoscopicTraffic"],
 ) -> None:

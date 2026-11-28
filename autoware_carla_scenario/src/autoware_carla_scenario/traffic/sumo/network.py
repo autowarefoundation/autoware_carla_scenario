@@ -17,8 +17,10 @@ OpenDRIVE became (``map.xodr.trace.json``) and what each became in SUMO -- which
 join a CARLA traffic light, by its OpenDRIVE signal id, to the SUMO signal links
 it switches (:class:`SignalTable`).
 
-Both are cached under a directory named after a hash of the OpenDRIVE text and
-of the roadgen and SUMO versions, so a map is converted once per machine.
+Both are cached under a directory named after a hash of the OpenDRIVE text as
+roadgen is given it (:func:`sanitize_opendrive`'s), of the roadgen and SUMO
+package versions and of what the netconvert that builds it says it is
+(``--version``), so a map is converted once per machine.
 """
 
 from __future__ import annotations
@@ -181,6 +183,28 @@ def _versions() -> str:
     return ",".join(out)
 
 
+def _netconvert_version(netconvert: str) -> str:
+    """What *netconvert* says it is (``--version``): the build that builds a
+    network, which ``$SUMO_HOME`` may make another SUMO's than the package's
+    (#2637).  ``?`` when it cannot say; building with it reports why."""
+    try:
+        proc = subprocess.run(  # noqa: S603 - a fixed tool invocation
+            [netconvert, "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_NETCONVERT_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "?"
+    except OSError:
+        return "?"
+    if proc.returncode != 0:
+        return "?"
+    return proc.stdout.strip()
+
+
 def build_network(
     opendrive: str,
     cache_dir: Path,
@@ -224,8 +248,16 @@ def build_network(
         options += ";crossings.guess"
     if cycle_on_sidewalks:
         options += ";cycle_on_sidewalks"
+    # What roadgen converts, and the netconvert that builds it (#2637).
+    sanitized = sanitize_opendrive(opendrive)
+    try:
+        netconvert_version = _netconvert_version(_binary("netconvert"))
+    except TrafficBackendUnavailable:
+        netconvert_version = "?"  # building says so
     key = hashlib.sha256(
-        "\0".join((_versions(), options, opendrive)).encode()
+        "\0".join(
+            (_versions(), f"netconvert={netconvert_version}", options, sanitized)
+        ).encode()
     ).hexdigest()[:16]
     target = cache_dir / key
     network = SumoNetwork(target / "network.net.xml", target / "network.safe")
@@ -236,7 +268,7 @@ def build_network(
     tmp = Path(tempfile.mkdtemp(prefix=f".{key}.", dir=cache_dir))
     try:
         xodr = tmp / "map.xodr"
-        xodr.write_text(sanitize_opendrive(opendrive))
+        xodr.write_text(sanitized)
         try:
             road_map = roadgen.read_opendrive(str(xodr))
             prefix = road_map.export_sumo(

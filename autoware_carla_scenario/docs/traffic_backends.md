@@ -1183,7 +1183,8 @@ uv run scenario ... traffic=sumo traffic.options.use_libsumo=false traffic.optio
 **To watch a run**, run SUMO as a TraCI process (`use_libsumo: false`) with
 `binary: sumo-gui`. Its window stays open after the run, for a look at how it
 ended, until it is closed (or `--quit-on-end` in `sumo_args` closes it at
-once). A headless `sumo` is ended with the run: it is given 5 s to exit once
+once). SUMO's mesoscopic model (`mesoscopic.engine: sumo`) runs the plain
+`sumo` beside it all the same: it has no window. A headless `sumo` is ended with the run: it is given 5 s to exit once
 its connection closes, then killed, and a failed start kills it and quotes
 what it wrote to its standard error.
 
@@ -1256,8 +1257,10 @@ OpenDRIVE the world runs (the file the run installed, or
 [roadgen](https://github.com/hakuturu583/hdmap_generator) into netconvert's
 plain-XML input and builds it with netconvert. The result is cached under
 `$XDG_CACHE_HOME/autoware_carla_scenario/sumo/` (`~/.cache/autoware_carla_scenario/sumo/`
-when `XDG_CACHE_HOME` is unset), keyed by the OpenDRIVE and the tool
-versions, so a map is converted once. roadgen writes the network without offset
+when `XDG_CACHE_HOME` is unset), keyed by the OpenDRIVE as roadgen is given it
+(the backend's fixes below applied), the roadgen and SUMO package versions and
+what the netconvert that builds it says it is (`netconvert --version`, the one
+in `$SUMO_HOME/bin` when that is set), so a map is converted once. roadgen writes the network without offset
 normalisation, so SUMO's x/y are OpenDRIVE's and CARLA's are the same with y
 mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 
@@ -1285,7 +1288,18 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | Scenario emergency vehicles (`EmergencyVehicleEntity`, or any vehicle whose blueprint's `special_type` is `emergency`) | as the scenario's other vehicles | published or driven, as a SUMO `emergency` vehicle with a bluelight device |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
-SUMO traffic sees it where CARLA has it and reacts to it. With the default the
+SUMO traffic sees it where CARLA has it and reacts to it. A vehicle SUMO drives
+is given more road as it nears the end of its route; at a dead end, where
+there is none, it is stopped at the end of its road and waits there, as the
+mesoscopic model holds one, rather than arriving: SUMO would remove it and
+leave its CARLA actor driving on. A new route given before it gets there
+(`turn_at_junction`) drops the stop.
+
+**No teleports**: SUMO is started with `--time-to-teleport -1`, as its
+mesoscopic one is, so a vehicle held at the front of its lane (at a goal, a
+light, behind a stopped car) waits as long as it is held instead of being
+teleported down the road after SUMO's 300 s, which would make its CARLA actor
+jump. `--time-to-teleport` in `sumo_args` sets SUMO's own instead. With the default the
 scenario's NPCs behave exactly as under the `traffic_manager` backend, while
 SUMO fills the rest of the road.
 
@@ -1783,7 +1797,9 @@ The options above were first checked against SUMO and a fake CARLA. These number
 - **Walker blueprint.** The persons' default blueprint was not in CARLA 0.10 (fixed in #1002).
 
 **Manoeuvres** of SUMO-driven vehicles become TraCI calls: `change_lane` →
-`changeLane` (SUMO obeys a solid line, and says so), `set_desired_speed` →
+`changeLane` (SUMO obeys a solid line, and says so; left and right are the
+driver's on a left-hand-traffic map too, whose network SUMO numbers from the
+left kerb), `set_desired_speed` →
 `setSpeed`, `turn_at_junction` → a route onto the junction's outgoing edge in
 that direction. With the default, they go to the TrafficManager. `follow_route`
 goes to the TrafficManager only: a vehicle SUMO drives keeps its route, since

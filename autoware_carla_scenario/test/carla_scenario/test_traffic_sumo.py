@@ -930,6 +930,22 @@ def crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="module")
+def left_hand_crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The crossroads, without footways, driven on the left (``rule="LHT"``):
+    roadgen makes it a ``lefthand`` network, whose lanes SUMO numbers from
+    the left kerb.  The eastbound lanes of arm 0 are at CARLA y < 0: the
+    kerb lane at -5.25, the inner one at -1.75."""
+    if not _HAS_SUMO:
+        pytest.skip("the `sumo` extra is not installed")
+    directory = tmp_path_factory.mktemp("sumo")
+    text = _crossroads(directory, sidewalks=False).read_text()
+    assert 'rule="RHT"' in text
+    path = directory / "left_hand_crossroads.xodr"
+    path.write_text(text.replace('rule="RHT"', 'rule="LHT"'))
+    return path
+
+
+@pytest.fixture(scope="module")
 def signalled_crossroads(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """The crossroads with footways and a traffic light on every arm."""
     if not _HAS_SUMO:
@@ -967,6 +983,8 @@ def _prepared(
     vehicles = options.pop("vehicles", None)
     box_location = options.pop("box_location", None)
     file_stem = options.pop("file_stem", "")
+    npc_at: tuple[float, float] = options.pop("npc_at", (-80.0, 5.25))
+    ego_at: tuple[float, float] = options.pop("ego_at", (-110.0, 1.75))
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -990,10 +1008,10 @@ def _prepared(
         )
     )
     npc = _FakeActor(
-        _carla_transform(-80.0, 5.25, 0.0), "npc", box_location=box_location
+        _carla_transform(npc_at[0], npc_at[1], 0.0), "npc", box_location=box_location
     )
     ego = _FakeActor(
-        _carla_transform(-110.0, 1.75, 0.0),
+        _carla_transform(ego_at[0], ego_at[1], 0.0),
         str(EGO_ROLE_NAME),
         box_location=box_location,
     )
@@ -1028,6 +1046,31 @@ def test_sumo_drives_the_npc_and_mirrors_the_ego(
     finally:
         backend.close()
     assert backend.describe()["backend"] == "sumo"
+
+
+@needs_sumo
+def test_a_vehicle_sumo_drives_waits_at_a_dead_end(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """#2637: SUMO arrived (removed) a vehicle it drove at the end of its road,
+    and its CARLA actor kept SUMO's last speed and drove off the map.  It waits
+    where its road ends instead, as the mesoscopic model holds one."""
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    sumo_id = next(iter(backend._driven))
+    vehicle = backend._traci.vehicle
+    try:
+        # East along arm 0, over the junction, to the end of arm 1 (x = 120):
+        # it left SUMO there after some 380 ticks.
+        for i in range(700):
+            backend.tick(world, i * 0.05)
+        assert sumo_id in vehicle.getIDList() and sumo_id in backend._driven
+        assert vehicle.getRoadID(sumo_id) == "1.bwd"
+        assert vehicle.getSpeed(sumo_id) == pytest.approx(0.0, abs=0.01)
+        assert 100.0 < npc.transform.location.x < 120.0
+        assert npc.constant_velocity is not None
+        assert npc.constant_velocity.x == pytest.approx(0.0, abs=0.01)
+    finally:
+        backend.close()
 
 
 @pytest.mark.parametrize(
@@ -1410,6 +1453,61 @@ def test_a_netconvert_that_does_not_finish_is_a_backend_error(
     assert [p.name for p in (tmp_path / "cache").iterdir()] == []  # cleaned up
 
 
+@needs_sumo
+def test_a_cached_network_is_one_of_the_same_sanitized_map_and_netconvert(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2637: the key hashed the raw OpenDRIVE and the package's SUMO, while
+    the network is built of the sanitized OpenDRIVE by the netconvert found
+    (``$SUMO_HOME``'s first): a change to either reused a stale network."""
+    from autoware_carla_scenario.traffic import TrafficBackendError
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    cache = tmp_path / "cache"
+    opendrive = crossroads.read_text()
+    built = network_module.build_network(opendrive, cache)
+    assert network_module.build_network(opendrive, cache) == built  # cached
+
+    # The framework's rewriting of the map changes: built anew.
+    sanitize = network_module.sanitize_opendrive
+    monkeypatch.setattr(
+        network_module,
+        "sanitize_opendrive",
+        lambda text: sanitize(text) + "\n<!-- rewritten -->\n",
+    )
+    rebuilt = network_module.build_network(opendrive, cache)
+    assert rebuilt.net_file != built.net_file and rebuilt.net_file.is_file()
+    monkeypatch.setattr(network_module, "sanitize_opendrive", sanitize)
+
+    # Another netconvert (here one that says another version, and fails to
+    # build): not the network the first one built.
+    other = tmp_path / "netconvert"
+    other.write_text(
+        '#!/bin/sh\n[ "$1" = --version ] && echo "Eclipse SUMO netconvert 0.0.1"'
+        " && exit 0\nexit 3\n"
+    )
+    other.chmod(0o755)
+    real = network_module._binary("netconvert")
+    assert network_module._netconvert_version(real) != (
+        network_module._netconvert_version(str(other))
+    )
+    monkeypatch.setattr(network_module, "_binary", lambda name: str(other))
+    with pytest.raises(TrafficBackendError, match=r"^netconvert failed \(3\)"):
+        network_module.build_network(opendrive, cache)
+
+
+def test_a_netconvert_that_cannot_say_its_version_keys_as_unknown(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.network import _netconvert_version
+
+    assert _netconvert_version(str(tmp_path / "missing")) == "?"
+    failing = tmp_path / "netconvert"
+    failing.write_text("#!/bin/sh\nexit 1\n")
+    failing.chmod(0o755)
+    assert _netconvert_version(str(failing)) == "?"
+
+
 def test_generate_demand_runs_the_command_network_built(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1488,6 +1586,27 @@ def test_generate_demand_runs_the_command_network_built(
             _old_ride_options(out / "f.rou.xml", 20.0, 900.0, bicycle_type),
         ),
     ]
+
+
+@needs_sumo
+@pytest.mark.parametrize(
+    ("sumo_args", "expected"),
+    [
+        ([], "-1"),
+        (["--time-to-teleport", "300"], "300"),
+        (["--time-to-teleport=120"], "120"),
+    ],
+)
+def test_sumo_teleports_no_vehicle_unless_sumo_args_say_so(
+    crossroads: Path, tmp_path: Path, sumo_args: list[str], expected: str
+) -> None:
+    """#2637: SUMO's own 300 s teleported a vehicle held at the front of its
+    lane down the road, and its CARLA actor with it."""
+    backend, _world, _npc, _ego = _prepared(crossroads, tmp_path, sumo_args=sumo_args)
+    try:
+        assert backend._traci.simulation.getOption("time-to-teleport") == expected
+    finally:
+        backend.close()
 
 
 @needs_sumo
@@ -1806,6 +1925,107 @@ def test_manoeuvres_become_sumo_commands(crossroads: Path, tmp_path: Path) -> No
         route = backend._traci.vehicle.getRoute(sumo_id)
         # From the west arm, left is OpenDRIVE's north arm (3), outbound.
         assert list(route[:2]) == ["0.fwd", "3.bwd"]
+    finally:
+        backend.close()
+
+
+def test_a_lane_step_counts_from_the_kerb_the_network_drives_by() -> None:
+    from autoware_carla_scenario.traffic.sumo.geometry import _lane_step
+
+    # Right-hand traffic: lane 0 is the right kerb's, left is up.
+    assert _lane_step(LaneChangeDirection.LEFT) == 1
+    assert _lane_step(LaneChangeDirection.RIGHT) == -1
+    # Left-hand traffic: lane 0 is the left kerb's, left is down (#2637).
+    assert _lane_step(LaneChangeDirection.LEFT, lefthand=True) == -1
+    assert _lane_step(LaneChangeDirection.RIGHT, lefthand=True) == 1
+
+
+@needs_sumo
+def test_a_network_says_whether_it_drives_on_the_left(
+    crossroads: Path, left_hand_crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.network import build_network
+    from autoware_carla_scenario.traffic.sumo.options import _net_lefthand
+
+    for xodr, lefthand in ((crossroads, False), (left_hand_crossroads, True)):
+        network = build_network(xodr.read_text(), tmp_path / "cache")
+        # netconvert's header comment names <lefthand> either way.
+        assert _net_lefthand(network.net_file) is lefthand
+
+
+@needs_sumo
+@pytest.mark.parametrize(
+    ("sublane", "length_m"), [(True, 0.0), (True, 30.0), (False, 0.0)]
+)
+def test_a_lane_change_on_a_left_hand_map_goes_the_way_asked(
+    left_hand_crossroads: Path, tmp_path: Path, sublane: bool, length_m: float
+) -> None:
+    """#2637: a right-hand network's lane step moved a vehicle asked to go
+    right onto the lane left of it -- here, off the road, so it stayed put."""
+    options: dict[str, Any] = {} if sublane else {"lateral_resolution_m": None}
+    backend, world, npc, _ego = _prepared(
+        left_hand_crossroads,
+        tmp_path,
+        npc_at=(-80.0, -5.25),
+        ego_at=(-110.0, -1.75),
+        **options,
+    )
+    sumo_id = next(iter(backend._driven))
+    entity = backend._driven[sumo_id]
+    try:
+        backend.tick(world, 0.0)
+        assert backend._traci.vehicle.getLaneIndex(sumo_id) == 0  # the left kerb's
+        backend.change_lane(entity, world, LaneChangeDirection.RIGHT, 0.0, length_m)
+        ticks = 0
+        while ticks < 200 and not backend.lane_change_finished(entity, world):
+            ticks += 1
+            backend.tick(world, ticks * 0.05)
+        assert backend.lane_change_finished(entity, world)
+        assert backend._traci.vehicle.getLaneIndex(sumo_id) == 1
+        for i in range(30):
+            backend.tick(world, i * 0.05)
+        # To the driver's right, towards the centre line, in CARLA.
+        assert npc.transform.location.y == pytest.approx(-1.75, abs=0.3)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_stretched_lane_change_on_a_left_hand_map_aims_and_looks_its_way(
+    left_hand_crossroads: Path, tmp_path: Path
+) -> None:
+    """#2637: a left-hand network's lateral position is positive to the
+    right; read as to the left, the point a car is steered at was off to the
+    wrong side, and the car ahead on the lane it goes to was not seen."""
+    import math
+
+    backend, world, _npc, _ego = _prepared(
+        left_hand_crossroads,
+        tmp_path,
+        npc_at=(-80.0, -5.25),
+        # Standing on the lane the NPC goes to, 25 m ahead of it.
+        ego_at=(-55.0, -1.75),
+    )
+    sumo_id = next(iter(backend._driven))
+    entity = backend._driven[sumo_id]
+    vehicle = backend._traci.vehicle
+    try:
+        backend.tick(world, 0.0)
+        backend.change_lane(entity, world, LaneChangeDirection.RIGHT, 0.0, 40.0)
+        slowed = False
+        across = 0.0
+        for i in range(60):
+            backend.tick(world, i * 0.05)
+            request = backend._lane_change_requests.get(sumo_id)
+            slowed = slowed or (request is not None and request.slowed)
+            lateral = float(vehicle.getLateralLanePosition(sumo_id))
+            if abs(lateral) > 0.2:
+                aim = backend._lookahead(sumo_id, 0.0)
+                assert aim is not None
+                assert math.dist(aim, vehicle.getPosition(sumo_id)) < 0.05
+                across = max(across, abs(lateral))
+        assert across > 0.2  # it did get under way
+        assert slowed  # for the ego ahead on the lane it goes to
     finally:
         backend.close()
 
@@ -4199,6 +4419,60 @@ def _mesoscopic(
     backend.adopt(_Entity(ego, str(EGO_ROLE_NAME)))
     backend.start(world, skip_actor_ids={ego.id} if ego_published else ())
     return backend, world, entity, ego
+
+
+@pytest.mark.parametrize(
+    ("binary", "headless"),
+    [
+        ("sumo", "sumo"),
+        ("/opt/sumo/bin/sumo", "/opt/sumo/bin/sumo"),
+        ("sumo-gui", "sumo"),
+        ("/opt/sumo/bin/sumo-gui", "/opt/sumo/bin/sumo"),
+        ("C:/sumo/bin/sumo-gui.exe", "C:/sumo/bin/sumo.exe"),
+    ],
+)
+def test_the_mesoscopic_sumo_runs_without_a_window(binary: str, headless: str) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import _headless
+
+    assert _headless(binary) == headless
+
+
+@needs_sumo
+def test_sumo_gui_opens_no_window_for_the_mesoscopic_model(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2637: ``binary: sumo-gui`` started the mesoscopic SUMO in a window
+    too (and killed it 5 s after the run's end)."""
+    from autoware_carla_scenario.traffic.sumo import backend as backend_module
+
+    started: list[str] = []
+    build = backend_module.build_mesoscopic_model
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        started.append(kwargs["binary"])
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(backend_module, "build_mesoscopic_model", recording)
+    # A `sumo-gui` and a `sumo` side by side, each the real (headless) sumo:
+    # no display here, and libsumo would try sumo-gui's in-process GUI.
+    real = backend_module.sumo_home() / "bin" / "sumo"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("sumo-gui", "sumo"):
+        wrapper = bin_dir / name
+        wrapper.write_text(f'#!/bin/sh\nexec "{real}" "$@"\n')
+        wrapper.chmod(0o755)
+    backend, _world, _entity, _ego = _mesoscopic(
+        crossroads,
+        tmp_path,
+        "sumo",
+        use_libsumo=False,
+        binary=str(bin_dir / "sumo-gui"),
+    )
+    try:
+        assert started == [str(bin_dir / "sumo")]
+    finally:
+        backend.close()
 
 
 def _tick_until(backend: Any, world: _FakeWorld, done: Any, ticks: int = 600) -> None:
