@@ -496,6 +496,24 @@ class TestTheReloadFallback:
         assert server.loads == ["Town10HD_Opt", "Town10HD_Opt"]
         assert runner._baseline is not None
 
+    def test_an_unknown_episode_is_not_blamed_on_another_client(
+        self, server: _Server, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No baseline episode (``world.id`` unreadable) is not another
+        client's load (#2621)."""
+        runner = _runner(server, world_reset="soft")
+        runner.load_map_by_name("Town10HD_Opt")
+        assert runner._baseline is not None
+        runner._baseline.episode = None
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario"):
+            runner.reset_world("Case0")
+
+        assert server.loads == ["Town10HD_Opt", "Town10HD_Opt"]
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("episode could not be read" in m for m in messages)
+        assert not any("another client" in m for m in messages)
+
     def test_a_failed_reload_leaves_no_baseline(self, server: _Server) -> None:
         runner = _runner(server, world_reset="soft")
         runner.load_map_by_name("Town10HD_Opt")
@@ -718,6 +736,22 @@ class TestValidation:
     def test_a_negative_reload_every_is_refused_by_the_runner(self) -> None:
         with pytest.raises(ValueError, match="reload_every must be >= 0"):
             _runner(_Server(), world_reset="soft", reload_every=-1)
+
+    @pytest.mark.parametrize("reload_every", [2.5, True, float("nan"), "3", None])
+    def test_a_reload_every_that_is_no_whole_number_is_refused(
+        self, reload_every: object
+    ) -> None:
+        """The only check on the Python API: 2.5 would act as 3, True as 1 and
+        NaN never reload (#2621)."""
+        with pytest.raises(ValueError, match="reload_every must be"):
+            check_world_reset("soft", reload_every)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="reload_every must be"):
+            _runner(_Server(), world_reset="soft", reload_every=reload_every)
+        with pytest.raises(ValueError, match="reload_every must be"):
+            ScenarioQueue(reload_every=reload_every)  # type: ignore[arg-type]
+
+    def test_a_whole_float_reload_every_is_accepted(self) -> None:
+        check_world_reset("soft", 2.0)  # type: ignore[arg-type]
 
     def test_the_queue_refuses_before_carla_starts(self) -> None:
         with pytest.raises(ValueError, match="world_reset must be one of"):

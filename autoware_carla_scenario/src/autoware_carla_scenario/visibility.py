@@ -33,6 +33,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+from .number_settings import finite_number_setting
 from .weather_rules import weather_at
 
 __all__ = [
@@ -130,13 +131,16 @@ def set_world_visibility(world_id: int, visibility_m: float) -> None:
     episode once left is not come back to).
 
     Raises:
-        ValueError: If *visibility_m* is not positive.
+        ValueError: If *visibility_m* is no number (a bool included), not
+            finite or not positive.
     """
-    if not visibility_m > 0.0:
+    # An infinity would raise in a traffic tick, not here (#2621).
+    visibility = finite_number_setting("visibility", visibility_m)
+    if not visibility > 0.0:
         raise ValueError(f"visibility must be positive, got {visibility_m}")
     for old in [w for w in _VISIBILITY if w != world_id]:
         del _VISIBILITY[old]
-    _VISIBILITY[world_id] = float(visibility_m)
+    _VISIBILITY[world_id] = visibility
 
 
 def world_visibility(world_id: Optional[int]) -> Optional[float]:

@@ -20,6 +20,8 @@ from typing import List, Optional
 
 import typesafe_carla.carla as carla
 
+from .seed import check_whole_number
+
 logger = logging.getLogger(__name__)
 
 #: Load the map again between cases (the default).
@@ -31,7 +33,8 @@ RESET_STRATEGIES = (RESET_RELOAD, RESET_SOFT)
 
 
 def check_world_reset(world_reset: str, reload_every: int) -> None:
-    """Refuse a reset strategy that is not one, or a negative *reload_every*.
+    """Refuse a reset strategy that is not one, or a *reload_every* that is
+    no whole number (``2.5``, ``True``, NaN, ``"3"``, ``None``) or is negative.
 
     Raises:
         ValueError: naming the value and what it may be.
@@ -41,6 +44,9 @@ def check_world_reset(world_reset: str, reload_every: int) -> None:
             f"world_reset must be one of {list(RESET_STRATEGIES)}, "
             f"got {world_reset!r}."
         )
+    # The only check on the Python API (ScenarioRunner, ScenarioQueue): 2.5
+    # would act as 3, True as 1, and NaN never reload (#2621).
+    check_whole_number("reload_every", reload_every)
     if reload_every < 0:
         raise ValueError(f"reload_every must be >= 0 (0: never), got {reload_every}.")
 

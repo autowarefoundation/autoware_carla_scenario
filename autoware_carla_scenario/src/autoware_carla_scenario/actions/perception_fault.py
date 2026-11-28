@@ -61,7 +61,9 @@ class PerceptionFaultInjectionAction(BaseAction):
         once: If ``True`` (default) the action fires at most once.
 
     Raises:
-        ValueError: If a size is negative or not finite, or *entity_name*
+        ValueError: If *category* is no :class:`PerceivedCategory` nor the
+            name of one (``"CAR"``), a size is no number (a bool included),
+            negative or not finite, *visible* is no bool, or *entity_name*
             is the ego (``Ego``, or ``ego`` / ``hero`` in any case).
     """
 
@@ -93,12 +95,14 @@ class PerceptionFaultInjectionAction(BaseAction):
                 "ego, which is not reported to its own driver; name another "
                 "road user"
             )
+        # Checked by the fault, not converted here: float(True) is 1 m and
+        # bool("false") is True (#2621).
         self._fault = PerceptionFault(
             category=category,
-            length_m=float(length_m),
-            width_m=float(width_m),
-            height_m=float(height_m),
-            visible=bool(visible),
+            length_m=length_m,
+            width_m=width_m,
+            height_m=height_m,
+            visible=visible,
         )
 
     def execute(self, world: "carla.World") -> None:

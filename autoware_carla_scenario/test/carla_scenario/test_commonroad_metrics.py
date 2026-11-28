@@ -1165,6 +1165,10 @@ def test_evaluates_leaves_out_only_a_heavy_metric_when_they_are_off(
         (math.inf, "p must be positive and finite, got inf"),
         (math.nan, "p must be positive and finite, got nan"),
         (10**400, "p must be positive and finite, got 1"),
+        (True, "p must be positive and finite, got True"),
+        (np.bool_(True), "p must be positive and finite, got "),
+        ("0.5", "p must be positive and finite, got '0.5'"),
+        (None, "p must be positive and finite, got None"),
     ],
 )
 def test_check_period_refuses_a_period_not_positive_and_finite(

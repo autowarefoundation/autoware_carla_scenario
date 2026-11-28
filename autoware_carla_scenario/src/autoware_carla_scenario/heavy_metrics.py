@@ -13,11 +13,11 @@ apart from its workers so that the library check compiles them;
 
 from __future__ import annotations
 
-import math
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from .metrics import CRIME_TTR_S
+from .number_settings import finite_number_setting
 from .value_text import shown
 
 __all__ = [
@@ -74,32 +74,14 @@ def _heavy_metrics_default() -> bool:
     return _heavy_metrics_from_user()
 
 
-def _is_real_number(value: float) -> bool:
-    """Whether *value* is a real number (a NumPy one too), not a bool: a
-    bool would pass as 0 or 1 (``period_s=True``, a 1 s period), and a
-    string would raise a ``TypeError`` naming no field."""
-    if TYPE_CHECKING:
-        # The check types *value* as the float it is annotated with, and
-        # Codon has no numbers module.
-        return True
-    else:
-        from numbers import Real  # noqa: PLC0415
-
-        # numpy's bool_ is no numbers.Real; Python's bool is, as an int.
-        return isinstance(value, Real) and not isinstance(value, bool)
-
-
 def _check_period(name: str, period: float) -> None:
-    if not _is_real_number(period):
-        raise ValueError(f"{name} must be positive and finite, got {shown(period)}")
+    """Refuse a period that is no number (a bool included), not finite or
+    not positive (:func:`~autoware_carla_scenario.number_settings.finite_number_setting`)."""
     try:
-        finite = math.isfinite(period)
-    except OverflowError:
-        # An int too big for a float (10**400), which str() may refuse (#1652).
-        raise ValueError(
-            f"{name} must be positive and finite, got {shown(period)}"
-        ) from None
-    if not (finite and period > 0.0):
+        finite = finite_number_setting(name, period)
+    except ValueError:
+        finite = 0.0
+    if not finite > 0.0:
         raise ValueError(f"{name} must be positive and finite, got {shown(period)}")
 
 
