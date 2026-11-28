@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from ..serve_cli import add_bind_arguments, warn_if_exposed
+from ..web_origin import is_wildcard
 
 __all__ = ["main"]
 
@@ -98,5 +99,6 @@ def main(argv: list[str] | None = None) -> None:
         args.host,
         args.port,
         "read and write drafts and export packages",
+        rebinding=is_wildcard(args.host),
     )
     uvicorn.run(application, host=args.host, port=args.port, log_level="info")

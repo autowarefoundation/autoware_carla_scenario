@@ -33,6 +33,22 @@ path (#2481).  The map is told by ``map.name``, and by ``map.source`` and
 is not read here; the run's trajectory log records each map file's SHA-256
 (its ``map`` record, docs/trajectory_log.md).
 
+Nor are where the traffic backend keeps its files and how it is watched or
+recorded: of ``traffic.options``, :data:`TRAFFIC_LOCAL_OPTIONS` --
+``cache_dir`` (where converted SUMO networks are cached on this machine),
+``binary`` (the SUMO executable, ``sumo-gui`` to watch) and ``fcd_output``
+(whether SUMO's floating car data is recorded) -- are left out, so a SLURM
+node with a cache of its own runs rollouts of the same scenario (#2620).
+The options that say what is simulated stay in, a ``net_path`` or a
+``route_path`` among them: the network and demand they name are the
+scenario.
+
+The ``odd`` section is digested as written: a registered name
+(``default``), a ``package.module:function``, or an OpenODD YAML file's
+path, which counts as written -- the same file under another path digests
+as another scenario, and the file's content is not read.  Give the runs one
+spelling of it (a path relative to where they run, or a registered name).
+
 A number is digested by its value, not its YAML spelling: a whole float is
 digested as the integer it equals, so ``15`` and ``15.0`` are one
 (``scenario.timeout_seconds=15`` against a YAML's ``15.0``, #2481).
@@ -58,6 +74,7 @@ __all__ = [
     "OTHER_SECTIONS",
     "SCENARIO_SECTIONS",
     "SCENARIO_SETTINGS",
+    "TRAFFIC_LOCAL_OPTIONS",
     "scenario_hash",
 ]
 
@@ -108,6 +125,13 @@ OTHER_SECTIONS: tuple[str, ...] = (
 #: environment's ``fog_density`` renders, LiDAR fog included.
 SCENARIO_SETTINGS: tuple[tuple[str, str], ...] = (("server", "fog_density_scale"),)
 
+#: The ``traffic.options`` that say where a run's traffic backend keeps its
+#: files on this machine, or how it is watched or recorded, not what it
+#: simulates: the SUMO network cache (``cache_dir``, the ``sumo`` and
+#: ``hybrid`` backends'), the SUMO executable (``binary``) and whether its
+#: floating car data is recorded (``fcd_output``).  Left out of the digest.
+TRAFFIC_LOCAL_OPTIONS: tuple[str, ...] = ("cache_dir", "binary", "fcd_output")
+
 #: Settings named so say where a run connects, not what it simulates.
 _ENDPOINTS = frozenset(("host", "address", "port"))
 
@@ -149,7 +173,8 @@ def scenario_hash(config: Mapping[str, Any], scenario_class: str) -> str:
         config: A run's config, resolved, as plain mappings and lists (what
             ``OmegaConf.to_container(cfg, resolve=True)`` returns).  Only its
             :data:`SCENARIO_SECTIONS` are read, without their endpoint
-            settings and the ``map`` section's paths, and the
+            settings, the ``map`` section's paths and the
+            :data:`TRAFFIC_LOCAL_OPTIONS` of ``traffic.options``, and the
             :data:`SCENARIO_SETTINGS` set in it; ``seed`` is not one of them.
             A number is digested by its value: ``15`` and ``15.0`` are one,
             as are ``0.01`` and ``1e-2``.
@@ -168,6 +193,15 @@ def scenario_hash(config: Mapping[str, Any], scenario_class: str) -> str:
         sections["map"] = {
             key: item for key, item in map_section.items() if not _is_map_path(key)
         }
+    traffic = sections.get("traffic")
+    if isinstance(traffic, dict):
+        options = traffic.get("options")
+        if isinstance(options, dict):
+            traffic["options"] = {
+                key: item
+                for key, item in options.items()
+                if key not in TRAFFIC_LOCAL_OPTIONS
+            }
     for section, key in SCENARIO_SETTINGS:
         settings = config.get(section)
         value = settings.get(key) if isinstance(settings, Mapping) else None

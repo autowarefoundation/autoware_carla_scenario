@@ -110,6 +110,22 @@ class TestBothCommands:
         assert served[0]["host"] == "127.0.0.2"
         assert served[0]["port"] == 8080
 
+    def test_a_wildcard_host_warns_of_dns_rebinding(
+        self,
+        prog: str,
+        served: list[dict[str, Any]],
+        base_path: None,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Bound to every interface, no Host is checked, so any page the user
+        # opens can drive it, not only who can reach the port (#2620).
+        _MAINS[prog](["--host", "0.0.0.0"])  # noqa: S104
+        assert "DNS rebinding" in capsys.readouterr().err
+        _MAINS[prog](["--host", "192.0.2.1"])
+        err = capsys.readouterr().err
+        assert "listening on 192.0.2.1" in err
+        assert "DNS rebinding" not in err
+
     def test_the_default_host_is_loopback(
         self, prog: str, served: list[dict[str, Any]], base_path: None
     ) -> None:
@@ -571,6 +587,33 @@ def test_warn_if_exposed_takes_a_hint_of_its_own(
         "prog: WARNING: listening on 0.0.0.0:1234 with no authentication; "
         "anyone who can reach this port can edit drafts. Firewall it.\n"
     )
+
+
+def test_warn_if_exposed_warns_of_dns_rebinding_when_told_to(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    warn_if_exposed("prog", "0.0.0.0", 1234, "edit drafts", rebinding=True)  # noqa: S104
+    assert capsys.readouterr().err == (
+        "prog: WARNING: listening on 0.0.0.0:1234 with no authentication; "
+        "anyone who can reach this port can edit drafts. Bound to every "
+        "interface, it checks no Host header, so any web page opened in a "
+        "browser that can reach it can do so too, through DNS rebinding; pass "
+        "--host with one of this machine's addresses to keep the check. Pass "
+        "--host 127.0.0.1 to serve this machine only.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "number", [True, False, 10**5000], ids=["true", "false", "huge"]
+)
+def test_check_port_is_number_settings_port_check(number: int) -> None:
+    # One port check (#2620): a bool is no port, as number_settings refuses
+    # it, and an integer too long for repr() is shown, not a str() error.
+    from autoware_carla_scenario import number_settings
+
+    assert not number_settings.is_port(number)
+    with pytest.raises(ValueError, match=r"^must be within 1-65535, got "):
+        check_port(number)
 
 
 @pytest.mark.parametrize(

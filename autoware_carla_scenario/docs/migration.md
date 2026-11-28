@@ -1,5 +1,19 @@
 # Migrating
 
+## `scenario_hash` leaves the traffic backend's cache, executable and recording out
+
+A run's `scenario_hash` no longer digests `traffic.options.cache_dir`,
+`traffic.options.binary` or `traffic.options.fcd_output`: where the SUMO
+networks are cached on a machine, which SUMO executable runs and whether its
+floating car data is recorded say nothing of what is simulated (#2620,
+[WOSAC Rollouts](wosac.md#are-they-rollouts)). A run whose config sets any
+of them (the `sumo` and `hybrid` traffic configs do) has another hash than
+the same run under an earlier release, so `scenario-wosac pack` refuses
+rollouts recorded before and after the change as different scenarios:
+record them again with one release. Runs that differ only in these settings
+are now rollouts of one scenario. An `odd` that is a file's path is digested
+as written, as before: give every rollout one spelling of it.
+
 ## `scenario` exits 2 for more of what it refuses before a run
 
 `scenario` now exits 2, which its `--help` and the exit-code table give for a

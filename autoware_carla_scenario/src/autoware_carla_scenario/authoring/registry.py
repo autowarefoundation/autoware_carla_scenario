@@ -38,7 +38,8 @@ from ..action_state import ActionState
 # is read, so the Metric card's options are the metrics themselves.
 from ..metrics import BUILT_IN_METRICS
 
-# Free to import: `seed` imports nothing but the standard library.  Every
+# Free to import: `seed` imports nothing but the standard library (and
+# value_text, which imports nothing else).  Every
 # seed field is bounded by MAX_SEED, as its constructor's check_seed is.
 from ..seed import MAX_SEED
 from dataclasses import dataclass

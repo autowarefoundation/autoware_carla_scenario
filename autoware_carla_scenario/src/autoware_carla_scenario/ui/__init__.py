@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from ..serve_cli import add_bind_arguments, warn_if_exposed
+from ..web_origin import is_wildcard
 
 SHUTDOWN_TIMEOUT_SECONDS = 5
 """How long the viewer's server waits for open connections as it shuts down."""
@@ -112,6 +113,7 @@ def main(argv: list[str] | None = None) -> None:
         args.host,
         args.port,
         "browse the results and start scenario runs and SLURM submissions",
+        rebinding=is_wildcard(args.host),
     )
     try:
         uvicorn.run(
