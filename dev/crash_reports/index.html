@@ -2576,7 +2576,9 @@ environment variables that affect a run (<code>CARLA*</code>, <code>SCENARIO*</c
 anything whose name looks like a secret is left out), and runs <code>scenario</code> with
 the case's own overrides. Run again, the case writes to an output directory of
 its own. A SLURM case's runs locally, without the batch's <code>launcher=</code> and
-<code>launcher.*</code> overrides; a report of a SLURM task that failed outside any case
+<code>launcher.*</code> overrides, and with <code>launcher=local</code> when the case's config
+selects SLURM (a launcher its scenario's config sets, which a single run
+refuses); a report of a SLURM task that failed outside any case
 runs the task's worker again. A report written outside any case (a batch's,
 before its cases are known) runs the command line again, without its
 <code>hydra.run.dir=</code> and <code>hydra.sweep.dir=</code>: the batch's directory is no longer
@@ -2648,7 +2650,10 @@ prepares a report there in advance, <code>crash_reports/native-&lt;time&gt;-&lt;
 <code>context.json</code>, <code>config.yaml</code> and <code>repro.sh</code>. If the process dies of a fatal
 signal, Python's <code>faulthandler</code> writes the stack of every thread to that
 directory's <code>faulthandler.log</code>.</p>
-<p>When the run ends normally, the directory is removed. If one is left with an
+<p>When the run ends normally, the directory is removed, and <code>crash_reports/</code>
+with it when preparing the report made it and nothing else is in it: a
+directory that was there before, such as one <code>SCENARIO_CRASH_REPORT_DIR</code>
+names or another task of a batch made, is never removed. If one is left with an
 empty <code>faulthandler.log</code>, the process was killed without a chance to write
 anything (<code>SIGKILL</code>, the OOM killer). Hydra's own log of the run, in the run's
 output directory, has the log records that came before.</p>
@@ -2710,7 +2715,7 @@ for a project you trust with them.</p>
 </tr>
 <tr>
 <td><code>SCENARIO_CRASH_REPORT_MAX_FILE_SIZE</code></td>
-<td>The largest <code>log.txt</code>, <code>traceback.txt</code> and <code>config.yaml</code> of a report (<code>1MiB</code>, <code>512KB</code>, <code>1048576</code>; <code>0</code> for no limit); default <code>1MiB</code></td>
+<td>The largest <code>log.txt</code>, <code>traceback.txt</code> and <code>config.yaml</code> of a report (<code>1MiB</code>, <code>512KB</code>, <code>1048576</code>; <code>0</code> for no limit, a size under a byte is refused); default <code>1MiB</code></td>
 </tr>
 <tr>
 <td><code>SCENARIO_CRASH_REPORT_MAX_REPORTS</code></td>
@@ -2738,7 +2743,7 @@ used. A crash report never stops a run.</p>
 <tbody>
 <tr>
 <td><code>locals</code></td>
-<td>the local variables of every frame, in <code>event.json</code></td>
+<td>the local variables of every frame, in <code>event.json</code>; one whose name looks like a secret (<code>password</code>, <code>token</code>, <code>api_key</code>, ...) shows as <code>[Filtered]</code>, as does such a field of a breadcrumb's data</td>
 </tr>
 <tr>
 <td><code>log</code></td>
@@ -2763,7 +2768,8 @@ used. A crash report never stops a run.</p>
 </tbody>
 </table>
 <p>The value is a comma-separated list of items, <code>all</code>, <code>none</code>, or <code>all</code> with
-some items removed by a leading <code>-</code>:</p>
+some items removed by a leading <code>-</code> (a list that starts with a removal, such
+as <code>-locals</code>, starts from <code>all</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_ITEMS</span><span class="o">=</span>all,-locals<span class="w">          </span><span class="c1"># everything but local variables</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SCENARIO_CRASH_REPORT_SEND_ITEMS</span><span class="o">=</span>log,config,repro<span class="w">  </span><span class="c1"># write all, send less</span>
 </code></pre></div>
@@ -2816,7 +2822,7 @@ write:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 24, 2026 23:44:47 UTC"><span class="timeago" datetime="2026-11-24T23:44:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 24, 2026 23:44:47 UTC">2026-11-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 05:09:58 UTC"><span class="timeago" datetime="2026-11-28T05:09:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 05:09:58 UTC">2026-11-28</span>
   </span>
 
     
