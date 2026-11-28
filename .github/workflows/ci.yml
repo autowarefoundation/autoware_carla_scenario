@@ -516,6 +516,8 @@ jobs:
         push: "false"
 
     - name: Report the image size
+      # bash -eo pipefail: the default shell would report `tee`'s status.
+      shell: bash
       env:
         IMAGE_REF: ${{ steps.pack.outputs.image-ref }}
       run: |
@@ -547,6 +549,8 @@ jobs:
         cache-scope: ${{ steps.pack.outputs.cache-scope }}
 
     - name: Check the two images share everything but the scenario layer
+      # bash -eo pipefail: the default shell would report `tee`'s status.
+      shell: bash
       env:
         FIRST: ${{ steps.pack.outputs.image-ref }}
         SECOND: ${{ steps.pack-variant.outputs.image-ref }}

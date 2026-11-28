@@ -110,7 +110,8 @@ outputs:
     value: ${{ steps.plan.outputs.tags }}
   digest:
     description: "Image digest (empty unless the image was pushed)"
-    value: ${{ steps.push.outputs.digest }}
+    # The push step also runs unpushed (a multi-platform build): no digest then.
+    value: ${{ inputs.push == 'true' && steps.push.outputs.digest || '' }}
   cache-scope:
     description: >
       The cache scope this build used, given or derived. Pass it to a second
