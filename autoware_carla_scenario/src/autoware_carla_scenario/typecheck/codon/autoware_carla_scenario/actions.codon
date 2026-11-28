@@ -10,7 +10,7 @@ from .conditions import (AdversityKind, AdversityLocation, BaseCondition, TurnIn
                          _expect_optional_condition)
 from .coordinate import (Lanelet2Pose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
-from .entity_role import EntityRole, _expect_role
+from .entity_role import EntityRole, _expect_role, _expect_optional_role
 from .traffic import (TurnDirection, LaneChangeDirection, BicycleParameters, PedestrianParameters,
                       VehicleParameters)
 from .trajectory import (Trajectory, TrajectoryFollowingMode, TrajectoryTiming,
@@ -723,14 +723,21 @@ def collision_objects(first, second, first_pose, second_pose, start_time: float 
 class SetSpeedAction(BaseAction):
     def __init__(self, label):
         compile_error("SetSpeedAction(): no constructor takes these arguments "
-                      "(required: entity_name, target_speed_kmh)")
+                      "(required: entity_name)")
 
-    def __init__(self, entity_name, target_speed_kmh: float, rate_kmh_s = None, condition = None,
+    def __init__(self, entity_name, target_speed_kmh = None, rate_kmh_s = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "set_speed",
-                 once: bool = True, overrides: bool = False, until = None, reissue = None):
-        _keyword_only(_kw, "SetSpeedAction(): label, once, overrides, until and reissue")
+                 once: bool = True, overrides: bool = False, until = None, reissue = None,
+                 relative_to = None, delta_kmh = None, factor = None, continuous = None):
+        _keyword_only(_kw, "SetSpeedAction(): label, once, overrides, until, reissue, "
+                      "relative_to, delta_kmh, factor and continuous")
         _expect_role(entity_name)
+        _expect_optional_float(target_speed_kmh)
         _expect_optional_float(rate_kmh_s)
+        _expect_optional_role(relative_to)
+        _expect_optional_float(delta_kmh)
+        _expect_optional_float(factor)
+        _expect_optional_bool(continuous)
         super().__init__(label, condition, timing, once=once, until=until, reissue=reissue)
 
 

@@ -537,3 +537,146 @@ class TestConstruction:
         action = SetSpeedAction(entity_name="npc1", target_speed_kmh=50.0, reissue=True)
 
         assert action.reissues_while_running is True
+
+
+def _reference(speed_kmh: float) -> _RecordingVehicle:
+    """An entity named ``ego`` in the scene (above the road), at *speed_kmh*."""
+    reference = _RecordingVehicle(speed_kmh, role_name="ego")
+    reference.actor.get_location.return_value = carla.Location(0.0, 0.0, 0.5)
+    return reference
+
+
+class TestRelativeTarget:
+    """A target relative to another entity's speed (OpenSCENARIO's
+    ``RelativeTargetSpeed``): its speed times ``factor`` plus ``delta_kmh``."""
+
+    def test_delta_and_factor_make_the_target(self, vehicle: _RecordingVehicle) -> None:
+        ego = _reference(40.0)
+        action = SetSpeedAction(
+            entity_name="npc1", relative_to="ego", delta_kmh=10.0, factor=0.5
+        )
+
+        _drive(action, _FakeWorld(vehicle, ego), ticks=3)
+
+        # The actor's velocity is float32, as CARLA's is.
+        assert vehicle.commanded == pytest.approx([30.0])
+
+    def test_without_delta_or_factor_it_matches_the_reference(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        action = SetSpeedAction(entity_name="npc1", relative_to="ego")
+
+        _drive(action, _FakeWorld(vehicle, _reference(25.0)), ticks=1)
+
+        assert vehicle.commanded == pytest.approx([25.0])
+
+    def test_a_target_below_zero_is_zero(self, vehicle: _RecordingVehicle) -> None:
+        action = SetSpeedAction(entity_name="npc1", relative_to="ego", delta_kmh=-50.0)
+
+        _drive(action, _FakeWorld(vehicle, _reference(20.0)), ticks=1)
+
+        assert vehicle.commanded == [0.0]
+
+    def test_the_target_is_read_once_when_not_continuous(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        """The reference speeds up after the start; the walk keeps the target
+        it read, and completes there."""
+        ego = _reference(36.0)
+        action = SetSpeedAction(
+            entity_name="npc1", relative_to="ego", delta_kmh=0.0, rate_kmh_s=360.0
+        )
+        world = _FakeWorld(vehicle, ego)
+        action.tick(world, 0.0)
+        ego.speed_kmh = 80.0
+        _drive(action, world, ticks=5, follows=vehicle)
+
+        assert max(vehicle.commanded) == 36.0
+        assert action.state is ActionState.COMPLETE
+
+    def test_a_continuous_target_follows_the_reference(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        ego = _reference(30.0)
+        action = SetSpeedAction(
+            entity_name="npc1", relative_to="ego", delta_kmh=5.0, continuous=True
+        )
+        world = _FakeWorld(vehicle, ego)
+
+        action.tick(world, 0.0)
+        action.tick(world, 0.1)
+        ego.speed_kmh = 50.0
+        action.tick(world, 0.2)
+        ego.speed_kmh = 10.0
+        action.tick(world, 0.3)
+
+        assert vehicle.commanded[0] == pytest.approx(35.0)
+        assert vehicle.commanded[-2:] == pytest.approx([55.0, 15.0])
+        assert action.reissues_while_running is True
+        assert action.state is not ActionState.COMPLETE
+
+    def test_nothing_is_commanded_while_the_reference_is_absent(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        action = SetSpeedAction(entity_name="npc1", relative_to="ego", delta_kmh=5.0)
+
+        _drive(action, _FakeWorld(vehicle), ticks=2)
+
+        assert vehicle.commanded == []
+
+    def test_a_reset_forgets_the_target_read(self, vehicle: _RecordingVehicle) -> None:
+        """The same action on a second run reads the reference anew."""
+        ego = _reference(20.0)
+        action = SetSpeedAction(entity_name="npc1", relative_to="ego")
+        world = _FakeWorld(vehicle, ego)
+        action.tick(world, 0.0)
+        # As the runner ends one run and begins the next.
+        action.close()
+        action.reset()
+        ego.speed_kmh = 60.0
+        action.tick(world, 0.0)
+
+        assert vehicle.commanded == pytest.approx([20.0, 60.0])
+
+
+class TestRelativeConstruction:
+    def test_a_target_is_needed(self) -> None:
+        with pytest.raises(ValueError, match="needs a target"):
+            SetSpeedAction(entity_name="npc1")
+
+    def test_an_absolute_and_a_relative_target_are_exclusive(self) -> None:
+        with pytest.raises(ValueError, match="give one"):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, relative_to="ego")
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"delta_kmh": 5.0}, {"factor": 1.1}, {"continuous": True}],
+    )
+    def test_relative_settings_need_a_reference(self, kwargs: dict) -> None:
+        with pytest.raises(ValueError, match="give relative_to too"):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, **kwargs)
+
+    def test_continuous_false_without_a_reference_is_the_default(self) -> None:
+        """What an editor's unchecked box sends."""
+        SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, continuous=False)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"delta_kmh": math.nan}, "delta_kmh must be finite"),
+            ({"delta_kmh": True}, "delta_kmh must be finite"),
+            ({"factor": -1.0}, "factor must be finite and not negative"),
+            ({"factor": math.inf}, "factor must be finite and not negative"),
+        ],
+    )
+    def test_bad_relative_settings_are_refused(
+        self, kwargs: dict, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            SetSpeedAction(entity_name="npc1", relative_to="ego", **kwargs)
+
+    def test_continuous_without_reissue_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="reissue=False would send it once"):
+            SetSpeedAction(
+                entity_name="npc1", relative_to="ego", continuous=True, reissue=False
+            )

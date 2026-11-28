@@ -101,6 +101,7 @@ __all__ = [
     "build_despawn_action",
     "build_lane_change_action",
     "build_routing_action",
+    "build_set_relative_speed_action",
     "build_set_speed_action",
     "build_spawn_action",
     "build_turn_action",
@@ -129,6 +130,7 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
         "turn_indicator",
         "lane_change",
         "routing",
+        "set_relative_speed",
         "set_speed",
         "turn",
     }
@@ -164,6 +166,7 @@ ONCE_ACTIONS: frozenset[str] = frozenset(
         "despawn",
         "lane_change",
         "routing",
+        "set_relative_speed",
         "set_speed",
         "spawn",
         "turn",
@@ -1946,6 +1949,32 @@ def build_routing_action(
         initial_distance_offset=params["initial_distance_offset"],
         speed=params["speed_ms"],
         stop_at_goal=params["stop_at_goal"],
+    )
+
+
+def build_set_relative_speed_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`SetSpeedAction`."""
+    from ..actions import SetSpeedAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return SetSpeedAction(
+        entity_name=compiled.actor_role,
+        rate_kmh_s=params["rate_kmh_s"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        overrides=compiled.node.overrides,
+        relative_to=str(params["other"]),
+        delta_kmh=params["delta_kmh"],
+        factor=params["factor"],
+        continuous=params["continuous"],
     )
 
 

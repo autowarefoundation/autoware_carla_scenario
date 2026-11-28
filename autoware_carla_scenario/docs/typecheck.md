@@ -364,7 +364,7 @@ file, binds it to the real Python signature of the class, method or function,
 and says what is wrong, at the argument:
 
 ```text
-scenario.py:28:62: error: SetSpeedAction(): target_speed_kmh: expected float, got str
+scenario.py:28:62: error: SpeedCondition(): value: expected float, got str
 scenario.py:28:60: error: TimeoutCondition(): 'lable' is an invalid keyword argument (did you mean 'label'?); TimeoutCondition takes (timeout_seconds: float = 60.0, *, label: str)
 scenario.py:36:9: error: val() returns str, but the function is declared -> float
 ```
