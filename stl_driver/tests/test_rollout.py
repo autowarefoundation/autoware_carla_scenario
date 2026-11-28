@@ -923,3 +923,44 @@ def test_the_stopping_distance_is_one_formula_for_floats_and_tensors(config):
     assert torch.equal(speed.grad, before.grad)
     assert torch.allclose(speed.grad, speed.detach() / brake + ramp)
     assert limits.stopping_distance_m(-3.0) == 0.0
+
+
+@pytest.mark.parametrize("short_m", [0.0, 0.3, 0.7, 0.95])
+def test_a_vehicle_at_rest_within_the_gap_of_the_stop_station_makes_progress(config, short_m):
+    """`liveness_stop_gap_m` is the room `makes_progress` lets a stopped
+    vehicle leave short of the stop station. Floored alone, without the gap
+    taken off first, a vehicle at rest 0.3 / 0.7 m short read -0.3 / -0.7."""
+    inputs = make_inputs(
+        config, speed0_mps=0.0, offset0_m=0.0, stop_station_m=short_m, light_active=True
+    )
+    signal = rollout(constant_accel_params(-4.0), inputs, config)
+    assert signal[:, Col.SPEED].max().item() == 0.0
+    rules = RuleSet(build_rules(config))
+    assert float(rules.per_rule(signal)["makes_progress"]) > 0.0
+
+
+def test_a_vehicle_at_rest_further_short_than_the_gap_is_asked_to_close_it(config):
+    """Beyond the gap the demand is the rest of the way to within it."""
+    gap = config.limits.liveness_stop_gap_m
+    inputs = make_inputs(
+        config, speed0_mps=0.0, offset0_m=0.0, stop_station_m=gap + 0.5, light_active=True
+    )
+    signal = rollout(constant_accel_params(-4.0), inputs, config)
+    assert signal[:, Col.PROGRESS_SLACK].max().item() == pytest.approx(-0.5, abs=1e-3)
+
+
+def test_tangent_and_curvature_are_held_past_the_ends_of_the_table(config):
+    """Past an end the point is extrapolated but the curvature is not: on a
+    bend ending at the table's end, a linear extrapolation of the curvature
+    read the opposite turn ten metres on."""
+    from stl_driver.rollout import _lookup_centreline
+
+    # A bend running past the table's end, so the curvature there is not zero.
+    inputs = make_inputs(config, route=curved_route(radius_m=20.0, sweep_rad=5.0))
+    length = (inputs.route_xy.shape[0] - 1) * inputs.route_ds
+    stations = torch.tensor([-5.0, 0.0, length, length + 10.0])
+    _, tangent, curvature = _lookup_centreline(stations, inputs)
+    assert torch.equal(curvature[0], curvature[1])
+    assert torch.equal(curvature[2], curvature[3])
+    assert torch.allclose(tangent[0], tangent[1])
+    assert torch.allclose(tangent[2], tangent[3])

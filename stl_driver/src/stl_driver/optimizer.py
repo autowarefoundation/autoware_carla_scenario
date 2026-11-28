@@ -127,10 +127,11 @@ class RobustnessOptimizer:
         would look like a policy that missed its deadline by a factor of a
         thousand.
 
-        Failure is not fatal.  ``torch.compile`` reaches into a specification
-        built out of a third-party library's ``nn.Module`` tree, and if it
-        cannot handle some corner of that, the eager path is still correct and
-        merely slower.
+        A compile failure is not fatal.  ``torch.compile`` reaches into a
+        specification built out of a third-party library's ``nn.Module`` tree,
+        and if it cannot handle some corner of that, the eager path is still
+        correct and merely slower.  A solve that fails eagerly too is not a
+        compile failure: it is raised, with compilation left as it was.
 
         Tries to compile once: called again -- every session calls it -- it only
         solves, which keeps the first step of the session at the steady rate.
@@ -148,12 +149,41 @@ class RobustnessOptimizer:
             self._compiled_batch = torch.compile(self._score_batch_eager, dynamic=True)
             self._compiled_refine = torch.compile(self._refine_losses, dynamic=True)
             self._compiled_scores = torch.compile(self._batched_scores_eager, dynamic=True)
-            self.solve(example, honour_budget=False)
         except Exception:  # noqa: BLE001 - any compile failure falls back
             logger.warning("torch.compile failed; continuing eagerly", exc_info=True)
-            self._compiled_batch = None
-            self._compiled_refine = None
-            self._compiled_scores = None
+            self._drop_compiled()
+            self.solve(example, honour_budget=False)
+            return
+
+        # Compilation is lazy, so this solve is where it happens. A compiled
+        # stage that fails while called is dropped by `_vmapped`; what escapes
+        # here is either a failure that one cannot catch -- a compiled
+        # backward, built on the first `backward()` -- or the search itself
+        # failing, which is no reason to turn compilation off. Retrying eagerly
+        # tells the two apart: only a solve that fails compiled and succeeds
+        # eagerly is blamed on compilation.
+        try:
+            self.solve(example, honour_budget=False)
+        except Exception:  # noqa: BLE001 - re-raised below unless compilation is to blame
+            compiled = (self._compiled_batch, self._compiled_refine, self._compiled_scores)
+            if all(stage is None for stage in compiled):
+                raise
+            self._drop_compiled()
+            try:
+                self.solve(example, honour_budget=False)
+            except Exception:
+                self._compiled_batch, self._compiled_refine, self._compiled_scores = compiled
+                raise
+            logger.warning(
+                "the compiled search failed and the eager one did not; continuing eagerly",
+                exc_info=True,
+            )
+
+    def _drop_compiled(self) -> None:
+        """Forget every compiled stage, so the search runs eagerly from now on."""
+        self._compiled_batch = None
+        self._compiled_refine = None
+        self._compiled_scores = None
 
     # -- seeds -------------------------------------------------------------
 
@@ -326,6 +356,7 @@ class RobustnessOptimizer:
         # batch, so it has already been rolled out and scored; this only
         # changes which of two near-equal plans is preferred.
         margin = optimizer.continuity_margin
+        carried_chosen = False
         if warm_start is not None and margin > 0.0:
             carried = len(candidates) + WARM_START_ROW
             carried_tier = _tier(carried, robustness, keeps_hard)
@@ -335,6 +366,7 @@ class RobustnessOptimizer:
                 best_params = candidates[carried].clone()
                 best_signal = signals[carried]
                 best_merit = float(merit[carried])
+                carried_chosen = True
                 # Descend from the carried plan as well, so continuity is a
                 # starting point rather than merely a tie-break at the end.
                 seeds = torch.cat([best_params.unsqueeze(0), seeds[:-1]], dim=0)
@@ -350,10 +382,12 @@ class RobustnessOptimizer:
         refined_params, refined_signal, refined_merit, refined_tier, n_steps = self._refine(
             seeds, inputs, started, optimizer.time_budget_s if honour_budget else None
         )
-        # Refinement has to clear the same bar: it starts from the carried plan
-        # when that was preferred, so accepting any improvement at all would
-        # let it drift a little every step and undo the continuity.
-        bar = margin if warm_start is not None else 0.0
+        # Refinement has to clear the same bar when the carried plan was
+        # preferred: it starts from that plan then, so accepting any
+        # improvement at all would let it drift a little every step and undo
+        # the continuity. When it was not, there is no continuity to keep, and
+        # a refined plan better than the sampled best is simply better.
+        bar = margin if carried_chosen else 0.0
         if (refined_tier, refined_merit) > (best_tier, best_merit + bar):
             best_params, best_signal = refined_params, refined_signal
 

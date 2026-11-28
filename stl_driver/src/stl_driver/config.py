@@ -37,6 +37,12 @@ class Horizon:
     n_steps: int = 40
     step_s: float = 0.1
 
+    def __post_init__(self) -> None:
+        if self.n_steps <= 0:
+            raise ValueError(f"n_steps must be positive, got {self.n_steps}")
+        if not math.isfinite(self.step_s) or self.step_s <= 0.0:
+            raise ValueError(f"step_s must be positive, got {self.step_s}")
+
     @property
     def duration_s(self) -> float:
         return self.n_steps * self.step_s
@@ -268,6 +274,11 @@ class Limits:
     #: `default_speed_limit_mps` over a four-second horizon, 55.6 m, plus the
     #: front of the car (3.75 m from the rear axle) and `collision_margin_m`.
     #: Round that up and nothing the ego could touch is outside it.
+    #:
+    #: A floor, not the radius itself: `STLDriverConfig.actor_reach_m` raises
+    #: it to that sum for whatever the config's top speed and horizon are, so
+    #: a faster cruise speed or a longer horizon does not leave traffic the
+    #: ego could reach out of `collision_free`.
     #:
     #: Worth having because the simulator reports every vehicle on the map and
     #: almost none of them are relevant: 200 steps in traffic of thirty gave 90
@@ -646,11 +657,29 @@ class STLDriverConfig:
 
     def route_table_length_m(self) -> float:
         """How far the resampled route must reach to cover any plan."""
-        top_speed = max(
-            self.cruise_speed_mps,
-            self.limits.default_speed_limit_mps,
+        return self._top_speed_mps() * self.horizon.duration_s + self.route_table_margin_m
+
+    def actor_reach_m(self) -> float:
+        """How near a predicted disc must come to be kept for `collision_free`.
+
+        The ego's own reach -- the top speed over the horizon, plus the front
+        of the car and `Limits.collision_margin_m` -- floored at
+        `Limits.actor_reach_m`, which covers it at the defaults (59.95 m
+        against 60). At a 20 m/s cruise it is 84.35 m, where a fixed 60 left
+        out of the check traffic the plan could reach within the horizon.
+        """
+        limits = self.limits
+        reach = (
+            self._top_speed_mps() * self.horizon.duration_s
+            + limits.ego_front_m()
+            + limits.collision_margin_m
         )
-        return top_speed * self.horizon.duration_s + self.route_table_margin_m
+        return max(limits.actor_reach_m, reach)
+
+    def _top_speed_mps(self) -> float:
+        """The fastest a plan is expected to go: the cruise speed, or the
+        fallback speed limit if that is higher."""
+        return max(self.cruise_speed_mps, self.limits.default_speed_limit_mps)
 
     def progress_target_m(self, target_speed_mps: float, current_speed_mps: float) -> float:
         """Distance `makes_progress` asks the plan to cover.

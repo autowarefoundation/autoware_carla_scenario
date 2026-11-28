@@ -423,6 +423,54 @@ def test_a_rule_whose_interval_overflows_the_horizon_is_rejected():
         validate_rules((bad,), T)
 
 
+def _bounded_hard_rule():
+    from stl_driver.ruleset import Rule
+    from stl_driver.signals import Col, column
+    from stl_driver.stl_backend import Always
+
+    return Rule(
+        "bounded_and_hard",
+        Always(column("speed", Col.SPEED) > 0.0, interval=[0, T - 1]),
+        weight=1.0,
+        margin=1.0,
+        hard=True,
+    )
+
+
+def test_a_hard_rule_with_a_bounded_interval_is_rejected():
+    """The emergency-stop check cuts the signal to its opening rows, where a
+    bounded window is padded with -1e9: such a rule passed validation and
+    then summoned the fallback on every step."""
+    from stl_driver.ruleset import validate_rules
+
+    rule = _bounded_hard_rule()
+    # What it would have done: a plan satisfying it everywhere reads -1e9.
+    window = CONFIG.horizon.rows_within(CONFIG.optimizer.fallback_window_s)
+    satisfying = signal_from_columns(speed=constant(8.0))
+    assert RuleSet((rule,)).imminent_hard_violation(satisfying, window) == "bounded_and_hard"
+    with pytest.raises(ValueError, match="hard rules must be unbounded"):
+        validate_rules((rule,), T)
+
+
+def test_a_supplied_specification_is_validated_too():
+    from stl_driver.policy import EgoPolicy
+
+    with pytest.raises(ValueError, match="hard rules must be unbounded"):
+        EgoPolicy(rules=RuleSet((_bounded_hard_rule(),)))
+
+
+@pytest.mark.parametrize("cruise", [4.0, 8.0, 20.0])
+def test_the_shipped_specification_passes_validation(cruise):
+    """`build_rules` validates what it builds; every hard rule it ships is
+    unbounded."""
+    from stl_driver.ruleset import validate_rules
+
+    config = STLDriverConfig(cruise_speed_mps=cruise)
+    rules = build_rules(config)
+    validate_rules(rules, config.horizon.n_steps)
+    assert any(rule.hard for rule in rules)
+
+
 def _rule(weight: float, margin: float):
     from stl_driver.ruleset import Rule
     from stl_driver.signals import Col, column
@@ -611,3 +659,14 @@ def test_readme_states_the_comfort_bounds() -> None:
     assert bounds in line
     assert f"|jerk| < {LIMITS.max_jerk_mps3:g}" in line
     assert f"|lat_accel| < {LIMITS.max_lat_accel_mps2:g}" in line
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"n_steps": 0}, {"n_steps": -1}, {"step_s": 0.0}, {"step_s": -0.1}, {"step_s": float("nan")}],
+)
+def test_a_horizon_that_is_empty_or_runs_backwards_is_rejected(fields):
+    from stl_driver.config import Horizon
+
+    with pytest.raises(ValueError, match="must be positive"):
+        Horizon(**fields)

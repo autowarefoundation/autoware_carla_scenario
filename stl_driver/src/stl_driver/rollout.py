@@ -17,8 +17,8 @@ keeps its exact derivative.  The clamps that remain on the live path are
 there on purpose, each where its flat side is a region no good plan lives in
 or a smooth floor would report something false: the speed floor (a softplus
 would report a stopped car as creeping; see :func:`rollout`), the knots'
-final clamp onto the envelope, the lateral progress, and the curvature
-denominator.
+final clamp onto the envelope, the lateral progress, the curvature
+denominator, and the tangent and curvature held past the route table's ends.
 
 **Nothing plan-independent computed here.**  The route table, the actor
 forecast, the stop-line station: all of it is precomputed in numpy and arrives
@@ -233,8 +233,8 @@ def _interpolate_knots(
 def _lookup_centreline(
     station: torch.Tensor,
     inputs: RolloutInputs,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Centreline point and unit tangent at each station, differentiably.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Centreline point, unit tangent and curvature at each station, differentiably.
 
     The subtle part is the index.  ``floor`` has zero derivative almost
     everywhere, so differentiating through it would silently zero
@@ -242,20 +242,27 @@ def _lookup_centreline(
     simply never steers, which looks like a tuning problem rather than a bug.
     Detaching the index and keeping the fractional part live gives the exact
     piecewise-linear derivative instead.
+
+    Past either end of the table the point is extrapolated along the end
+    segment, but the tangent and curvature are held at that end's, as
+    `RouteTable.frenet_to_xy_many` holds the tangent: extrapolated linearly,
+    a curvature tapering off at the end of a bend went on falling past zero
+    and read as the opposite turn ten metres on.
     """
     table_size = inputs.route_xy.shape[0]
     index_real = station / inputs.route_ds
     lower = torch.floor(index_real.detach()).clamp(0, table_size - 2).long()
+    # Unclamped for the point, below 0 or above 1 on the end segments, which
+    # is the extrapolation; clamped for what is held.
     weight = (index_real - lower).unsqueeze(-1)
+    held = weight.clamp(0.0, 1.0)
 
     point = inputs.route_xy[lower] * (1.0 - weight) + inputs.route_xy[lower + 1] * weight
-    tangent = (
-        inputs.route_tangent[lower] * (1.0 - weight) + inputs.route_tangent[lower + 1] * weight
-    )
+    tangent = inputs.route_tangent[lower] * (1.0 - held) + inputs.route_tangent[lower + 1] * held
     tangent = tangent / tangent.norm(dim=-1, keepdim=True).clamp_min(1e-9)
     curvature = (
-        inputs.route_curvature[lower] * (1.0 - weight[..., 0])
-        + inputs.route_curvature[lower + 1] * weight[..., 0]
+        inputs.route_curvature[lower] * (1.0 - held[..., 0])
+        + inputs.route_curvature[lower + 1] * held[..., 0]
     )
     return point, tangent, curvature
 
@@ -470,12 +477,17 @@ def rollout(
     # speed rather than the plan's, so every candidate is asked for the same
     # thing and none can lower the bar by slowing down.
     stopping = config.limits.stopping_distance(inputs.speed0_mps)
-    # Floored a little below zero rather than at it, so that a vehicle stopped
-    # at the line is asked for slightly less than nothing and reads as
-    # satisfied. At exactly zero it reads exactly zero -- neither satisfied nor
-    # violated -- which is no way to report the most correct thing it does.
-    floor = -config.limits.liveness_stop_gap_m
-    reachable = (inputs.stop_station_m - inputs.station0_m - stopping).clamp_min(floor)
+    # Less `liveness_stop_gap_m` as well, so that a vehicle at rest within that
+    # gap of the stop station is asked for nothing and reads as satisfied: the
+    # gap is the room the rule lets a stopped vehicle leave. Taken off before
+    # the floor, not only bounded by it -- floored alone, a vehicle at rest
+    # 0.7 m short read -0.7. And floored a little below zero rather than at
+    # it, so that a vehicle stopped at or past the station is asked for
+    # slightly less than nothing; at exactly zero it would read exactly zero
+    # -- neither satisfied nor violated -- which is no way to report the most
+    # correct thing it does.
+    gap = config.limits.liveness_stop_gap_m
+    reachable = (inputs.stop_station_m - inputs.station0_m - stopping - gap).clamp_min(-gap)
     demanded = torch.minimum(inputs.progress_target_m, reachable)
     progress_slack = saturate(
         (station - inputs.station0_m) - demanded,
@@ -573,8 +585,9 @@ def _clearance(
     cap = limits.saturation_m
 
     if inputs.n_actor_discs == 0:
-        # Exactly `cap`, which `saturate` can never reach, so "no actor" is
-        # distinguishable from "an actor a very long way off".
+        # Exactly `cap`, the value `saturate` levels off at -- and in float32
+        # reaches for an actor a long way off (`signals.saturate`), so this is
+        # not a sentinel to tell "no actor" apart by; nothing needs it to be.
         return torch.full(positions.shape[:-1], cap, dtype=positions.dtype, device=positions.device)
 
     offsets = inputs.ego_disc_offsets.to(device=positions.device, dtype=positions.dtype)

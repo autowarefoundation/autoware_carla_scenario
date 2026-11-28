@@ -1176,3 +1176,20 @@ def test_too_many_discs_drop_the_farthest():
     assert sorted(kept_centres[0, :, 0].tolist()) == [5.0, 12.0]
     # The radii must follow their own discs, not be re-paired with others.
     assert sorted(kept_radii.tolist()) == [1.0, 3.0]
+
+
+def test_the_reach_covers_a_faster_cruise():
+    """At 20 m/s the ego covers 80 m of the horizon: a fixed 60 m reach left a
+    vehicle it could reach out of `collision_free`."""
+    limits = CONFIG.limits
+    # The default already covers the default ego, and stays as it is.
+    assert CONFIG.actor_reach_m() == limits.actor_reach_m
+    fast = replace(CONFIG, cruise_speed_mps=20.0)
+    assert fast.actor_reach_m() == pytest.approx(
+        20.0 * fast.horizon.duration_s + limits.ego_front_m() + limits.collision_margin_m
+    )
+    route = build_route_table(
+        straight_route(), ds=fast.route_table_ds_m, length_m=fast.route_table_length_m()
+    )
+    forecast = forecast_actors(renderer(actor(75.0, 0.0)), Pose.identity(), route, 0.0, fast)
+    assert forecast.centres.shape[1] > 0

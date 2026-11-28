@@ -9,6 +9,7 @@ the plan stops -- rather than on robustness numbers.
 
 from __future__ import annotations
 
+import logging
 import math
 import sys
 
@@ -287,6 +288,38 @@ def test_the_same_inputs_give_the_same_plan(optimizer):
     second = optimizer.solve(inputs)
     assert torch.equal(first.params, second.params)
     assert first.robustness == second.robustness
+
+
+def test_refinement_is_held_to_the_continuity_bar_only_when_the_carried_plan_was_chosen():
+    """The bar keeps refinement from drifting off the carried plan. A carried
+    plan that lost -- here a hard stop on an empty road -- leaves nothing to
+    keep, and a refined plan better than the sampled best by less than the
+    margin was thrown away for it."""
+    from stl_driver.optimizer import _lexicographic_pick, _tier
+
+    search = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    inputs = make_inputs(CONFIG, speed0_mps=6.0)
+    braking = search._candidates(None, float(inputs.accel0_mps2))[BRAKE_ROW].clone()
+
+    # The sampling stage as `solve` will see it, to know what it will pick.
+    candidates = search._candidates(braking, float(inputs.accel0_mps2))
+    signals, _, merit, robustness, _ = search._score_batch(candidates, inputs)
+    keeps = search._keeps_hard_rules_if_needed(signals, robustness)
+    pick = _lexicographic_pick(merit, robustness, keeps)
+    tier = _tier(pick, robustness, keeps)
+    best = float(merit[pick])
+    margin = CONFIG.optimizer.continuity_margin
+    carried = len(candidates) + WARM_START_ROW
+    assert float(merit[carried]) < best - margin  # the carried plan loses
+
+    refined = torch.full((N_PARAMS,), 0.123)
+
+    def slightly_better(*_args, **_kwargs):
+        return refined, signals[pick], best + 0.5 * margin, tier, 1
+
+    search._refine = slightly_better  # type: ignore[method-assign]
+    solution = search.solve(inputs, warm_start=braking)
+    assert torch.equal(solution.params, refined)
 
 
 def test_refinement_improves_on_the_best_sample(optimizer):
@@ -1176,3 +1209,49 @@ def test_a_failed_compile_is_not_retried_every_session(monkeypatch):
 
     assert len(calls) == 1
     assert optimizer._compiled_batch is None
+
+
+def test_a_warm_up_solve_that_fails_eagerly_too_is_raised_not_blamed_on_compile(
+    monkeypatch, caplog
+):
+    """Only a solve that fails compiled and succeeds eagerly is a compile
+    failure. Anything else is the search failing: it used to be logged as
+    "torch.compile failed" and compilation turned off for it."""
+    monkeypatch.setattr(torch, "compile", lambda fn, **_: fn)
+    search = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+
+    def broken(*_args, **_kwargs):
+        raise ValueError("the search itself is broken")
+
+    search.solve = broken  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING), pytest.raises(ValueError, match="itself is broken"):
+        search.prepare(make_inputs(CONFIG))
+    assert "torch.compile failed" not in caplog.text
+    assert search._compiled_batch is not None
+    assert search._compiled_refine is not None
+    assert search._compiled_scores is not None
+
+
+def test_a_warm_up_solve_that_fails_only_compiled_continues_eagerly(monkeypatch, caplog):
+    """A compiled backward is built on the first `backward()`, out of
+    `_vmapped`'s reach; the eager retry is what tells it apart."""
+    monkeypatch.setattr(torch, "compile", lambda fn, **_: fn)
+    search = RobustnessOptimizer(RuleSet(build_rules(CONFIG)), CONFIG)
+    solve = search.solve
+    calls: list[bool] = []
+
+    def compiled_backward_fails(*args, **kwargs):
+        compiled = search._compiled_refine is not None
+        calls.append(compiled)
+        if compiled:
+            raise RuntimeError("compiled backward failed (simulated)")
+        return solve(*args, **kwargs)
+
+    search.solve = compiled_backward_fails  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING):
+        search.prepare(make_inputs(CONFIG))
+    assert calls == [True, False]
+    assert "the compiled search failed" in caplog.text
+    assert search._compiled_batch is None
+    assert search._compiled_refine is None
+    assert search._compiled_scores is None

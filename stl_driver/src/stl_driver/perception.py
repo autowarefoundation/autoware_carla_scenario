@@ -450,7 +450,7 @@ def _drop_traffic_out_of_reach(
     That is also what makes the radius easy to justify: it has to cover the
     ego's own reach and nothing more. At the default speed limit over a
     four-second horizon that is 55.6 m, plus the front of the car and the
-    collision margin -- see `Limits.actor_reach_m`.
+    collision margin -- see `STLDriverConfig.actor_reach_m`.
 
     Removed rather than moved away, unlike `_drop_traffic_behind`: the point
     is a narrower tensor, and this runs after the discs are no longer needed
@@ -461,7 +461,7 @@ def _drop_traffic_out_of_reach(
         return centres_over_time, radii
 
     closest = np.linalg.norm(centres_over_time, axis=2).min(axis=0)
-    keep = closest <= config.limits.actor_reach_m
+    keep = closest <= config.actor_reach_m()
     if keep.all():
         return centres_over_time, radii
     return (
