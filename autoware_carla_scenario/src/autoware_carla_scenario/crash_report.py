@@ -101,6 +101,7 @@ from sentry_sdk.integrations.argv import ArgvIntegration
 from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.modules import ModulesIntegration
+from sentry_sdk.scrubber import EventScrubber
 from sentry_sdk.transport import HttpTransport, Transport
 
 from .atomic_file import write_bytes_atomically
@@ -251,10 +252,33 @@ def _redacted(value: Any) -> Any:
     return value
 
 
+class _Scrubber(EventScrubber):
+    """sentry-sdk's default :class:`~sentry_sdk.scrubber.EventScrubber`
+    (``password``, ``token``, ``secret``, ``api_key``, ... and, user
+    identity being off, ``ip_address``), run in ``before_send``: on an event
+    already serialized, so a value it filters is the text ``[Filtered]``,
+    as the SDK's own writes it (#2616)."""
+
+    def scrub_dict(self, d: object) -> None:
+        if not isinstance(d, dict):
+            return
+        for k in list(d):
+            if isinstance(k, str) and k.lower() in self.denylist:
+                d[k] = "[Filtered]"
+
+
+_SCRUBBER = _Scrubber()
+
+
 def _redact_event(event: Any, _hint: Any) -> Any:
     """``before_send``: the event, as written and sent, with every URL's
     credentials redacted -- the frames' local variables, the command line
-    (``ArgvIntegration``), the run's context, the breadcrumbs."""
+    (``ArgvIntegration``), the run's context, the breadcrumbs -- and what is
+    named like a secret filtered (:class:`_Scrubber`): the frames' local
+    variables, the breadcrumbs' data, the extra data, the user.  The SDK
+    scrubs those itself only when not given ``data_collection``
+    (:func:`_locals_option`), and refuses a scrubber of its own with it."""
+    _SCRUBBER.scrub_event(event)
     return _redacted(event)
 
 
@@ -774,13 +798,15 @@ def _locals_option(include: bool) -> dict[str, Any]:
     ``api_key``, ...) is ``[Filtered]`` either way (#2616).  With
     ``include_local_variables`` the SDK's default ``EventScrubber`` filters
     it.  Given ``data_collection`` (2.70 and later take it), the SDK
-    installs no scrubber, and ``stack_frame_variables: True`` keeps every
-    local as it is: its ``denylist`` mode filters them.
+    installs no scrubber, and ignores one given: ``before_send`` runs the
+    same scrubber (:func:`_redact_event`), on the breadcrumbs' data and the
+    extra data too.  Not ``stack_frame_variables``' ``denylist`` mode,
+    which filters the locals alone, and every one whose name holds ``key``,
+    ``sid`` or ``auth`` (``inside``, ``lane_key``, ``author``).
     """
     if "data_collection" in inspect.signature(ClientConstructor.__init__).parameters:
-        variables: Any = {"mode": "denylist"} if include else False
         return {
-            "data_collection": {"stack_frame_variables": variables, "user_info": False}
+            "data_collection": {"stack_frame_variables": include, "user_info": False}
         }
     return {"include_local_variables": include}
 

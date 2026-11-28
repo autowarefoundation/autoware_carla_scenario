@@ -129,7 +129,8 @@ directory's `faulthandler.log`.
 
 When the run ends normally, the directory is removed, and `crash_reports/`
 with it when preparing the report made it and nothing else is in it: a
-directory `SCENARIO_CRASH_REPORT_DIR` names is never removed. If one is left with an
+directory that was there before, such as one `SCENARIO_CRASH_REPORT_DIR`
+names or another task of a batch made, is never removed. If one is left with an
 empty `faulthandler.log`, the process was killed without a chance to write
 anything (`SIGKILL`, the OOM killer). Hydra's own log of the run, in the run's
 output directory, has the log records that came before.
@@ -187,7 +188,7 @@ Every report holds the exception with its stack, `traceback.txt` and
 
 | Item | What it adds |
 |---|---|
-| `locals` | the local variables of every frame, in `event.json`; one whose name looks like a secret (`password`, `token`, `api_key`, ...) shows as `[Filtered]` |
+| `locals` | the local variables of every frame, in `event.json`; one whose name looks like a secret (`password`, `token`, `api_key`, ...) shows as `[Filtered]`, as does such a field of a breadcrumb's data |
 | `log` | `log.txt`, and the log records as the event's breadcrumbs |
 | `config` | `config.yaml`, the run's composed config |
 | `environment` | the environment variables that affect a run, in `context.json` and as `export` lines in `repro.sh` |

@@ -1528,7 +1528,16 @@ def _raise_with_secrets() -> None:
     secret = "hunter2-secret"  # noqa: F841, S105
     api_key = "hunter2-api-key"  # noqa: F841
     plain = 7  # noqa: F841 - the report keeps it
-    raise ValueError("boom")
+    inside = 8  # noqa: F841 - a name holding "sid" is no secret: kept
+    try:
+        _raise_with_a_secret()
+    except KeyError as exc:
+        raise ValueError("boom") from exc
+
+
+def _raise_with_a_secret() -> None:
+    session = "hunter2-session"  # noqa: F841 - the chained exception's frame
+    raise KeyError("cause")
 
 
 class _NoDataCollection:
@@ -1548,20 +1557,30 @@ def test_a_local_named_like_a_secret_is_filtered(
     if path not in crash_report._locals_option(True):
         pytest.skip(f"the installed sentry-sdk takes no {path}")
     with _installed(tmp_path, monkeypatch):
+        logging.getLogger("autoware_carla_scenario.test").warning(
+            "logged", extra={"password": "hunter2-breadcrumb"}
+        )
         try:
             _raise_with_secrets()
         except ValueError as exc:
             report = crash_report.capture(exc)
     assert report is not None
     event = json.loads((report / "event.json").read_text())
-    frames = event["exception"]["values"][0]["stacktrace"]["frames"]
-    # In no frame's variables (the source lines around a frame show them).
+    values = event["exception"]["values"]
+    frames = [f for v in values for f in v["stacktrace"]["frames"]]
+    # In no frame's variables, of either exception (the source lines around
+    # a frame show them), nor in a breadcrumb's data.
     assert "hunter2" not in json.dumps([f.get("vars") for f in frames])
-    frame = frames[-1]
-    assert frame["function"] == "_raise_with_secrets"
+    crumbs = event["breadcrumbs"]["values"]
+    (crumb,) = [c for c in crumbs if c.get("message") == "logged"]
+    assert crumb["data"]["password"] == "[Filtered]"
+    by_function = {f["function"]: f for f in frames}
+    frame = by_function["_raise_with_secrets"]
     for name in ("password", "token", "secret", "api_key"):
         assert "Filtered" in frame["vars"][name]
     assert frame["vars"]["plain"] == "7"
+    assert frame["vars"]["inside"] == "8"
+    assert "Filtered" in by_function["_raise_with_a_secret"]["vars"]["session"]
 
 
 @pytest.mark.parametrize("path", ["data_collection", "include_local_variables"])
