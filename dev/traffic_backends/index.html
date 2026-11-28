@@ -4148,7 +4148,8 @@ before anything is spawned.</p>
 <p><strong>To watch a run</strong>, run SUMO as a TraCI process (<code>use_libsumo: false</code>) with
 <code>binary: sumo-gui</code>. Its window stays open after the run, for a look at how it
 ended, until it is closed (or <code>--quit-on-end</code> in <code>sumo_args</code> closes it at
-once). A headless <code>sumo</code> is ended with the run: it is given 5 s to exit once
+once). SUMO's mesoscopic model (<code>mesoscopic.engine: sumo</code>) runs the plain
+<code>sumo</code> beside it all the same: it has no window. A headless <code>sumo</code> is ended with the run: it is given 5 s to exit once
 its connection closes, then killed, and a failed start kills it and quotes
 what it wrote to its standard error.</p>
 <p><strong>Its switches</strong> -- <code>publish_walkers</code>, <code>pedestrian_crossings</code>,
@@ -4216,8 +4217,10 @@ OpenDRIVE the world runs (the file the run installed, or
 <a href="https://github.com/hakuturu583/hdmap_generator">roadgen</a> into netconvert's
 plain-XML input and builds it with netconvert. The result is cached under
 <code>$XDG_CACHE_HOME/autoware_carla_scenario/sumo/</code> (<code>~/.cache/autoware_carla_scenario/sumo/</code>
-when <code>XDG_CACHE_HOME</code> is unset), keyed by the OpenDRIVE and the tool
-versions, so a map is converted once. roadgen writes the network without offset
+when <code>XDG_CACHE_HOME</code> is unset), keyed by the OpenDRIVE as roadgen is given it
+(the backend's fixes below applied), the roadgen and SUMO package versions and
+what the netconvert that builds it says it is (<code>netconvert --version</code>, the one
+in <code>$SUMO_HOME/bin</code> when that is set), so a map is converted once. roadgen writes the network without offset
 normalisation, so SUMO's x/y are OpenDRIVE's and CARLA's are the same with y
 mirrored. <code>traffic.options.net_path</code> runs on an existing <code>.net.xml</code> instead.</p>
 <div class="admonition note">
@@ -4292,9 +4295,20 @@ by roadgen's validation.</p>
 </tbody>
 </table>
 <p>A published vehicle has SUMO's speed and lane-change control switched off, so
-SUMO traffic sees it where CARLA has it and reacts to it. With the default the
-scenario's NPCs behave exactly as under the <code>traffic_manager</code> backend, while
-SUMO fills the rest of the road.</p>
+SUMO traffic sees it where CARLA has it and reacts to it. A vehicle SUMO drives
+is given more road as it nears the end of its route; at a dead end, where
+there is none, it is stopped at the end of its road and waits there, as the
+mesoscopic model holds one, rather than arriving: SUMO would remove it and
+leave its CARLA actor driving on. A new route given before it gets there
+(<code>turn_at_junction</code>) drops the stop. With the default the scenario's NPCs
+behave exactly as under the <code>traffic_manager</code> backend, while SUMO fills the
+rest of the road.</p>
+<p><strong>No teleports</strong>: SUMO is started with <code>--time-to-teleport -1</code>, as its
+mesoscopic one is, so a vehicle held at the front of its lane (at a goal, a
+light, behind a stopped car) waits as long as it is held instead of being
+teleported down the road after SUMO's 300 s, which would make its CARLA actor
+jump. A gridlock is not resolved either: its vehicles wait in it.
+<code>--time-to-teleport</code> in <code>sumo_args</code> sets SUMO's own instead.</p>
 <p><strong>How much of SUMO's traffic reaches CARLA</strong>: an ambient vehicle is mirrored
 into CARLA while it is within <code>spawn_radius_m</code> of the ego, at most
 <code>max_vehicles</code> of them, the nearest first; the rest drive in SUMO only, where
@@ -4866,7 +4880,9 @@ microscopic vehicles only.</p>
 <li><strong>Walker blueprint.</strong> The persons' default blueprint was not in CARLA 0.10 (fixed in #1002).</li>
 </ul>
 <p><strong>Manoeuvres</strong> of SUMO-driven vehicles become TraCI calls: <code>change_lane</code> →
-<code>changeLane</code> (SUMO obeys a solid line, and says so), <code>set_desired_speed</code> →
+<code>changeLane</code> (SUMO obeys a solid line, and says so; left and right are the
+driver's on a left-hand-traffic map too, whose network SUMO numbers from the
+left kerb), <code>set_desired_speed</code> →
 <code>setSpeed</code>, <code>turn_at_junction</code> → a route onto the junction's outgoing edge in
 that direction. With the default, they go to the TrafficManager. <code>follow_route</code>
 goes to the TrafficManager only: a vehicle SUMO drives keeps its route, since
@@ -4895,7 +4911,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 23:05:29 UTC"><span class="timeago" datetime="2026-11-27T23:05:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 23:05:29 UTC">2026-11-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 11:45:11 UTC"><span class="timeago" datetime="2026-11-28T11:45:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 11:45:11 UTC">2026-11-28</span>
   </span>
 
     
