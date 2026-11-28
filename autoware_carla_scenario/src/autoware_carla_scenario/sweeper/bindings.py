@@ -78,13 +78,33 @@ class StopLineOffsetBinding:
     The stop line arc-length is determined by projecting the stop line
     centroid onto the lanelet centerline, following the same pattern as
     :func:`~autoware_carla_scenario.coordinate.stop_line._linestring_to_pose`.
+
+    An offset longer than the road before the stop line walks back onto its
+    predecessors, through a junction too.  ``through_junction: false`` keeps
+    the walk off junction lanelets: a pick whose road before the stop line is
+    clear of junctions for less than *offset* metres is dropped, so the case
+    starts on the approach to its own junction and no other::
+
+        ego.spawn_s:
+          type: stop_line_offset
+          offset: 50.0
+          through_junction: false
     """
 
     target_key: str
     offset: float = 15.0
+    #: Whether the walk back may step onto a junction lanelet (one tagged
+    #: ``turn_direction``); ``False`` drops the pick where it would.
+    through_junction: bool = True
 
     def __post_init__(self) -> None:
         _check_offset("stop_line_offset", self.offset)
+        # Read by its truth, the text "false" would turn it on (#1946).
+        if not isinstance(self.through_junction, bool):
+            raise ValueError(
+                "stop_line_offset through_junction must be true or false, "
+                f"got {self.through_junction!r}"
+            )
 
     @staticmethod
     def _project_stop_line(ls: ConstLineString3d, lanelet: ConstLanelet) -> float:
@@ -129,7 +149,8 @@ class StopLineOffsetBinding:
             ValueError: If the walk runs out of predecessors before it has
                 covered *shortfall*: the road before the stop line is shorter
                 than the offset, and no spawn on it is *offset* metres before
-                the line (#2392).
+                the line (#2392); or, without ``through_junction``, if it
+                would step onto a junction lanelet first.
         """
         current: ConstLanelet = lanelet
         remaining = shortfall
@@ -152,6 +173,17 @@ class StopLineOffsetBinding:
                 )
 
             prev = predecessors[0]
+            if not self.through_junction and is_junction_lanelet(prev):
+                # The approach is shorter than the offset: the spawn would be
+                # before another junction, so the sweep drops the pick.
+                raise ValueError(
+                    f"[{self.target_key}] lanelet {current.id} follows junction "
+                    f"lanelet {prev.id}: the road behind the stop line of "
+                    f"lanelet {original_lanelet_id} is clear of junctions for "
+                    f"{self.offset - remaining:.2f} m, short of the "
+                    f"{self.offset:g} m offset (through_junction: false); "
+                    "cannot resolve stop_line_offset binding."
+                )
             prev_length = lanelet2.geometry.length2d(prev)
 
             if prev_length >= remaining:
@@ -513,9 +545,17 @@ class StopLineApproachBinding:
 
     target_key: str
     offset: float = 15.0
+    #: As ``stop_line_offset``'s, so the two land on the same lanelet.
+    through_junction: bool = True
 
     def __post_init__(self) -> None:
         _check_offset("stop_line_approach", self.offset)
+        # Read by its truth, the text "false" would turn it on (#1946).
+        if not isinstance(self.through_junction, bool):
+            raise ValueError(
+                "stop_line_approach through_junction must be true or false, "
+                f"got {self.through_junction!r}"
+            )
 
     def resolve(
         self,
@@ -524,9 +564,9 @@ class StopLineApproachBinding:
         routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
         """Return the lanelet the offset lands on."""
-        landed = StopLineOffsetBinding(self.target_key, self.offset).resolve(
-            lanelet_id, lanelet_map, routing_graph
-        )
+        landed = StopLineOffsetBinding(
+            self.target_key, self.offset, self.through_junction
+        ).resolve(lanelet_id, lanelet_map, routing_graph)
         return BindingResult(value=landed.lanelet_id_override or lanelet_id)
 
 

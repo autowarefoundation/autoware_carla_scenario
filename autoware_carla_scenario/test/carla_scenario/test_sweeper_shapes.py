@@ -233,7 +233,7 @@ def test_a_composite_with_an_unknown_key_is_refused(cfg: Any, message: str) -> N
         (
             {"type": "stop_line_offset", "ofset": 3},
             r"stop_line_offset binding ego.spawn_s: unknown key\(s\) \['ofset'\]; "
-            r"it takes \['offset'\]",
+            r"it takes \['offset', 'through_junction'\]",
         ),
         ({"type": "matched", "depth": 1}, r"matched binding ego.spawn_s: unknown"),
         (15, r"Binding ego.spawn_s must be a mapping with a 'type'.*15"),
