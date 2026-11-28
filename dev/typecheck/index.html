@@ -2467,10 +2467,12 @@ sweep are checked before anything starts. To check without running anything:</p>
 overrides apply. <code>scenario='*'</code> is every config, like no <code>scenario=</code>; a
 package author checks only theirs (<code>scenario='my_package/*'</code>, about 15 s per
 config), as every built-in config takes minutes. It exits with 0 when every
-scenario passed, 1 when one failed (or its <code>controls:</code> are invalid: they are
-validated before Codon is looked for, so that is reported, exit 1, with Codon
-or without), and 2 when it could not run: there is no Codon compiler, no
-config matches <code>scenario=</code> (the message lists the
+scenario passed, 1 when one failed (or its <code>controls:</code> are invalid, or its
+<code>scenario.name</code> is no registered scenario: both are found before Codon is
+looked for, so that is reported, exit 1, with Codon or without), and 2 when
+it could not run: there is no Codon compiler for a config that needs
+compiling (a scenario with a custom builder is not compiled, so a run of
+only those needs none), no config matches <code>scenario=</code> (the message lists the
 configs), or an override names a key the config does not have
 (<code>scenario.timout_seconds=3</code> is reported with the closest key,
 <code>scenario.timeout_seconds</code>; <code>+key=value</code> adds a new one; <code>HYDRA_FULL_ERROR=1</code>
@@ -3136,7 +3138,9 @@ calls its builder (<code>odd: OddDefinition = urban_odd()</code>). Every attribu
 probe is then called with a world, and every condition must come from an
 attribute. The ODD's own modules have every function compiled as a
 scenario's do, with the same warning for one the check cannot call (compiled
-where the builder reaches it). The runner checks the ODD named by the <code>odd</code> key under the same
+where the builder reaches it), and the same refusals before the compile: a
+declared return type Codon does not enforce (#529) and the class rules
+(#587, #588). The runner checks the ODD named by the <code>odd</code> key under the same
 <code>typecheck</code> mode, and <code>scenario-odd check</code> does it without running anything:
 it exits with 0 when every ODD passed, 1 when one failed (a checker error is
 reported as <code>[FAILED] &lt;odd&gt;: checker error: ...</code>, its traceback on stderr, and
@@ -9328,7 +9332,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 27, 2026 20:25:47 UTC"><span class="timeago" datetime="2026-11-27T20:25:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 27, 2026 20:25:47 UTC">2026-11-27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 01:32:47 UTC"><span class="timeago" datetime="2026-11-28T01:32:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 01:32:47 UTC">2026-11-28</span>
   </span>
 
     
