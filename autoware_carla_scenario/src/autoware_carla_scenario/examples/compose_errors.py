@@ -18,7 +18,10 @@ from typing import Any
 
 __all__ = ["compose_error", "compose_or_report", "resolve_scenarios", "suggest"]
 
-_OVERRIDE_KEY = re.compile(r"Could not (?:override|delete) '([^']+)'")
+#: An override of a key the config does not have.  Not a failed ``~``
+#: deletion (``Could not delete 'group=name'``), which no ``+`` fixes: that
+#: one is reported as Hydra words it (#2612).
+_OVERRIDE_KEY = re.compile(r"Could not override '([^']+)'")
 
 
 def suggest(word: str, known: list[str]) -> str:

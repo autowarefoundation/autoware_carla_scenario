@@ -1272,7 +1272,7 @@ def test_no_wait_without_slurm_is_refused(
     fake_slurm: SimpleNamespace, capsys: pytest.CaptureFixture[str]
 ) -> None:
     status, _batch = _run_batch(fake_slurm, "local", list(_SWEEP), wait=False)
-    assert status == 1
+    assert status == 2
     assert "--no-wait is for launcher=slurm only" in capsys.readouterr().err
 
 

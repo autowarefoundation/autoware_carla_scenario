@@ -48,7 +48,8 @@ INSTALL_HINT = "pip install 'carla-canvas[client]>=0.2'"
 
 class CanvasUnavailableError(RuntimeError):
     """``canvas.config`` is set, but carla_canvas's client is not installed,
-    or the file is not there."""
+    or the file is not there; or it is not the file this process already
+    applied."""
 
     def __init__(self, message: str) -> None:
         # Explicit for the static check, which cannot build a subclass of an
@@ -56,20 +57,37 @@ class CanvasUnavailableError(RuntimeError):
         super().__init__(message)
 
 
+#: The file :func:`use_canvas` applied in this process, if any: typesafe_carla
+#: loads the plugin once, so a later run in the process (a Hydra basic
+#: sweeper's next job) renders with it whatever it names (#2612).
+_APPLIED: list[str] = []
+
+
 def use_canvas(config: Union[str, Path, None]) -> Optional[Path]:
     """Have the sensors *config* names rendered by carla_canvas; its path.
 
     ``None`` or ``""`` leaves the run's sensors to CARLA (and returns
     ``None``).  Call it before any sensor listens: typesafe_carla loads its
-    sensor plugin then, once for the process.
+    sensor plugin then, once for the process.  Once a file was applied, the
+    same file may be applied again, but no other, nor none.
 
     Raises:
-        CanvasUnavailableError: The file does not exist, or carla_canvas is
-            not installed.
+        CanvasUnavailableError: The file does not exist, carla_canvas is
+            not installed, or this process already applied another file.
     """
-    if config is None or str(config) == "":
+    wanted: Optional[Path] = None
+    if config is not None and str(config) != "":
+        wanted = Path(config).expanduser().resolve()
+    if _APPLIED and (wanted is None or str(wanted) != _APPLIED[0]):
+        shown = "null" if wanted is None else str(wanted)
+        raise CanvasUnavailableError(
+            f"canvas.config is {shown}, but this process already applied "
+            f"canvas.config {_APPLIED[0]}, and typesafe_carla loads its sensor "
+            "plugin once for the process: run them in separate processes"
+        )
+    if wanted is None:
         return None
-    path = Path(config).expanduser().resolve()
+    path = wanted
     if not path.is_file():
         raise CanvasUnavailableError(f"canvas.config {path} is not a file")
     try:
@@ -90,5 +108,7 @@ def use_canvas(config: Union[str, Path, None]) -> Optional[Path]:
         )
     os.environ[CONFIG_ENV] = str(path)
     os.environ[PLUGIN_ENV] = plugin
+    if not _APPLIED:
+        _APPLIED.append(str(path))
     logger.info("Sensors rendered by carla_canvas: %s (plugin %s)", path, plugin)
     return path

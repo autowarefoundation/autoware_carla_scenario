@@ -80,7 +80,9 @@ uv run scenario scenario=temporary_stop/temporary_stop
 composed config -- followed by the runner's own flags, which it reads before
 Hydra sees the command line: `--resume-from N` and `--resume-into DIR`
 ([Resume from a Specific Scenario](#resume-from-a-specific-scenario)) and
-`--no-wait` ([SLURM](slurm.md)). `--hydra-help` is Hydra's own help.
+`--no-wait` ([SLURM](slurm.md)). `--hydra-help` is Hydra's own help. With
+`--help`, `--cfg` or another flag that asks Hydra for no job, nothing runs,
+so these flags are not refused where a run would refuse them.
 
 ### Batch Execution with Glob Patterns
 
@@ -110,7 +112,9 @@ them. A trailing `**` means everything below it and is read as `**/*`, so
 `scenario/`. A `**` inside a component (`lane_change/**left`) is refused with
 an error naming the pattern, and so is a pattern that could reach outside
 `scenario/`: one starting with `/` (`/lane_change/*`) or with a `..` component
-(`../*`). Only files are selected, and nothing hidden: a dangling symlink, or a
+(`../*`). A pattern that matches no config is refused too, naming the closest
+ones and listing every config, as `scenario-check` and `scenario-expand`
+refuse it; both exit 2 before anything runs. Only files are selected, and nothing hidden: a dangling symlink, or a
 path with a component below `scenario/` that starts with `.` (an editor's
 `.#default.yaml` lock link, a macOS `._default.yaml`, a `.git/` directory), is
 no scenario, even when the pattern names it (#2481). The pattern means the
@@ -269,7 +273,10 @@ at once, each on a CARLA of its own, with the same outputs (off unless
 selected; see [Running a Batch on SLURM](slurm.md)). It runs the scenarios
 `scenario=` names (a glob, or one scenario): `launcher=slurm` without
 `scenario=` is refused, `Error: launcher=slurm runs a batch: ...` and exit 2,
-rather than running the default scenario here:
+rather than running the default scenario here. One scenario runs under SLURM
+only with `launcher=slurm` on the command line: a single run whose scenario's
+config sets `launcher.type` is refused, exit 1, where it used to run here
+([Configuration](slurm.md#configuration)):
 
 ```bash
 uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
@@ -2013,8 +2020,8 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 | Code | Meaning |
 |------|---------|
 | 0 | All scenarios passed |
-| 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, a batch's command line that does not compose (an override of a key the config does not have: `Error: <scenario>: could not override ...`), a batch's `hydra.run.dir=` (`hydra.sweep.dir=`) that is not empty or is given with `--resume-into`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
+| 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built; so does a batch whose cases name two `canvas.config` files, and a single run whose scenario's config sets `launcher.type`, which only a glob batch reads) |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, carla_canvas is not installed or the `canvas.config` file is not there (or it is another file than the one the process already applied: a later job of Hydra's own sweeper), a `scenario=` glob that matches no config or is not a valid pattern, a `--no-wait` without `launcher=slurm`, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, a batch's command line that does not compose (an override of a key the config does not have: `Error: <scenario>: could not override ...`), a batch's `hydra.run.dir=` (`hydra.sweep.dir=`) that is not empty or is given with `--resume-into`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running. Ctrl-C prints `scenario: interrupted` rather than a traceback, and the process still dies by `SIGINT`, as Python's own does, so a parent sees the signal (a shell's 130) |
 
 The same codes hold however the cases run: a single run, a glob batch, a
@@ -2113,7 +2120,11 @@ uv run scenario scenario=cut_in/left ego.entity=carla_driver \
 The run sets `CARLA_CANVAS_CONFIG` and `TYPESAFE_CARLA_SENSOR_PLUGIN` before
 any sensor listens, which is when typesafe_carla loads the plugin, once for
 the process: the cases of a batch name one file (a batch naming two is
-refused). The renderer is the configuration's: started by the plugin when
+refused, `Error: the cases name 2 canvas.config files ...`, exit 1), and a
+later job of Hydra's own sweeper in the same process (`--multirun
+canvas.config=a.yaml,null`) that names another file, or none, is refused
+(exit 2): run those as separate runs. A missing file or carla_canvas client
+is refused before the run, exit 2. The renderer is the configuration's: started by the plugin when
 nothing answers at `renderer.endpoint` and the file gives a
 `renderer.command`, or run by hand (`carla-canvas serve --config ...`).
 carla_canvas is not an extra of this package: it needs protobuf 7, and the

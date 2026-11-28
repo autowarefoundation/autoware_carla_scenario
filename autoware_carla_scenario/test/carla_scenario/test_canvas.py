@@ -21,6 +21,14 @@ from autoware_carla_scenario.canvas import (
 from autoware_carla_scenario.examples.run import apply_canvas, canvas_config
 
 
+@pytest.fixture(autouse=True)
+def _nothing_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test a process of its own, as far as use_canvas tells."""
+    from autoware_carla_scenario import canvas as canvas_module
+
+    monkeypatch.setattr(canvas_module, "_APPLIED", [])
+
+
 @pytest.fixture
 def canvas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """carla_canvas installed, its plugin at a known path; the environment clean."""
@@ -86,3 +94,21 @@ def test_a_batch_names_one_config(canvas: Path, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="2 canvas.config"):
         canvas_config(cfg(str(config)), cfg("other.yaml"))
     assert apply_canvas(cfg(str(config))) == config
+
+
+def test_a_process_applies_one_config(canvas: Path, tmp_path: Path) -> None:
+    """A Hydra basic sweeper's jobs run in one process, which loads the plugin
+    once: ``canvas.config=a.yaml,null`` ran its second job with a.yaml's
+    renderer (#2612).  The same file again, and none again, still run."""
+    first = tmp_path / "a.yaml"
+    first.write_text("")
+    other = tmp_path / "b.yaml"
+    other.write_text("")
+    assert use_canvas(None) is None
+    assert use_canvas(None) is None
+    assert use_canvas(first) == first
+    assert use_canvas(str(first)) == first
+    with pytest.raises(CanvasUnavailableError, match="already applied"):
+        use_canvas(other)
+    with pytest.raises(CanvasUnavailableError, match="canvas.config is null"):
+        use_canvas(None)

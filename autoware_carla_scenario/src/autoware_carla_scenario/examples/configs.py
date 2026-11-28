@@ -1,8 +1,12 @@
-"""Hydra-compatible dataclass definitions for scenario parameters.
+"""Dataclass definitions for scenario parameters.
 
 Each dataclass corresponds to a YAML config group and provides typed,
-documented defaults.  Hydra's ``structured configs`` feature maps the
-YAML values directly to these dataclasses via OmegaConf.
+documented defaults.  Hydra composes the YAML into a plain config, which no
+structured config types: the builder that
+:func:`~autoware_carla_scenario.register_scenario` registers builds the
+scenario's config class from the composed ``scenario`` mapping
+(``config_cls(**scenario)``), as the pre-run check does first, so the class's
+``__post_init__`` refuses a value before anything starts.
 
 The **shared** configs (``ServerConfig``, ``MapConfig``, ``EntityConfig``,
 ``EgoVehicleConfig``, ``NpcVehicleConfig``, ``SweepConfig``) live in the public
