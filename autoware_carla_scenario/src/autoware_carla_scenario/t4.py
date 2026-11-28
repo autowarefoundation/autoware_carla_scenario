@@ -297,11 +297,12 @@ class _FrameCamera:
 
     def destroy(self) -> None:
         if self._sensor is not None:
+            sensor, self._sensor = self._sensor, None
+            # Destroyed even when stopping it fails (npc_collisions._release).
             try:
-                self._sensor.stop()
-                self._sensor.destroy()
+                sensor.stop()
             finally:
-                self._sensor = None
+                sensor.destroy()
 
 
 class T4Recording:
@@ -386,7 +387,9 @@ class T4Recording:
         captured = datetime.fromtimestamp(started, tz=timezone.utc)
         # Whatever fails from here on leaves no unfinished dataset behind: the
         # directory goes, unless it was there before (it is then not ours).
+        # So does one :meth:`close` cannot finish.
         existed = self.path.exists()
+        self._existed = existed
         try:
             self._start_writer(
                 writer_module,
@@ -966,6 +969,10 @@ class T4Recording:
             summary = self._writer.finish()
         except Exception as error:  # noqa: BLE001 - best effort, like the log
             logger.warning("T4 dataset: not written to %s: %s", self.path, error)
+            # No unfinished dataset left behind (a run with no key frame),
+            # unless the directory was there before the recording.
+            if not self._existed:
+                shutil.rmtree(self.path, ignore_errors=True)
             return None
         logger.info(
             "T4 dataset: %d frame(s), %d box(es) of %d road user(s) written to %s",

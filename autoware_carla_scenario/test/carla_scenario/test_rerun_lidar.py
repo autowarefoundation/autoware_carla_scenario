@@ -179,6 +179,25 @@ def test_a_converter_records_lidar_only_between_start_and_stop(tmp_path: Path) -
     plain.close()
 
 
+def test_a_sensor_recording_that_cannot_start_does_not_fail_the_run(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Best effort, as the other recorders are (#2617).
+    class _BrokenSdk(_Sdk):
+        def RecordingStream(self, application_id: str, *, recording_id: str) -> Any:  # noqa: N802
+            raise OSError("No space left on device")
+
+    converter = RerunConverter(
+        converter=_Converter(), lidar_max_points=0, lidar_sdk=_BrokenSdk()
+    )
+    with caplog.at_level("ERROR"):
+        converter.start_sensors(tmp_path / "Run-1.trajectory.jsonl", "Run-1", 0)
+    assert active_recorder() is None
+    assert "starting the sensor recording" in caplog.text
+    converter.stop_sensors()
+    converter.close()
+
+
 def test_rerun_lidar_is_read_from_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
     built: list[dict[str, Any]] = []
 

@@ -585,14 +585,15 @@ def test_only_the_projector_the_run_reads_is_copied(
             info.write_text("projector_type: MGRS\n")
 
     recording = _start(tmp_path, monkeypatch, _World(), prepare=prepare)
-    recording.close()
     copied = (
         dataset_path(tmp_path / "out", "CutInScenario")
         / "0"
         / "map"
         / "map_projector_info.yaml"
     )
+    # Before close(): a dataset with no key frame is not left on disk.
     assert copied.exists() is not linked_out
+    recording.close()
 
 
 def test_the_ego_pose_is_its_rear_axle_in_the_map_frame(
@@ -911,6 +912,39 @@ def test_a_recording_that_cannot_start_keeps_a_directory_it_did_not_make(
     recorder = T4Recorder(T4Settings.from_driver(_driver(), {}))
     assert recorder.start(out, "Run", world, world.ego, 100) is None  # type: ignore[arg-type]
     assert kept.read_text() == "{}"
+
+
+@pytest.mark.parametrize("existed", [False, True])
+def test_a_dataset_that_cannot_be_finished_leaves_no_directory_it_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existed: bool
+) -> None:
+    """A run with no key frame cannot be finished: the tree the writer began
+    (the map copied in) is no dataset, and goes -- unless the directory was
+    there before the recording started (#2617)."""
+    root = dataset_path(tmp_path / "out", "CutInScenario")
+    if existed:
+        root.mkdir(parents=True)
+    recording = _start(tmp_path, monkeypatch, _World())
+    assert (root / "0").is_dir()
+    assert recording.close() is None
+    assert root.is_dir() is existed
+
+
+def test_a_camera_that_cannot_be_stopped_is_still_destroyed() -> None:
+    """(#2617; as npc_collisions._release does.)"""
+
+    class _Unstoppable(_Sensor):
+        def stop(self) -> None:
+            raise RuntimeError("stopping failed")
+
+    sensor = _Unstoppable("sensor.camera.rgb")
+    config = T4Settings.from_driver(_driver(), {}).cameras[0][1]
+    camera = t4._FrameCamera(config, 1)  # noqa: SLF001
+    camera._sensor = sensor  # noqa: SLF001
+    with pytest.raises(RuntimeError, match="stopping failed"):
+        camera.destroy()
+    assert sensor.destroyed
+    camera.destroy()  # once only
 
 
 def test_a_driver_policys_ego_feeds_the_dataset(
