@@ -516,6 +516,8 @@ jobs:
         push: "false"
 
     - name: Report the image size
+      # bash -eo pipefail: the default shell would report `tee`'s status.
+      shell: bash
       env:
         IMAGE_REF: ${{ steps.pack.outputs.image-ref }}
       run: |
@@ -547,6 +549,8 @@ jobs:
         cache-scope: ${{ steps.pack.outputs.cache-scope }}
 
     - name: Check the two images share everything but the scenario layer
+      # bash -eo pipefail: the default shell would report `tee`'s status.
+      shell: bash
       env:
         FIRST: ${{ steps.pack.outputs.image-ref }}
         SECOND: ${{ steps.pack-variant.outputs.image-ref }}
@@ -570,10 +574,18 @@ jobs:
         # Everything up to and including the framework layer has to match. The
         # two that may differ are the scenario layer -- which is the point --
         # and the `useradd` layer behind it, whose files carry the time the
-        # build ran.
-        assert first[:-2] == second[:-2], (
+        # build ran. They are third and second from the end: the trailing
+        # `WORKDIR /work` (a directory `useradd` already made) adds an empty
+        # layer, the same in both images.
+        assert len(first) == len(second), f"{first} vs {second}"
+        may_differ = {len(first) - 3, len(first) - 2}
+        differ = {i for i, (a, b) in enumerate(zip(first, second)) if a != b}
+        assert differ <= may_differ, (
             "the client, dependency or framework layer now depends on the "
             f"scenario package: {first} vs {second}"
         )
-        print(f"### Layer sharing — {len(first) - 2} of {len(first)} layers identical")
+        print(
+            f"### Layer sharing — {len(first) - len(differ)} of {len(first)} "
+            "layers identical"
+        )
         PY

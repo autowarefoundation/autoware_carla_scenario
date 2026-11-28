@@ -54,7 +54,10 @@ def test_push_runs_after_the_smoke_test(action: dict[str, Any]) -> None:
     assert push["with"]["platforms"] == "${{ inputs.platforms }}"
     assert _index(action, "Build image") < _index(action, "Smoke-test the image")
     assert _index(action, "Smoke-test the image") < _index(action, "Push image")
-    assert action["outputs"]["digest"]["value"] == "${{ steps.push.outputs.digest }}"
+    # The push step also runs unpushed, for a multi-platform build (#2624).
+    assert action["outputs"]["digest"]["value"] == (
+        "${{ inputs.push == 'true' && steps.push.outputs.digest || '' }}"
+    )
 
 
 def test_both_builds_build_the_same_image(action: dict[str, Any]) -> None:

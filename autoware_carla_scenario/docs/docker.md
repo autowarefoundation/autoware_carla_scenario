@@ -148,13 +148,13 @@ of resolving and installing them again. The action reports the scope
 it used, so a second build in the same workflow can just name the first's:
 
 ```yaml
-- uses: ./.github/actions/pack-scenario-image
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
   id: first
   with:
     scenario-package-path: packages/first_scenario
     image: ghcr.io/my-org/first-scenario
 
-- uses: ./.github/actions/pack-scenario-image
+- uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
   with:
     scenario-package-path: packages/second_scenario
     image: ghcr.io/my-org/second-scenario
@@ -256,7 +256,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pack the scenario package
-        uses: ./.github/actions/pack-scenario-image
+        uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
         with:
           scenario-package-path: packages/my_scenario_package
           image: ghcr.io/${{ github.repository_owner }}/my-scenario
@@ -298,7 +298,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       # ...
-      - uses: ./.github/actions/pack-scenario-image
+      - uses: autowarefoundation/autoware_carla_scenario/.github/actions/pack-scenario-image@vX.Y.Z
         with:
           scenario-package-path: packages/my_scenario_package
           image: ghcr.io/${{ github.repository_owner }}/my-scenario
