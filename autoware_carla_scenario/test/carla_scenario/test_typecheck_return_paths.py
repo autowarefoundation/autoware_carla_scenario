@@ -5,8 +5,11 @@ return statement"); every one they expect accepted, mypy accepts."""
 from __future__ import annotations
 
 import ast
+import importlib.util
 import sys
 import textwrap
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -425,3 +428,68 @@ def test_a_return_inside_suppress_may_fall_through(header: str) -> None:
         + "    return 0\n"
     )
     assert _refused(source) == ["f"]
+
+
+# ---------------------------------------------------------------------------
+# The ODD check refuses what the scenario check refuses (#2605)
+# ---------------------------------------------------------------------------
+
+
+_ODD_MODULE = """
+class Probe:
+    _unset_reading: float
+
+    def read(self) -> float:
+        return self._unset_reading
+
+
+def flag() -> bool:
+    return "yes"
+
+
+def build() -> None:
+    pass
+"""
+
+
+def test_the_odd_check_refuses_before_the_compile_as_the_scenario_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A literal returned from a ``-> bool`` (#529) and an attribute nothing
+    assigns (#588) in an ODD's module fail its check before Codon runs."""
+    from autoware_carla_scenario.typecheck import check, typecheck_odd  # noqa: PLC0415
+
+    name = "acs_odd_refusals_case"
+    path = tmp_path / f"{name}.py"
+    path.write_text(_ODD_MODULE, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, module)
+    spec.loader.exec_module(module)
+
+    def compiled(
+        title: str,
+        roots: list[str],
+        driver: object,
+        toolchain: object,
+        timeout: float,
+        *,
+        what: str,
+        refuse: Callable[[check._Sources], list[check.Diagnostic]] | None = None,
+    ) -> check.TypeCheckResult:
+        # The compile itself: the refusals are added to what it reports.
+        assert roots == [name]
+        sources = check._Sources({name: check._read_module(path)})
+        problems = [] if refuse is None else refuse(sources)
+        return check.TypeCheckResult(title, ok=not problems, diagnostics=problems)
+
+    monkeypatch.setattr(check, "_typecheck", compiled)
+    result = typecheck_odd(module.build)
+    assert not result.ok
+    messages = [d.message for d in result.diagnostics]
+    assert any(m.startswith("flag() returns str") for m in messages), messages
+    assert any(
+        m.startswith("Probe._unset_reading is declared but never assigned")
+        for m in messages
+    ), messages

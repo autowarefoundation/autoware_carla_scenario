@@ -3152,9 +3152,9 @@ def typecheck_scenario(
 
 
 def _returns_not_kept(sources: _Sources) -> list[Diagnostic]:
-    """Each function of the scenario's modules whose declared return type
-    Codon does not enforce: a literal returned from a ``-> bool`` and a path
-    that returns nothing (#529, :mod:`.return_paths`)."""
+    """Each function of the scenario's (or the ODD's) modules whose declared
+    return type Codon does not enforce: a literal returned from a ``-> bool``
+    and a path that returns nothing (#529, :mod:`.return_paths`)."""
     modules = {
         name: (str(module.path), module.tree)
         for name, module in sources.modules.items()
@@ -3628,6 +3628,11 @@ def typecheck_odd(
         toolchain,
         timeout,
         what="ODD",
+        # What Python knows before the compile, as for a scenario (#2605).
+        refuse=lambda sources: [
+            *_returns_not_kept(sources),
+            *_class_problems(sources),
+        ],
     )
 
 
@@ -4167,6 +4172,16 @@ def _uncalled_of(
     return tuple(out)
 
 
+def _uncalled_node_ids(name: str, module: _Module) -> set[int]:
+    """The ``id()`` of every node inside a function of the module *name* that
+    :data:`.library.UNCALLED` lists: Codon compiles none of them."""
+    return {
+        id(node)
+        for function in uncalled_nodes(module.tree, _uncalled(name))
+        for node in ast.walk(function)
+    }
+
+
 def _read_module(path: Path) -> _Module:
     text = path.read_text(encoding="utf-8")
     return _Module(path, path.name == "__init__.py", text, ast.parse(text))
@@ -4203,11 +4218,7 @@ def _library_dependencies(
             name = pending.pop()
             module = sources.modules[name]
             modelled = set(MODELLED_IMPORTS.get(name, ()))
-            skipped = {
-                id(node)
-                for function in uncalled_nodes(module.tree, _uncalled(name))
-                for node in ast.walk(function)
-            }
+            skipped = _uncalled_node_ids(name, module)
             for imported, aliases, _line in _imports(
                 module.tree, name, module.is_package, skip=skipped
             ):
@@ -4374,11 +4385,7 @@ def _library_imports(sources: _Sources, tc: Toolchain, codon_path: Path) -> None
     known = _codon_stdlib(tc) | _shims() | _linked(codon_path) | {_PACKAGE}
     for name, module in sources.modules.items():
         # Codon compiles no import in a function nothing calls.
-        skipped = {
-            id(node)
-            for function in uncalled_nodes(module.tree, _uncalled(name))
-            for node in ast.walk(function)
-        }
+        skipped = _uncalled_node_ids(name, module)
         # Nor one in the `else` branch of `if TYPE_CHECKING:` or the body of
         # `if not TYPE_CHECKING:`, a compile-time true there (the typing shim).
         skipped |= {id(node) for node in _run_time_only_nodes(module.tree)}

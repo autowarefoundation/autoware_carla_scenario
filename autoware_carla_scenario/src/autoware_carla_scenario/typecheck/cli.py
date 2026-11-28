@@ -13,7 +13,7 @@ status is 0 when every scenario passed, 1 when one failed (or its ``controls:`` 
 invalid, or the checker itself raised on it: ``[FAILED] <config>: checker
 error: ...``, with the traceback on stderr, and the other configs are still
 checked and reported), and 2 when there is
-no Codon compiler to check with, a config could not be checked (``[SKIPPED]``
+no Codon compiler to compile a config with, a config could not be checked (``[SKIPPED]``
 says why) and none failed, or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
 (the message suggests the closest key; ``+key=value`` adds a new one; each
@@ -27,9 +27,11 @@ A package author checks only theirs: ``scenario='my_package/*'``.
 the checked modules they import (docs/typecheck.md, "Checking the framework
 itself").  A name that is not a module of the package, or that it EXCLUDES,
 is refused (``[FAILED]``, exit status 1) before Codon is looked for.
-Likewise, the configs are composed and their ``controls:`` validated before
-Codon is looked for: a wrong control fails the command (exit status 1) with
-Codon or without.
+Likewise, the configs are composed, their ``controls:`` validated and their
+scenario names looked up before Codon is looked for, and Codon is looked for
+only when a config is to be compiled: a wrong control or an unknown scenario
+name fails the command (exit status 1) with Codon or without, and configs
+whose scenarios all have a custom builder need no Codon.
 
 The flags are ``-h``/``--help`` and ``--library``.  Any other argument that
 starts with ``-`` is refused with ``Error: scenario-check does not take
@@ -131,6 +133,7 @@ def _main(argv: list[str] | None) -> int:
     )
     from ..registry import (  # noqa: PLC0415
         get_scenario_builder,
+        get_scenario_classes,
         get_scenario_registry,
         load_scenario_plugins,
     )
@@ -175,25 +178,36 @@ def _main(argv: list[str] | None) -> int:
         if errors:
             control_errors[config_name] = errors
 
-    # Composing the configs and validating their controls needs no Codon:
-    # it is looked for only now, so a wrong control fails the command (exit
-    # status 1) with Codon or without (#2511), as a refused --library
-    # module does (#2288).
-    to_check = [c for n, c in zip(names, cfgs) if n not in control_errors]
+    # Composing the configs, validating their controls and telling which
+    # scenario names are unknown or have a custom builder needs no Codon: it
+    # is looked for only now, and only when a config is to be compiled, so
+    # what fails without compiling fails the command (exit status 1) with
+    # Codon or without (#2511, #2605), as a refused --library module does
+    # (#2288), and a run of custom builders only needs no Codon at all.
+    unknown: set[str] = set()
+    custom: set[str] = set()
+    for config_name, cfg in zip(names, cfgs):
+        if config_name in control_errors:
+            continue
+        scenario_name = str(cfg.scenario.name)
+        if get_scenario_builder(scenario_name) is None:
+            unknown.add(config_name)
+        elif get_scenario_classes(scenario_name) is None:
+            custom.add(config_name)
+    to_check = [
+        (n, c)
+        for n, c in zip(names, cfgs)
+        if n not in control_errors and n not in unknown and n not in custom
+    ]
     toolchain: Toolchain | None = None
+    no_codon = False
     if to_check:
         try:
             toolchain = find_supported_codon()
         except ToolchainError as exc:
             print(f"scenario-check: {exc}", file=sys.stderr)  # noqa: T201
-            if not control_errors:
-                return 2
-    if control_errors and toolchain is None:
-        print(  # noqa: T201
-            f"{len(control_errors)} of {len(names)} scenario config(s) failed "
-            "the static check"
-        )
-        return 1
+            no_codon = True
+            to_check = []
 
     def check(cfg: Any) -> Any:
         # An exception is this config's failure, not the command's: it is
@@ -210,20 +224,16 @@ def _main(argv: list[str] | None) -> int:
     # takes a CPU core and some memory of its own).
     # A config whose controls are wrong is reported above, not compiled.
     with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
-        checked = iter(list(pool.map(check, to_check)))
-    results: list[Any] = [None if n in control_errors else next(checked) for n in names]
+        checked = list(pool.map(check, [c for _, c in to_check]))
+    results: dict[str, Any] = {n: r for (n, _), r in zip(to_check, checked)}
 
     failed = len(control_errors)
     skipped = 0
-    for config_name, cfg, result in zip(names, cfgs, results):
+    for config_name, cfg in zip(names, cfgs):
         scenario_name = str(cfg.scenario.name)
         if config_name in control_errors:
             continue
-        if isinstance(result, Exception):
-            print(_checker_error(config_name, result))  # noqa: T201
-            failed += 1
-            continue
-        if result is None and get_scenario_builder(scenario_name) is None:
+        if config_name in unknown:
             known = sorted(get_scenario_registry())
             hint = suggest(scenario_name, known)
             print(  # noqa: T201
@@ -232,7 +242,18 @@ def _main(argv: list[str] | None) -> int:
             )
             failed += 1
             continue
+        if config_name in custom:
+            print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
+            continue
+        if config_name not in results:
+            continue  # no Codon to compile it with, said above
+        result = results[config_name]
+        if isinstance(result, Exception):
+            print(_checker_error(config_name, result))  # noqa: T201
+            failed += 1
+            continue
         if result is None:
+            # Registered with a custom builder since it was classified.
             print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
             continue
         if result.skipped is not None:
@@ -247,7 +268,7 @@ def _main(argv: list[str] | None) -> int:
         print(f"{failed} of {len(names)} scenario config(s) failed the static check")  # noqa: T201
     if skipped:
         print(f"{skipped} of {len(names)} scenario config(s) could not be checked")  # noqa: T201
-    return 1 if failed else 2 if skipped else 0
+    return 1 if failed else 2 if skipped or no_codon else 0
 
 
 if __name__ == "__main__":
