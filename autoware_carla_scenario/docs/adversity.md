@@ -145,9 +145,9 @@ map. A crosswalk without one has no red light to run.
 4. **Challenge**: the candidate's adversarial future conflicts with the
    ego's normal future (TeraSim's AV-centred NADE). With `challenge_npcs`, it
    is also checked against the other candidates' futures.
-5. **Avoidability**: if no victim can brake out of the conflict (emergency
-   brake, with a 0.5 m buffer), `p` is multiplied by 3e-4 and the magnitude
-   by 40.
+5. **Avoidability**: if a victim -- any one of them -- cannot brake out of
+   the conflict (emergency brake, with a 0.5 m buffer), `p` is multiplied by
+   3e-4 and the magnitude by 40.
 6. **Importance sampling**: `q = clip(p × magnitude (20), 0,
    max_is_probability (0.05))`, or `fixed_is_probability` when that is set.
    At most one adversity is sampled per tick, the nearest challenger first,
@@ -206,16 +206,21 @@ seed of `2.5`, `True` or `-1` is refused when the action is built, naming
 
 NADE splits a run's seed into three random streams: the sampling draws, the
 triggers' own draws (a jaywalker's speed, a crosser's wait) and the victims'
-responses. Stream `i` of seed `s` is seeded with `3 s + i`
+responses. Stream `i` of seed `s` is seeded with `2**31 + 3 s + i`
 (`adversity.nade.stream_seed`), so no stream of one run is a stream of
 another, and a sweep over consecutive seeds gives independent runs (#2024).
 A run still repeats from its seed. Before #2024 the streams were seeded
 `s`, `s + 1` and `s + 2`, so run `k`'s triggers drew what run `k + 1`
 sampled with; the draws for a given seed other than 0 changed with the fix.
+The `2**31` puts the streams past every seed a component seeded with the
+run's seed itself takes (a `TrafficSourceAction`, the SUMO backend): before
+#2607 they were seeded `3 s + i`, so at seed 0 NADE sampled from the same
+`Random(0)` as those components, and run `k`'s streams were what they drew
+in runs `3 k` to `3 k + 2`. NADE's draws for every seed changed with that fix.
 
 An `AdversityFeasibleCondition` -- the default trigger of every adversarial
 action -- draws from a stream of its own as well. Its seed is
-`3 * 2**31 + s * 2**30 + k` (`adversity.nade.trigger_stream_seed`), where `s`
+`4 * 2**31 + s * 2**30 + k` (`adversity.nade.trigger_stream_seed`), where `s`
 is its seed (the run's, by default) and `k` is a 30-bit key of its entity,
 kind and label: FNV-1a over `"<entity>\x1f<kind>\x1f<label>"`
 (`adversity.nade.trigger_key`), not `hash()`, which Python salts per process.
@@ -225,7 +230,9 @@ jaywalkers following the run's seed draw different speeds and waits, and no
 condition draws another run's numbers (#2226). Before #2226 a condition drew
 from `random.Random(s)`, the same stream for every condition of a run and, at
 seed `3 k`, NADE's sampling stream of seed `k`; the triggers' draws of every
-seed changed with the fix.
+seed changed with the fix. (They were seeded `3 * 2**31 + s * 2**30 + k`
+until #2607 moved NADE's streams past the run's seeds and these past them, so
+the triggers' draws of every seed changed again.)
 
 It drives the NPCs and pedestrians a scenario registers, and with
 `drive_background` (the default) the traffic backend's background vehicles in
@@ -388,8 +395,9 @@ before it has none.
 `start_s` and `end_s` must be finite, with `end_s` after `start_s`.
 `ConstructionSettings` refuses a number that is not finite, a spacing
 (`spacing`, `warning_zone_spacing`) that is not positive, and a negative
-length, `speed_limit_mph` or `merge_signs`; a length of 0 means no such
-zone. Its text fields must be spelled exactly as listed, in lower case:
+length, `speed_limit_mph` or `merge_signs`, and a `merge_signs` that is not
+a whole number (`2.5`, `True`); a length of 0 means no such zone. Its text
+fields must be spelled exactly as listed, in lower case:
 `construction_type` one of `cone`, `barrier` or `mixed`; `side` one of
 `right` or `left`; `taper_type` one of `linear` or `curved`; and `layout`
 one of `highway` or `urban`. Any other value is refused when the settings

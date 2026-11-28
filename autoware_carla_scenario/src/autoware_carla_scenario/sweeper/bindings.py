@@ -134,7 +134,10 @@ class StopLineOffsetBinding:
         current: ConstLanelet = lanelet
         remaining = shortfall
 
-        while remaining > 0:
+        # Each lanelet walked past is shorter than what remains, so what
+        # remains stays positive: the walk ends on a lanelet long enough, or
+        # raises at the road's start.
+        while True:
             predecessors = routing_graph.previous(current)
             if not predecessors:
                 # The start of the last lanelet would be short of the offset,
@@ -153,30 +156,21 @@ class StopLineOffsetBinding:
 
             if prev_length >= remaining:
                 result_s = prev_length - remaining
-                result_lanelet = prev
-                break
+                logger.info(
+                    "[%s] Offset not satisfiable on spawn lanelet %d "
+                    "(shortfall=%.2f m). Walked back to predecessor lanelet %d "
+                    "-> spawn_s=%.2f m (lanelet length=%.2f m).",
+                    self.target_key,
+                    original_lanelet_id,
+                    shortfall,
+                    prev.id,
+                    result_s,
+                    prev_length,
+                )
+                return BindingResult(value=result_s, lanelet_id_override=prev.id)
 
             remaining -= prev_length
             current = prev
-        else:
-            result_lanelet = current
-            result_s = 0.0
-
-        logger.info(
-            "[%s] Offset not satisfiable on spawn lanelet %d "
-            "(shortfall=%.2f m). Walked back to predecessor lanelet %d "
-            "-> spawn_s=%.2f m (lanelet length=%.2f m).",
-            self.target_key,
-            original_lanelet_id,
-            shortfall,
-            result_lanelet.id,
-            result_s,
-            lanelet2.geometry.length2d(result_lanelet),
-        )
-        return BindingResult(
-            value=result_s,
-            lanelet_id_override=result_lanelet.id,
-        )
 
     def resolve(
         self,

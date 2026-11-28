@@ -7,6 +7,7 @@ W_OUT_LANE2 at y = -5.25; the ego drives east on it.
 from __future__ import annotations
 
 import math
+import random
 from typing import Any
 
 import pytest
@@ -32,6 +33,7 @@ from autoware_carla_scenario.adversity.observation import AgentSnapshot, Scene
 from autoware_carla_scenario.adversity.geometry import PredictedState
 from autoware_carla_scenario.adversity.triggers import DEFAULT_THRESHOLDS
 from autoware_carla_scenario.route.geometry import MapFeatures
+from autoware_carla_scenario.seed import MAX_SEED
 
 from . import _route_maps as rm
 
@@ -403,7 +405,7 @@ def test_the_streams_of_consecutive_seeds_do_not_coincide() -> None:
     # #2024: seed + stream gave run k's trigger stream to run k + 1's draws.
     seeds = {stream_seed(seed, stream) for seed in range(100) for stream in range(3)}
     assert len(seeds) == 300
-    assert stream_seed(0, 0) == 0 and stream_seed(7, 2) == 23
+    assert stream_seed(0, 0) == 2**31 and stream_seed(7, 2) == 2**31 + 23
     with pytest.raises(ValueError, match="stream"):
         stream_seed(1, 3)
     for k in (0, 1, 41):
@@ -420,6 +422,18 @@ def test_the_streams_of_consecutive_seeds_do_not_coincide() -> None:
         b._triggers.random(),
         b._responses.random(),
     ]
+
+
+def test_no_stream_is_one_a_component_seeded_with_a_runs_seed_draws() -> None:
+    # #2607: 3 * seed + stream made seed 0's sampling stream Random(0), what a
+    # TrafficSourceAction or the SUMO backend of run 0 draws, and run k's
+    # streams those of runs 3k to 3k + 2.
+    assert min(stream_seed(0, i) for i in range(3)) > MAX_SEED
+    for k in (0, 1, 7):
+        run = ImportanceSampler(k)
+        raw = {random.Random(s).random() for s in range(3 * k, 3 * k + 3)}
+        firsts = {run._draws.random(), run._triggers.random(), run._responses.random()}
+        assert not raw & firsts
 
 
 def test_an_ego_off_the_lanes_is_challenged_by_nothing(features: MapFeatures) -> None:

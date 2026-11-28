@@ -296,3 +296,148 @@ def test_case_index_picks_among_the_drawn_cases(nishishinjuku: Any) -> None:
     every = expand_sweep(_sweep(samples=2), nishishinjuku, seed=3)
     one = expand_sweep(_sweep(samples=2, case_index=3), nishishinjuku, seed=3)
     assert one == [every[3]]
+
+
+def test_a_route_case_keeps_its_values_whatever_other_matches_the_map_has() -> None:
+    # #2607: a route case's index and the count of matches were part of its
+    # draws' seed, so its values moved when another match appeared.
+    from autoware_carla_scenario.sweeper.expand import _with_distribution_draws
+
+    def drawn(index: int, count: int) -> float:
+        case = [
+            f"{_PICK}=56",
+            "scenario.route.lanelet_ids=[56,57]",
+            f"scenario.route.index={index}",
+            f"scenario.route.case_count={count}",
+        ]
+        (out,) = _with_distribution_draws(
+            [case], {_DIST: UniformDistribution(0.5, 3.0)}, 1, 5, "", [], None, None
+        )
+        return _value(out, _DIST)
+
+    assert drawn(0, 1) == drawn(2, 3) == drawn(1, 7)
+    # The match itself still tells cases apart.
+    other = _with_distribution_draws(
+        [[f"{_PICK}=57", "scenario.route.index=0", "scenario.route.case_count=1"]],
+        {_DIST: UniformDistribution(0.5, 3.0)},
+        1,
+        5,
+        "",
+        [],
+        None,
+        None,
+    )
+    assert _value(other[0], _DIST) != drawn(0, 1)
+
+
+@pytest.mark.parametrize(
+    ("sweep", "message"),
+    [
+        # A distribution alone, or an ODD sample alone: no lanelet is picked.
+        (
+            {
+                "constraints": {_DIST: [{"type": "uniform", "low": 0, "high": 1}]},
+                "bindings": {"ego.spawn_s": {"type": "stop_line_offset"}},
+            },
+            "sweep.bindings",
+        ),
+        (
+            {
+                "odd_sample": {"count": 2},
+                "bindings": {"ego.spawn_s": {"type": "stop_line_offset"}},
+            },
+            "sweep.bindings",
+        ),
+        (
+            {
+                "odd_sample": {"count": 2},
+                "exclude": {_PICK: [1, 2]},
+            },
+            "sweep.exclude",
+        ),
+        (
+            {
+                "constraints": {_DIST: [{"type": "uniform", "low": 0, "high": 1}]},
+                "exclude": {_PICK: [1]},
+            },
+            "sweep.exclude",
+        ),
+        (
+            {"constraints": {_PICK: [{"type": "is_junction"}]}, "samples": 3},
+            "sweep.samples",
+        ),
+        ({"odd_sample": {"count": 2}, "samples": 2}, "sweep.samples"),
+    ],
+)
+def test_a_setting_nothing_in_the_sweep_reads_is_refused(
+    sweep: dict[str, Any], message: str
+) -> None:
+    # #2607: these were silently ignored.
+    with pytest.raises(ValueError, match=message):
+        check_constraint_keys(sweep)
+
+
+def test_the_settings_the_sweep_reads_are_still_taken() -> None:
+    pick = {_PICK: [{"type": "is_junction"}]}
+    check_constraint_keys(
+        {
+            "constraints": pick,
+            "bindings": {"ego.spawn_s": {"type": "stop_line_offset"}},
+            "exclude": {_PICK: [1]},
+        }
+    )
+    check_constraint_keys({"route": {"pattern": "x"}, "exclude": {_PICK: [1]}})
+    # samples: 1 is the default a composed config always holds.
+    check_constraint_keys({"constraints": pick, "samples": 1})
+    check_constraint_keys({"odd_sample": {"count": 2}, "samples": 1})
+    check_constraint_keys(_sweep(samples=4))
+    # A sweep that expands nothing is not judged: it runs as concrete.
+    check_constraint_keys({"bindings": {"ego.spawn_s": {"type": "stop_line_offset"}}})
+
+
+@pytest.mark.parametrize(
+    ("sweep", "loads"),
+    [
+        ({"constraints": {_DIST: [{"type": "uniform", "low": 0, "high": 1}]}}, False),
+        ({"odd_sample": {"count": 2}}, False),
+        (_sweep(), True),
+        ({"route": {"pattern": "x"}}, True),
+    ],
+)
+def test_the_hydra_sweeper_loads_the_map_only_when_the_sweep_reads_it(
+    monkeypatch: pytest.MonkeyPatch, sweep: dict[str, Any], loads: bool
+) -> None:
+    # #2607: it loaded the Lanelet2 map for an ODD-only or a distributions-only
+    # sweep too, which needs none (and may name none).
+    from unittest.mock import MagicMock
+
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+    the_map = object()
+    loaded: list[Any] = []
+    given: list[Any] = []
+
+    def load(map_cfg: Any, **_: Any) -> Any:
+        loaded.append(map_cfg)
+        return the_map
+
+    def expand(sweep: Any, lanelet_map: Any, *_: Any, **__: Any) -> list[list[str]]:
+        given.append(lanelet_map)
+        return []
+
+    monkeypatch.setattr(mod, "load_sweep_map", load)
+    monkeypatch.setattr(mod, "expand_sweep", expand)
+    sweeper = mod.LaneletConstraintSweeper()
+    sweeper.config = OmegaConf.create(
+        {
+            "sweep": sweep,
+            "hydra": {"runtime": {"choices": {"scenario": "cut_in/left"}}},
+        }
+    )
+    sweeper.launcher = MagicMock()
+    with pytest.raises(mod.SweepFailedError):
+        sweeper.sweep([])
+    assert len(loaded) == int(loads)
+    assert given == [the_map if loads else None]

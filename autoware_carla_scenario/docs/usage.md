@@ -777,13 +777,18 @@ which needs no map -- runs `sweep.samples` times, each with a value of its own
 for every distribution, written as an override (`scenario.stop_line_distance_m=1.734`).
 Each value is drawn from a seed of its own, made of `sweep.seed` (else the
 run's `seed`, else the default seed), the scenario's name (`scenario.name`), the
-case's overrides, the sample's number and the key. So:
+case's overrides (but a route case's `scenario.route.index` and
+`scenario.route.case_count`, which say where it stands among the matches), the
+sample's number and the key. So:
 
 - the same config and seed draw the same values: two planners run on the same
   cases;
 - a case keeps its values when the sweep gains or loses other cases (a map
   update, a constraint changed): the values of lanelet 56's second sample do not
-  depend on the lanelets beside it;
+  depend on the lanelets beside it, nor a route match's on the other matches.
+  Before #2607 a route case's seed held its index and the count of matches,
+  so its values moved when another match appeared or was excluded; the values
+  every route case draws changed with the fix;
 - adding a distribution does not move the values the others draw;
 - two scenarios drawing the same key (`ego.initial_speed_kmh`) do not draw the
   same values;
@@ -800,6 +805,11 @@ that is not a whole number of at least 1 and a `sweep.seed` that is not a whole
 number from 0 to 2^31 - 1. A key drawn from a distribution may
 not be set by a binding, a route match, the ODD sample or an override of the
 run: the run would follow that value while the sweep said it was drawn.
+A setting nothing in the sweep would read is refused rather than ignored
+(#2607): `sweep.samples` above 1 without a distribution, `sweep.bindings`
+without a lanelet constraint (whose pick they derive from), and
+`sweep.exclude` without a lanelet constraint or a route search (whose cases it
+drops).
 
 #### Relations between parameters (Z3)
 

@@ -68,6 +68,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from ..seed import check_whole_number
 from .checks import check_non_negative, check_positive
 
 __all__ = [
@@ -170,8 +171,9 @@ class ConstructionSettings:
     Each is refused when built outside its bounds (#1479): every number
     finite, the spacings (``spacing``, ``warning_zone_spacing``) positive,
     and the lengths, ``speed_limit_mph`` and ``merge_signs`` not negative
-    (0 for none).  ``work_zone_offset`` and ``warning_sign_offset`` may be of
-    either sign.  The text fields take only the values listed below, spelled
+    (0 for none); ``merge_signs`` is a whole number (``2.5`` or ``True`` is
+    refused, ``2.0`` kept as ``2``).  ``work_zone_offset`` and
+    ``warning_sign_offset`` may be of either sign.  The text fields take only the values listed below, spelled
     exactly (lower case); any other is refused (#2263).
 
     Attributes:
@@ -238,10 +240,14 @@ class ConstructionSettings:
         check_non_negative("termination_zone_length", self.termination_zone_length)
         _check_finite("warning_sign_offset", self.warning_sign_offset)
         check_non_negative("merge_distance", self.merge_distance)
-        if self.merge_signs < 0:
+        # A whole number, kept as an int: 2.5 would fail range() mid-run and
+        # True would read as 1 (#2607).
+        count = check_whole_number("merge_signs", self.merge_signs)
+        if count < 0:
             raise ValueError(
                 f"merge_signs must not be negative, not {self.merge_signs}"
             )
+        object.__setattr__(self, "merge_signs", count)
 
 
 DEFAULT_CONSTRUCTION = ConstructionSettings()

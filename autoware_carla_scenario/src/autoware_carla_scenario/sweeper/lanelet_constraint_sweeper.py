@@ -3,7 +3,8 @@
 When activated via ``--multirun hydra/sweeper=lanelet_constraint``, this
 sweeper:
 
-1. Loads the Lanelet2 map (lightweight, no CARLA required).
+1. Loads the Lanelet2 map (lightweight, no CARLA required) -- when a lanelet
+   constraint or a route search reads it.
 2. Parses constraints from ``sweep.constraints`` and finds matching lanelets.
 3. For each match, resolves bindings from ``sweep.bindings`` to compute
    derived parameters (e.g. ``ego.spawn_s``).
@@ -98,6 +99,7 @@ from .expand import (
     scenario_rules,
     sweep_section,
 )
+from .distributions import is_distribution
 from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
     SWEEPER_OWNS_RETRIES_ENV,
     _interrupt_signal,
@@ -759,13 +761,20 @@ class LaneletConstraintSweeper(Sweeper):
         # map on this machine and is read in place.  A map that cannot be
         # resolved, fetched or read is refused as an invalid sweep, a
         # ValueError naming it, as scenario-expand and a batch refuse it
-        # (#1447), in one line (#1705).
-        try:
-            lanelet_map = load_sweep_map(
-                OmegaConf.select(cfg, "map"), prefix="LaneletConstraintSweeper: "
-            )
-        except ValueError as exc:
-            _refuse_invalid_sweep(cfg, exc)
+        # (#1447), in one line (#1705).  Only a lanelet constraint or a route
+        # search reads it: a sweep drawing from the ODD or from distributions
+        # alone needs none, as expand_config does not load one (#2607).
+        lanelet_map: Any = None
+        if sweep_dict.get("route") or any(
+            not is_distribution(constraint_list)
+            for constraint_list in (sweep_dict.get("constraints") or {}).values()
+        ):
+            try:
+                lanelet_map = load_sweep_map(
+                    OmegaConf.select(cfg, "map"), prefix="LaneletConstraintSweeper: "
+                )
+            except ValueError as exc:
+                _refuse_invalid_sweep(cfg, exc)
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
         odd = OmegaConf.select(cfg, "odd")

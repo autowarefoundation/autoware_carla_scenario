@@ -7,10 +7,10 @@ TeraSim's ``utils/nade/avoidance.py``, on predicted futures:
   checks, and with ``challenge_npcs`` the other candidates too.
 * **Avoidability** (:func:`avoidable`): each victim's *avoid* future -- an
   emergency brake held to the horizon -- is checked against the adversarial
-  future again, with a 0.5 m buffer.  A conflict no victim can brake out of
-  is unavoidable: an unreasonable adversity, whose naturalistic probability
-  is cut by ``unavoidable_factor`` (3e-4) and whose IS magnitude is
-  multiplied by ``unavoidable_magnitude`` (40).
+  future again, with a 0.5 m buffer.  A conflict a victim cannot brake out
+  of (any one of them) is unavoidable: an unreasonable adversity, whose
+  naturalistic probability is cut by ``unavoidable_factor`` (3e-4) and whose
+  IS magnitude is multiplied by ``unavoidable_magnitude`` (40).
 * **Response** (:func:`respond`): once an adversity is sampled whose
   victims do not include the ego, its NPC victims avoid it -- brake at the
   emergency deceleration for 3 s -- with the IS probability
