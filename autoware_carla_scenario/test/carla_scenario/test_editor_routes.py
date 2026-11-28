@@ -2367,6 +2367,7 @@ class TestEnvironmentTrack:
             "communication_loss",
             "lane_change",
             "routing",
+            "set_relative_speed",
             "set_speed",
             "turn",
             "turn_indicator",

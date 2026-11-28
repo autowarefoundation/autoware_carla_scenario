@@ -50,14 +50,16 @@ def _check(tmp_path: Path, setup: str, extra: str = "") -> tuple[Any, Path]:
 
 _CALLS = [
     (
-        'self.register_pre_tick(SetSpeedAction(EGO_ROLE_NAME, "fast", label="s"))\n',
+        "self.register_pass_condition(SpeedCondition("
+        'EGO_ROLE_NAME, "fast", ComparisonRule.GREATER_THAN, label="s"))\n',
         '"fast"',
-        "SetSpeedAction(): target_speed_kmh: expected float, got str",
+        "SpeedCondition(): value: expected float, got str",
     ),
     (
-        'self.register_pre_tick(SetSpeedAction(EGO_ROLE_NAME, label="s"))\n',
-        "SetSpeedAction(EGO_ROLE_NAME",
-        "SetSpeedAction(): missing required argument 'target_speed_kmh'",
+        "self.register_pass_condition(SpeedCondition("
+        'EGO_ROLE_NAME, rule=ComparisonRule.GREATER_THAN, label="s"))\n',
+        "SpeedCondition(EGO_ROLE_NAME",
+        "SpeedCondition(): missing required argument 'value'",
     ),
     (
         'self.register_pass_condition(TimeoutCondition(3.0, lable="p"))\n',

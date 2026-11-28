@@ -1,4 +1,4 @@
-"""Condition that is always satisfied."""
+"""Conditions that always, or never, hold."""
 
 from __future__ import annotations
 
@@ -27,3 +27,20 @@ class AlwaysTrueCondition(BaseCondition):
             message="AlwaysTrueCondition",
             elapsed_seconds=elapsed,
         )
+
+
+class NeverCondition(BaseCondition):
+    """A condition that never holds: the *until* of an action that runs for
+    the rest of the run (a traffic source or sink, a speed that follows
+    another entity's), where an action with none is over on the tick after it
+    fired."""
+
+    def __init__(self, *, label: str = "until_the_run_ends") -> None:
+        super().__init__(label=label)
+
+    def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
+        """Never a result."""
+        # Through a typed local: Codon 0.19 cannot type a bare `return None`
+        # that is a function's only return.
+        never: Optional[ScenarioResult] = None
+        return never

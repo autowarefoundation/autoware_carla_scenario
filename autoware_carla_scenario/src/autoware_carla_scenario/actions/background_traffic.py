@@ -36,7 +36,8 @@ import random
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..action_state import ActionState
-from ..conditions import BaseCondition, ScenarioResult
+from ..conditions import BaseCondition
+from ..conditions.always_true import NeverCondition
 from ..kinematics.walker_motion import simulated_seconds
 from ..seed import check_seed, check_whole_number, resolve_seed
 from ..traffic.base import check_background_speed
@@ -219,19 +220,6 @@ class LaneletRegion:
         )
 
 
-class _Never(BaseCondition):
-    """Never fires: a source or sink with no ``until`` runs for the whole run."""
-
-    def __init__(self) -> None:
-        super().__init__(label="until_the_run_ends")
-
-    def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
-        # Through a typed local: Codon 0.19 cannot type a bare `return None`
-        # that is a function's only return.
-        never: Optional[ScenarioResult] = None
-        return never
-
-
 class _BackendAction(BaseAction):
     """An action that acts through the run's traffic backend.
 
@@ -253,7 +241,7 @@ class _BackendAction(BaseAction):
         if until is not None:
             stop = until
         else:
-            stop = _Never()
+            stop = NeverCondition()
         super().__init__(label, until=stop, **kwargs)
         self._backend: Optional["TrafficBackend"] = None
 
