@@ -396,7 +396,20 @@ class TrajectoryRecorder:
                 self._lights.append(tl)
                 self._emit(_light_record(tl))
         except Exception:
+            opened = self._out is not None
             self._fail("could not start")
+            # A log that never started is no run's log (the runner neither
+            # keeps nor converts it): the file it was opened as goes too.
+            # Opened for writing, it held nothing of an earlier run's.
+            if opened:
+                try:
+                    self.path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning(
+                        "Trajectory recording: removing %s failed",
+                        self.path,
+                        exc_info=True,
+                    )
 
     def _open(self) -> IO[bytes]:
         """The stream the records go to: the file at :attr:`path`."""

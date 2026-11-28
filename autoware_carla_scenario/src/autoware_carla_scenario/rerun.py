@@ -270,22 +270,27 @@ class RerunConverter:
         beside it -- when :attr:`records_sensors`; otherwise nothing.
 
         The recording is the active one (:func:`.rerun_lidar.active_recorder`)
-        until :meth:`stop_sensors`.
+        until :meth:`stop_sensors`.  One that cannot start is logged, and the
+        run goes on without it, as with the other recorders.
         """
         if not self.records_sensors:
             return
         self.stop_sensors()
         from .rerun_lidar import LidarRecorder, lidar_recording_path  # noqa: PLC0415
 
-        self._lidar = LidarRecorder(
-            lidar_recording_path(Path(trajectory).parent, label),
-            label,
-            start_frame,
-            self._lidar_max_points or 0,
-            sdk=self._lidar_sdk,
-            lidar=self._lidar_max_points is not None,
-            cameras=self._cameras,
-        ).start()
+        path = lidar_recording_path(Path(trajectory).parent, label)
+        try:
+            self._lidar = LidarRecorder(
+                path,
+                label,
+                start_frame,
+                self._lidar_max_points or 0,
+                sdk=self._lidar_sdk,
+                lidar=self._lidar_max_points is not None,
+                cameras=self._cameras,
+            ).start()
+        except Exception:  # noqa: BLE001 - a lost recording is not a lost run
+            logger.exception("starting the sensor recording %s failed", path)
 
     def stop_sensors(self) -> None:
         """Close the run's sensor recording, if one is open."""

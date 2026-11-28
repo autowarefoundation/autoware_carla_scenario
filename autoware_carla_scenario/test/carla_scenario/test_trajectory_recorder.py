@@ -507,6 +507,24 @@ def test_an_error_stops_recording_without_raising(tmp_path: Path) -> None:
     recorder.record(world, 0.05)  # and stays off
 
 
+class _NoLightsWorld(_World):
+    def get_actors(self, ids: list[int] | None = None):
+        if ids is None:
+            raise RuntimeError("time-out")
+        return super().get_actors(ids)
+
+
+def test_a_log_that_could_not_start_leaves_no_file(tmp_path: Path) -> None:
+    # The world and map records are written before the failure: the runner
+    # keeps no log that never started, so none is left to be taken for one
+    # (#2617).
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(_NoLightsWorld())
+
+    assert not recorder.active
+    assert not recorder.path.exists()
+
+
 class _FailingFile:
     def write(self, data: bytes) -> int:
         raise OSError("No space left on device")
