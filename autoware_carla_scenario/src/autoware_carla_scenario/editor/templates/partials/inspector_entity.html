@@ -5,7 +5,7 @@
 {%- set spawn_slot = document.lanelet_slot(target.id ~ '.spawn') -%}
 {%- set goal_slot = document.lanelet_slot(target.id ~ '.goal') -%}
 
-<form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+<form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}" novalidate
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
   <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
   <p class="ed-kicker">{{ {'ego': 'Ego vehicle', 'motorcycle': 'Motorcycle', 'pedestrian': 'Pedestrian'}.get(target.kind, 'Vehicle') }}</p>
@@ -125,7 +125,7 @@
   {# Where along the lanelet, under the same heading as which lanelet: it is one
      question -- where does this vehicle start -- and one panel answering it.
      Its own form, because the panel is shown outside the inspector's. #}
-  <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
+  <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}" novalidate
         hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML"
         style="margin-top:16px">
     <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
@@ -197,6 +197,7 @@
 {% if target.kind != 'ego' or document.entities|length > 1 %}
   <button class="ed-btn-danger" style="width:100%; margin-top:16px"
           hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}/delete"
+          hx-vals='{"draft_revision": "{{ draft.revision }}"}'
           hx-target="#editor-body" hx-swap="innerHTML"
           hx-confirm="Delete this actor, its actions and every condition that names it?">
     {{ ic.icon('trash', 13) }} Delete actor

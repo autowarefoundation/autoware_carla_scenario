@@ -33,7 +33,7 @@
        nothing has to be selected somewhere the map is covering. #}
     {% if inline_fields and spec and spec.fields %}
       <form class="ed-constraint-fields"
-            hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}"
+            hx-post="/draft/{{ draft.id }}/constraint/{{ node.id }}" novalidate
             hx-trigger="change delay:200ms"
             hx-target="#editor-body" hx-swap="innerHTML">
         <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
@@ -76,6 +76,7 @@
     <summary class="ed-add-btn" title="Add a constraint">{{ ic.icon('plus', 11) }} constraint</summary>
     <form hx-post="/draft/{{ draft.id }}/constraint" hx-target="#editor-body" hx-swap="innerHTML"
           class="ed-add-form">
+      <input type="hidden" name="draft_revision" value="{{ draft.revision }}">
       <input type="hidden" name="slot" value="{{ slot.key }}">
       <input type="hidden" name="parent_id" value="{{ parent_id }}">
       <select name="type_id" class="ed-input-xs" style="flex:1" aria-label="Constraint type">

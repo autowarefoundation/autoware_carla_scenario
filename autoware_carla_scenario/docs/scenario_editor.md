@@ -1044,7 +1044,13 @@ re-sorts them -- does not: a row button rendered before it may now point at
 another row, and is refused. If one of those posts fails the click goes
 nowhere, the failure is shown, and the change waits for the next click; if
 the server refuses the value, it is posted again as an ordinary edit, so the
-reason is shown as an edit's is.
+reason is shown as an edit's is. A post htmx does not send because the browser
+finds its form invalid (`htmx:validation:halted`) is such a failure too, not a
+form that has left: the click goes nowhere and the change waits (#2632). The
+inspector forms whose fields carry a `min` or a `step` -- an entity's, an
+action's, a condition's, a constraint's, a waypoint condition's vertex -- are
+`novalidate`, as the gate's is (#2442), so the browser stops none of them: a
+value out of range is posted, and the server says why it was not taken.
 
 A form posts **all** of its fields, so one rendered from an older copy of the
 draft would put back whatever was changed since. Each draft therefore has a
@@ -1072,9 +1078,17 @@ refused rather than removing or moving the wrong row, and so is the second of
 two quick clicks in one tab, sent before the answer to the first renumbered
 the page. The refusal is the same 409 with its Reload button. Every answer
 re-renders the buttons with the revision it was rendered from, so a click
-after the swap goes through. A post without a `draft_revision` -- another
-button (add, remove by id), a script -- is not checked, so it acts on the draft
-as it is now.
+after the swap goes through.
+
+A button that names an actor by its id -- Delete actor, the Fixed /
+Constraint search / From the search choice of a lanelet, "+ action" on an
+actor's track, "+ constraint" on a search -- carries the revision too, checked
+leniently, as an inspector form is: an actor's id is reused (a new one takes
+the lowest free `npcN`), so a stale tab's click would otherwise act on the
+actor that took the id since -- delete another tab's new car, with its actions
+and the conditions naming it (#2632). A post without a `draft_revision` --
+another button (add an actor, remove by an id never reused), a script -- is
+not checked, so it acts on the draft as it is now.
 
 The forms of those rows -- a signal group's, a controller's, a phase's, the
 vertex of a waypoint condition -- post to a URL holding the row's position

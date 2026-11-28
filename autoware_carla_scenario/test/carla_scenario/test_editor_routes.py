@@ -3124,6 +3124,11 @@ const htmx = {
         fire(ctx.source, 'htmx:afterRequest', detail);
         fire(body, 'htmx:afterRequest', detail);
         resolve();
+      }, halt() {
+        // As htmx does for a form the browser finds invalid: no request, no
+        // `htmx:afterRequest`, and the promise resolved all the same.
+        fire(ctx.source, 'htmx:validation:halted', { elt: ctx.source, errors: [{}] });
+        resolve();
       } });
     };
     return new Promise((resolve) => {
@@ -3228,6 +3233,17 @@ const saved = '<input type="hidden" name="draft_revision" value="8">';
   out.stayedRewritten = stayed.formData.get('draft_revision');
   log.splice(0);
 
+  // A form htmx does not send because the browser finds it invalid: the
+  // navigation stops, and the change is kept (#2632).
+  form.reportValidity = () => { log.push('reportValidity'); return false; };
+  typed();
+  navigate(card, inspector);
+  await tick();
+  flushes.shift().halt();
+  await tick(); await tick();
+  out.halted = log.splice(0).filter((line) => !line.startsWith('ajax '));
+  out.keptAfterHalt = !navigate(form, editorBody, 'change').prevented;
+
   out.flushedWith = out.flushedWith && {
     source: out.flushedWith.source.id, target: out.flushedWith.target.id, swap: out.flushedWith.swap };
   process.stdout.write(JSON.stringify(out));
@@ -3312,6 +3328,10 @@ class TestPendingChangeBeforeNavigating:
         # before it: the strict check refuses that click, as it should.
         assert result["movedKept"] == "9"
         assert result["stayedRewritten"] == "10"
+        # A flush the browser's validation halted is a failure, not a form
+        # that left: the navigation stays and the change waits (#2632).
+        assert result["halted"] == ["reportValidity"]
+        assert result["keptAfterHalt"] is True
 
 
 class TestScenarioMap:

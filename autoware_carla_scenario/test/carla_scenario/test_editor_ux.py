@@ -14,7 +14,8 @@ import re
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
+from urllib.parse import urlencode
 
 import pytest
 from fastapi.testclient import TestClient
@@ -406,6 +407,228 @@ class TestRowButtons:
         ).read_text(encoding="utf-8")
         button = template.split("/advance/{{ index }}/delete")[1].split(">")[0]
         assert """hx-vals='{"draft_revision": "{{ draft.revision }}"}'""" in button
+
+
+def _post(client: TestClient, url: str, fields: dict[str, str], tab: str) -> Any:
+    """Post *fields* urlencoded, as a page does (``data=`` mis-encodes lists)."""
+    return client.post(
+        url,
+        content=urlencode(fields),
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            CLIENT_HEADER: tab,
+        },
+    )
+
+
+class TestEntityButtons:
+    """A button that names an entity by its id carries the revision (#2632).
+
+    Entity ids are reused -- a new actor takes the lowest free ``npcN`` -- so
+    a stale tab's click would act on the actor that took the id since.
+    """
+
+    @staticmethod
+    def _reuse_npc1(client: TestClient, draft_id: str) -> str:
+        """Tab B replaces npc1 with a new car under the same id; returns the
+        revision tab A, opened before, still shows."""
+        page = client.get(f"/draft/{draft_id}/inspector/npc1").text
+        shown = _revision(page)
+        delete = re.search(
+            r'hx-post="[^"]*/entity/npc1/delete"\s+hx-vals=\'([^\']*)\'', page
+        )
+        assert delete is not None, "the delete button names no revision"
+        assert f'"{REVISION_FIELD}": "{shown}"' in delete.group(1)
+        base = f"/draft/{draft_id}"
+        assert (
+            _post(
+                client, f"{base}/entity/npc1/delete", {REVISION_FIELD: shown}, "tab-b"
+            )
+        ).status_code == 200
+        assert (
+            _post(client, f"{base}/entity", {"kind": "vehicle"}, "tab-b").status_code
+            == 200
+        )
+        now = str(_stored(client, draft_id).revision)
+        renamed = _post(
+            client,
+            f"{base}/entity/npc1",
+            {"title": "B's new car", REVISION_FIELD: now},
+            "tab-b",
+        )
+        assert renamed.status_code == 200
+        return shown
+
+    @pytest.mark.parametrize(
+        ("path", "fields"),
+        [
+            ("entity/npc1/delete", {}),
+            ("lanelet-mode", {"slot": "npc1.spawn", "mode": "constraint_search"}),
+            ("action", {"type_id": "set_speed", "actor": "npc1"}),
+            ("constraint", {"slot": "npc1.spawn", "type_id": "lanelet_length"}),
+        ],
+    )
+    def test_a_stale_tabs_button_does_not_act_on_a_reused_id(
+        self, client: TestClient, draft_id: str, path: str, fields: dict[str, str]
+    ) -> None:
+        shown = self._reuse_npc1(client, draft_id)
+        before = _stored(client, draft_id)
+        stale = _post(
+            client,
+            f"/draft/{draft_id}/{path}",
+            {**fields, REVISION_FIELD: shown},
+            "tab-a",
+        )
+        assert stale.status_code == 409
+        assert "Changed elsewhere" in stale.text
+        after = _stored(client, draft_id)
+        assert after.revision == before.revision
+        assert after.document.to_yaml_dict() == before.document.to_yaml_dict()
+        car = after.document.entity("npc1")
+        assert car is not None and car.title == "B's new car"
+
+    @pytest.mark.parametrize(
+        ("path", "fields"),
+        [
+            ("lanelet-mode", {"slot": "npc1.spawn", "mode": "constraint_search"}),
+            ("action", {"type_id": "set_speed", "actor": "npc1"}),
+            ("entity/npc1/delete", {}),
+        ],
+    )
+    def test_a_current_click_goes_through_and_a_quick_one_after_it(
+        self, client: TestClient, draft_id: str, path: str, fields: dict[str, str]
+    ) -> None:
+        # Checked leniently: this page's own save since does not refuse it.
+        shown = str(_stored(client, draft_id).revision)
+        base = f"/draft/{draft_id}"
+        quick = _post(
+            client, f"{base}/scenario", {"title": "T", REVISION_FIELD: shown}, "tab-a"
+        )
+        assert quick.status_code == 200
+        response = _post(
+            client, f"{base}/{path}", {**fields, REVISION_FIELD: shown}, "tab-a"
+        )
+        assert response.status_code == 200
+        assert _stored(client, draft_id).revision == int(shown) + 2
+
+    def test_the_lane_and_search_buttons_carry_the_revision(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        base = f"/draft/{draft_id}"
+        shown = str(_stored(client, draft_id).revision)
+        assert (
+            _post(
+                client,
+                f"{base}/lanelet-mode",
+                {
+                    "slot": "npc1.spawn",
+                    "mode": "constraint_search",
+                    REVISION_FIELD: shown,
+                },
+                "tab-a",
+            )
+        ).status_code == 200
+        page = client.get(f"{base}/inspector/npc1").text
+        now = _revision(page)
+        radios = re.findall(
+            r"hx-post=\"[^\"]*/lanelet-mode\"\s+hx-vals='([^']*)'", page
+        )
+        assert radios
+        assert all(f'"{REVISION_FIELD}": "{now}"' in vals for vals in radios)
+        add_constraint = re.findall(
+            r'<form hx-post="[^"]*/constraint" [^>]*>\s*'
+            r'<input type="hidden" name="draft_revision" value="(\d+)">',
+            page,
+        )
+        assert add_constraint and set(add_constraint) == {now}
+        canvas = client.get(f"{base}/canvas").text
+        lanes = re.findall(
+            r'<form hx-post="[^"]*/action" [^>]*>\s*'
+            r'<input type="hidden" name="draft_revision" value="(\d+)">',
+            canvas,
+        )
+        assert lanes and set(lanes) == {now}
+
+
+class TestInspectorFormsSkipBrowserValidation:
+    """htmx sends no form the browser finds invalid and says nothing, so an
+    inspector form whose inputs carry ``min`` or ``step`` would drop every
+    change in it: the server's messages stand in for the browser's (#2632)."""
+
+    _FORM = re.compile(r"(<form\b[^>]*>)(.*?)</form>", re.S)
+    _CONSTRAINED = re.compile(
+        r'<input\b[^>]*\b(?:min|max)="|<input\b[^>]*step="(?!any")'
+    )
+
+    def test_every_constrained_form_is_novalidate(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        base = f"/draft/{draft_id}"
+        tab = "tab-a"
+        added = _post(
+            client, f"{base}/action", {"type_id": "routing", "actor": "npc1"}, tab
+        )
+        assert added.status_code == 200
+        document = _stored(client, draft_id).document
+        routing = next(a for a in document.actions if a.type == "routing")
+        gate = _post(
+            client,
+            f"{base}/condition",
+            {
+                "slot": f"advance:{routing.id}",
+                "vertex": "1",
+                "type_id": "trajectory_time",
+            },
+            tab,
+        )
+        assert gate.status_code == 200
+        counted = _post(
+            client,
+            f"{base}/condition",
+            {"slot": "fail", "type_id": "entity_count"},
+            tab,
+        )
+        assert counted.status_code == 200
+        assert (
+            _post(
+                client,
+                f"{base}/lanelet-mode",
+                {"slot": "npc1.spawn", "mode": "constraint_search"},
+                tab,
+            ).status_code
+            == 200
+        )
+        assert (
+            _post(
+                client,
+                f"{base}/constraint",
+                {"slot": "npc1.spawn", "type_id": "lanelet_length"},
+                tab,
+            ).status_code
+            == 200
+        )
+        document = _stored(client, draft_id).document
+        objects = ["scenario", *(e.id for e in document.entities)]
+        objects += [a.id for a in document.actions]
+        objects += [c.id for root in document.condition_roots() for c in root.walk()]
+        objects += [
+            node.id for entity in document.entities for node in entity.spawn.constraints
+        ]
+        seen: set[str] = set()
+        for object_id in objects:
+            page = client.get(f"{base}/inspector/{object_id}").text
+            for tag, inner in self._FORM.findall(page):
+                if "hx-post" not in tag or not self._CONSTRAINED.search(inner):
+                    continue
+                url = re.search(r'hx-post="([^"]+)"', tag)
+                assert url is not None
+                assert "novalidate" in tag, (object_id, url.group(1))
+                seen.add(re.sub(r"[^/]+$", "", url.group(1).split(base, 1)[1]))
+        # The entity's, an action's, a condition's and a waypoint vertex's.
+        assert {"/entity/", "/action/", "/condition/"} <= {
+            re.sub(r"^(/[^/]+/).*", r"\1", url) for url in seen
+        }
+        assert any("/advance/" in url for url in seen)
 
 
 class TestRowForms:
