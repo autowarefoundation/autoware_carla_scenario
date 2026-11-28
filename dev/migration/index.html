@@ -2237,6 +2237,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#nade-and-route-sweeps-draw-new-values-unread-sweep-settings-are-refused" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NADE and route sweeps draw new values; unread sweep settings are refused
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rerun_metrics-is-gone" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2470,6 +2481,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#nade-and-route-sweeps-draw-new-values-unread-sweep-settings-are-refused" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NADE and route sweeps draw new values; unread sweep settings are refused
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rerun_metrics-is-gone" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2689,6 +2711,23 @@
 
 
 <h1 id="migrating">Migrating<a class="headerlink" href="#migrating" title="Permanent link">&para;</a></h1>
+<h2 id="nade-and-route-sweeps-draw-new-values-unread-sweep-settings-are-refused">NADE and route sweeps draw new values; unread sweep settings are refused<a class="headerlink" href="#nade-and-route-sweeps-draw-new-values-unread-sweep-settings-are-refused" title="Permanent link">&para;</a></h2>
+<p>NADE's three random streams are now seeded past every seed a component
+seeded with the run's seed itself takes (a <code>TrafficSourceAction</code>, the SUMO
+backend), and an <code>AdversityFeasibleCondition</code>'s stream past them
+(<a href="../adversity/">Adversity</a>, <code>adversity.nade.stream_seed</code> and
+<code>trigger_stream_seed</code>), so NADE no longer samples what those components draw
+(#2607). A run still repeats from its seed, but NADE's draws and its triggers'
+draws for every seed differ from those of earlier releases. So do the values
+a route sweep's distributions draw: a route case's seed no longer holds its
+<code>scenario.route.index</code> and <code>scenario.route.case_count</code>, so that it keeps its
+values when another match appears or is excluded
+(<a href="../usage/">Usage</a>, "Drawing scalar parameters from distributions").</p>
+<p>A sweep that expands now refuses a setting nothing in it reads, which it
+used to ignore: <code>sweep.samples</code> above 1 without a distribution,
+<code>sweep.bindings</code> without a lanelet constraint, and <code>sweep.exclude</code> without a
+lanelet constraint or a route search. Drop the setting. <code>ConstructionSettings</code>
+refuses a <code>merge_signs</code> that is not a whole number (<code>2.5</code>, <code>True</code>).</p>
 <h2 id="rerun_metrics-is-gone"><code>rerun_metrics</code> is gone<a class="headerlink" href="#rerun_metrics-is-gone" title="Permanent link">&para;</a></h2>
 <p>The module wrote a run's metrics into its Rerun recording for a converter that
 did not draw <code>metric</code> records, but every converter the <code>rerun</code> extra installs
@@ -2960,7 +2999,7 @@ are written into the trajectory log.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 25, 2026 10:04:11 UTC"><span class="timeago" datetime="2026-11-25T10:04:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 25, 2026 10:04:11 UTC">2026-11-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 02:20:28 UTC"><span class="timeago" datetime="2026-11-28T02:20:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 02:20:28 UTC">2026-11-28</span>
   </span>
 
     
