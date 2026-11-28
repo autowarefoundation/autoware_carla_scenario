@@ -284,6 +284,17 @@ def test_a_zero_path_speed_cannot_be_timed() -> None:
     assert errors == [f"actions[{index}].speed_kmh"]
 
 
+def test_a_negative_path_speed_is_refused_untimed_too() -> None:
+    """#2608: the builder refuses it, so the field check does, timed or not."""
+    document = _lanelet_path(-30.0)
+    document.actions[-1].params["time_domain"] = "none"
+    index = len(document.actions) - 1
+    issues = validate_document(document).errors
+    assert [(i.path, i.message) for i in issues] == [
+        (f"actions[{index}].speed_kmh", "Path speed must not be negative.")
+    ]
+
+
 def test_the_path_speed_help_says_what_empty_means() -> None:
     spec = registry.get_action_spec("routing")
     assert spec is not None

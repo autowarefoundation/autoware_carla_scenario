@@ -3167,6 +3167,8 @@ register_action_spec(
                 kind="number",
                 default=30.0,
                 required=False,
+                # The builder refuses a negative speed (#2608); say so here.
+                minimum=0.0,
                 unit="km/h",
                 help="Times the lanelet path; 0 leaves it untimed; empty uses 30 km/h.",
             ),
