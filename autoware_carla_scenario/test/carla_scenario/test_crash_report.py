@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import sentry_sdk
 
 from autoware_carla_scenario import crash_report
 
@@ -1548,11 +1549,19 @@ class _NoDataCollection:
         pass
 
 
+def _skip_without_include_local_variables() -> None:
+    """sentry-sdk 3.x refuses ``include_local_variables``: that path is one of
+    2.x only (CI runs this file against each major)."""
+    if int(sentry_sdk.VERSION.split(".")[0]) >= 3:
+        pytest.skip("sentry-sdk 3.x takes no include_local_variables")
+
+
 @pytest.mark.parametrize("path", ["data_collection", "include_local_variables"])
 def test_a_local_named_like_a_secret_is_filtered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
     if path == "include_local_variables":
+        _skip_without_include_local_variables()
         monkeypatch.setattr(crash_report, "ClientConstructor", _NoDataCollection)
     if path not in crash_report._locals_option(True):
         pytest.skip(f"the installed sentry-sdk takes no {path}")
@@ -1588,6 +1597,7 @@ def test_without_locals_a_frame_has_no_variables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
     if path == "include_local_variables":
+        _skip_without_include_local_variables()
         monkeypatch.setattr(crash_report, "ClientConstructor", _NoDataCollection)
     monkeypatch.setenv(crash_report.ITEMS_ENV, "-locals")
     with _installed(tmp_path, monkeypatch):

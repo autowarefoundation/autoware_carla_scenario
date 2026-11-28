@@ -101,7 +101,6 @@ from sentry_sdk.integrations.argv import ArgvIntegration
 from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.modules import ModulesIntegration
-from sentry_sdk.scrubber import EventScrubber
 from sentry_sdk.transport import HttpTransport, Transport
 
 from .atomic_file import write_bytes_atomically
@@ -252,33 +251,82 @@ def _redacted(value: Any) -> Any:
     return value
 
 
-class _Scrubber(EventScrubber):
-    """sentry-sdk's default :class:`~sentry_sdk.scrubber.EventScrubber`
-    (``password``, ``token``, ``secret``, ``api_key``, ... and, user
-    identity being off, ``ip_address``), run in ``before_send``: on an event
-    already serialized, so a value it filters is the text ``[Filtered]``,
-    as the SDK's own writes it (#2616)."""
+# sentry-sdk 2.x's ``sentry_sdk.scrubber.DEFAULT_DENYLIST`` and
+# ``DEFAULT_PII_DENYLIST`` (user identity being off), as 2.75 has them; kept
+# here because 3.x has no ``sentry_sdk.scrubber`` at all (#2616).
+_DENYLIST = frozenset(
+    name.lower()
+    for name in (
+        "password", "passwd", "secret", "api_key", "apikey", "auth",
+        "credentials", "mysql_pwd", "privatekey", "private_key", "token",
+        "session", "csrftoken", "sessionid", "x_csrftoken", "x_forwarded_for",
+        "set_cookie", "cookie", "authorization", "proxy-authorization",
+        "x_api_key", "aiohttp_session", "connect.sid", "csrf_token", "csrf",
+        "_csrf", "_csrf_token", "PHPSESSID", "_session", "symfony",
+        "user_session", "_xsrf", "XSRF-TOKEN",
+        "x_real_ip", "ip_address", "remote_addr",
+    )
+)  # fmt: skip
 
-    def scrub_dict(self, d: object) -> None:
-        if not isinstance(d, dict):
-            return
-        for k in list(d):
-            if isinstance(k, str) and k.lower() in self.denylist:
-                d[k] = "[Filtered]"
+
+def _scrub_dict(d: object) -> None:
+    """Filter *d*'s values whose key is named like a secret, as sentry-sdk's
+    ``EventScrubber.scrub_dict`` does: on an event already serialized, so a
+    filtered value is the text ``[Filtered]``, as the SDK's own writes it."""
+    if not isinstance(d, dict):
+        return
+    for k in list(d):
+        if isinstance(k, str) and k.lower() in _DENYLIST:
+            d[k] = "[Filtered]"
 
 
-_SCRUBBER = _Scrubber()
+def _scrub_frames(stacktrace: object) -> None:
+    if isinstance(stacktrace, dict):
+        for frame in stacktrace.get("frames") or ():
+            if isinstance(frame, dict):
+                _scrub_dict(frame.get("vars"))
+
+
+def _scrub_event(event: Any) -> None:
+    """What sentry-sdk's default ``EventScrubber.scrub_event`` filters: the
+    request (and its headers, cookies, data), the extra data, the user, the
+    breadcrumbs' data, the frames' local variables and the spans' data."""
+    if not isinstance(event, dict):
+        return
+    request = event.get("request")
+    _scrub_dict(request)
+    if isinstance(request, dict):
+        for part in ("headers", "cookies", "data"):
+            _scrub_dict(request.get(part))
+    _scrub_dict(event.get("extra"))
+    _scrub_dict(event.get("user"))
+    crumbs = event.get("breadcrumbs")
+    if isinstance(crumbs, dict):
+        crumbs = crumbs.get("values")
+    for crumb in crumbs or ():
+        if isinstance(crumb, dict):
+            _scrub_dict(crumb.get("data"))
+    for section in ("exception", "threads"):
+        found: Any = event.get(section)
+        values: Any = found.get("values") if isinstance(found, dict) else None
+        for value in values or ():
+            if isinstance(value, dict):
+                _scrub_frames(value.get("stacktrace"))
+    _scrub_frames(event.get("stacktrace"))
+    for span in event.get("spans") or ():
+        if isinstance(span, dict):
+            _scrub_dict(span.get("data"))
 
 
 def _redact_event(event: Any, _hint: Any) -> Any:
     """``before_send``: the event, as written and sent, with every URL's
     credentials redacted -- the frames' local variables, the command line
     (``ArgvIntegration``), the run's context, the breadcrumbs -- and what is
-    named like a secret filtered (:class:`_Scrubber`): the frames' local
+    named like a secret filtered (:func:`_scrub_event`): the frames' local
     variables, the breadcrumbs' data, the extra data, the user.  The SDK
     scrubs those itself only when not given ``data_collection``
     (:func:`_locals_option`), and refuses a scrubber of its own with it."""
-    _SCRUBBER.scrub_event(event)
+    _scrub_event(event)
     return _redacted(event)
 
 
