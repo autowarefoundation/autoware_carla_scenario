@@ -263,6 +263,7 @@ class ScenarioQueue:
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
+                *reload_every* is no whole number (a bool included),
                 or *world_reset* is neither ``"reload"`` nor ``"soft"``, or
                 *timeout_seconds* is not positive and finite, or
                 *overwrite_xodr* is set without both *xodr_path* and

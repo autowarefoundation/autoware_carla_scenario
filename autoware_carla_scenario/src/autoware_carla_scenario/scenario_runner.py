@@ -1156,8 +1156,8 @@ class ScenarioRunner:
 
         Raises:
             ValueError: *world_reset* is not ``"reload"`` or ``"soft"``, or
-                *reload_every* is negative, or *timeout_seconds* is not
-                positive and finite.
+                *reload_every* is no whole number (a bool included) or is
+                negative, or *timeout_seconds* is not positive and finite.
         """
         check_world_reset(world_reset, reload_every)
         # Refused now, not once a run has set the world up and spawned the
