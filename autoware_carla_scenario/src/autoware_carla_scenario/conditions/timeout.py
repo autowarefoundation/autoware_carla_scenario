@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class TimeoutCondition(BaseCondition):
-    """Fail condition that triggers when elapsed time exceeds the timeout.
+    """Fail condition that triggers when elapsed time reaches the timeout.
 
     Measured on the simulated clock, like every other duration: *timeout* is
     part of what the scenario says -- "this manoeuvre should be over within N
@@ -59,7 +59,7 @@ class TimeoutCondition(BaseCondition):
         return {"timeout_seconds": self.timeout_seconds}
 
     def check(self, world: "carla.World", elapsed: float) -> Optional[ScenarioResult]:
-        """Return a failure result if elapsed time exceeds the timeout.
+        """Return a failure result once elapsed time reaches the timeout.
 
         Args:
             world: The CARLA world instance (unused).

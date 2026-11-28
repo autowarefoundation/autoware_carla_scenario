@@ -702,6 +702,56 @@ class TestInitRegistrationsStartEveryRunAsBuilt:
         assert scenario.sticky.to_summary_dict()["satisfied"] is False
 
 
+class _CoversOnALatch(BaseScenario):
+    """Samples a cover item on a sticky condition registered in ``__init__``,
+    twice, and on one of its pass conditions."""
+
+    def __init__(self) -> None:
+        super().__init__(_ego_config())
+        self.latch = StickyCondition(
+            _Scripted("at_goal", lambda t: 0.5 <= t < 1.0), label="visited_goal"
+        )
+        self.judged = StickyCondition(
+            _Scripted("judged", lambda t: 0.5 <= t < 1.0), label="judged"
+        )
+        self.register_pass_condition(self.judged)
+        self.register_cover("a", lambda w: 1, values=[1], event=self.latch)
+        self.register_cover("b", lambda w: 1, values=[1], event=self.latch)
+        self.register_cover("c", lambda w: 1, values=[1], event=self.judged)
+
+    def setup(self) -> None:
+        pass
+
+    def is_done(self) -> bool:
+        return False
+
+
+class TestCoverEventsStartEveryRunAsBuilt:
+    def test_a_latched_cover_event_is_reset_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cover item's condition latched in an earlier attempt is not
+        satisfied in the retry; each distinct one is reset once (#2611)."""
+        scenario = _CoversOnALatch()
+        scenario._reset_registrations()
+        assert scenario.latch.check(None, 0.5) is not None  # type: ignore[arg-type]
+        assert scenario.latch.check(None, 2.0) is not None  # type: ignore[arg-type]
+
+        resets: list[str] = []
+        for condition in (scenario.latch, scenario.judged):
+            original = condition.reset
+
+            def counted(original: Any = original, label: str = condition.label) -> None:
+                resets.append(label)
+                original()
+
+            monkeypatch.setattr(condition, "reset", counted)
+        scenario._reset_registrations()
+
+        assert scenario.latch.check(None, 2.0) is None  # type: ignore[arg-type]
+        assert resets == ["judged", "visited_goal"]
+
+
 class TestCollisionClosedWithinARun:
     def test_a_closed_condition_attaches_no_sensor_until_reset(self) -> None:
         """Closed, the condition is not checked again in that run -- it

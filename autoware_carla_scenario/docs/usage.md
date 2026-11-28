@@ -41,13 +41,14 @@ Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/)
 3. Compiles the scenario with Codon and refuses it if it does not type-check
    ([Static Check](typecheck.md); `typecheck=off` skips it)
 4. Connects to the CARLA server and loads the specified map (OpenDRIVE or built-in)
-5. Spawns the ego vehicle at the configured Lanelet2 position (converted to CARLA coordinates)
-6. Enables synchronous mode (fixed 20 Hz tick rate) and starts the native CARLA recorder
-7. Runs a warm-up phase (5 ticks for physics stabilization)
-8. Enables autopilot and applies initial speeds
-9. Executes the main tick loop, checking pass/fail conditions each tick
-10. Writes the results as JSON, and the run's trajectory log as it goes
-11. Resets the CARLA world (a map reload, or a soft reset with
+5. Enables synchronous mode (fixed 20 Hz tick rate)
+6. Spawns the ego vehicle at the configured Lanelet2 position (converted to CARLA coordinates) and starts the native CARLA recorder
+7. Runs a warm-up phase (5 ticks with the vehicles held still, for physics stabilization)
+8. Runs the init actions, starts the ego (`on_scenario_start`) and waits until it is ready
+9. Releases the vehicles' brakes, enables autopilot and applies initial speeds
+10. Executes the main tick loop, checking pass/fail conditions each tick
+11. Writes the results as JSON, and the run's trajectory log as it goes
+12. Resets the CARLA world (a map reload, or a soft reset with
     `server.world_reset=soft`) right before each scenario after the first, so every
     scenario starts on a clean world. After the last one, a server the run
     launched itself is stopped; one that was already running is reset once
