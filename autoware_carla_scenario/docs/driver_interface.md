@@ -441,6 +441,9 @@ Autoware's does. Where the chain differs from the replay:
 - The localization lag delays only what the controller reads; the policy is told
   the ego's own pose.
 - The TSO's goal steer-zero mode is left out: the chain is not given the route goal.
+- Until the first plan is published (the third tick at the defaults), a moving ego
+  (a spawn at speed) tracks the policy's own plan, with `control`'s steering,
+  rather than braking for want of a trajectory; an ego at rest is held.
 
 ### Warming up a policy
 

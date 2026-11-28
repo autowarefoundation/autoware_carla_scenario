@@ -1120,7 +1120,9 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
         With Autoware's chain, the plan tracked is the trajectory it published
         (its speeds and accelerations too, with the TSO), and the steering is
-        the MPC's, from the measured tire angle *steer*.
+        the MPC's, from the measured tire angle *steer*.  Until the chain has
+        published its first plan, a moving ego tracks the policy's own (in the same
+        local frame), so a spawn at speed is not braked; one at rest is held.
         """
         now_us = observation.timestamp_us
         plan = self._plan
@@ -1129,8 +1131,15 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         chain = self._lateral
         if chain is not None:
             published = chain.published(now_us)
-            plan = Trajectory.empty() if published is None else published.trajectory
-            if published is not None:
+            if published is None:
+                moving = (
+                    abs(observation.speed_mps)
+                    > self._follower.config.stopped_state_entry_vel
+                )
+                if not moving:
+                    plan = Trajectory.empty()
+            else:
+                plan = published.trajectory
                 velocities = published.velocities
                 accelerations = published.accelerations
         self._follower.follow_wheel_grip(actor)
