@@ -614,6 +614,7 @@ def test_a_single_run_refuses_a_launcher_its_config_selects() -> None:
     assert message.startswith("launcher.type is 'slurm' in the scenario's config")
     assert "launcher=slurm on the command line" in message
     assert "glob" in message
+    assert message.endswith("launcher=local, to run it here")
     run.check_run_config(_shipped(["launcher=local"]))
     # A batch reads it.
     run.check_batch_configs([cfg])

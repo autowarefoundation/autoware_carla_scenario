@@ -265,7 +265,8 @@ selects the launcher itself (`launcher.type: slurm`) is read by a glob's
 batch, whose scenarios share it; a single scenario runs as a batch only with
 `launcher=slurm` on the command line, and one whose config selects it
 otherwise is refused (`Error: launcher.type is 'slurm' in the scenario's
-config, which a single run does not read: ...`, exit 1) rather than run here.
+config, which a single run does not read: ...`, exit 1) rather than run here;
+`launcher=local` on the command line runs it here.
 `--no-wait` without SLURM is refused, exit 2, before a glob's sweeps are
 expanded.
 

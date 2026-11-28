@@ -17,7 +17,8 @@ refusal before anything ran, where it exited 1 (#2612):
 A script or CI step that reads exit 1 as "refused" for these reads 2 now.
 Also refused, and new: a single run whose scenario's config sets
 `launcher.type` (it ran here, ignoring it; exit 1: put `launcher=slurm` on the
-command line or name the scenario with a glob), and a later job of Hydra's
+command line or name the scenario with a glob; `launcher=local` runs it
+here, as a crash report's `repro.sh` of such a batch's case needs), and a later job of Hydra's
 own sweeper that names another `canvas.config` than the one the process
 already applied, or none (exit 2; it ran with the first one's renderer: run
 them as separate runs). A batch whose cases name two `canvas.config` files

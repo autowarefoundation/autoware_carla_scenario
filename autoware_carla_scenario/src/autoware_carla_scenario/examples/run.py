@@ -3003,7 +3003,8 @@ def check_run_config(cfg: DictConfig) -> None:
         raise RunConfigError(
             f"launcher.type is {kind!r} in the scenario's config, which a single "
             f"run does not read: put launcher={kind} on the command line, or "
-            "name the scenario with a glob, to run it as a batch"
+            "name the scenario with a glob, to run it as a batch; or "
+            "launcher=local, to run it here"
         )
     check_batch_configs([cfg])
 
