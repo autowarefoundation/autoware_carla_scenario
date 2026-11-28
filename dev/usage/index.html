@@ -4181,10 +4181,11 @@ neither starts the other.</p>
 <li>Compiles the scenario with Codon and refuses it if it does not type-check
    (<a href="../typecheck/">Static Check</a>; <code>typecheck=off</code> skips it)</li>
 <li>Connects to the CARLA server and loads the specified map (OpenDRIVE or built-in)</li>
-<li>Spawns the ego vehicle at the configured Lanelet2 position (converted to CARLA coordinates)</li>
-<li>Enables synchronous mode (fixed 20 Hz tick rate) and starts the native CARLA recorder</li>
-<li>Runs a warm-up phase (5 ticks for physics stabilization)</li>
-<li>Enables autopilot and applies initial speeds</li>
+<li>Enables synchronous mode (fixed 20 Hz tick rate)</li>
+<li>Spawns the ego vehicle at the configured Lanelet2 position (converted to CARLA coordinates) and starts the native CARLA recorder</li>
+<li>Runs a warm-up phase (5 ticks with the vehicles held still, for physics stabilization)</li>
+<li>Runs the init actions, starts the ego (<code>on_scenario_start</code>) and waits until it is ready</li>
+<li>Releases the vehicles' brakes, enables autopilot and applies initial speeds</li>
 <li>Executes the main tick loop, checking pass/fail conditions each tick</li>
 <li>Writes the results as JSON, and the run's trajectory log as it goes</li>
 <li>Resets the CARLA world (a map reload, or a soft reset with
@@ -7943,7 +7944,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 02:20:28 UTC"><span class="timeago" datetime="2026-11-28T02:20:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 02:20:28 UTC">2026-11-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 03:19:20 UTC"><span class="timeago" datetime="2026-11-28T03:19:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 03:19:20 UTC">2026-11-28</span>
   </span>
 
     
