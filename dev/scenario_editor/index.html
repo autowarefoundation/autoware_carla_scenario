@@ -4194,7 +4194,16 @@ re-sorts them -- does not: a row button rendered before it may now point at
 another row, and is refused. If one of those posts fails the click goes
 nowhere, the failure is shown, and the change waits for the next click; if
 the server refuses the value, it is posted again as an ordinary edit, so the
-reason is shown as an edit's is.</p>
+reason is shown as an edit's is. A post htmx does not send because the browser
+finds its form invalid (<code>htmx:validation:halted</code>) is such a failure too, not a
+form that has left: the click goes nowhere and the change waits (#2632). The
+inspector forms whose fields carry a <code>min</code> or a <code>step</code> -- an entity's, an
+action's, a condition's, a constraint's, a waypoint condition's vertex -- are
+<code>novalidate</code>, as the gate's is (#2442), so the browser stops none of them: a
+value out of range is posted, and the server says what is wrong with it --
+refusing it beside the form (a vertex below 1, a whole number with a fraction),
+or keeping it and flagging it in the validation report (a negative initial
+speed), as it does for one a script posts.</p>
 <p>A form posts <strong>all</strong> of its fields, so one rendered from an older copy of the
 draft would put back whatever was changed since. Each draft therefore has a
 <code>revision</code>, counted up by every save and stored in its file, and each
@@ -4220,9 +4229,16 @@ refused rather than removing or moving the wrong row, and so is the second of
 two quick clicks in one tab, sent before the answer to the first renumbered
 the page. The refusal is the same 409 with its Reload button. Every answer
 re-renders the buttons with the revision it was rendered from, so a click
-after the swap goes through. A post without a <code>draft_revision</code> -- another
-button (add, remove by id), a script -- is not checked, so it acts on the draft
-as it is now.</p>
+after the swap goes through.</p>
+<p>A button that names an actor by its id -- Delete actor, the Fixed /
+Constraint search / From the search choice of a lanelet, "+ action" on an
+actor's track, "+ constraint" on a search -- carries the revision too, checked
+leniently, as an inspector form is: an actor's id is reused (a new one takes
+the lowest free <code>npcN</code>), so a stale tab's click would otherwise act on the
+actor that took the id since -- delete another tab's new car, with its actions
+and the conditions naming it (#2632). A post without a <code>draft_revision</code> --
+another button (add an actor, remove by an id never reused), a script -- is
+not checked, so it acts on the draft as it is now.</p>
 <p>The forms of those rows -- a signal group's, a controller's, a phase's, the
 vertex of a waypoint condition -- post to a URL holding the row's position
 too, but are checked like any other inspector form, so a page's own quick
@@ -4777,7 +4793,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 08:24:58 UTC"><span class="timeago" datetime="2026-11-28T08:24:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 08:24:58 UTC">2026-11-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 09:24:26 UTC"><span class="timeago" datetime="2026-11-28T09:24:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 09:24:26 UTC">2026-11-28</span>
   </span>
 
     
