@@ -177,9 +177,18 @@ def _sumo_velocity(speed: float, angle_deg: float) -> tuple[float, float]:
     return speed * math.sin(heading), speed * math.cos(heading)
 
 
-def _lane_step(direction: LaneChangeDirection) -> int:
-    """The lane index one lane to *direction*: SUMO counts from the right kerb."""
-    return 1 if direction is LaneChangeDirection.LEFT else -1
+def _lane_step(direction: LaneChangeDirection, lefthand: bool = False) -> int:
+    """The step in lane index one lane to *direction*.
+
+    SUMO counts lanes from the kerb: the right one in a right-hand-traffic
+    network, the left one in a *lefthand* one (``lefthand="true"``, what
+    roadgen builds of an OpenDRIVE with ``rule="LHT"``), where a lane to the
+    left has the lower index (#2637).
+    """
+    toward_higher = direction is LaneChangeDirection.LEFT
+    if lefthand:
+        toward_higher = not toward_higher
+    return 1 if toward_higher else -1
 
 
 def world_opendrive(context: TrafficContext, who: str) -> str:

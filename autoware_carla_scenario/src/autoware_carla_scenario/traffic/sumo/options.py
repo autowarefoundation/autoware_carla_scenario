@@ -110,15 +110,35 @@ def sumo_class_of(base_type: str, emergency: bool) -> tuple[str, str]:
 
 
 def _net_offset(net_file: Path) -> tuple[float, float]:
-    """The ``netOffset`` of *net_file*, read from its ``<location>``."""
+    """The ``netOffset`` of *net_file*, read from its ``<location>``
+    element.  The header comment netconvert writes before it (its
+    configuration, ``<edge-files .../>`` among it) is not the network: read
+    as its first ``<edge``, it ended the search before the offset (#2637)."""
     with net_file.open() as f:
         for line in f:
-            found = re.search(r'netOffset="([-\d.eE+]+),([-\d.eE+]+)"', line)
-            if found:
-                return float(found[1]), float(found[2])
-            if "<edge" in line:
+            stripped = line.lstrip()
+            if stripped.startswith("<location "):
+                found = re.search(r'netOffset="([-\d.eE+]+),([-\d.eE+]+)"', line)
+                if found:
+                    return float(found[1]), float(found[2])
+                break
+            if stripped.startswith("<edge "):
                 break
     return 0.0, 0.0
+
+
+def _net_lefthand(net_file: Path) -> bool:
+    """Whether *net_file* is a left-hand-traffic network, read from its
+    ``<net>`` element's ``lefthand`` (#2637).  The header comment
+    netconvert writes before it (its configuration, ``<lefthand .../>`` among
+    it) is not the element."""
+    with net_file.open() as f:
+        for line in f:
+            if line.lstrip().startswith("<net "):
+                return re.search(r'\slefthand="(?:true|1)"', line) is not None
+            if line.lstrip().startswith("<edge "):
+                break
+    return False
 
 
 def _with_siren(mode: int, on: bool) -> int:
@@ -150,6 +170,12 @@ def _write_scenario_types(path: Path) -> Path:
 #: SUMO's spellings of the options naming its additional and route files.
 _ADDITIONAL_OPTIONS = ("-a", "--additional-files", "--additional")
 _ROUTE_OPTIONS = ("-r", "--route-files", "--routes")
+
+
+def _sets_option(sumo_args: list[str], option: str) -> bool:
+    """Whether *sumo_args* sets *option* (``--name``), as ``--name X`` or
+    ``--name=X``."""
+    return any(arg == option or arg.startswith(option + "=") for arg in sumo_args)
 
 
 def _merge_file_options(

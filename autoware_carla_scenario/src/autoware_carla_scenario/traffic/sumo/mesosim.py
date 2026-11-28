@@ -387,7 +387,9 @@ class SumoMesoscopicTraffic:
                 f"(got {list(route)[:1]})"
             )
         if vehicle_id in self._sumo_ids:
-            from traci.exceptions import TraCIException  # noqa: PLC0415
+            # The class the connection raises: importing libsumo replaces
+            # traci.exceptions' with its own (#2637).
+            from traci.connection import TraCIException  # noqa: PLC0415
 
             try:
                 self._conn.vehicle.setRoute(self._sumo_ids[vehicle_id], list(route))
@@ -446,7 +448,9 @@ class SumoMesoscopicTraffic:
         if self._junction_control and self._signal_states is not None:
             self._copy_signals(self._signal_states())
         self._step_to(now)
-        from traci.exceptions import TraCIException  # noqa: PLC0415
+        # The class the connection raises: importing libsumo replaces
+        # traci.exceptions' with its own (#2637).
+        from traci.connection import TraCIException  # noqa: PLC0415
 
         ids = self._sumo_ids
         # No list of every vehicle: one in SUMO is subscribed to from the
@@ -523,7 +527,9 @@ class SumoMesoscopicTraffic:
 
     def _insert(self, vehicle: MesoVehicle) -> None:
         """Add *vehicle* to SUMO, from its record's road and offset."""
-        from traci.exceptions import TraCIException  # noqa: PLC0415
+        # The class the connection raises: importing libsumo replaces
+        # traci.exceptions' with its own (#2637).
+        from traci.connection import TraCIException  # noqa: PLC0415
 
         conn = self._conn
         route = vehicle.remaining_route
