@@ -246,6 +246,18 @@ def test_the_settings_refuse_what_would_not_lay_out(name: str, value: float) -> 
         ConstructionSettings(**{name: value})  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("value", [2.5, True, False, _NAN, "2"])
+def test_merge_signs_is_a_whole_number(value: Any) -> None:
+    # #2607: 2.5 raised a TypeError from range() mid-run, True read as 1.
+    with pytest.raises(ValueError, match="merge_signs"):
+        ConstructionSettings(merge_signs=value)
+
+
+def test_a_whole_merge_signs_is_kept_as_an_int() -> None:
+    settings = ConstructionSettings(merge_signs=3.0)  # type: ignore[arg-type]
+    assert settings.merge_signs == 3 and type(settings.merge_signs) is int
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [

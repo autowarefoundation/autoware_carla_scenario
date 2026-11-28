@@ -378,6 +378,12 @@ def _with_relations_holding(
     return kept
 
 
+#: The overrides of a route case that say where it stands among the others
+#: (:func:`expand_route`), left out of its draws' seed so that a case keeps
+#: its values when the map gains or loses another match (#2607).
+_UNSEEDED_KEYS = frozenset({"scenario.route.index", "scenario.route.case_count"})
+
+
 def _with_distribution_draws(
     base_cases: list[list[str]],
     distributions: Mapping[str, Any],
@@ -391,8 +397,11 @@ def _with_distribution_draws(
     """Each of *base_cases* *samples* times, each time with a value drawn for
     every key of *distributions*, in the order of the base cases.  A draw's
     seed is a hash of *seed*, *scenario*, the base case's overrides (but its
-    encoded ODD case, which a change to the ODD's definition alone would move)
-    and the sample's number (:mod:`.distributions`).
+    encoded ODD case, which a change to the ODD's definition alone would move,
+    and a route case's ``scenario.route.index`` and
+    ``scenario.route.case_count``, which another match appearing or being
+    excluded would: :data:`_UNSEEDED_KEYS`, #2607) and the sample's number
+    (:mod:`.distributions`).
 
     The keys *solver*'s relations name are drawn together, conditioned on
     them (:meth:`.relations.RelationSolver.draw`, with the values the case
@@ -425,9 +434,10 @@ def _with_distribution_draws(
     joint = solver if solver is not None and solver.related else None
     related = set(joint.related) if joint is not None else set()
     alone = {k: d for k, d in distributions.items() if k not in related}
+    unseeded = _UNSEEDED_KEYS | {ODD_CASE_KEY}
     cases: list[list[str]] = []
     for case in base_cases:
-        named = [o for o in case if _override_key(o) != ODD_CASE_KEY]
+        named = [o for o in case if _override_key(o) not in unseeded]
         held = (
             _relation_values(joint, [*case, *arguments], config_value)
             if joint is not None
@@ -844,7 +854,10 @@ def check_constraint_keys(
     ``sweep.exclude`` maps each key to a list of values (or null), and
     ``sweep.route`` and ``sweep.odd_sample`` are mappings (or null).
     A route search derives nothing from a pick, so ``sweep.bindings`` beside
-    ``sweep.route`` is refused rather than silently dropped (#2454).
+    ``sweep.route`` is refused rather than silently dropped (#2454); so are,
+    in a sweep that expands, bindings without a lanelet constraint,
+    ``sweep.exclude`` without one or a route search, and a ``sweep.samples``
+    above 1 without a distribution (#2607).
     Its other keys may each hold a distribution (:mod:`.distributions`),
     checked here with ``sweep.samples``, ``sweep.seed`` and
     ``sweep.relations`` (:mod:`.relations`).
@@ -858,7 +871,8 @@ def check_constraint_keys(
     Raises:
         ValueError: If ``sweep.constraints`` has more than one key, or one of
             those sections is not shaped as above (#1951), or a route search
-            has bindings.
+            has bindings, or bindings, ``exclude`` or ``samples`` would be
+            ignored (#2607).
     """
     # Only a missing section or null is empty: [], 0, false or "" is not a
     # mapping (#2134).
@@ -923,7 +937,41 @@ def check_constraint_keys(
             raise ValueError(
                 f"sweep.exclude.{key} must be a list of values, got {_shape(values)}"
             )
+    if constraints_cfg or sweep.get("route") or sweep.get("odd_sample"):
+        _check_used(sweep, lanelet, distributions, bindings_cfg, exclude_cfg)
     return lanelet, distributions
+
+
+def _check_used(
+    sweep: Mapping[Any, Any],
+    lanelet: Mapping[str, Any],
+    distributions: Mapping[str, Any],
+    bindings: Mapping[Any, Any],
+    exclude: Mapping[Any, Any],
+) -> None:
+    """Refuse a ``sweep.bindings``, ``sweep.exclude`` or ``sweep.samples``
+    (above 1) that nothing in the sweep would read, rather than ignore it
+    (#2607): bindings derive from a lanelet constraint's pick, ``exclude``
+    drops lanelet cases and route matches, and ``samples`` repeats the
+    distributions' draws."""
+    if bindings and not lanelet:
+        raise ValueError(
+            "sweep.bindings derive values from the lanelet a constraint picks, "
+            "and the sweep has no lanelet constraint; drop sweep.bindings "
+            f"({', '.join(str(key) for key in bindings)})"
+        )
+    if exclude and not (lanelet or sweep.get("route")):
+        raise ValueError(
+            "sweep.exclude drops lanelet cases and route matches, and the sweep "
+            "has neither a lanelet constraint nor a route search; drop "
+            f"sweep.exclude ({', '.join(str(key) for key in exclude)})"
+        )
+    if _samples(sweep.get("samples")) > 1 and not distributions:
+        raise ValueError(
+            "sweep.samples repeats each case with values drawn from the "
+            "distributions in sweep.constraints, and the sweep has none; drop "
+            "sweep.samples"
+        )
 
 
 def _check_relations(

@@ -1,5 +1,25 @@
 # Migrating
 
+## NADE and route sweeps draw new values; unread sweep settings are refused
+
+NADE's three random streams are now seeded past every seed a component
+seeded with the run's seed itself takes (a `TrafficSourceAction`, the SUMO
+backend), and an `AdversityFeasibleCondition`'s stream past them
+([Adversity](adversity.md), `adversity.nade.stream_seed` and
+`trigger_stream_seed`), so NADE no longer samples what those components draw
+(#2607). A run still repeats from its seed, but NADE's draws and its triggers'
+draws for every seed differ from those of earlier releases. So do the values
+a route sweep's distributions draw: a route case's seed no longer holds its
+`scenario.route.index` and `scenario.route.case_count`, so that it keeps its
+values when another match appears or is excluded
+([Usage](usage.md), "Drawing scalar parameters from distributions").
+
+A sweep that expands now refuses a setting nothing in it reads, which it
+used to ignore: `sweep.samples` above 1 without a distribution,
+`sweep.bindings` without a lanelet constraint, and `sweep.exclude` without a
+lanelet constraint or a route search. Drop the setting. `ConstructionSettings`
+refuses a `merge_signs` that is not a whole number (`2.5`, `True`).
+
 ## `rerun_metrics` is gone
 
 The module wrote a run's metrics into its Rerun recording for a converter that

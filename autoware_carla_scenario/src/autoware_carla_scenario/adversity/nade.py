@@ -26,9 +26,9 @@ As TeraSim's ``NADE`` (``envs/nade.py``, ``envs/nade_with_av.py``):
 * **Challenge**: the candidate's adversarial future conflicts with the
   ego's normal future -- and with ``challenge_npcs`` the other candidates'
   -- (:func:`~.avoidance.victims`); a pedestrian's only with what moves.
-* **Avoidability** (:func:`~.avoidance.avoidable`): when no victim can
-  brake out of it, ``p`` is cut by ``unavoidable_factor`` and the
-  magnitude multiplied by ``unavoidable_magnitude``.
+* **Avoidability** (:func:`~.avoidance.avoidable`): when a victim cannot
+  brake out of it (any one of them), ``p`` is cut by ``unavoidable_factor``
+  and the magnitude multiplied by ``unavoidable_magnitude``.
 * **Importance sampling**: ``q = clip(p * magnitude, 0,
   max_is_probability)``, or ``fixed_is_probability`` when set.  At most one
   adversity is sampled a tick, the nearest challenger first, and none for
@@ -178,7 +178,7 @@ class NadeChoice:
             (:mod:`.avoidance`); none when the ego is a victim.
         response: Which response that is: :data:`~.avoidance.AVOID`,
             :data:`~.avoidance.ACCEPT`, or ``""``.
-        avoidable: Whether its victims could brake out of it.
+        avoidable: Whether every one of its victims could brake out of it.
     """
 
     name: str
@@ -216,24 +216,34 @@ _RESPONSES = 2
 _STREAMS = 3
 
 
+#: Where NADE's streams start: past every seed a component seeded with the
+#: run's seed itself takes (``MAX_SEED`` at most), so that none of them draws
+#: what NADE does (#2607).
+_STREAM_BASE = MAX_SEED + 1
+
+
 def stream_seed(seed: int, stream: int) -> int:
     """The seed of sub-stream *stream* (0 to 2) of a run seeded *seed*.
 
-    ``seed * 3 + stream``: one-to-one over the non-negative seeds a run
-    takes, so the three streams of a run never coincide with any stream of
-    another run -- not even of the next seed's, as ``seed + stream`` did
-    (#2024) -- and a run repeats from its seed.  An explicit integer
-    formula, not ``hash()``, which Codon and CPython do not share.
+    ``2**31 + seed * 3 + stream``: one-to-one over the non-negative seeds a
+    run takes, so the three streams of a run never coincide with any stream
+    of another run -- not even of the next seed's, as ``seed + stream`` did
+    (#2024) -- and a run repeats from its seed.  Past
+    :data:`~..seed.MAX_SEED`, so no stream is ``Random(s)`` for a seed *s* a
+    component seeded with a run's seed itself takes (a traffic source, the
+    SUMO backend) -- ``seed * 3 + stream`` was, for run ``s // 3`` (#2607).
+    An explicit integer formula, not ``hash()``, which Codon and CPython do
+    not share.
     """
     if not 0 <= stream < _STREAMS:
         raise ValueError(f"stream must be 0 to {_STREAMS - 1}, not {stream}")
-    return seed * _STREAMS + stream
+    return _STREAM_BASE + seed * _STREAMS + stream
 
 
 #: Where the triggers' own streams start: past every seed :func:`stream_seed`
-#: gives (``3 * MAX_SEED + 2`` at most), and every seed a component seeded
-#: with the run's seed itself takes (``MAX_SEED`` at most).
-_TRIGGER_BASE = _STREAMS * (MAX_SEED + 1)
+#: gives (``2**31 + 3 * MAX_SEED + 2`` at most), and every seed a component
+#: seeded with the run's seed itself takes (``MAX_SEED`` at most).
+_TRIGGER_BASE = _STREAM_BASE + _STREAMS * (MAX_SEED + 1)
 
 #: How many triggers a run's seed tells apart: a trigger key is below it.
 _TRIGGER_KEYS = 1 << 30
@@ -262,7 +272,7 @@ def trigger_stream_seed(seed: int, key: int) -> int:
     :class:`~..conditions.adversity_feasible.AdversityFeasibleCondition`'s
     (a jaywalker's speed, a stopped crosser's wait).
 
-    ``3 * 2**31 + seed * 2**30 + key``: one-to-one over the seeds (0 to
+    ``4 * 2**31 + seed * 2**30 + key``: one-to-one over the seeds (0 to
     :data:`~..seed.MAX_SEED`) and keys (0 to ``2**30 - 1``,
     :func:`trigger_key`), so two triggers of a run draw apart, no trigger of
     one run draws another run's numbers, and none draws what
