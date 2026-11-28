@@ -106,7 +106,7 @@ def _cli(pattern: str) -> list[str]:
     try:
         return run._resolve_scenario_glob(pattern)
     except SystemExit as exc:
-        assert exc.code == 1
+        assert exc.code == 2
         return []
 
 
@@ -150,7 +150,7 @@ def test_cli_exits_on_no_match(
 ) -> None:
     with pytest.raises(SystemExit) as excinfo:
         run._resolve_scenario_glob("no_such_*")
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert "no scenario configs match pattern 'no_such_*'" in err
     assert str(glob_package / "scenario") in err
@@ -305,7 +305,7 @@ def test_the_cli_reports_a_malformed_pattern(
 ) -> None:
     with pytest.raises(SystemExit) as excinfo:
         run._resolve_scenario_glob(pattern)
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert err.startswith("Error: invalid scenario pattern")
     assert repr(pattern) in err
@@ -414,7 +414,7 @@ def test_the_cli_reports_a_pattern_outside_scenario(
 ) -> None:
     with pytest.raises(SystemExit) as excinfo:
         run._resolve_scenario_glob(pattern)
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == 2
     err = capsys.readouterr().err
     assert err.startswith("Error: invalid scenario pattern")
     assert repr(pattern) in err

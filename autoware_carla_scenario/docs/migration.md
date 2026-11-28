@@ -1,5 +1,29 @@
 # Migrating
 
+## `scenario` exits 2 for more of what it refuses before a run
+
+`scenario` now exits 2, which its `--help` and the exit-code table give for a
+refusal before anything ran, where it exited 1 (#2612):
+
+- a `scenario=` glob that matches no config, or is not a valid pattern (it now
+  names the closest configs too, as `scenario-check` and `scenario-expand`
+  do);
+- `--no-wait` without `launcher=slurm` (in a glob's batch, before its sweeps
+  are expanded);
+- carla_canvas's client not installed, or a `canvas.config` file that is not
+  there, which was a crash with a crash report (and a case the lanelet
+  sweeper retried).
+
+A script or CI step that reads exit 1 as "refused" for these reads 2 now.
+Also refused, and new: a single run whose scenario's config sets
+`launcher.type` (it ran here, ignoring it; exit 1: put `launcher=slurm` on the
+command line or name the scenario with a glob; `launcher=local` runs it
+here, as a crash report's `repro.sh` of such a batch's case needs), and a later job of Hydra's
+own sweeper that names another `canvas.config` than the one the process
+already applied, or none (exit 2; it ran with the first one's renderer: run
+them as separate runs). A batch whose cases name two `canvas.config` files
+prints an `Error:` line and exits 1 rather than crashing.
+
 ## NADE and route sweeps draw new values; unread sweep settings are refused
 
 NADE's three random streams are now seeded past every seed a component

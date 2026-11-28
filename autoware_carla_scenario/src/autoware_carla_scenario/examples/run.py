@@ -83,7 +83,7 @@ from autoware_carla_scenario.batch_resume import (
     ResumeIntoError,
     read_resumed_batch,
 )
-from autoware_carla_scenario.canvas import use_canvas
+from autoware_carla_scenario.canvas import CanvasUnavailableError, use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.config_flags import check_flag
 from autoware_carla_scenario import crash_report
@@ -186,7 +186,6 @@ from autoware_carla_scenario.registry import (
     load_scenario_plugins,
     register_conf_dir,
 )
-from autoware_carla_scenario.scenario_glob import resolve_scenario_glob, scenario_dirs
 from autoware_carla_scenario.scenario_runner import _run_file_stem
 from autoware_carla_scenario.slurm.stems import sequential_stems
 from autoware_carla_scenario.value_text import shown
@@ -2261,22 +2260,16 @@ def _resolve_scenario_glob(pattern: str) -> list[str]:
     viewer's launcher resolves its patterns with the same
     :func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`.
     An invalid pattern (a ``**`` that is not a whole path component, a
-    leading ``/`` or a ``..`` component), like
-    one that matches nothing, is reported on stderr and exits with status 1.
+    leading ``/`` or a ``..`` component), like one that matches nothing, is
+    reported on stderr, with the closest configs, and exits with status 2, as
+    ``scenario-check`` and ``scenario-expand`` report it
+    (:func:`~autoware_carla_scenario.examples.compose_errors.resolve_scenarios`).
     """
-    conf_dirs = get_conf_dirs()
-    try:
-        names = resolve_scenario_glob(pattern, conf_dirs)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
-        sys.exit(1)
-    if not names:
-        print(  # noqa: T201
-            f"Error: no scenario configs match pattern '{pattern}' "
-            f"under {[str(d) for d in scenario_dirs(conf_dirs)]}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    from .compose_errors import resolve_scenarios  # noqa: PLC0415
+
+    names = resolve_scenarios(pattern)
+    if names is None:
+        sys.exit(2)
     return names
 
 
@@ -2959,7 +2952,7 @@ def check_batch_configs(
             _check_ego_vehicle_type(cfg)
             _check_ego_lanelet_ids(cfg)
             _native_autoware_interface(cfg)
-            # Each case's alone: that the cases name one is run_batch's.
+            # Each case's alone: that the cases name one is checked below.
             canvas_config(cfg)
             # Every case's, though apply_metrics reads only the first set.
             metrics_heavy(cfg)
@@ -2984,14 +2977,35 @@ def check_batch_configs(
             # batch is checked, and the one refused need not be the first.
             prefix = f"{names[i]}: " if i < len(names) else ""
             raise RunConfigError(f"{prefix}{exc}") from exc
+    try:
+        # That the cases name one file: a process loads one (#2612).
+        canvas_config(*configs)
+    except ValueError as exc:
+        raise RunConfigError(str(exc)) from exc
 
 
 def check_run_config(cfg: DictConfig) -> None:
-    """:func:`check_batch_configs` of one run's *cfg*.
+    """:func:`check_batch_configs` of one run's *cfg*, and that it selects no
+    launcher in its config: a single run reads ``launcher=`` off the command
+    line alone (:func:`_dispatch`), and would run here what its config says to
+    submit (#2612).
 
     Raises:
         RunConfigError: naming the key of the first value refused.
     """
+    from ..slurm.settings import launcher_type  # noqa: PLC0415
+
+    try:
+        kind = launcher_type(cfg)
+    except ValueError as exc:
+        raise RunConfigError(str(exc)) from exc
+    if kind != "local":
+        raise RunConfigError(
+            f"launcher.type is {kind!r} in the scenario's config, which a single "
+            f"run does not read: put launcher={kind} on the command line, or "
+            "name the scenario with a glob, to run it as a batch; or "
+            "launcher=local, to run it here"
+        )
     check_batch_configs([cfg])
 
 
@@ -3039,6 +3053,29 @@ def _batch_launcher(configs: list[DictConfig]) -> str:
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(2)
     return kind
+
+
+def _may_select_slurm(scenario_names: list[str], overrides: list[str]) -> bool:
+    """Whether the batch of *scenario_names* with *overrides* may run under
+    SLURM, told before its sweeps are expanded: by the command line's
+    ``launcher=``, or else by any scenario's config (each composed once).  A
+    config whose launcher is not one is left to :func:`_batch_launcher`.
+    """
+    from ..slurm.settings import (  # noqa: PLC0415
+        launcher_requested_in_argv,
+        launcher_type,
+    )
+
+    given = launcher_requested_in_argv(overrides)
+    if given is not None:
+        return given == "slurm"
+    for name in scenario_names:
+        try:
+            if launcher_type(_compose_case(name, overrides)) != "local":
+                return True
+        except ValueError:
+            return True
+    return False
 
 
 def run_batch(
@@ -3119,6 +3156,11 @@ def run_batch(
         except RuntimeError as exc:
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(2)
+    if wait is not None and not _may_select_slurm(scenario_names, overrides):
+        # Before the sweep is expanded (it can take a while), and again once
+        # the cases are.
+        print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
+        sys.exit(2)
     if pattern is not None:
         # A glob over every scenario cannot fit every map: the scenarios it
         # picked that do not fit this one are skipped, before any is expanded
@@ -3246,7 +3288,7 @@ def run_batch(
         sys.exit(2)
     if wait is not None and launcher != "slurm":
         print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
-        sys.exit(1)
+        sys.exit(2)
 
     # Before anything is built: a batch asking for Rerun recordings without
     # the extra installed is refused at once (RerunUnavailableError).  Under
@@ -4483,6 +4525,17 @@ _multirun_failed: list[str] = []
 _multirun_ran: list[str] = []
 
 
+#: What a run raises when it refuses to start, before anything ran: a scenario
+#: that does not type-check, an extra or carla_canvas it asks for that is not
+#: installed (or a ``canvas.config`` file that is not there).  Exit 2.
+_UNAVAILABLE: tuple[type[BaseException], ...] = (
+    ScenarioTypeError,
+    RerunUnavailableError,
+    T4UnavailableError,
+    CanvasUnavailableError,
+)
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def _hydra_main(cfg: DictConfig) -> None:
     """Hydra entry point that dispatches to the selected scenario."""
@@ -4499,7 +4552,7 @@ def _hydra_case(cfg: DictConfig, marker_dir: Path | None) -> None:
     """:func:`_hydra_main`'s run of *cfg*, its verdict and its errors."""
     try:
         result = run_scenario(cfg)
-    except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
+    except _UNAVAILABLE as exc:
         # A refusal ends a --multirun too, with the same 2: the next case
         # would be refused for the same reason.  Hydra lets SystemExit through
         # its basic sweeper, and the lanelet sweeper stops on a case's 2.
@@ -4802,12 +4855,7 @@ def _environ_for_run(name: str, value: str | None) -> Iterator[None]:
 
 #: What a run raises when it refuses its configuration: the user's to fix, not
 #: a crash, and so not reported (:func:`crash_report.reporting`).
-_REFUSALS: tuple[type[BaseException], ...] = (
-    RunConfigError,
-    ScenarioTypeError,
-    RerunUnavailableError,
-    T4UnavailableError,
-)
+_REFUSALS: tuple[type[BaseException], ...] = (RunConfigError, *_UNAVAILABLE)
 
 
 def _quiet_interrupt(exc: KeyboardInterrupt) -> None:
@@ -5095,7 +5143,7 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
                 resume_from=resume_from,
                 **extra,
             )
-        except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
+        except _UNAVAILABLE as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
         except RunConfigError as exc:
@@ -5108,19 +5156,25 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(1)
     else:
-        if no_wait:
+        # --help, --cfg job, ...: Hydra answers them and runs nothing, so the
+        # flags only a run reads are not refused (#2612).
+        if no_wait and not no_job:
             print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
-            sys.exit(1)
-        if resume_into is not None:
+            sys.exit(2)
+        if resume_into is not None and not no_job:
             print(  # noqa: T201
                 "Error: --resume-into resumes a local batch (a scenario glob); "
                 "a sweep resumes into its own directory with hydra.sweep.dir=",
                 file=sys.stderr,
             )
             sys.exit(2)
-        if resume_from > 0 and not (
-            _multirun_requested_in_argv(sys.argv)
-            and _lanelet_sweeper_requested_in_argv(sys.argv)
+        if (
+            resume_from > 0
+            and not no_job
+            and not (
+                _multirun_requested_in_argv(sys.argv)
+                and _lanelet_sweeper_requested_in_argv(sys.argv)
+            )
         ):
             # Only the lanelet sweeper reads SWEEP_RESUME_FROM: a single run
             # or Hydra's basic sweeper would run every case (#2089).

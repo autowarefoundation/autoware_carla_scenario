@@ -9,6 +9,9 @@
   lanelet sweep and a glob batch refuse them before any case runs, and a
   fractional lanelet id is refused rather than truncated.
 - A missing Rerun SDK is a :class:`RerunUnavailableError`, so the CLI exits 2.
+- #2612: a batch naming two canvas files, a missing canvas, the flags a run
+  reads under ``--help``, a failed ``~`` deletion, a glob matching nothing,
+  ``--no-wait`` without SLURM and a launcher selected in a single run's config.
 """
 
 from __future__ import annotations
@@ -479,3 +482,139 @@ def test_a_batch_with_a_misspelled_key_is_one_error_line(
             "the config has no such key"
         ), err
         assert "did you mean 'ego.spawn_lanelet_id'?" in err, err
+
+
+# ---------------------------------------------------------------------------
+# #2612: what the scan of the CLI found
+# ---------------------------------------------------------------------------
+
+
+def test_a_batch_naming_two_canvas_files_is_a_run_config_error() -> None:
+    """The batch check refused one case at a time, so two files were only
+    found by apply_canvas, a ValueError the CLI did not catch: a crash."""
+    from autoware_carla_scenario.examples import run
+
+    configs = [
+        _shipped(["canvas.config=/a.yaml"]),
+        _shipped(["canvas.config=/b.yaml"]),
+    ]
+    with pytest.raises(run.RunConfigError, match="2 canvas.config files"):
+        run.check_batch_configs(configs, ["one", "two"])
+    run.check_batch_configs([configs[0], configs[0]], ["one", "two"])
+
+
+def test_a_missing_canvas_is_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    """Exit 2 and no crash report, as a missing Rerun or T4 extra."""
+    from autoware_carla_scenario.canvas import CanvasUnavailableError
+    from autoware_carla_scenario.examples import run
+
+    assert CanvasUnavailableError in run._REFUSALS
+
+    def refuse(*_: Any, **__: Any) -> Any:
+        raise CanvasUnavailableError("canvas.config /x.yaml is not a file")
+
+    code, _ = _main(monkeypatch, ["scenario=intersection_passing/*"], run_batch=refuse)
+    assert code == 2
+    assert "is not a file" in capsys.readouterr().err
+
+    monkeypatch.setattr(run, "run_scenario", refuse)
+    with pytest.raises(SystemExit) as exited:
+        run._hydra_case(_shipped([]), None)
+    assert exited.value.code == 2
+    assert "is not a file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--no-wait"], ["--resume-from", "3"], ["--resume-into", "/nowhere"]],
+)
+@pytest.mark.parametrize("ask", ["--cfg=job", "--help"])
+def test_no_job_is_not_refused_for_the_flags_a_run_reads(
+    monkeypatch: pytest.MonkeyPatch, extra: list[str], ask: str
+) -> None:
+    code, calls = _main(
+        monkeypatch, [f"scenario={_CONCRETE}", "launcher=slurm", ask, *extra]
+    )
+    assert code is None
+    assert [call[0] for call in calls] == ["hydra"]
+
+
+def test_a_failed_deletion_is_not_read_as_an_override(capsys: Any) -> None:
+    from autoware_carla_scenario.examples.compose_errors import compose_or_report
+
+    assert compose_or_report(_CONCRETE, ["~launcher=slurm"]) is None
+    err = capsys.readouterr().err
+    assert err.startswith("Error: Could not delete 'launcher=slurm'"), err
+    assert "+launcher" not in err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["scenario=lane_chang/*"],
+        ["--multirun", "scenario=lane_chang/*", "launcher=slurm"],
+        ["scenario=lane_change/**left"],
+    ],
+)
+def test_a_glob_that_matches_nothing_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, argv: list[str]
+) -> None:
+    code, calls = _main(monkeypatch, argv)
+    assert code == 2
+    assert calls == []
+    err = capsys.readouterr().err
+    assert err.startswith("Error: "), err
+    if "scenario=lane_chang/*" in argv:
+        assert "did you mean: lane_change/" in err, err
+
+
+def test_no_wait_without_slurm_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    code, calls = _main(monkeypatch, [f"scenario={_CONCRETE}", "--no-wait"])
+    assert code == 2
+    assert calls == []
+    assert "--no-wait is for launcher=slurm only" in capsys.readouterr().err
+
+
+def test_no_wait_without_slurm_is_refused_before_the_sweeps_expand(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    def expand(*_: Any, **__: Any) -> Any:
+        raise AssertionError("refused before the sweeps are expanded")
+
+    for argv in (
+        ["--multirun", "scenario=lane_change/*", "--no-wait"],
+        ["--multirun", "scenario=lane_change/*", "launcher=local", "--no-wait"],
+    ):
+        code, _ = _main(
+            monkeypatch,
+            argv,
+            run_batch=run.run_batch,
+            _expand_batch=expand,
+            skip_off_map_scenarios=expand,
+        )
+        assert code == 2
+        assert "--no-wait is for launcher=slurm only" in capsys.readouterr().err
+
+
+def test_a_single_run_refuses_a_launcher_its_config_selects() -> None:
+    """A single run reads launcher= off the command line alone, so a config
+    selecting SLURM used to run here, while a glob batch honoured it."""
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped(["launcher=slurm"])
+    with pytest.raises(run.RunConfigError) as raised:
+        run.check_run_config(cfg)
+    message = str(raised.value)
+    assert message.startswith("launcher.type is 'slurm' in the scenario's config")
+    assert "launcher=slurm on the command line" in message
+    assert "glob" in message
+    assert message.endswith("launcher=local, to run it here")
+    run.check_run_config(_shipped(["launcher=local"]))
+    # A batch reads it.
+    run.check_batch_configs([cfg])
