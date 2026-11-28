@@ -263,7 +263,12 @@ the lane's own heading, which is the speed along the lane only there. CriMe
 plain numbers, so on a bend, where the headings either side of the ego
 straddle 0, it read a heading as much as 2pi off -- TTC `inf` and ALongReq
 `0` with a lead closing fast; the worker interpolates them unwrapped, for
-every CriMe measure that reads a lane's heading. CriMe
+every CriMe measure that reads a lane's heading. When the ego drives
+against the lane under it (overtaking through the oncoming lane, or the wrong
+way), CriMe's "ahead" along that lane is behind the ego, and a car coming at it
+head-on read TTC `inf` and ALongReq `0`; the worker reverses the frame's
+lanelets then, so the lane runs the ego's way and the frame reads as it would
+in a lane running the ego's way. CriMe
 0.4 also drops the sign of the other road user's velocity and acceleration
 along the lane, reading a braking lead as speeding up and a car coming the
 other way in the ego's lane as going its way; the worker reads TTC and
@@ -438,8 +443,10 @@ section and key names are strings and whose values JSON can carry (finite number
 non-empty tuple or list of non-empty strings (not a `str`): a bad value
 raises `ValueError`, naming the field, when the settings are built, not later
 in a run. A section or key CommonRoad-Reach's configuration does not have
-(`planning.size_grid` for `reachable_set.size_grid`) is refused by the worker
-as it starts, before the first frame. A timeout far past what `poll()` waits at once
+(`planning.size_grid` for `reachable_set.size_grid`), or one the worker sets
+itself for every reachable set (`planning.dt`, `planning.step_start`,
+`planning.steps_computation`, ...; `commonroad_metrics/README.md`), is
+refused by the worker as it starts, before the first frame. A timeout far past what `poll()` waits at once
 (about 25 days) is waited in pieces.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:

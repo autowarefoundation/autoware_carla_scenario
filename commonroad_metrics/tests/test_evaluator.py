@@ -246,6 +246,48 @@ def test_the_worker_refuses_a_malformed_road_user(ego: dict[str, Any], error: st
     assert answers[1]["error"].startswith(error)
 
 
+@pytest.mark.parametrize("bad", [2.0, 0, -1, True, "2", None])
+def test_a_road_user_whose_id_is_no_positive_int_is_refused(bad: Any) -> None:
+    """#2625: a float id raised out of the evaluation, and an id of 0 left
+    CriMe's previous ego in place."""
+    fields = {**on_road(50, 1.75, 15.0, 1).__dict__, "id": bad}
+    with pytest.raises(
+        ValueError, match=rf"^id must be a positive int, got {re.escape(repr(bad))}$"
+    ):
+        Actor.from_mapping(fields)
+
+
+def test_road_users_sharing_an_id_are_refused(evaluator: Evaluator) -> None:
+    """#2625: refused with the id named; the ego among the others is still
+    the ego, left out."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    lead = on_road(80, 1.75, 5.0, 2)
+    with pytest.raises(ValueError, match=r"^road users share the id 2: ids must be unique$"):
+        evaluator.evaluate(ego, [lead, on_road(100, 5.25, 5.0, 2)], ["crime_ttc_s"])
+    values, errors = evaluator.evaluate(ego, [ego, lead, ego], ["crime_ttc_s"])
+    assert errors == {}
+    assert values["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
+    requests = [
+        {"op": "init", "map": str(MAP)},
+        {
+            "op": "evaluate",
+            "measures": ["crime_ttc_s"],
+            "ego": ego.__dict__,
+            "others": [lead.__dict__, lead.__dict__],
+        },
+        {"op": "evaluate", "measures": ["crime_ttc_s"], "ego": {**ego.__dict__, "id": 1.0}},
+    ]
+    stdin = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    stdout = io.StringIO()
+    serve(stdin, stdout)
+    answers = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert answers[1] == {
+        "ok": False,
+        "error": "ValueError: road users share the id 2: ids must be unique",
+    }
+    assert answers[2] == {"ok": False, "error": "ValueError: id must be a positive int, got 1.0"}
+
+
 @pytest.mark.parametrize(
     ("changes", "message"),
     [
@@ -523,6 +565,84 @@ def test_an_oncoming_car_in_the_ego_lane_closes_the_gap() -> None:
     assert errors == {}
     assert values["crime_a_long_req_mps2"] == -math.inf
     assert values["crime_btn"] == math.inf
+
+
+def test_an_ego_against_its_lane_reads_a_car_coming_at_it_head_on(evaluator: Evaluator) -> None:
+    """#2625: an ego on a lanelet running the other way (overtaking through
+    the oncoming lane) read the car coming at it head-on as behind it -- TTC,
+    HW and THW inf, ALongReq and BTN 0 -- and Reach failed on it as reversing
+    faster than it can.  The network is reversed then, and the frame reads as
+    its mirror on a lane running the ego's way."""
+    # CriMe's (the reachable set reads the road around the ego, which has two
+    # lanes forward and one backward).
+    keys = list(CRIME_MEASURES)
+    # The ego in the backward lane going forward at 15 m/s, a car 60 m ahead
+    # coming at 10 m/s: closing at 25 m/s over a 55.5 m gap.
+    ego = on_road(40, -1.75, 15.0, 1)
+    oncoming = replace(on_road(100, -1.75, -10.0, 2), yaw=HEADING + math.pi)
+    against, errors = evaluator.evaluate(ego, [oncoming], MEASURES)
+    assert errors == {}
+    assert against["crime_hw_m"] == pytest.approx(55.5, abs=0.1)
+    assert against["crime_ttc_s"] == pytest.approx(55.5 / 25.0, abs=0.02)
+    assert against["crime_a_long_req_mps2"] < -10.0
+    assert against["crime_btn"] > 0.85
+    for key in ("reach_drivable_area_m2", "reach_drivable_area_sum_m2", "crime_wttr_s"):
+        assert against[key] is not None and against[key] > 0.0
+    # The same frame in a lane running the ego's way.
+    mirror = replace(on_road(100, 1.75, -10.0, 2), yaw=HEADING + math.pi)
+    along, errors = evaluator.evaluate(on_road(40, 1.75, 15.0, 1), [mirror], keys)
+    assert errors == {}
+    assert {k: against[k] for k in keys} == along
+    # 30 m apart: a condition crime_ttc_s < 1.5 holds.
+    close = replace(on_road(70, -1.75, -10.0, 2), yaw=HEADING + math.pi)
+    values, errors = evaluator.evaluate(ego, [close], ["crime_ttc_s", "crime_btn"])
+    assert errors == {}
+    assert values["crime_ttc_s"] == pytest.approx(25.5 / 25.0, abs=0.02)
+    assert values["crime_btn"] == math.inf
+
+
+def test_an_ego_against_its_lane_follows_a_car_going_its_way(evaluator: Evaluator) -> None:
+    """#2625: following a slower car through the oncoming lane reads as
+    following it in a lane running the ego's way (test_following_a_slower_car),
+    and an ego going the backward lane's own way is not reversed."""
+    keys = ["crime_ttc_s", "crime_hw_m", "crime_a_long_req_mps2", "crime_thw_s", "crime_btn"]
+    along, errors = evaluator.evaluate(
+        on_road(50, 1.75, 15.0, 1), [on_road(80, 1.75, 5.0, 2)], keys
+    )
+    assert errors == {}
+    against, errors = evaluator.evaluate(
+        on_road(50, -1.75, 15.0, 1), [on_road(80, -1.75, 5.0, 2)], keys
+    )
+    assert errors == {}
+    assert against == along
+    backward = [
+        replace(on_road(d, -1.75, -v, i), yaw=HEADING + math.pi)
+        for d, v, i in ((80, 15.0, 1), (50, 5.0, 2))
+    ]
+    with_lane, errors = evaluator.evaluate(backward[0], backward[1:], keys)
+    assert errors == {}
+    assert with_lane == along
+    assert evaluator._alignment(backward[0])[1] is False  # type: ignore[index]
+    assert evaluator._alignment(on_road(50, -1.75, 15.0, 1))[1] is True  # type: ignore[index]
+
+
+def test_a_reversed_network_keeps_its_links_consistent(evaluator: Evaluator) -> None:
+    """#2625: every lanelet reversed -- bounds, sides, links -- so that the
+    lanelets keep their driving directions to one another."""
+    network = evaluator._local_network(0.0, 0.0, 0.0, reverse=True)
+    one, two, three = (network.find_lanelet_by_id(i) for i in (1, 2, 3))
+    # The backward lane now runs forward, its old right bound its left.
+    assert three.center_vertices[0] == pytest.approx([-1.05, 1.4])
+    assert three.center_vertices[-1] == pytest.approx([238.95, 181.4])
+    original = evaluator._network.find_lanelet_by_id(3)
+    assert three.left_vertices == pytest.approx(original.right_vertices[::-1])
+    assert three.right_vertices == pytest.approx(original.left_vertices[::-1])
+    # Left and right swap: lanelets 1 and 3, sharing their left bounds the
+    # other way, share their right bounds now, still the other way.
+    assert (one.adj_left, one.adj_right, one.adj_right_same_direction) == (2, 3, False)
+    assert one.adj_left_same_direction is True
+    assert (two.adj_left, two.adj_right, two.adj_right_same_direction) == (None, 1, True)
+    assert (three.adj_left, three.adj_right, three.adj_right_same_direction) == (None, 1, False)
 
 
 def test_a_slow_approach_beyond_the_horizon_needs_no_more_than_a_stop() -> None:
@@ -865,6 +985,28 @@ def test_reach_settings_refuse_what_reach_does_not_have(
     """#2290: a misspelled or misplaced key was set where nothing read it."""
     with pytest.raises(ValueError, match=re.escape(message)):
         Evaluator(str(MAP), EvaluatorSettings(reach_settings=reach_settings))
+
+
+@pytest.mark.parametrize(
+    ("key", "hint"),
+    [
+        ("dt", " (use the settings' dt)"),
+        ("step_start", ""),
+        ("steps_computation", " (use the settings' horizon_steps)"),
+        ("CLCS", ""),
+        ("lanelet_network", ""),
+    ],
+)
+def test_reach_settings_refuse_what_the_worker_sets(key: str, hint: str) -> None:
+    """#2625: planning.dt was applied over the worker's, so Reach stepped past
+    the end of the road users' trajectories; the steps were overwritten for
+    every reachable set."""
+    message = (
+        f"reach_settings['planning'][{key!r}]: planning.{key} is set by the worker for "
+        f"every reachable set and cannot be overridden{hint}"
+    )
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        Evaluator(str(MAP), EvaluatorSettings(reach_settings={"planning": {key: 1}}))
 
 
 def test_reach_settings_set_reach_configuration() -> None:
@@ -1230,6 +1372,99 @@ def test_crime_reads_the_lanelet_the_frame_was_turned_for(
     with _shared_frame():
         base.CriMeBase._update_clcs(measure)
     assert updates == {"CLCS": 2}
+
+
+def test_on_a_loop_ramp_the_ego_is_against_its_lane_only_where_it_is(tmp_path: Path) -> None:
+    """#2625: whether the ego runs against its lane is read where it is, not
+    from the lanelet's first to its last centre point.  On a lanelet bending
+    three quarters of a turn (a loop ramp) that heading is more than a quarter
+    turn off the lane early on it: an ego following the lane there read as
+    against it, the network reversed and a lead 30 m ahead read as behind (TTC
+    inf); and one going the wrong way read as going the lane's way."""
+    import warnings
+
+    import numpy as np
+    from commonroad.common.file_writer import CommonRoadFileWriter, OverwriteExistingFile
+    from commonroad.planning.planning_problem import PlanningProblemSet
+    from commonroad.scenario.lanelet import Lanelet, LaneletNetwork
+    from commonroad.scenario.scenario import Scenario, ScenarioID
+
+    radius, width = 40.0, 3.5
+    # Counterclockwise around the origin from (0, -40) to (-40, 0).
+    angles = np.radians(np.linspace(-90.0, 180.0, 200))
+
+    def arc(r: float) -> Any:
+        return np.stack([r * np.cos(angles), r * np.sin(angles)], 1)
+
+    network = LaneletNetwork()
+    network.add_lanelet(Lanelet(arc(radius - width / 2), arc(radius), arc(radius + width / 2), 1))
+    scenario = Scenario(0.1, ScenarioID(map_name="Loop"))
+    scenario.add_objects(network)
+    path = tmp_path / "loop.xml"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        CommonRoadFileWriter(scenario, PlanningProblemSet(), "", "", "", set()).write_to_file(
+            str(path), OverwriteExistingFile.ALWAYS
+        )
+    evaluator = Evaluator(str(path))
+
+    def car(degrees: float, speed: float, actor_id: int, wrong_way: bool = False) -> Actor:
+        a = math.radians(degrees)
+        yaw = a - math.pi / 2 if wrong_way else a + math.pi / 2
+        x, y = radius * math.cos(a), radius * math.sin(a)
+        return Actor(actor_id, "car", x, y, yaw, speed * math.cos(yaw), speed * math.sin(yaw))
+
+    keys = ["crime_ttc_s", "crime_a_long_req_mps2"]
+    # From first to last centre point the lane heads 135 degrees off +x: at
+    # -60 degrees round it heads 30 degrees, at 150 degrees 240 (a car going
+    # the wrong way there heads 60), each more than a quarter turn off 135.
+    for degrees, wrong_way in ((-60.0, False), (60.0, False), (150.0, True), (60.0, True)):
+        ego = car(degrees, 15.0, 1, wrong_way)
+        assert evaluator._alignment(ego)[1] is wrong_way  # type: ignore[index]
+        lead = car(degrees - 30.0 if wrong_way else degrees + 30.0, 5.0, 2, wrong_way)
+        values, errors = evaluator.evaluate(ego, [lead], keys)
+        assert errors == {}
+        # Going the wrong way the ego bends right, and CriMe reads a gap round
+        # a right-hand bend about 2.3 m longer than round a left-hand one (as
+        # on a loop running clockwise, reversed or not): 18.0 m, not 15.6 m.
+        ttc, a_long_req = (1.8, -2.78) if wrong_way else (1.56, -3.21)
+        assert values["crime_ttc_s"] == pytest.approx(ttc, abs=0.05)
+        assert values["crime_a_long_req_mps2"] == pytest.approx(a_long_req, abs=0.05)
+
+
+def test_against_its_lane_the_frame_is_turned_for_the_lanelet_read_once_reversed() -> None:
+    """#2625: where an ego drives against every lanelet under it (a junction
+    gone the wrong way), the one heading most its way once the network is
+    reversed is the one heading most against it now: the frame is turned for
+    that one, which the measures read (_best_lanelet on the reversed
+    network)."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from commonroad_metrics.evaluator import _TILT, _best_lanelet
+
+    centres = {
+        1: np.array([[20.0, 0.0], [0.0, 0.0]]),  # straight on, along -x
+        2: np.array([[20.0, 0.0], [15.0, 5.0], [15.0, 20.0]]),  # turning right
+    }
+    evaluator = object.__new__(Evaluator)
+    evaluator._network = SimpleNamespace(
+        find_lanelet_by_position=lambda points: [[2, 1]],
+        find_lanelet_by_id=lambda i: SimpleNamespace(center_vertices=centres[i]),
+    )
+    evaluator._centres = centres
+    assert _best_lanelet(evaluator._network, [2, 1], 0.0) == 2
+    # Near where both begin, so that the turning one runs against the ego
+    # where it is too.
+    angle, against = evaluator._alignment(Actor(1, "car", 18.0, 0.0, 0.0))  # type: ignore[misc]
+    assert against is True
+    assert angle == pytest.approx(_TILT)  # lanelet 1 reversed runs along +x
+    reversed_centres = {i: c[::-1] for i, c in centres.items()}
+    reversed_network = SimpleNamespace(
+        find_lanelet_by_id=lambda i: SimpleNamespace(center_vertices=reversed_centres[i])
+    )
+    assert _best_lanelet(reversed_network, [2, 1], 0.0) == 1
 
 
 def test_a_lat_req_reads_the_lanelet_the_frame_was_turned_for(

@@ -25,7 +25,8 @@ The lanelet network is read once, and cut down every frame to the lanelets
 within :attr:`EvaluatorSettings.radius_m` of the ego, so that a measure deep-
 copying the scenario (CriMe's do) copies a block, not a city.  That block is
 moved so the ego is at the origin and turned so the lane under it runs along
-+x (:meth:`Evaluator._alignment` says why).
++x (:meth:`Evaluator._alignment` says why), every lanelet of it reversed when
+that lane runs against the ego (:meth:`Evaluator._local_network`).
 """
 
 from __future__ import annotations
@@ -160,8 +161,8 @@ class Actor:
     """A road user in the frame, in the CommonRoad frame of the map.
 
     Attributes:
-        id: Its id, unique in the frame; not ``0`` (CommonRoad's ids are
-            positive).
+        id: Its id, a positive int (CommonRoad's ids are positive), unique
+            among the road users of a frame (:meth:`Evaluator.evaluate`).
         kind: ``car``, ``truck``, ``bus``, ``motorcycle``, ``bicycle`` or
             ``pedestrian``.
         x, y: Where its centre is (m).
@@ -174,7 +175,8 @@ class Actor:
     Every number but ``id`` must be finite: a NaN or an infinity is refused
     with a :class:`NonFiniteError` naming the field (the worker answers the
     frame with each measure ``null`` and failed with that message), anything
-    but a number with a ``ValueError`` (the worker answers ``ok: false``).
+    but a number with a ``ValueError`` (the worker answers ``ok: false``), as
+    is an ``id`` that is not a positive int (a float, a bool, ``0``).
     """
 
     id: int
@@ -191,6 +193,8 @@ class Actor:
     width: float = 1.8
 
     def __post_init__(self) -> None:
+        if isinstance(self.id, bool) or not isinstance(self.id, int) or self.id < 1:
+            raise ValueError(f"id must be a positive int, got {self.id!r}")
         for name in _ACTOR_NUMBERS:
             _finite(name, getattr(self, name))
 
@@ -341,9 +345,23 @@ class Evaluator:
     # The scenario of a frame
     # ------------------------------------------------------------------
 
-    def _local_network(self, x: float, y: float, angle: float) -> Any:
+    def _local_network(self, x: float, y: float, angle: float, reverse: bool = False) -> Any:
         """The lanelets within the radius of ``(x, y)``, as a network of their
-        own, moved so that ``(x, y)`` is the origin and turned by *angle*."""
+        own, moved so that ``(x, y)`` is the origin and turned by *angle*;
+        with *reverse*, every lanelet runs the other way (:func:`_reversed`).
+
+        The ego's lane is the lanelet under it heading most its way
+        (:func:`_best_lanelet`), and every measure reads along it: CriMe's
+        curvilinear frame, whose "ahead" is along the lanelet, and Reach's.
+        When even that one runs against the ego -- the ego overtaking through
+        the oncoming lane, or driving the wrong way -- its "ahead" is behind
+        the ego: a car coming at it head-on reads as behind (TTC ``inf``,
+        ALongReq ``0``), and Reach reads the ego as reversing.  The network
+        is reversed then, all of it, so that the lane runs the ego's way and
+        every link stays consistent: predecessors and successors swap, left
+        and right swap, and two lanelets reversed together keep their
+        driving directions to one another.
+        """
 
         from commonroad.scenario.lanelet import LaneletNetwork
 
@@ -360,6 +378,8 @@ class Evaluator:
         network = LaneletNetwork()
         for lanelet_id in sorted(kept):
             lanelet = _without_dangling(self._network.find_lanelet_by_id(lanelet_id), kept)
+            if reverse:
+                lanelet = _reversed(lanelet)
             lanelet.translate_rotate(-point, angle)
             network.add_lanelet(lanelet)
         for sign in self._network.traffic_signs:
@@ -383,9 +403,17 @@ class Evaluator:
         nearest = a + np.clip(t, 0.0, 1.0)[:, None] * ab
         return np.asarray(np.linalg.norm(nearest - point, axis=1))
 
-    def _alignment(self, ego: Actor) -> float | None:
+    def _alignment(self, ego: Actor) -> tuple[float, bool] | None:
         """The angle that turns the lane under the ego to run along +x (nearly:
-        :data:`_TILT` off it); ``None`` when the ego is on no lanelet.
+        :data:`_TILT` off it), and whether that lane runs against the ego
+        where the ego is (``cos(heading - yaw) < 0`` with the heading of the
+        lanelet's centre line at its point nearest the ego, the one CriMe's
+        measures read the ego along -- not the heading from the lanelet's first
+        to its last centre point, which :func:`_best_lanelet` picks by and
+        which on a lanelet bending more than half a turn, a loop ramp, is more
+        than a quarter turn off where the ego is): the network is then
+        reversed (:meth:`_local_network`), and the angle turns the lane as
+        reversed to run along +x.  ``None`` when the ego is on no lanelet.
 
         CriMe projects a road user's speed onto the lane with the cosine of the
         lane's own heading, which is the speed along the lane only where the
@@ -396,11 +424,20 @@ class Evaluator:
         found = self._network.find_lanelet_by_position([np.array([ego.x, ego.y])])[0]
         if not found:
             return None
-        centre = self._centres[_best_lanelet(self._network, found, ego.yaw)]
         point = np.array([ego.x, ego.y])
-        i = int(np.argmin(np.linalg.norm(centre - point, axis=1)))
-        a, b = (centre[i], centre[i + 1]) if i + 1 < len(centre) else (centre[i - 1], centre[i])
-        return _TILT - math.atan2(b[1] - a[1], b[0] - a[0])
+
+        def segment(lanelet_id: int) -> tuple[Any, Any]:
+            centre = self._centres[lanelet_id]
+            i = int(np.argmin(np.linalg.norm(centre - point, axis=1)))
+            return (centre[i], centre[i + 1]) if i + 1 < len(centre) else (centre[i - 1], centre[i])
+
+        a, b = segment(_best_lanelet(self._network, found, ego.yaw))
+        against = math.cos(math.atan2(b[1] - a[1], b[0] - a[0]) - ego.yaw) < 0.0
+        if against:
+            # Reversed, the one heading most against the ego heads most its
+            # way: the one the measures read (_best_lanelet on the network).
+            b, a = segment(_best_lanelet(self._network, found, ego.yaw + math.pi))
+        return _TILT - math.atan2(b[1] - a[1], b[0] - a[0]), against
 
     def _obstacle(self, actor: Actor, network: Any) -> Any:
         from commonroad.geometry.shape import Rectangle
@@ -462,13 +499,16 @@ class Evaluator:
         _assign_lanelets(obstacle, network)
         return obstacle
 
-    def scenario(self, ego: Actor, others: Iterable[Actor], angle: float = 0.0) -> Any:
+    def scenario(
+        self, ego: Actor, others: Iterable[Actor], angle: float = 0.0, reverse: bool = False
+    ) -> Any:
         """The CommonRoad scenario of a frame: the lanelets around the ego and
         every road user on them, moved so that the ego is at the origin and
-        turned by *angle*."""
+        turned by *angle*, and with *reverse* running the other way
+        (:meth:`_local_network`)."""
         from commonroad.scenario.scenario import Scenario
 
-        network = self._local_network(ego.x, ego.y, angle)
+        network = self._local_network(ego.x, ego.y, angle, reverse)
         scenario = Scenario(self.settings.dt, self._scenario_id)
         scenario.add_objects(network)
         for actor in [ego, *(a for a in others if a.id != ego.id)]:
@@ -483,7 +523,18 @@ class Evaluator:
         self, ego: Actor, others: Iterable[Actor], measures: Iterable[str]
     ) -> tuple[dict[str, float | None], dict[str, str]]:
         """The measures asked for in a frame; with the error of each that
-        failed (its value then ``None``)."""
+        failed (its value then ``None``).
+
+        Raises:
+            ValueError: Two of *others* share an id (one sharing the ego's is
+                the ego, and left out).
+        """
+        others = list(others)
+        seen: set[int] = set()
+        for actor in others:
+            if actor.id in seen and actor.id != ego.id:
+                raise ValueError(f"road users share the id {actor.id!r}: ids must be unique")
+            seen.add(actor.id)
         wanted = list(dict.fromkeys(measures))
         unknown = [m for m in wanted if m not in MEASURES]
         values: dict[str, float | None] = {}
@@ -491,13 +542,14 @@ class Evaluator:
         wanted = [m for m in wanted if m not in unknown]
         if not wanted:
             return values, errors
-        angle = self._alignment(ego)
-        if angle is None:
+        alignment = self._alignment(ego)
+        if alignment is None:
             # Off the map: nothing CriMe or Reach measure is defined.
             for m in wanted:
                 values[m] = None
             return values, errors
-        scenario = self.scenario(ego, list(others), angle)
+        angle, reverse = alignment
+        scenario = self.scenario(ego, others, angle, reverse)
         ego_id = self._id_base + ego.id
         ego = _moved(ego, ego.x, ego.y, angle)
         if any(m in CRIME_MEASURES for m in wanted):
@@ -1345,6 +1397,33 @@ def _signed_crime_measures() -> dict[str, type]:
 #: scenario, the planning problem or the omegaconf it was read from).
 _REACH_SECTIONS: tuple[str, ...] = ("general", "planning", "vehicle", "reachable_set", "debug")
 
+#: The keys of CommonRoad-Reach's configuration the worker sets itself, which
+#: ``reach_settings`` may not: the time step (``planning.dt``, the
+#: :attr:`EvaluatorSettings.dt` the road users' trajectories step by -- a
+#: Reach step of another length would run past their end, and they would drop
+#: out of its collision check), the steps of each reachable set (from the
+#: horizon and where the set starts), and what Reach derives from the frame's
+#: scenario, planning problem and curvilinear frame for every one.
+_REACH_OWNED: dict[str, frozenset[str]] = {
+    "planning": frozenset(
+        {
+            "dt",
+            "step_start",
+            "steps_computation",
+            "p_lon_initial",
+            "p_lat_initial",
+            "v_lon_initial",
+            "v_lat_initial",
+            "o_initial",
+            "route",
+            "reference_path",
+            "lanelet_network",
+            "list_ids_lanelets",
+            "CLCS",
+        }
+    ),
+}
+
 
 def _apply_reach_settings(config: Any, reach_settings: Mapping[str, Any]) -> None:
     """Set *reach_settings*, overrides by section and key, on CommonRoad-
@@ -1354,11 +1433,14 @@ def _apply_reach_settings(config: Any, reach_settings: Mapping[str, Any]) -> Non
     have adds it, read by nothing: a misspelled or misplaced key
     (``planning.size_grid`` for ``reachable_set.size_grid``) would do
     nothing.  Every section and key must be one the configuration has, and a
-    key must hold a value, not a section of its own (``vehicle.ego``).
+    key must hold a value, not a section of its own (``vehicle.ego``).  A key
+    the worker sets itself (:data:`_REACH_OWNED`: ``planning.dt``,
+    ``planning.step_start``, ``planning.steps_computation``, ...) is refused
+    too: the worker's value would overwrite it, or it the worker's.
 
     Raises:
-        ValueError: A section or key it does not have, naming it as
-            ``reach_settings[section][key]``.
+        ValueError: A section or key it does not have, or one the worker
+            sets, naming it as ``reach_settings[section][key]``.
     """
     for section, overrides in reach_settings.items():
         if section not in _REACH_SECTIONS:
@@ -1379,6 +1461,15 @@ def _apply_reach_settings(config: Any, reach_settings: Mapping[str, Any]) -> Non
                 raise ValueError(
                     f"{where}: CommonRoad-Reach's {section!r} section has no key "
                     f"{name!r} (its keys: {known})"
+                )
+            if name in _REACH_OWNED.get(section, ()):
+                hint = {
+                    "dt": " (use the settings' dt)",
+                    "steps_computation": " (use the settings' horizon_steps)",
+                }.get(name, "")
+                raise ValueError(
+                    f"{where}: {section}.{name} is set by the worker for every "
+                    f"reachable set and cannot be overridden{hint}"
                 )
             if type(getattr(target, name)).__module__.startswith("commonroad_reach"):
                 raise ValueError(
@@ -1461,6 +1552,43 @@ def _without_dangling(lanelet: Any, kept: set[int]) -> Any:
         copied.adj_right = None
         copied.adj_right_same_direction = None
     return copied
+
+
+def _reversed(lanelet: Any) -> Any:
+    """*lanelet* running the other way: its bounds and centre line reversed,
+    its left bound the right one and its right the left, its predecessors its
+    successors and its successors its predecessors, its left neighbour its
+    right one and its right its left.
+
+    For a network every lanelet of which is reversed
+    (:meth:`Evaluator._local_network`): each link then still joins the
+    lanelets it joined, and two neighbours keep their driving directions to
+    one another, so the ``adj_*_same_direction`` flags are kept as they are.
+    The stop line is dropped: it is at the lanelet's end, where traffic the
+    other way enters it.
+    """
+    from commonroad.scenario.lanelet import Lanelet
+
+    return Lanelet(
+        left_vertices=np.flip(lanelet.right_vertices, 0).copy(),
+        center_vertices=np.flip(lanelet.center_vertices, 0).copy(),
+        right_vertices=np.flip(lanelet.left_vertices, 0).copy(),
+        lanelet_id=lanelet.lanelet_id,
+        predecessor=list(lanelet.successor),
+        successor=list(lanelet.predecessor),
+        adjacent_left=lanelet.adj_right,
+        adjacent_left_same_direction=lanelet.adj_right_same_direction,
+        adjacent_right=lanelet.adj_left,
+        adjacent_right_same_direction=lanelet.adj_left_same_direction,
+        line_marking_left_vertices=lanelet.line_marking_right_vertices,
+        line_marking_right_vertices=lanelet.line_marking_left_vertices,
+        lanelet_type=set(lanelet.lanelet_type),
+        user_one_way=set(lanelet.user_one_way),
+        user_bidirectional=set(lanelet.user_bidirectional),
+        traffic_signs=set(lanelet.traffic_signs),
+        traffic_lights=set(lanelet.traffic_lights),
+        adjacent_areas=set(lanelet.adjacent_areas),
+    )
 
 
 def _assign_lanelets(obstacle: Any, network: Any) -> None:
