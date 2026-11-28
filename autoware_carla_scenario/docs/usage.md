@@ -495,6 +495,25 @@ the pick.
       value: 0.0
 ```
 
+The walk-back steps onto any predecessor, a junction lanelet too, so a spawn
+50 m before a turn's stop line can start before the junction behind it, where
+the approach is shorter than that. A `lanelet_length` on the lanelet before
+the pick cannot rule this out where the approach is split into several short
+lanelets. `through_junction: false` keeps the walk-back off junction lanelets
+(those tagged `turn_direction`): a pick whose road before the line is clear of
+junctions for less than `offset` is dropped, so every case starts on the
+approach to its own junction. `stop_line_approach` takes it too, to land on
+the same lanelet:
+
+```yaml
+sweep:
+  bindings:
+    ego.spawn_s:
+      type: stop_line_offset
+      offset: 50.0
+      through_junction: false
+```
+
 A constraint sees the pick, not where a walk-back puts the spawn. Use
 `sweep.exclude` to drop a case by the values it ends up with once its bindings
 are applied. Each key lists the values a case may not hold there. For example,
