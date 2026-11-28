@@ -65,9 +65,11 @@ where the lane runs along +x. Distances, times and areas do not change with the
 turn.
 
 The ego's lane is the lanelet under it heading most its way, and CriMe's
-"ahead" is along that lanelet. When even that one runs against the ego
-(`cos(heading - yaw) < 0`: the ego overtaking through the oncoming lane, or
-driving the wrong way), a car coming at it head-on read as behind it -- TTC,
+"ahead" is along that lanelet. When even that one runs against the ego where
+the ego is (`cos(heading - yaw) < 0`, with the lane's heading at the ego, not
+from its first to its last point, which on a loop ramp is more than a quarter
+turn off it: the ego overtaking through the oncoming lane, or driving the
+wrong way), a car coming at it head-on read as behind it -- TTC,
 HW and THW `inf`, ALongReq and BTN `0` -- and Reach read the ego as reversing.
 The worker reverses every lanelet of the frame then -- bounds, left and right,
 predecessors and successors, neighbours -- so the ego's lane runs its way and

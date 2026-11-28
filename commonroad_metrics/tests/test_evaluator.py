@@ -1374,6 +1374,64 @@ def test_crime_reads_the_lanelet_the_frame_was_turned_for(
     assert updates == {"CLCS": 2}
 
 
+def test_on_a_loop_ramp_the_ego_is_against_its_lane_only_where_it_is(tmp_path: Path) -> None:
+    """#2625: whether the ego runs against its lane is read where it is, not
+    from the lanelet's first to its last centre point.  On a lanelet bending
+    three quarters of a turn (a loop ramp) that heading is more than a quarter
+    turn off the lane early on it: an ego following the lane there read as
+    against it, the network reversed and a lead 30 m ahead read as behind (TTC
+    inf); and one going the wrong way read as going the lane's way."""
+    import warnings
+
+    import numpy as np
+    from commonroad.common.file_writer import CommonRoadFileWriter, OverwriteExistingFile
+    from commonroad.planning.planning_problem import PlanningProblemSet
+    from commonroad.scenario.lanelet import Lanelet, LaneletNetwork
+    from commonroad.scenario.scenario import Scenario, ScenarioID
+
+    radius, width = 40.0, 3.5
+    # Counterclockwise around the origin from (0, -40) to (-40, 0).
+    angles = np.radians(np.linspace(-90.0, 180.0, 200))
+
+    def arc(r: float) -> Any:
+        return np.stack([r * np.cos(angles), r * np.sin(angles)], 1)
+
+    network = LaneletNetwork()
+    network.add_lanelet(Lanelet(arc(radius - width / 2), arc(radius), arc(radius + width / 2), 1))
+    scenario = Scenario(0.1, ScenarioID(map_name="Loop"))
+    scenario.add_objects(network)
+    path = tmp_path / "loop.xml"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        CommonRoadFileWriter(scenario, PlanningProblemSet(), "", "", "", set()).write_to_file(
+            str(path), OverwriteExistingFile.ALWAYS
+        )
+    evaluator = Evaluator(str(path))
+
+    def car(degrees: float, speed: float, actor_id: int, wrong_way: bool = False) -> Actor:
+        a = math.radians(degrees)
+        yaw = a - math.pi / 2 if wrong_way else a + math.pi / 2
+        x, y = radius * math.cos(a), radius * math.sin(a)
+        return Actor(actor_id, "car", x, y, yaw, speed * math.cos(yaw), speed * math.sin(yaw))
+
+    keys = ["crime_ttc_s", "crime_a_long_req_mps2"]
+    # From first to last centre point the lane heads 135 degrees off +x: at
+    # -60 degrees round it heads 30 degrees, at 150 degrees 240 (a car going
+    # the wrong way there heads 60), each more than a quarter turn off 135.
+    for degrees, wrong_way in ((-60.0, False), (60.0, False), (150.0, True), (60.0, True)):
+        ego = car(degrees, 15.0, 1, wrong_way)
+        assert evaluator._alignment(ego)[1] is wrong_way  # type: ignore[index]
+        lead = car(degrees - 30.0 if wrong_way else degrees + 30.0, 5.0, 2, wrong_way)
+        values, errors = evaluator.evaluate(ego, [lead], keys)
+        assert errors == {}
+        # Going the wrong way the ego bends right, and CriMe reads a gap round
+        # a right-hand bend about 2.3 m longer than round a left-hand one (as
+        # on a loop running clockwise, reversed or not): 18.0 m, not 15.6 m.
+        ttc, a_long_req = (1.8, -2.78) if wrong_way else (1.56, -3.21)
+        assert values["crime_ttc_s"] == pytest.approx(ttc, abs=0.05)
+        assert values["crime_a_long_req_mps2"] == pytest.approx(a_long_req, abs=0.05)
+
+
 def test_against_its_lane_the_frame_is_turned_for_the_lanelet_read_once_reversed() -> None:
     """#2625: where an ego drives against every lanelet under it (a junction
     gone the wrong way), the one heading most its way once the network is
@@ -1397,7 +1455,9 @@ def test_against_its_lane_the_frame_is_turned_for_the_lanelet_read_once_reversed
     )
     evaluator._centres = centres
     assert _best_lanelet(evaluator._network, [2, 1], 0.0) == 2
-    angle, against = evaluator._alignment(Actor(1, "car", 10.0, 0.0, 0.0))  # type: ignore[misc]
+    # Near where both begin, so that the turning one runs against the ego
+    # where it is too.
+    angle, against = evaluator._alignment(Actor(1, "car", 18.0, 0.0, 0.0))  # type: ignore[misc]
     assert against is True
     assert angle == pytest.approx(_TILT)  # lanelet 1 reversed runs along +x
     reversed_centres = {i: c[::-1] for i, c in centres.items()}

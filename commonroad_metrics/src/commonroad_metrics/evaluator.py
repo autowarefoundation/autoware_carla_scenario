@@ -406,11 +406,14 @@ class Evaluator:
     def _alignment(self, ego: Actor) -> tuple[float, bool] | None:
         """The angle that turns the lane under the ego to run along +x (nearly:
         :data:`_TILT` off it), and whether that lane runs against the ego
-        (``cos(heading - yaw) < 0`` with the lanelet's heading from its first
-        to its last centre point, as :func:`_best_lanelet` reads it): the
-        network is then reversed (:meth:`_local_network`), and the angle
-        turns the lane as reversed to run along +x.  ``None`` when the ego is
-        on no lanelet.
+        where the ego is (``cos(heading - yaw) < 0`` with the heading of the
+        lanelet's centre line at its point nearest the ego, the one CriMe's
+        measures read the ego along -- not the heading from the lanelet's first
+        to its last centre point, which :func:`_best_lanelet` picks by and
+        which on a lanelet bending more than half a turn, a loop ramp, is more
+        than a quarter turn off where the ego is): the network is then
+        reversed (:meth:`_local_network`), and the angle turns the lane as
+        reversed to run along +x.  ``None`` when the ego is on no lanelet.
 
         CriMe projects a road user's speed onto the lane with the cosine of the
         lane's own heading, which is the speed along the lane only where the
@@ -421,19 +424,19 @@ class Evaluator:
         found = self._network.find_lanelet_by_position([np.array([ego.x, ego.y])])[0]
         if not found:
             return None
-        best = _best_lanelet(self._network, found, ego.yaw)
-        dx, dy = self._centres[best][-1] - self._centres[best][0]
-        against = math.cos(math.atan2(dy, dx) - ego.yaw) < 0.0
+        point = np.array([ego.x, ego.y])
+
+        def segment(lanelet_id: int) -> tuple[Any, Any]:
+            centre = self._centres[lanelet_id]
+            i = int(np.argmin(np.linalg.norm(centre - point, axis=1)))
+            return (centre[i], centre[i + 1]) if i + 1 < len(centre) else (centre[i - 1], centre[i])
+
+        a, b = segment(_best_lanelet(self._network, found, ego.yaw))
+        against = math.cos(math.atan2(b[1] - a[1], b[0] - a[0]) - ego.yaw) < 0.0
         if against:
             # Reversed, the one heading most against the ego heads most its
             # way: the one the measures read (_best_lanelet on the network).
-            best = _best_lanelet(self._network, found, ego.yaw + math.pi)
-        centre = self._centres[best]
-        point = np.array([ego.x, ego.y])
-        i = int(np.argmin(np.linalg.norm(centre - point, axis=1)))
-        a, b = (centre[i], centre[i + 1]) if i + 1 < len(centre) else (centre[i - 1], centre[i])
-        if against:
-            a, b = b, a
+            b, a = segment(_best_lanelet(self._network, found, ego.yaw + math.pi))
         return _TILT - math.atan2(b[1] - a[1], b[0] - a[0]), against
 
     def _obstacle(self, actor: Actor, network: Any) -> Any:
