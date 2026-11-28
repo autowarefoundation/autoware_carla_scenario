@@ -1398,7 +1398,8 @@ class ResolvedTrajectory:
             squared = dx * dx + dy * dy
             fraction = (
                 0.0
-                if squared < _EPSILON_M
+                # Squared length against a squared epsilon (#2608).
+                if squared < _EPSILON_M * _EPSILON_M
                 else min(max(((x - x0) * dx + (y - y0) * dy) / squared, 0.0), 1.0)
             )
             gap = math.hypot(x0 + fraction * dx - x, y0 + fraction * dy - y)

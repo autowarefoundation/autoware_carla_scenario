@@ -3,7 +3,13 @@
 * :mod:`.model` -- the OpenSCENARIO-style trajectory (polyline, vertices,
   timing, following mode) and its interpolation;
 * :mod:`.resolve` -- placing one in CARLA world coordinates;
-* :mod:`.authoring` -- building one from what a scenario document states.
+* :mod:`.relative_lane` -- resolving a lane-relative vertex
+  (:class:`~.model.RelativeLanePose`) to a lanelet pose;
+* :mod:`.authoring` -- building one from what a scenario document states;
+* :mod:`.authored` -- the typed builders :mod:`.authoring` re-exports (a
+  goal, via lanelets, timing, a lanelet path);
+* :mod:`.vertex_text` -- the editor's text of vertices, and what is read
+  off typed rows.
 
 Reading a recorded scene (a T4 dataset) into trajectories is left to tools
 outside the framework, such as ``scene_to_scenario_transpiler``.

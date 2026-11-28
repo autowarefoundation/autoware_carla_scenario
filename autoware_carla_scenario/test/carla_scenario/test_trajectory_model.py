@@ -761,6 +761,14 @@ class TestHeadings:
 
 
 class TestAlongThePath:
+    def test_a_segment_under_a_millimetre_is_projected_along(self) -> None:
+        """#2608: its squared length was compared with a linear epsilon, so
+        a 0.9 mm segment was taken as a point and every projection was 0."""
+        short = ResolvedTrajectory(
+            xs=[0.0, 0.0009], ys=[0.0, 0.0], zs=[0.0, 0.0], yaws=[None, None]
+        )
+        assert short.project(0.0009, 0.0) == pytest.approx(0.0009)
+
     def test_at_distance(self) -> None:
         sample = _straight().at_distance(15.0, speed=3.0)
         assert (sample.x, sample.vx, sample.vy) == pytest.approx((15.0, 3.0, 0.0))
@@ -1194,3 +1202,15 @@ class TestFieldTypes:
         assert RelativeLanePose(entity_ref=EntityRole.npc(1)).entity_ref == "npc1"
         assert RelativeLanePose(entity_ref="npc2").entity_ref == "npc2"
         assert RelativeLanePose().entity_ref is None
+
+
+def test_the_package_docstring_names_every_submodule() -> None:
+    """#2608: it listed only .model, .resolve and .authoring."""
+    import pkgutil
+
+    import autoware_carla_scenario.trajectory as package
+
+    names = [info.name for info in pkgutil.iter_modules(package.__path__)]
+    assert names
+    missing = [name for name in names if f":mod:`.{name}`" not in package.__doc__]
+    assert not missing

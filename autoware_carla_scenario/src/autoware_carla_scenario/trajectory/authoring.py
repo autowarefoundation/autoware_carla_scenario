@@ -39,7 +39,7 @@ import math
 import operator
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
-from ..number_settings import number_setting
+from ..number_settings import finite_number_setting, number_setting
 from ..value_text import shown
 from .authored import (
     LANELET_PATH_STEP_M,
@@ -153,6 +153,14 @@ def _field_float(name: str, value: Any) -> float:
     return number_setting(name, value, text=True)
 
 
+def _unknown_keys(index: int, row: Mapping[Any, Any], keys: Sequence[str]) -> None:
+    """Refuse a mapping row's keys other than *keys* (and ``time``, which
+    :func:`_no_time` answers), as :func:`_route_row` does (#2608)."""
+    unknown = sorted(str(key) for key in row if key != "time" and key not in keys)
+    if unknown:
+        raise ValueError(f"vertex {index}: a vertex takes {list(keys)}, not {unknown}")
+
+
 def _field_int(name: str, value: Any) -> int:
     """``int(value)`` of the card's field *name*; for a value ``int()`` cannot
     read, a ``ValueError`` naming the field (#1660).  What ``int()`` reads is
@@ -168,6 +176,10 @@ def _field_int(name: str, value: Any) -> int:
 # ---------------------------------------------------------------------------
 
 
+#: The cells of a vertex, in order.
+_CELLS = ("x", "y", "yaw")
+
+
 def parse_vertices(value: Any) -> list[VertexRow]:
     """Read vertices from a document value or the editor's text.
 
@@ -178,7 +190,8 @@ def parse_vertices(value: Any) -> list[VertexRow]:
     and are not counted: vertex N is the Nth vertex.
 
     Raises:
-        ValueError: On a row that is not two or three numbers, saying which --
+        ValueError: On a row that is not two or three numbers, or a mapping
+            with a key other than ``x``, ``y`` and ``yaw``, saying which --
             and, for a row that still has a time cell, how to give the vertex
             its time now.
     """
@@ -190,7 +203,8 @@ def _row(index: int, row: Any) -> VertexRow:
     if isinstance(row, dict):
         if row.get("time") is not None:
             raise _no_time(index, row["time"])
-        cells: list[Any] = [row.get("x"), row.get("y"), row.get("yaw")]
+        _unknown_keys(index, row, _CELLS)
+        cells: list[Any] = [row.get(name) for name in _CELLS]
     elif isinstance(row, (list, tuple)):
         cells = list(row)
     else:
@@ -263,7 +277,8 @@ def parse_relative_vertices(value: Any) -> list[RelativeVertexRow]:
     ``d_lane`` must be a whole number.
 
     Raises:
-        ValueError: On a row that is not one to four numbers, saying which --
+        ValueError: On a row that is not one to four numbers, or a mapping
+            with a key other than those four, saying which --
             and, for a row that still has a time cell, how to give the vertex
             its time now.
     """
@@ -277,6 +292,7 @@ def _relative_row(index: int, row: Any) -> RelativeVertexRow:
     if isinstance(row, dict):
         if row.get("time") is not None:
             raise _no_time(index, row["time"])
+        _unknown_keys(index, row, _RELATIVE_CELLS)
         cells: list[Any] = [row.get(name) for name in _RELATIVE_CELLS]
     elif isinstance(row, (list, tuple)):
         cells = list(row)
@@ -507,6 +523,20 @@ def _check_advance(name: str, gates: Mapping[int, "BaseCondition"], count: int) 
             raise ValueError(f"{name}: no vertex {index!r} (it has {count})")
 
 
+def _speed_kmh(name: str, speed_kmh: Any) -> Optional[float]:
+    """The ``lanelets`` source's *speed_kmh* read as the card's other fields
+    are (a numeric string included), ``None`` left as it is; a negative or
+    non-finite speed refused rather than read as untimed (#2608)."""
+    if speed_kmh is None:
+        return None
+    speed = finite_number_setting(f"{name}: speed_kmh", speed_kmh, text=True)
+    if speed < 0.0:
+        raise ValueError(
+            f"{name}: speed_kmh must not be negative, got {shown(speed_kmh)}"
+        )
+    return speed
+
+
 def authored_trajectory(
     path_source: str,
     vertices: Any = None,
@@ -543,8 +573,9 @@ def authored_trajectory(
             :func:`parse_route_vertices`).
 
     Raises:
-        ValueError: On an unknown source, a source without what it needs, or
-            a waypoint condition on a vertex the trajectory does not have.
+        ValueError: On an unknown source, a source without what it needs, a
+            ``speed_kmh`` that is no number, negative or not finite, or a
+            waypoint condition on a vertex the trajectory does not have.
     """
     gates = dict(advance or {})
     if path_source == "vertices":
@@ -605,7 +636,7 @@ def authored_trajectory(
         return _lanelet_path(
             name,
             list(lanelet_ids or ()),
-            speed_kmh,
+            _speed_kmh(name, speed_kmh),
             _field_float(f"{name}: lateral_offset_m", lateral_offset_m or 0.0),
         )
     raise ValueError(f"{name}: unknown path source {path_source!r}")

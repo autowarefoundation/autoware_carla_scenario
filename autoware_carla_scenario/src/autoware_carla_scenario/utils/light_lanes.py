@@ -115,6 +115,7 @@ def _inside(
     outline: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> bool:
     """Whether *point* is inside the polygon *outline* (even-odd rule)."""
+    # Not polygon.point_in_polygon: on an ndarray, and no 1e-9 on-edge rule.
     x, y = float(point[0]), float(point[1])
     xs, ys = outline[:, 0], outline[:, 1]
     xs2, ys2 = np.roll(xs, -1), np.roll(ys, -1)
