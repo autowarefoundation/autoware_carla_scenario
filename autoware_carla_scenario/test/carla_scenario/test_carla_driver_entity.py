@@ -1165,6 +1165,46 @@ def test_the_run_up_keeps_the_spawn_pose_s_offset_from_its_lane() -> None:
     assert (first.location.x, first.location.y) == pytest.approx((-5.0, 0.8))
 
 
+def _pedals_with_the_mpc(speed_mps: float, ticks: int = 5) -> List[Tuple[float, float]]:
+    """``(throttle, brake)`` per tick of an ego at *speed_mps*, steered by Autoware's
+    lateral chain, with no warm-up."""
+    from autoware_carla_scenario.driver.autoware_lateral import (  # noqa: PLC0415
+        LateralChainConfig,
+    )
+
+    config = DriverClientConfig(send_renderer_data=False, rear_axle_offset_m=-1.4)
+    entity = CarlaDriverEntity(
+        config,
+        client=_FakeDriverClient(config),
+        lateral_config=LateralChainConfig(controller="mpc"),
+    )
+    actor = _actor()
+    actor.get_velocity.return_value = SimpleNamespace(x=speed_mps, y=0.0, z=0.0)
+    entity._vehicle = actor  # noqa: SLF001 - stands in for spawn()
+    world = _world_with_route()
+    entity.on_scenario_start(world)
+    for tick in range(ticks):
+        entity.on_tick(world, tick * _TICK_S)
+    return [
+        (call.args[0].throttle, call.args[0].brake)
+        for call in actor.apply_control.call_args_list
+    ]
+
+
+def test_a_moving_ego_is_not_braked_before_the_mpc_s_first_plan() -> None:
+    """The chain's first plan is visible on the third tick (#2635); spawned at speed,
+    the ego tracks the policy's own plan until then instead of the stop brake."""
+    pedals = _pedals_with_the_mpc(8.0)
+    assert len(pedals) == 5
+    assert all(brake == 0.0 for _, brake in pedals)
+    assert all(throttle > 0.0 for throttle, _ in pedals[:2])
+
+
+def test_an_ego_at_rest_is_held_until_the_mpc_s_first_plan() -> None:
+    pedals = _pedals_with_the_mpc(0.0)
+    assert pedals[:2] == [(0.0, pytest.approx(0.6)), (0.0, pytest.approx(0.6))]
+
+
 # ---------------------------------------------------------------------------
 # A policy served by the scenario itself
 # ---------------------------------------------------------------------------
