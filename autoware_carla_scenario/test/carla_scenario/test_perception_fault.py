@@ -59,6 +59,51 @@ def test_a_size_must_be_finite_and_not_negative(size: float) -> None:
         PerceptionFault(width_m=size)
 
 
+@pytest.mark.parametrize("spelt", ["CAR", "car"])
+def test_a_category_spelt_as_text_is_read_as_the_member(spelt: str) -> None:
+    """As a scenario file or the editor spells it (#2621): text would raise in
+    the renderer and the T4Scene every tick."""
+    fault = PerceptionFault(category=spelt)  # type: ignore[arg-type]
+    assert fault.category is PerceivedCategory.CAR
+    action = PerceptionFaultInjectionAction("npc1", spelt)  # type: ignore[arg-type]
+    assert action._fault.category is PerceivedCategory.CAR
+
+
+def test_actual_spelt_as_text_changes_nothing() -> None:
+    assert PerceptionFault(category="actual").is_none  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("category", ["sedan", "", 2, None])
+def test_an_unknown_category_is_refused(category: object) -> None:
+    with pytest.raises(ValueError, match="category must be a PerceivedCategory"):
+        PerceptionFault(category=category)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="category must be a PerceivedCategory"):
+        PerceptionFaultInjectionAction("npc1", category)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("size", [True, np.bool_(True), "1.5", None])
+def test_a_size_that_is_no_number_is_refused(size: object) -> None:
+    """``length_m=True`` would read as 1 m (#2621)."""
+    with pytest.raises(ValueError, match="length_m must be a number"):
+        PerceptionFault(length_m=size)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="length_m must be a number"):
+        PerceptionFaultInjectionAction("npc1", length_m=size)  # type: ignore[arg-type]
+
+
+def test_a_size_is_held_as_a_float() -> None:
+    fault = PerceptionFault(length_m=2, width_m=np.float32(1.5))  # type: ignore[arg-type]
+    assert type(fault.length_m) is float and type(fault.width_m) is float
+
+
+@pytest.mark.parametrize("visible", ["false", 0, None, np.bool_(False)])
+def test_visible_that_is_no_bool_is_refused(visible: object) -> None:
+    """``visible="false"`` would read as True (#2621)."""
+    with pytest.raises(ValueError, match="visible must be True or False"):
+        PerceptionFault(visible=visible)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="visible must be True or False"):
+        PerceptionFaultInjectionAction("npc1", visible=visible)  # type: ignore[arg-type]
+
+
 def test_a_fault_that_changes_nothing_clears_the_one_set() -> None:
     set_perception_fault(2, PerceptionFault(visible=False))
     assert perception_fault(2) == PerceptionFault(visible=False)

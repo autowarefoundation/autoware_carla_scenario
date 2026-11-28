@@ -3,6 +3,8 @@ the speed it allows, and the record a traffic backend reads it from."""
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from autoware_carla_scenario.visibility import (
@@ -157,3 +159,14 @@ class TestWorldVisibility:
     def test_no_visibility_is_refused(self) -> None:
         with pytest.raises(ValueError, match="positive"):
             set_world_visibility(1, 0.0)
+
+    @pytest.mark.parametrize("visibility", [math.inf, math.nan, True, "50"])
+    def test_a_visibility_that_is_no_finite_number_is_refused(
+        self, visibility: object
+    ) -> None:
+        """An infinity would raise in a traffic tick, and True read as 1 m
+        (#2621)."""
+        forget_visibility()
+        with pytest.raises(ValueError, match="visibility must be"):
+            set_world_visibility(1, visibility)  # type: ignore[arg-type]
+        assert world_visibility(1) is None

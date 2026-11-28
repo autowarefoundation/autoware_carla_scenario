@@ -1570,9 +1570,10 @@ class ScenarioRunner:
         """Reset the world without loading the map, if it can be done.
 
         Returns False -- the caller then loads the map -- when there is no
-        baseline, a reload is due (*reload_every*), the server runs another
-        episode than the one the baseline was read in (another client loaded
-        a world), or the soft reset raises or finds anything left over.
+        baseline, a reload is due (*reload_every*), the episode the server
+        runs, or the one the baseline was read in, is not known, the server
+        runs another episode than the baseline's (another client loaded a
+        world), or the soft reset raises or finds anything left over.
         """
         if self._baseline is None:
             logger.info(
@@ -1589,7 +1590,18 @@ class ScenarioRunner:
             return False
         try:
             world = self._client.get_world()
-            if not same_episode(episode_of(world), baseline.episode):
+            episode = episode_of(world)
+            if episode is None or baseline.episode is None:
+                # Not another client's doing: the episode is not known, so
+                # whether the world is the baseline's cannot be told (#2621).
+                logger.warning(
+                    "[%s] The CARLA world's episode could not be read, so the "
+                    "soft reset cannot tell it is the one it knows: loading "
+                    "the map",
+                    scenario_name,
+                )
+                return False
+            if not same_episode(episode, baseline.episode):
                 logger.warning(
                     "[%s] The CARLA world is not the one the soft reset knows "
                     "(another client loaded a world on this server): loading "

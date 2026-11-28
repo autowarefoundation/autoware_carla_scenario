@@ -15,9 +15,11 @@ ground truth.  They are forgotten as each run starts
 from __future__ import annotations
 
 import enum
-import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+from .number_settings import finite_number_setting
+from .value_text import shown
 
 __all__ = [
     "PerceivedCategory",
@@ -109,12 +111,19 @@ class PerceptionFault:
     """How one road user is reported, where it differs from what it is.
 
     Attributes:
-        category: The category reported; ``ACTUAL`` keeps its own.
+        category: The category reported; ``ACTUAL`` keeps its own.  A
+            member's name (``"CAR"``, as a scenario file or the editor
+            spells it) or value (``"car"``) is read as that member.
         length_m: The box's length (along the road user's heading), m; 0
             keeps its own.
         width_m: The box's width, m; 0 keeps its own.
         height_m: The box's height, m; 0 keeps its own.
         visible: ``False`` leaves the road user out altogether.
+
+    Raises:
+        ValueError: If *category* is no :class:`PerceivedCategory` nor the
+            name of one, a size is no number (a bool included), negative or
+            not finite, or *visible* is no bool.
     """
 
     category: PerceivedCategory = PerceivedCategory.ACTUAL
@@ -124,9 +133,26 @@ class PerceptionFault:
     visible: bool = True
 
     def __post_init__(self) -> None:
-        _check_size("length_m", self.length_m)
-        _check_size("width_m", self.width_m)
-        _check_size("height_m", self.height_m)
+        length_m = _check_size("length_m", self.length_m)
+        width_m = _check_size("width_m", self.width_m)
+        height_m = _check_size("height_m", self.height_m)
+        if TYPE_CHECKING:
+            # The check types every field as it is annotated (#2621).
+            pass
+        else:
+            # A category spelt as text (``"car"``) would raise as the
+            # renderer and the T4Scene read it, every tick, and ``"actual"``
+            # would be stored as a fault that changes nothing; a size of
+            # ``True`` would read as 1 m, and ``visible="false"`` as True.
+            object.__setattr__(self, "category", _category(self.category))
+            object.__setattr__(self, "length_m", length_m)
+            object.__setattr__(self, "width_m", width_m)
+            object.__setattr__(self, "height_m", height_m)
+            if not isinstance(self.visible, bool):
+                raise ValueError(
+                    "PerceptionFault: visible must be True or False, "
+                    f"got {shown(self.visible)}"
+                )
 
     @property
     def is_none(self) -> bool:
@@ -145,12 +171,35 @@ class PerceptionFault:
         )
 
 
-def _check_size(name: str, value: float) -> None:
-    """Refuse a box size that is negative or not finite."""
-    if not math.isfinite(value) or value < 0.0:
+def _check_size(name: str, value: float) -> float:
+    """*value*, a box size, as a ``float``; refused if it is no number (a
+    bool included), negative or not finite."""
+    size = finite_number_setting(f"PerceptionFault: {name}", value)
+    if size < 0.0:
         raise ValueError(
             f"PerceptionFault: {name} must be finite and not negative "
-            f"(0 keeps the road user's own), got {value!r}"
+            f"(0 keeps the road user's own), got {shown(value)}"
+        )
+    return size
+
+
+def _category(category: PerceivedCategory) -> PerceivedCategory:
+    """*category*, or the member a string names, by its name (``"CAR"``) or
+    its value (``"car"``); refused if it is neither."""
+    if TYPE_CHECKING:
+        # The check types *category* as the member it is annotated with.
+        return category
+    else:
+        if isinstance(category, PerceivedCategory):
+            return category
+        if isinstance(category, str):
+            for member in PerceivedCategory:
+                if category in (member.name, member.value):
+                    return member
+        names = ", ".join(member.name for member in PerceivedCategory)
+        raise ValueError(
+            "PerceptionFault: category must be a PerceivedCategory or the name "
+            f"of one ({names}), got {shown(category)}"
         )
 
 
