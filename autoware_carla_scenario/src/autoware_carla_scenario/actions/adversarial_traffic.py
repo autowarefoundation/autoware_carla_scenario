@@ -54,7 +54,7 @@ from ._adversarial_execution import (
     movement_held,
     start_execution,
 )
-from .background_traffic import _Never
+from ..conditions.always_true import NeverCondition
 from .base import BaseAction, TickTiming
 from ..adversity_event import AdversityEvent
 
@@ -134,7 +134,7 @@ class AdversarialTrafficAction(BaseAction):
                     f"{adversity.kind.value}: a probability is in [0, 1], "
                     f"not {adversity.probability}"
                 )
-        forever: BaseCondition = _Never()
+        forever: BaseCondition = NeverCondition()
         super().__init__(
             label=label,
             condition=condition,

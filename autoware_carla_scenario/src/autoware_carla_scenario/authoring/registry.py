@@ -2797,12 +2797,10 @@ register_action_spec(
         category="Vehicle / Motion",
         builder="build_set_relative_speed_action",
         target="..actions:SetSpeedAction",
-        # Short, so the generated builder's line fits the formatter.
-        argmap=(("other", "relative_to"),),
         visual_kind="continuous",
         fields=(
             FieldSpec(
-                name="other",
+                name="relative_to",
                 label="Relative to",
                 kind="entity",
                 default=None,

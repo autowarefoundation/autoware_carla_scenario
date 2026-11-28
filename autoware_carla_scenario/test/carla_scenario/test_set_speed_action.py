@@ -680,3 +680,58 @@ class TestRelativeConstruction:
             SetSpeedAction(
                 entity_name="npc1", relative_to="ego", continuous=True, reissue=False
             )
+
+
+class _TimedWorld(_FakeWorld):
+    """A world whose snapshot also says the simulated time."""
+
+    def __init__(self, *vehicles: _RecordingVehicle) -> None:
+        super().__init__(*vehicles)
+        self.seconds = 0.0
+
+    def get_snapshot(self) -> MagicMock:
+        snapshot = super().get_snapshot()
+        snapshot.timestamp.elapsed_seconds = self.seconds
+        return snapshot
+
+
+class TestRelativeTargetOfAWalker:
+    def test_a_walkers_speed_is_measured_from_where_it_moved(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        """CARLA reports a walker on its controller standing: the reference's
+        speed is measured from its moves, not read."""
+        walker = _reference(0.0)
+        walker.actor.type_id = "walker.pedestrian.0001"
+        position = {"x": 0.0}
+        walker.actor.get_location.side_effect = lambda: carla.Location(
+            position["x"], 0.0, 0.5
+        )
+        world = _TimedWorld(vehicle, walker)
+        action = SetSpeedAction(
+            entity_name="npc1", relative_to="ego", delta_kmh=1.0, continuous=True
+        )
+
+        action.tick(world, 0.0)  # nothing measured yet: nothing commanded
+        assert vehicle.commanded == []
+        position["x"], world.seconds = 1.5, 1.0  # 1.5 m/s
+        action.tick(world, 1.0)
+        action.tick(world, 1.0)
+
+        assert vehicle.commanded[-1] == pytest.approx(1.5 * 3.6 + 1.0)
+
+
+class TestARepeatingRelativeAction:
+    def test_each_firing_reads_the_reference_anew(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        ego = _reference(20.0)
+        action = SetSpeedAction(entity_name="npc1", relative_to="ego", once=False)
+        world = _FakeWorld(vehicle, ego)
+
+        _drive(action, world, ticks=3)
+        ego.speed_kmh = 60.0
+        _drive(action, world, ticks=3)
+
+        assert vehicle.commanded[0] == pytest.approx(20.0)
+        assert vehicle.commanded[-1] == pytest.approx(60.0)

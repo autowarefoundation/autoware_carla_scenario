@@ -6,6 +6,8 @@ import logging
 import math
 from typing import TYPE_CHECKING, Optional, Union
 
+from ..action_state import ActionState
+from ..conditions.always_true import NeverCondition
 from ..conditions.base import BaseCondition, ScenarioResult, find_actor_by_role_name
 from ..constants import tick_seconds
 from ..conditions.comparison import ComparisonRule
@@ -14,9 +16,10 @@ from ..conditions.composition.speed import SpeedCondition
 from ..conditions.entity_existence import find_present_actor_by_role_name
 from ..entity.registry import fail_if_pedestrian, find_vehicle_entity
 from ..entity_role import EntityRole
+from ..kinematics import Vector3
+from ..kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from ..traffic.driven import BackendDriven
 from ..control_domain import ControlDomain
-from .background_traffic import _Never
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -37,9 +40,8 @@ _KMH_PER_MS: float = 3.6
 
 
 class _ResolvedTarget:
-    """The target a relative, not continuous :class:`SetSpeedAction` read
-    from its reference when it first ran (``None`` until then), shared with
-    the condition that says it arrived."""
+    """The target read from the reference for this run (``None`` until
+    read), shared with the condition that says it arrived."""
 
     kmh: Optional[float]
 
@@ -48,10 +50,8 @@ class _ResolvedTarget:
 
 
 class _ReachedResolvedTarget(CompositionCondition):
-    """Holds once the entity's speed is within :data:`ARRIVAL_TOLERANCE_KMH`
-    of the target its action read from its reference -- never before it has
-    read one.  A rate-limited relative change's arrival, as
-    :class:`SpeedCondition` is an absolute one's."""
+    """A rate-limited relative change's arrival: the entity within
+    :data:`ARRIVAL_TOLERANCE_KMH` of :class:`_ResolvedTarget`."""
 
     _resolved: _ResolvedTarget
 
@@ -119,10 +119,12 @@ class SetSpeedAction(BaseAction):
     **A target relative to another entity.**  With *relative_to*, the target
     is that entity's speed times *factor* plus *delta_kmh* (OpenSCENARIO's
     ``RelativeTargetSpeed``; a result below 0 is 0): ``relative_to="ego",
-    delta_kmh=10`` drives 10 km/h faster than the ego.  Without *continuous*
-    the target is read once, when the action first runs, and held from then
-    on -- a rate-limited change then completes when the vehicle reaches that
-    target, as an absolute one does.  With *continuous* it is read again every
+    delta_kmh=10`` drives 10 km/h faster than the ego.  A walker's speed is
+    measured from where it moved (CARLA reports a walker on its controller
+    standing).  Without *continuous* the target is read once, when the action
+    fires (each time, for a repeating one), and held for that run -- a
+    rate-limited change then completes when the vehicle reaches it, as an
+    absolute one does.  With *continuous* it is read again every
     tick, so the vehicle keeps following the other's speed; such an action
     never arrives, and runs until the scenario ends (or its *until* holds).
     A reference that is not in the scene (not spawned yet, or parked out of
@@ -174,18 +176,14 @@ class SetSpeedAction(BaseAction):
             take it once when the action starts.  Only with *relative_to*.
 
     Raises:
-        ValueError: If neither or both of *target_speed_kmh* and
-            *relative_to* are given, if *delta_kmh* or *factor* is given or
-            *continuous* is true without *relative_to*, if *continuous* is
-            given with ``reissue=False``, if *delta_kmh* is
-            not finite or *factor* is negative or not finite (or either is a
-            boolean), if *target_speed_kmh* is negative, not finite or a
-            boolean, if *rate_kmh_s* is not positive, not finite or a boolean
-            (``None`` is the unbounded rate), or if *reissue* is ``False`` while a rate is
-            given.  A
-            rate of zero is a change that never arrives, and a rate that is
-            never re-sent is a walk that never takes its second step; both are
-            worth reporting rather than running.
+        ValueError: If the target is given neither or both ways, or a
+            relative-only argument without *relative_to*; if a number is out
+            of range (*target_speed_kmh* and *factor* negative, *rate_kmh_s*
+            not positive), not finite or a boolean; or if *reissue* is
+            ``False`` where the command must be re-sent (a rate, or
+            *continuous*).  A rate of zero is a change that never arrives,
+            and a rate never re-sent is a walk that never takes its second
+            step; both are worth reporting rather than running.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -197,6 +195,7 @@ class SetSpeedAction(BaseAction):
     _factor: float
     _continuous: bool
     _resolved: _ResolvedTarget
+    _velocities: WalkerVelocities
 
     def __init__(
         self,
@@ -280,7 +279,8 @@ class SetSpeedAction(BaseAction):
                 "drop rate_kmh_s to command the target at once."
             )
 
-        follows = relative_to is not None and continuous is True
+        # Refused above without relative_to.
+        follows = continuous is True
         if follows and reissue is False:
             raise ValueError(
                 "a continuous relative speed follows the reference by being "
@@ -290,24 +290,24 @@ class SetSpeedAction(BaseAction):
         if until is None and follows:
             # It follows the reference for the rest of the run: an action with
             # no *until* would be over on the tick after it fired.
-            forever: BaseCondition = _Never()
+            forever: BaseCondition = NeverCondition()
             until = forever
-        elif until is None and rate_kmh_s is not None and relative_to is not None:
-            # The target is read when the action starts: arrival is measured
-            # against what was read.
-            reached: BaseCondition = _ReachedResolvedTarget(
-                entity_name, resolved, label=f"{label}_arrived"
-            )
-            until = reached
-        elif until is None and rate_kmh_s is not None and target_speed_kmh is not None:
-            arrived: BaseCondition = SpeedCondition(
-                entity_name=entity_name,
-                value=target_speed_kmh / _KMH_PER_MS,
-                rule=ComparisonRule.EQUAL_TO,
-                tolerance=ARRIVAL_TOLERANCE_KMH / _KMH_PER_MS,
-                label=f"{label}_arrived",
-            )
-            until = arrived
+        elif until is None and rate_kmh_s is not None:
+            if target_speed_kmh is None:
+                # Measured against the target read when the action fired.
+                reached: BaseCondition = _ReachedResolvedTarget(
+                    entity_name, resolved, label=f"{label}_arrived"
+                )
+                until = reached
+            else:
+                arrived: BaseCondition = SpeedCondition(
+                    entity_name=entity_name,
+                    value=target_speed_kmh / _KMH_PER_MS,
+                    rule=ComparisonRule.EQUAL_TO,
+                    tolerance=ARRIVAL_TOLERANCE_KMH / _KMH_PER_MS,
+                    label=f"{label}_arrived",
+                )
+                until = arrived
 
         super().__init__(
             label=label,
@@ -326,12 +326,14 @@ class SetSpeedAction(BaseAction):
         self._factor = factor if factor is not None else 1.0
         self._continuous = follows
         self._resolved = resolved
+        # A walker reference's speed, measured from where it moved.
+        self._velocities = WalkerVelocities()
 
     def reset(self) -> None:
-        """Back to standby (:meth:`BaseAction.reset`), forgetting the target
-        read from the reference: the next run reads its own."""
+        """Back to standby (:meth:`BaseAction.reset`), forgetting the walkers
+        measured: the next scenario run measures its own."""
         super().reset()
-        self._resolved.kmh = None
+        self._velocities.clear()
 
     # ------------------------------------------------------------------
     # BaseAction interface
@@ -357,8 +359,9 @@ class SetSpeedAction(BaseAction):
 
     def _target_kmh(self, world: "carla.World") -> Optional[float]:
         """The target this tick: the absolute one, or the one relative to the
-        reference -- read now when continuous, else the one read when the
-        action first ran.  ``None`` while the reference is not in the scene."""
+        reference -- read now when continuous, else the one read when this
+        run of the action fired.  ``None`` while the reference is not in the
+        scene, or is a walker not measured yet."""
         if self._relative_to is None:
             return self._target_speed_kmh
         if not self._continuous and self._resolved.kmh is not None:
@@ -366,15 +369,15 @@ class SetSpeedAction(BaseAction):
         reference = find_present_actor_by_role_name(world, self._relative_to)
         if reference is None:
             return None
-        target = max(0.0, _actor_speed_kmh(reference) * self._factor + self._delta_kmh)
+        read = self._velocities.velocity(reference, simulated_seconds(world))
+        if read is None:
+            return None
+        # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+        velocity: Vector3 = read
+        speed_kmh = velocity.magnitude() * _KMH_PER_MS
+        target = max(0.0, speed_kmh * self._factor + self._delta_kmh)
         if not self._continuous:
             self._resolved.kmh = target
-            logger.info(
-                "SetSpeedAction: '%s' targets %.1f km/h, relative to '%s'",
-                self._entity_name,
-                target,
-                self._relative_to,
-            )
         return target
 
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
@@ -383,6 +386,10 @@ class SetSpeedAction(BaseAction):
 
     def execute(self, world: "carla.World") -> None:
         """Command the target, or this tick's step towards it."""
+        if self._lifecycle is not ActionState.RUNNING:
+            # The trigger fired: a run of its own, which reads the reference
+            # anew (a repeating action fires again after it completed).
+            self._resolved.kmh = None
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
             fail_if_pedestrian(self._entity_name, "set_desired_speed")
@@ -407,9 +414,12 @@ class SetSpeedAction(BaseAction):
             entity.set_desired_speed(world, target_kmh)
             if not self._continuous:
                 logger.info(
-                    "SetSpeedAction: '%s' commanded to %.1f km/h",
+                    "SetSpeedAction: '%s' commanded to %.1f km/h%s",
                     self._entity_name,
                     target_kmh,
+                    ""
+                    if self._relative_to is None
+                    else f", relative to '{self._relative_to}'",
                 )
             return
 

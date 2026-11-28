@@ -1971,7 +1971,7 @@ def build_set_relative_speed_action(
         label=compiled.label,
         once=compiled.node.once,
         overrides=compiled.node.overrides,
-        relative_to=str(params["other"]),
+        relative_to=str(params["relative_to"]),
         delta_kmh=params["delta_kmh"],
         factor=params["factor"],
         continuous=params["continuous"],

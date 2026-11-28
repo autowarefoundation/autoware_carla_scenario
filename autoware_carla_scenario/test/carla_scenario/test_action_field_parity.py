@@ -67,7 +67,7 @@ NEEDED_PARAMS: dict[str, dict[str, Any]] = {
     "vehicle_parameters": {"speed_factor_mean": 1.0},
     "routing": {"goal_lanelet_id": 300},
     # The entity whose speed the target is relative to.
-    "set_relative_speed": {"other": "car"},
+    "set_relative_speed": {"relative_to": "car"},
     # A required lanelet: 0 is the empty field (#1021).
     "construction_zone": {"lanelet_id": 243},
     "urban_construction_zone": {"lanelet_id": 243},
