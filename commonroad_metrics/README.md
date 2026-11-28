@@ -64,6 +64,18 @@ the cosine of the lane's own heading, which is its speed along the lane only
 where the lane runs along +x. Distances, times and areas do not change with the
 turn.
 
+The ego's lane is the lanelet under it heading most its way, and CriMe's
+"ahead" is along that lanelet. When even that one runs against the ego
+(`cos(heading - yaw) < 0`: the ego overtaking through the oncoming lane, or
+driving the wrong way), a car coming at it head-on read as behind it -- TTC,
+HW and THW `inf`, ALongReq and BTN `0` -- and Reach read the ego as reversing.
+The worker reverses every lanelet of the frame then -- bounds, left and right,
+predecessors and successors, neighbours -- so the ego's lane runs its way and
+the frame reads as its mirror on a lane running the ego's way: with the ego
+at 15 m/s in the oncoming lane and a car 60 m ahead coming at 10 m/s, TTC
+2.22 s, ALongReq -10.29 m/s^2, BTN 0.89. A frame whose ego goes its lane's
+way is not changed.
+
 CriMe 0.4 reads the other road user's velocity and acceleration along the lane
 as their magnitude, dropping their sign: a braking lead reads as speeding up
 (TTC `inf`, ALongReq `0`) and a car coming the other way in the ego's lane as
@@ -208,10 +220,14 @@ interrupted evaluation stops at once rather than finishing its remaining
 frames. A framework killed outright (`SIGKILL`) closes the worker's input, and a
 worker exits at its end, so a worker must not ignore the end of its input.
 
-A road user is `id` (positive), `kind` (`car`, `truck`, `bus`, `motorcycle`,
+A road user is `id` (a positive integer, unique among the frame's road users;
+one of the `others` with the ego's id is the ego, and left out), `kind` (`car`, `truck`, `bus`, `motorcycle`,
 `bicycle`, `pedestrian`), `x`, `y`, `yaw`, `vx`, `vy`, `ax`, `ay`, `yaw_rate`,
 `length` and `width`, every number finite (a frame with one that is not
-fails its measures, above). A value is a number, `Infinity` (no conflict: TTC never
+fails its measures, above). An `id` that is not a positive integer (`2.0`,
+`0`, `true`) or two of the `others` sharing one is out of protocol:
+`{"ok": false, "error": "ValueError: road users share the id 2: ids must be unique"}`.
+A value is a number, `Infinity` (no conflict: TTC never
 comes), `-Infinity` (ALongReq when no braking avoids a contact within the
 horizon; BTN is `Infinity` then) or `null` (nothing to measure from: no other
 road user in the frame, above); a measure that failed is `null`
@@ -223,4 +239,12 @@ overrides of CommonRoad-Reach's configuration by section and key (`{"reachable_s
 section or key the configuration does not have -- `planning.size_grid` for
 `reachable_set.size_grid`, a misspelling -- is refused: `init` answers
 `{"ok": false, "error": "ValueError: reach_settings['planning']['size_grid']: ..."}`
-rather than every frame's Reach measures failing.
+rather than every frame's Reach measures failing. So is a key the worker sets
+itself for every reachable set, which an override would break or which would
+overwrite it: `planning.dt` (the settings' `dt`, the step of the road users'
+trajectories -- Reach stepping by another would run past their end, and they
+would drop out of its collision check), `planning.step_start` and
+`planning.steps_computation` (from `horizon_steps` and where each set
+starts), and what Reach derives from the frame (`planning.p_lon_initial`,
+`p_lat_initial`, `v_lon_initial`, `v_lat_initial`, `o_initial`, `route`,
+`reference_path`, `lanelet_network`, `list_ids_lanelets`, `CLCS`).

@@ -249,7 +249,9 @@ class CommonRoadSettings:
             section and key: a mapping of mappings
             (``{"reachable_set": {"size_grid": 0.3}}``), names strings and
             values JSON ones; ``None`` for none.  A section or key Reach does
-            not have is refused by a worker as it starts.
+            not have, or one the worker sets itself (``planning.dt``,
+            ``planning.step_start``, ``planning.steps_computation``, ...), is
+            refused by a worker as it starts.
         cache_dir: Where the converted maps are kept (a ``str`` is taken as
             a :class:`~pathlib.Path`); ``None`` for
             :func:`~.map.default_cache_dir`.
