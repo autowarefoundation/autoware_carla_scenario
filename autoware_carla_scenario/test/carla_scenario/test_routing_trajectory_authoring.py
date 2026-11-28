@@ -131,6 +131,12 @@ class TestVertexText:
             (3.0, 4.0, None),
         ]
 
+    def test_a_mapping_with_an_unknown_key_is_refused(self) -> None:
+        """#2608: ``z`` was dropped; ``time: null`` is still read as no time."""
+        with pytest.raises(ValueError, match=r"^vertex 2: .*not \['z'\]"):
+            parse_vertices([[0, 0], {"x": 1, "y": 2, "z": 5.0}])
+        assert parse_vertices([{"x": 1, "y": 2, "time": None}]) == [(1.0, 2.0, None)]
+
     def test_a_time_cell_is_refused_saying_how_to_write_it(self) -> None:
         """Times are waypoint conditions now; a row with one is pointed there."""
         for value in (
@@ -209,6 +215,46 @@ class TestFactories:
         )
         assert not authored_trajectory(
             "lanelets", lanelet_ids=[1], speed_kmh=0
+        ).is_timed
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ("fast", "must be a number, got 'fast'"),
+            (math.nan, "must be finite, got nan"),
+            (math.inf, "must be finite, got inf"),
+            (-30.0, "must not be negative, got -30"),
+            (True, "must be a number, got True"),
+        ],
+        ids=["text", "nan", "inf", "negative", "bool"],
+    )
+    def test_a_lanelet_path_speed_that_is_no_speed_is_refused_by_its_name(
+        self, monkeypatch: pytest.MonkeyPatch, value: Any, message: str
+    ) -> None:
+        """#2608: not a bare ``TypeError``, nor an untimed path."""
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.transform.lanelet_length",
+            lambda lanelet_id: 10.0,
+        )
+        with pytest.raises(ValueError, match=rf"^route: speed_kmh {message}"):
+            authored_route("lanelets", lanelet_ids=[1], speed_kmh=value)
+
+    def test_a_lanelet_path_speed_given_as_text_is_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """As the card's other fields are (#2608): '36' is 10 m/s."""
+        monkeypatch.setattr(
+            "autoware_carla_scenario.coordinate.transform.lanelet_length",
+            lambda lanelet_id: 10.0,
+        )
+        trajectory = authored_trajectory(
+            "lanelets",
+            lanelet_ids=[1],
+            speed_kmh="36",  # type: ignore[arg-type]
+        )
+        assert trajectory.vertices[-1].time == pytest.approx(1.0)
+        assert not authored_trajectory(
+            "lanelets", lanelet_ids=[1], speed_kmh=None
         ).is_timed
 
     @pytest.mark.parametrize(
@@ -536,6 +582,11 @@ class TestRelativeVertexText:
             (20.0, 0.5, 0, None),
             (30.0, 0.0, -1, None),
         ]
+
+    def test_a_mapping_with_an_unknown_key_is_refused(self) -> None:
+        """#2608: ``dlane`` was dropped, leaving the vertex on its own lane."""
+        with pytest.raises(ValueError, match=r"^vertex 1: .*not \['dlane'\]"):
+            parse_relative_vertices([{"ds": 10, "dlane": 1}])
 
     def test_rows_and_mappings_are_read_too(self) -> None:
         assert parse_relative_vertices([[1, 2, 1], {"ds": -3, "d_lane": -2}]) == [

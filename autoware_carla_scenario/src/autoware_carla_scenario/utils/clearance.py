@@ -465,6 +465,7 @@ def _rectangles_meet(
 ) -> bool:
     """Whether two rectangles ``(x, y, heading rad, half length, half width)``
     overlap (separating axes)."""
+    # Not polygon.boxes_meet: exact, no 1e-9 edge tolerance; 4 projections.
     ax, ay, ah, al, aw = a
     bx, by, bh, bl, bw = b
     dx, dy = bx - ax, by - ay
