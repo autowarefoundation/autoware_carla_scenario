@@ -85,7 +85,8 @@ See [ODD](odd.md).
 All conditions inherit from `BaseCondition` and return a
 `ScenarioResult` from `check(world, elapsed)` once triggered (or
 `None` when not yet triggered). At the end of a run the runner calls
-`close()` on every pass and fail condition and every action's trigger: a
+`close()` on every pass and fail condition, every condition a cover item is
+sampled on (`register_cover(..., event=condition)`) and every action's trigger: a
 condition that holds something in the simulator -- `CollisionCondition`'s
 listening sensor -- stops and destroys it there, through its own handle.
 `close()` does nothing by default, and composite conditions close their

@@ -732,6 +732,7 @@ def test_only_an_importance_sampled_run_has_an_outcome_weight() -> None:
 
         outcome_weight = BaseScenario.outcome_weight
         importance_sampling_weight = BaseScenario.importance_sampling_weight
+        registered_actions = BaseScenario.registered_actions
 
         def __init__(self) -> None:
             self._init_actions: list[Any] = []

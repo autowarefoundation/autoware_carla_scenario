@@ -342,3 +342,40 @@ class TestScenarioClosesItsConditions:
         scenario.register_fail_condition(_Closable("good", closed))
         scenario.close_conditions()
         assert closed == ["good"]
+
+
+class _AlwaysEqual(_Closable):
+    """Equal to every condition: closing goes by identity, not equality."""
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    __hash__ = _Closable.__hash__
+
+
+class TestCoverEventsAreClosed:
+    """A condition a cover item is sampled on is closed with the others, each
+    distinct object once (#2611)."""
+
+    def test_each_distinct_event_is_closed_once(self) -> None:
+        closed: list[str] = []
+        scenario = _scenario()
+        judged = _Closable("judged", closed)
+        event = _AlwaysEqual("event", closed)
+        other = _AlwaysEqual("other", closed)
+        scenario.register_fail_condition(judged)
+        scenario.register_cover("a", lambda w: 1, values=[1], event=event)
+        scenario.register_cover("b", lambda w: 1, values=[1], event=event)
+        scenario.register_cover("c", lambda w: 1, values=[1], event=judged)
+        scenario.register_cover("d", lambda w: 1, values=[1], event=other)
+        scenario.register_cover("e", lambda w: 1, values=[1])
+        scenario.close_conditions()
+        assert closed == ["judged", "event", "other"]
+
+    def test_a_collision_event_releases_its_sensor(self) -> None:
+        calls: list[str] = []
+        collision, _sensor, _world = _attached(calls)
+        scenario = _scenario()
+        scenario.register_cover("hit", lambda w: 1, values=[1], event=collision)
+        scenario.close_conditions()
+        assert calls == ["listen", "stop", "destroy"]

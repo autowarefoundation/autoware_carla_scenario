@@ -821,9 +821,35 @@ class BaseScenario(ABC):
         # Concatenated rather than unpacked into a tuple, which Codon cannot.
         return self._init_actions + self._pre_tick_actions + self._post_tick_actions
 
+    def _cover_events(self) -> List[BaseCondition]:
+        """The conditions the cover items are sampled on (``register_cover(...,
+        event=condition)``) that are not also pass or fail conditions, each
+        once: the same object may be the event of several items.
+
+        Compared by identity, not equality.  The coverage collector checks
+        them every tick but neither closes nor resets them, so
+        :meth:`close_conditions` and :meth:`_reset_registrations` do.
+        """
+        events: List[BaseCondition] = []
+        # The pass and fail conditions are closed and reset already.
+        seen: List[BaseCondition] = self._pass_conditions + self._fail_conditions
+        for item in self._cover_items:
+            event = item.event
+            if isinstance(event, BaseCondition):
+                taken = False
+                for other in seen:
+                    if other is event:
+                        taken = True
+                        break
+                if not taken:
+                    events.append(event)
+                    seen.append(event)
+        return events
+
     def close_conditions(self) -> None:
-        """Close every condition of the run: the pass and fail conditions and
-        the actions' triggers (:meth:`BaseCondition.close`).
+        """Close every condition of the run: the pass and fail conditions, the
+        conditions cover items are sampled on and the actions' triggers
+        (:meth:`BaseCondition.close`).
 
         The runner calls it at the run's end, while the world is still the
         run's, so that a sensor a condition started listening is stopped and
@@ -831,7 +857,9 @@ class BaseScenario(ABC):
         condition whose close raises is logged, and the others are still
         closed.
         """
-        conditions: List[BaseCondition] = self._pass_conditions + self._fail_conditions
+        conditions: List[BaseCondition] = (
+            self._pass_conditions + self._fail_conditions + self._cover_events()
+        )
         for condition in conditions:
             try:
                 condition.close()
@@ -978,10 +1006,9 @@ class BaseScenario(ABC):
         self._restore_registrations()
         for condition in self._pass_conditions + self._fail_conditions:
             condition.reset()
-        # Concatenated rather than unpacked into a tuple, which Codon cannot.
-        for action in (
-            self._init_actions + self._pre_tick_actions + self._post_tick_actions
-        ):
+        for event in self._cover_events():
+            event.reset()
+        for action in self.registered_actions():
             action.reset()
 
     def _restore_registrations(self) -> None:
@@ -1043,9 +1070,7 @@ class BaseScenario(ABC):
         samples what happens.  A batch of runs weighted by it estimates the
         naturalistic rate of what it counts."""
         weight = 1.0
-        for action in (
-            self._init_actions + self._pre_tick_actions + self._post_tick_actions
-        ):
+        for action in self.registered_actions():
             weight *= action.importance_sampling_weight
         return weight
 
@@ -1057,9 +1082,7 @@ class BaseScenario(ABC):
         samples what happens importance-sampled
         (:attr:`BaseAction.importance_sampled`), else ``None`` -- a run that
         samples nothing is no weighted run, though its weight is 1."""
-        for action in (
-            self._init_actions + self._pre_tick_actions + self._post_tick_actions
-        ):
+        for action in self.registered_actions():
             if action.importance_sampled:
                 return self.importance_sampling_weight
         return None
@@ -1320,15 +1343,15 @@ class BaseScenario(ABC):
 
         This method is called by :class:`ScenarioRunner` **after** the warm-up
         ticks complete so that vehicles remain stationary during stabilisation.
+        It applies what :meth:`initial_speeds_mps` returns for *ego_actor*.
 
         Args:
             ego_actor: The ego vehicle CARLA actor.
         """
 
-        def _apply(actor: "carla.Actor", speed_kmh: float) -> None:
-            if speed_kmh <= 0.0:
+        def _apply(actor: "carla.Actor", speed_ms: float) -> None:
+            if speed_ms <= 0.0:
                 return
-            speed_ms = speed_kmh / 3.6
             fwd = actor.get_transform().get_forward_vector()
             # On a slope the forward vector is pitched: scale its horizontal
             # direction, not the vector itself, so the ground speed is the
@@ -1343,20 +1366,20 @@ class BaseScenario(ABC):
                 carla.Vector3D(x=fwd.x * scale, y=fwd.y * scale, z=0.0)
             )
 
+        # What initial_speeds_mps() says, each vehicle through the handle the
+        # scenario holds for it; the others -- the vehicles a spawn card
+        # brought in before the clock started, held still since -- looked up
+        # in the world.
+        speeds = self.initial_speeds_mps(ego_actor)
         for entity in self._entities:
-            if entity.actor is not None:
-                _apply(entity.actor, entity.initial_speed_kmh)
-
-        if ego_actor is not None:
-            _apply(ego_actor, self.ego_config.initial_speed_kmh)
-            # The vehicles a spawn card brought in before the clock started,
-            # held still since: at the speed they entered at.
-            from .entity.vehicle_entity import entry_speeds  # noqa: PLC0415
-
-            held = entry_speeds()
-            if len(held) > 0:
-                world = ego_actor.get_world()
-                for actor_id, speed in held.items():
-                    actor = world.get_actor(actor_id)
-                    if actor is not None:
-                        _apply(actor, speed * 3.6)
+            actor = entity.actor
+            if actor is not None and actor.id in speeds:
+                _apply(actor, speeds.pop(actor.id))
+        if ego_actor is not None and ego_actor.id in speeds:
+            _apply(ego_actor, speeds.pop(ego_actor.id))
+        if len(speeds) > 0:
+            world = ego_actor.get_world() if ego_actor is not None else self.world
+            for actor_id, speed in speeds.items():
+                found = world.get_actor(actor_id)
+                if found is not None:
+                    _apply(found, speed)

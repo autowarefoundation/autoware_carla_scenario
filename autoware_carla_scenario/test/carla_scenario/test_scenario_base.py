@@ -750,7 +750,8 @@ class TestEntityRegistration:
 class _PitchedActor:
     """An actor whose forward vector is *forward*, recording its velocity."""
 
-    def __init__(self, forward: carla.Vector3D) -> None:
+    def __init__(self, forward: carla.Vector3D, actor_id: int = 1) -> None:
+        self.id = actor_id
         self._forward = forward
         self.velocity: Optional[carla.Vector3D] = None
 
@@ -812,6 +813,46 @@ class TestSetInitialSpeed:
         assert velocity.x == pytest.approx(0.0)
         assert velocity.y == pytest.approx(10.0)
         assert velocity.z == 0.0
+
+    def test_it_applies_what_initial_speeds_mps_says(self) -> None:
+        """The ego's speed and a spawn card's entry speed, each the one
+        initial_speeds_mps() reports -- with an ego actor or without (#2611)."""
+        from autoware_carla_scenario.entity.vehicle_entity import hold_entry_speed
+
+        config = EgoConfig(
+            spawn_location=SpawnTransform(carla.Transform()),
+            vehicle_type="vehicle.mini.cooper",
+            initial_speed_kmh=36.0,
+        )
+        level = carla.Vector3D(x=1.0, y=0.0, z=0.0)
+        entered = _PitchedActor(level)
+        world = MagicMock()
+        world.get_actor.side_effect = lambda actor_id: (
+            entered if actor_id == 41 else None
+        )
+        hold_entry_speed(41, 5.0)
+        hold_entry_speed(42, 7.0)  # gone from the world: nothing to apply
+        ego = _PitchedActor(level, actor_id=7)
+        ego.get_world = lambda: world  # type: ignore[method-assign]
+        scenario = _SimpleScenario(config)
+        client = MagicMock()
+        client.get_world.return_value = world
+        scenario.set_client(client)
+
+        for ego_actor in (ego, None):
+            entered.velocity = None
+            ego.velocity = None
+            speeds = scenario.initial_speeds_mps(ego_actor)  # type: ignore[arg-type]
+            scenario.set_initial_speed(ego_actor)  # type: ignore[arg-type]
+
+            assert entered.velocity is not None
+            assert entered.velocity.x == pytest.approx(speeds[41]) == 5.0
+            if ego_actor is None:
+                assert 7 not in speeds
+                assert ego.velocity is None
+            else:
+                assert ego.velocity is not None
+                assert ego.velocity.x == pytest.approx(speeds[7]) == 10.0
 
     def test_a_vertical_forward_vector_sets_no_horizontal_speed(self) -> None:
         velocity = self._velocity(carla.Vector3D(x=0.0, y=0.0, z=1.0), 36.0)
