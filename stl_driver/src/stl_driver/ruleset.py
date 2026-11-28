@@ -63,6 +63,19 @@ def validate_rules(rules: tuple[Rule, ...], n_steps: int) -> None:
     for rule in rules:
         for interval in _intervals(rule.formula):
             assert_interval_fits(interval, n_steps, what=f"rule {rule.name!r}")
+            if rule.hard and math.isfinite(float(interval[1])):
+                # The emergency-stop check judges hard rules on the opening
+                # rows alone (`RuleSet.imminent_hard_violation`), where a
+                # bounded window runs off the end and is padded with -1e9:
+                # the plan reads as catastrophically violated and the
+                # fallback brakes on every step.
+                raise ValueError(
+                    f"rule {rule.name!r} is hard and has the bounded interval "
+                    f"{list(interval)}; hard rules must be unbounded, because the "
+                    "emergency-stop check evaluates them on a truncated signal, "
+                    "where a bounded window reads as -1e9. Make it soft, or drop "
+                    "the interval"
+                )
         if not math.isfinite(rule.weight) or rule.weight <= 0.0:
             raise ValueError(f"rule {rule.name!r} has non-positive weight {rule.weight}")
         # An infinite margin is allowed on purpose: it leaves the rule
@@ -269,7 +282,7 @@ class RuleSet:
         Evaluating on a truncated signal works because every hard rule is an
         unbounded ``Always``; a rule with a bounded interval would be padded
         past the end and read as catastrophically violated, so
-        :func:`build_rules` keeps the hard ones unbounded.
+        :func:`validate_rules` refuses a hard rule with one.
         """
         window = signal[: max(2, min(n_steps, signal.shape[0]))]
         for name in self.hard_rules:

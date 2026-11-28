@@ -275,7 +275,10 @@ it, the policy deadlocks at the first red light it stops for:
 `stl_driver` also defends itself against the first independently: a stop line
 inside the margin holds the vehicle where it stands rather than behind it, so
 the rule stays satisfiable (`docs/RULES.md`, `stop_on_red`), and CARLA's
-finite-differenced acceleration is confined to the physical envelope before it
-anchors the plan, and moves no faster than the jerk limit over the time since
-the previous step (whatever `driver.policy_timestep_s` is; at most 1 s, and one
-0.1 s horizon step when there is no previous step to measure from).
+finite-differenced acceleration is confined to the envelope a plan may command
+(`Limits.plan_accel_envelope`, inside the comfort bounds) before it anchors the
+plan, and moves from the previous step's anchor no faster than the plan's jerk
+limit over the time since that step (whatever `driver.policy_timestep_s` is; at
+most 1 s, and one 0.1 s horizon step when either step carries no time or the
+time does not move forward). A session's first step has no previous anchor, so
+only the envelope applies to it.

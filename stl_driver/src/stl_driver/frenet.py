@@ -229,8 +229,20 @@ def build_route_table(
     # Differentiating the heading once, here, on the uniform grid, gives a
     # curvature that is smooth in station and can be interpolated. It is
     # cheaper too -- two second differences over 2-D positions disappear.
-    heading = np.unwrap(np.arctan2(tangent[:, 1], tangent[:, 0]))
-    curvature = np.gradient(heading) / ds
+    #
+    # Second order at the two ends as well as inside (where it is the same
+    # central difference). The first-order one-sided difference there, taken
+    # twice, read a constant 20 m bend (0.05 /m) as 0.025 at the table's
+    # first point -- the ego's -- and 0.0375 at the next, under-reporting
+    # lateral acceleration over the opening metres of every plan by up to
+    # half. Only for the curvature: the tangent kept above points along the
+    # end segments, which is the line the table is extrapolated along past
+    # its ends (`RouteTable.frenet_to_xy_many`, `project_to_frenet`). Second
+    # order needs three points; a two-point table has no bend to get wrong.
+    edge_order = 2 if len(xy) >= 3 else 1
+    ends = np.gradient(xy, axis=0, edge_order=edge_order)
+    heading = np.unwrap(np.arctan2(ends[:, 1], ends[:, 0]))
+    curvature = np.gradient(heading, edge_order=edge_order) / ds
 
     return RouteTable(
         ds=float(ds),

@@ -10,6 +10,8 @@ suite would notice.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 from carla_driver_interface.driver import DriveContext, SessionState
@@ -448,6 +450,8 @@ def test_an_emergency_stop_starts_at_the_ego(policy, speed_mps):
         )
     )
     assert result.debug_scalars["stl_fallback"] == 1.0
+    # And which hard rule summoned it.
+    assert result.debug_scalars["stl_fallback_rule_collision_free"] == 1.0
     positions = result.trajectory_in_rig.positions
     dt = CONFIG.horizon.step_s
     first_step = speed_mps * dt - 0.5 * CONFIG.limits.emergency_decel_mps2 * dt**2
@@ -745,3 +749,18 @@ def test_actors_reach_the_policy(policy):
     result = policy.drive(context(route=straight_route(), renderer_data=data))
     assert result.debug_scalars["n_actor_discs"] >= 2.0
     assert result.debug_scalars["min_clearance_m"] < 50.0
+
+
+def test_a_failed_warm_up_is_logged_not_swallowed(caplog):
+    """It must not stop a session starting, but it used to vanish without a
+    trace -- and whatever broke it breaks the first step too."""
+    driver = EgoPolicy()
+
+    def broken(_inputs):
+        raise RuntimeError("warm-up broke (simulated)")
+
+    driver.optimizer.prepare = broken  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING, logger="stl_driver.policy"):
+        driver.warm_up()
+    assert "warm-up failed" in caplog.text
+    assert "warm-up broke (simulated)" in caplog.text

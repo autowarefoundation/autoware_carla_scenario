@@ -15,6 +15,7 @@ in, which is the point of writing the specification down in the first place.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, replace
@@ -42,9 +43,11 @@ from stl_driver.perception import (
 )
 from stl_driver.rollout import RolloutInputs, plan_xy
 from stl_driver.rules import build_rules
-from stl_driver.ruleset import RuleSet
+from stl_driver.ruleset import RuleSet, validate_rules
 
 __all__ = ["EgoPolicy", "warmed_up_policy"]
+
+logger = logging.getLogger(__name__)
 
 #: The longest interval the acceleration anchor is rate-limited over
 #: (`EgoPolicy._plausible_acceleration`). A longer gap between two steps -- a
@@ -118,6 +121,10 @@ class EgoPolicy(BaseDriver):
         torch.set_num_threads(self.config.optimizer.torch_threads)
         # A caller can supply an entirely different specification without
         # editing anything here; see `stl_driver.rules` for the shape of one.
+        # `build_rules` validates its own; one supplied here is checked
+        # against this config's horizon the same way.
+        if rules is not None:
+            validate_rules(rules.rules, self.config.horizon.n_steps)
         self.rules = rules or RuleSet(build_rules(self.config))
         self.optimizer = RobustnessOptimizer(self.rules, self.config)
         self.device = self.optimizer.device
@@ -212,9 +219,10 @@ class EgoPolicy(BaseDriver):
             )
             self.optimizer.prepare(inputs)
         except Exception:  # noqa: BLE001
-            # A failed warm-up costs a slower first step and nothing else; it
-            # must never stop a session from starting.
-            pass
+            # A failed warm-up must never stop a session from starting, but it
+            # is logged: whatever broke it is likely to break the first step
+            # too, and the traceback is worth having before that.
+            logger.warning("warm-up failed; the first step pays for it", exc_info=True)
 
     # -- the step ----------------------------------------------------------
 
@@ -544,6 +552,11 @@ class EgoPolicy(BaseDriver):
         }
         for name, value in solution.per_rule.items():
             scalars[f"stl_rule_{name}"] = value
+        if solution.imminent_rule is not None:
+            # Which hard rule summoned the emergency plan: the per-rule values
+            # above cover the whole horizon, and more than one hard rule can be
+            # negative there.
+            scalars[f"stl_fallback_rule_{solution.imminent_rule}"] = 1.0
 
         with torch.no_grad():
             from stl_driver.signals import Col

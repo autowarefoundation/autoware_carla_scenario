@@ -273,3 +273,18 @@ def test_projection_round_trips_beyond_either_end(past_m):
     recovered_s, recovered_d = project_to_frenet(table, points)
     assert np.allclose(recovered_s, stations, atol=1e-6)
     assert np.allclose(recovered_d, offsets, atol=1e-6)
+
+
+def test_curvature_is_right_at_both_ends_of_the_table():
+    """A one-sided first-order difference at the ends, taken twice, read a
+    constant 20 m bend (0.05 /m) as 0.025 at the table's first point -- the
+    ego's -- and at its last."""
+    radius = 20.0
+    # Densely sampled, so the published polyline's own chords are not what
+    # is measured; the table ends inside the bend.
+    angles = np.linspace(0.0, 4.0, 400)
+    route = np.stack(
+        [radius * np.sin(angles), radius * (1.0 - np.cos(angles)), np.zeros_like(angles)], axis=1
+    )
+    table = table_for(route, length_m=60.0)
+    assert np.allclose(table.curvature, 1.0 / radius, rtol=2e-3)

@@ -168,7 +168,7 @@ hardest allowed stop violated the rule: closed loop, a light turning red with
 This replaced `min(margin, 0.5 · distance)` of the live distance, which within
 two margins of the line put the stop station halfway to it, so it slid
 forward as the vehicle crept: a red light 30 m ahead stopped the rear axle at
-28.1 m rather than 26 m.  Now it stops at 25.3 m -- short of 26 by less than
+28.1 m rather than 26 m.  Now it stops at 25.5 m -- short of 26 by less than
 `liveness_stop_gap_m`, the room `makes_progress` lets a stopped vehicle leave
 (#1147).
 
@@ -338,10 +338,11 @@ something within two metres, and only 15 were genuine.
 
 A red light is deliberately *not* in the gate.  What the rule demands is
 capped by the room the stop line leaves -- the distance to the stop station
-less the stopping distance from the current speed, floored at
-`-liveness_stop_gap_m` -- so approaching a red light satisfies the rule
-rather than being excused from it, and a rule that is satisfied still has a
-gradient towards the line.
+less the stopping distance from the current speed and `liveness_stop_gap_m`
+(1 m), floored at `-liveness_stop_gap_m` -- so approaching a red light
+satisfies the rule rather than being excused from it, a rule that is
+satisfied still has a gradient towards the line, and a vehicle at rest within
+`liveness_stop_gap_m` of the stop station satisfies it.
 
 `makes_progress` wraps that condition in `Always`, so it reads "if nothing
 obstructs us at any point in the horizon".  Asking only about the present
