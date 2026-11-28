@@ -907,6 +907,12 @@ whatever the control showed instead:
   and the browser posts nothing for it, so the field stays unset and the
   validator's "is required" is what the author sees. A stored value that is
   not one of the options is shown as such, and kept.
+- A `text` field is read through `str()` by its builder, a `builds` helper's
+  included, so a hand-edited number (`names: 12`) is the text it was written
+  as; a list, a mapping or a YAML boolean is a validation error. A
+  `lanelet_list` field refuses an id of 0 or below, as a single `lanelet`
+  field does, and `equals.value` takes what the sweeper's `EqualsConstraint`
+  takes: a lanelet id, exactly `any`, or a `${...}` reference.
 
 ### A number's bounds
 

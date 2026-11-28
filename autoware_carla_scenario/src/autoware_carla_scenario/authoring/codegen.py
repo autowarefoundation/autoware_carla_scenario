@@ -461,6 +461,30 @@ def _field_expression(
     return source, None
 
 
+def _built_field_expression(field: FieldSpec) -> str:
+    """Return the expression passing *field* to a ``builds`` target.
+
+    A text field is settled as :func:`_field_expression` settles one fed to
+    the constructor directly: ``coerce_params`` leaves text as the document
+    wrote it, so a number written there reaches the helper as a number, and
+    a helper that parses the text would raise on it at setup (#2630).
+
+    A field whose default is ``None`` may arrive unset, and has to stay
+    ``None`` rather than become the string ``"None"``.  An ``entity`` or
+    ``action`` one is passed as it is: the validator has matched it against
+    the document's own ids, so it is already a string or unset, and the
+    conditional ``str()`` would be wider than the formatter leaves one line.
+    """
+    source = f'params["{field.name}"]'
+    if field.kind not in TEXT_KINDS:
+        return source
+    if field.default is not None:
+        return f"str({source})"
+    if field.kind in ("entity", "action"):
+        return source
+    return f"(str({source}) if {source} is not None else None)"
+
+
 def _optional(field: FieldSpec, annotation: Any) -> bool:
     """Whether *field* may be left unset and its parameter accepts ``None``.
 
@@ -700,7 +724,7 @@ def _render_builds(
                         f"{field_name!r}"
                     )
                 consumed.add(field_name)
-                pieces.append((kwarg, f'params["{field_name}"]'))
+                pieces.append((kwarg, _built_field_expression(fields[field_name])))
             for kwarg, source in part.sources:
                 if source not in COMPILED_SOURCES:
                     raise GenerationError(
