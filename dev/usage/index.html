@@ -4218,7 +4218,9 @@ neither starts the other.</p>
 composed config -- followed by the runner's own flags, which it reads before
 Hydra sees the command line: <code>--resume-from N</code> and <code>--resume-into DIR</code>
 (<a href="#resume-from-a-specific-scenario">Resume from a Specific Scenario</a>) and
-<code>--no-wait</code> (<a href="../slurm/">SLURM</a>). <code>--hydra-help</code> is Hydra's own help.</p>
+<code>--no-wait</code> (<a href="../slurm/">SLURM</a>). <code>--hydra-help</code> is Hydra's own help. With
+<code>--help</code>, <code>--cfg</code> or another flag that asks Hydra for no job, nothing runs,
+so these flags are not refused where a run would refuse them.</p>
 <h3 id="batch-execution-with-glob-patterns">Batch Execution with Glob Patterns<a class="headerlink" href="#batch-execution-with-glob-patterns" title="Permanent link">&para;</a></h3>
 <p>When the <code>scenario=</code> value contains glob metacharacters (<code>*</code>, <code>?</code>, <code>[</code>), all matching scenario configs are executed sequentially in a single CARLA session:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Run all intersection-passing variants</span>
@@ -4243,7 +4245,9 @@ them. A trailing <code>**</code> means everything below it and is read as <code>
 <code>scenario/</code>. A <code>**</code> inside a component (<code>lane_change/**left</code>) is refused with
 an error naming the pattern, and so is a pattern that could reach outside
 <code>scenario/</code>: one starting with <code>/</code> (<code>/lane_change/*</code>) or with a <code>..</code> component
-(<code>../*</code>). Only files are selected, and nothing hidden: a dangling symlink, or a
+(<code>../*</code>). A pattern that matches no config is refused too, naming the closest
+ones and listing every config, as <code>scenario-check</code> and <code>scenario-expand</code>
+refuse it; both exit 2 before anything runs. Only files are selected, and nothing hidden: a dangling symlink, or a
 path with a component below <code>scenario/</code> that starts with <code>.</code> (an editor's
 <code>.#default.yaml</code> lock link, a macOS <code>._default.yaml</code>, a <code>.git/</code> directory), is
 no scenario, even when the pattern names it (#2481). The pattern means the
@@ -4394,7 +4398,10 @@ at once, each on a CARLA of its own, with the same outputs (off unless
 selected; see <a href="../slurm/">Running a Batch on SLURM</a>). It runs the scenarios
 <code>scenario=</code> names (a glob, or one scenario): <code>launcher=slurm</code> without
 <code>scenario=</code> is refused, <code>Error: launcher=slurm runs a batch: ...</code> and exit 2,
-rather than running the default scenario here:</p>
+rather than running the default scenario here. One scenario runs under SLURM
+only with <code>launcher=slurm</code> on the command line: a single run whose scenario's
+config sets <code>launcher.type</code> is refused, exit 1, where it used to run here
+(<a href="../slurm/#configuration">Configuration</a>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="s1">'scenario=cut_in/*'</span><span class="w"> </span>+sweep.odd_sample.count<span class="o">=</span><span class="m">24</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nv">launcher</span><span class="o">=</span>slurm<span class="w"> </span>launcher.array_parallelism<span class="o">=</span><span class="m">2</span>
 </code></pre></div>
@@ -6943,11 +6950,11 @@ driver ending the run is <code>driver</code>, and a case that raised on every at
 </tr>
 <tr>
 <td>1</td>
-<td>One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints <code>Error: &lt;case&gt;: &lt;key&gt; ...</code> before anything is built)</td>
+<td>One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints <code>Error: &lt;case&gt;: &lt;key&gt; ...</code> before anything is built; so does a batch whose cases name two <code>canvas.config</code> files, and a single run whose scenario's config sets <code>launcher.type</code>, which only a glob batch reads)</td>
 </tr>
 <tr>
 <td>2</td>
-<td>Refused before anything ran: the scenario does not type-check, an extra it asks for (<code>rerun</code>, <code>t4</code>, the Rerun SDK <code>rerun.lidar</code> and <code>rerun.cameras</code> record with) is not installed, a <code>--resume-from</code> that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a <code>--resume-into</code> directory the batch cannot resume into, <code>launcher=slurm</code> without <code>scenario=</code>, a batch's command line that does not compose (an override of a key the config does not have: <code>Error: &lt;scenario&gt;: could not override ...</code>), a batch's <code>hydra.run.dir=</code> (<code>hydra.sweep.dir=</code>) that is not empty or is given with <code>--resume-into</code>, or (in a lanelet sweep) a config value its runs would refuse, such as a <code>t4scene.step_s</code> that is not a multiple of the tick or a <code>sweep.resume_from</code> that is not a whole number</td>
+<td>Refused before anything ran: the scenario does not type-check, an extra it asks for (<code>rerun</code>, <code>t4</code>, the Rerun SDK <code>rerun.lidar</code> and <code>rerun.cameras</code> record with) is not installed, carla_canvas is not installed or the <code>canvas.config</code> file is not there (or it is another file than the one the process already applied: a later job of Hydra's own sweeper), a <code>scenario=</code> glob that matches no config or is not a valid pattern, a <code>--no-wait</code> without <code>launcher=slurm</code>, a <code>--resume-from</code> that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a <code>--resume-into</code> directory the batch cannot resume into, <code>launcher=slurm</code> without <code>scenario=</code>, a batch's command line that does not compose (an override of a key the config does not have: <code>Error: &lt;scenario&gt;: could not override ...</code>), a batch's <code>hydra.run.dir=</code> (<code>hydra.sweep.dir=</code>) that is not empty or is given with <code>--resume-into</code>, or (in a lanelet sweep) a config value its runs would refuse, such as a <code>t4scene.step_s</code> that is not a multiple of the tick or a <code>sweep.resume_from</code> that is not a whole number</td>
 </tr>
 <tr>
 <td>130, 143</td>
@@ -7072,7 +7079,11 @@ measurements they read are the same:</p>
 <p>The run sets <code>CARLA_CANVAS_CONFIG</code> and <code>TYPESAFE_CARLA_SENSOR_PLUGIN</code> before
 any sensor listens, which is when typesafe_carla loads the plugin, once for
 the process: the cases of a batch name one file (a batch naming two is
-refused). The renderer is the configuration's: started by the plugin when
+refused, <code>Error: the cases name 2 canvas.config files ...</code>, exit 1), and a
+later job of Hydra's own sweeper in the same process (<code>--multirun
+canvas.config=a.yaml,null</code>) that names another file, or none, is refused
+(exit 2): run those as separate runs. A missing file or carla_canvas client
+is refused before the run, exit 2. The renderer is the configuration's: started by the plugin when
 nothing answers at <code>renderer.endpoint</code> and the file gives a
 <code>renderer.command</code>, or run by hand (<code>carla-canvas serve --config ...</code>).
 carla_canvas is not an extra of this package: it needs protobuf 7, and the
@@ -7944,7 +7955,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 03:19:20 UTC"><span class="timeago" datetime="2026-11-28T03:19:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 03:19:20 UTC">2026-11-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 28, 2026 03:28:47 UTC"><span class="timeago" datetime="2026-11-28T03:28:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 28, 2026 03:28:47 UTC">2026-11-28</span>
   </span>
 
     
