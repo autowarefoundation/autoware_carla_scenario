@@ -359,9 +359,10 @@ def _lock_text(
     return "\n".join([*header, *pins]) + "\n"
 
 
-def _distribution_names(top: str) -> list[str]:
-    """The distributions that provide the top-level package *top*."""
-    names = metadata.packages_distributions().get(top)
+def _distribution_names(top: str, provided: dict[str, list[str]]) -> list[str]:
+    """The distributions that provide the top-level package *top*, of
+    *provided* (``metadata.packages_distributions()``)."""
+    names = provided.get(top)
     if not names:
         return []
     return names
@@ -405,10 +406,15 @@ class RunEnvironment:
     implementation: str
     platform: str
     machine: str
+    #: ``metadata.packages_distributions()``, read on the first
+    #: scenario_package(): it scans every distribution, a large part of a
+    #: second, and a run asks several times (#2616).
+    _provided: Optional[dict[str, list[str]]]
 
     def __init__(self, packages: list[dict[str, Any]]) -> None:
         self.packages = packages
         self.by_name = {p["name"]: p for p in packages}
+        self._provided = None
         self.python, self.implementation, self.platform, self.machine = _interpreter()
 
     @property
@@ -434,7 +440,11 @@ class RunEnvironment:
         top = module.split(".")[0]
         if not top:
             return None
-        for name in _distribution_names(top):
+        provided = self._provided
+        if provided is None:
+            provided = dict(metadata.packages_distributions())
+            self._provided = provided
+        for name in _distribution_names(top, provided):
             found = self.by_name.get(_normalize(name))
             if found is not None:
                 return found

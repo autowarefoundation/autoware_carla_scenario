@@ -1059,3 +1059,27 @@ def test_an_editable_scenario_package_is_found_by_its_directory(
     assert env.scenario_package(_Elsewhere()) is None
     monkeypatch.setitem(sys.modules, "my_scenarios.scenario", SimpleNamespace())
     assert env.scenario_package(_Elsewhere()) is None
+
+
+def test_which_distributions_provide_a_package_is_read_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #2616: packages_distributions() scans every distribution; a run asks
+    # for the scenario's package several times (write(), a crash report's
+    # environment pin).
+    calls: list[int] = []
+
+    def provided() -> dict[str, list[str]]:
+        calls.append(1)
+        return {"town10_scenarios": ["town10_scenarios"]}
+
+    monkeypatch.setattr(environment.metadata, "packages_distributions", provided)
+    env = RunEnvironment(
+        [{"name": "town10-scenarios", "version": "0.3.0", "source": {"kind": "index"}}]
+    )
+    monkeypatch.setattr(_Scenario, "__module__", "town10_scenarios.cut_in")
+    for _ in range(3):
+        assert env.scenario_package(_Scenario()) is env.by_name["town10-scenarios"]
+    env.summary(_Scenario())
+    env.lock(_Scenario())
+    assert len(calls) == 1

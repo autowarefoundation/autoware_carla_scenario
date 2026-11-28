@@ -63,7 +63,7 @@ from .ports import (
 from .ports import _env_domain_id as _env_domain_id
 from .ports import _take_domain as _take_domain
 from .same_files import SameFiles
-from .settings import SlurmSettings
+from .settings import SlurmSettings, launcher_type
 from .start_lock import _NO_FLOCK_ERRNOS as _NO_FLOCK_ERRNOS
 from .start_lock import _LockId as _LockId
 from .start_lock import _ServerClock as _ServerClock
@@ -652,13 +652,19 @@ def _batch_configs(
     return found
 
 
-def repro_overrides(case: dict[str, Any]) -> list[str]:
+def repro_overrides(case: dict[str, Any], cfg: Any = None) -> list[str]:
     """What ``repro.sh`` of a crash report of *case* runs ``scenario`` with:
     its scenario and overrides, without the batch's launcher (``launcher=``,
     ``launcher.*``), so that it runs again here, as a single run (the
-    checked crash_report_settings.repro_overrides(), #2386)."""
+    checked crash_report_settings.repro_overrides(), #2386), and with
+    ``launcher=local`` when the case's composed config *cfg* selects
+    another launcher, which its scenario's config may (#2616)."""
+    try:
+        launcher = launcher_type(cfg)
+    except ValueError:
+        launcher = "local"  # refused before any case runs
     return settings_repro_overrides(
-        f"{case['scenario']}", [str(o) for o in case["overrides"]]
+        f"{case['scenario']}", [str(o) for o in case["overrides"]], launcher
     )
 
 
@@ -865,7 +871,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 # A crash report of the case runs it again with `scenario`.
                 with crash_report.run_context(
                     batch_dir,
-                    overrides=repro_overrides(case),
+                    overrides=repro_overrides(case, cfg),
                     config_yaml=run.config_yaml(cfg),
                 ):
                     (result,) = queue.run_all(release=True, continue_on_error=True)

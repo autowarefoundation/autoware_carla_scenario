@@ -103,6 +103,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.modules import ModulesIntegration
 from sentry_sdk.transport import HttpTransport, Transport
 
+from .atomic_file import write_bytes_atomically
 from .config_flags import FALSE_TEXT
 
 # The settings, their environment variables and parsers, the size cut and a
@@ -512,6 +513,10 @@ class _NativeReport:
 
     directory: Path
     log: IO[str]
+    #: Whether arming it made the directory that holds it: only then is that
+    #: removed with it, never one the user named
+    #: (:data:`CRASH_REPORT_DIR_ENV`) nor one another process made (#2616).
+    made_parent: bool = False
     pid: int = field(default_factory=os.getpid)
 
 
@@ -593,14 +598,6 @@ class _Reporter:
                 else {}
             ),
         }
-
-    def repro_script(self) -> bytes:
-        """``repro.sh``: credentials redacted, as in ``context.json``, and
-        only the user's environment exported (:func:`repro_environment`)."""
-        context = self.context_dict()
-        return _repro_script_of(
-            context, repro_environment(context.get("environment") or {})
-        )
 
     def context_files(self) -> dict[str, bytes]:
         """The files of a report that say how to run it again.
@@ -694,6 +691,7 @@ class _Reporter:
         directory = (
             self.context.report_dir / f"native-{_timestamp()}-{host}-{os.getpid()}"
         )
+        made_parent = not directory.parent.exists()
         try:
             directory.mkdir(parents=True, exist_ok=True)
             self._write_native_files(directory)
@@ -703,7 +701,7 @@ class _Reporter:
             faulthandler.enable(all_threads=True)
             return
         faulthandler.enable(file=log, all_threads=True)
-        self.native = _NativeReport(directory, log)
+        self.native = _NativeReport(directory, log, made_parent)
 
     def refresh_native(self) -> None:
         """Write the files of the native-crash report prepared for this
@@ -724,8 +722,10 @@ class _Reporter:
         for name in ("config.yaml", "repro.sh"):
             if name not in files:
                 (directory / name).unlink(missing_ok=True)
+        # In one rename each: a fatal signal while one is rewritten (each
+        # case of a batch) leaves the old file or the new one, whole (#2616).
         for name, data in files.items():
-            _write(directory / name, data)
+            _write(directory / name, data, atomic=True)
 
     def disarm_native(self) -> None:
         """Remove the report :meth:`arm_native` prepared, unless a fatal
@@ -746,7 +746,8 @@ class _Reporter:
             if log_path.exists() and log_path.stat().st_size > 0:
                 return
             shutil.rmtree(native.directory, ignore_errors=True)
-            native.directory.parent.rmdir()  # crash_reports/, when empty
+            if native.made_parent:
+                native.directory.parent.rmdir()  # crash_reports/, when empty
         except OSError:
             pass
 
@@ -768,10 +769,18 @@ def _locals_option(include: bool) -> dict[str, Any]:
     takes ``data_collection={"stack_frame_variables": ...}`` instead.  3.x
     also collects user identity by default, which 2.x leaves off
     (``send_default_pii``): it is turned off here, as before.
+
+    A local whose name looks like a secret (``password``, ``token``,
+    ``api_key``, ...) is ``[Filtered]`` either way (#2616).  With
+    ``include_local_variables`` the SDK's default ``EventScrubber`` filters
+    it.  Given ``data_collection`` (2.70 and later take it), the SDK
+    installs no scrubber, and ``stack_frame_variables: True`` keeps every
+    local as it is: its ``denylist`` mode filters them.
     """
     if "data_collection" in inspect.signature(ClientConstructor.__init__).parameters:
+        variables: Any = {"mode": "denylist"} if include else False
         return {
-            "data_collection": {"stack_frame_variables": include, "user_info": False}
+            "data_collection": {"stack_frame_variables": variables, "user_info": False}
         }
     return {"include_local_variables": include}
 
@@ -1074,9 +1083,12 @@ def capture(exc: BaseException, *, message: str | None = None) -> Path | None:
     return reporter.written.get(event_id)
 
 
-def _write(path: Path, data: str | bytes) -> None:
+def _write(path: Path, data: str | bytes, *, atomic: bool = False) -> None:
     if isinstance(data, str):
         data = data.encode("utf-8", "replace")
-    path.write_bytes(data)
+    if atomic:
+        write_bytes_atomically(path, data)
+    else:
+        path.write_bytes(data)
     if path.name.endswith(".sh"):
         path.chmod(0o755)

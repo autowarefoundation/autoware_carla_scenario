@@ -460,8 +460,21 @@ def test_a_slurm_task_that_raises_leaves_a_report_in_the_batch(
     )
 
 
+@pytest.mark.parametrize(
+    ("launcher", "repro"),
+    [
+        (None, 'exec scenario scenario=cut_in seed=4 "$@"'),
+        # #2616: the composed config selects SLURM, which a single run
+        # refuses (a scenario's config may set it): run here.
+        ("slurm", 'exec scenario scenario=cut_in seed=4 launcher=local "$@"'),
+    ],
+)
 def test_a_slurm_case_s_failed_attempt_leaves_a_report_of_the_case(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_env: Any
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker_env: Any,
+    launcher: str | None,
+    repro: str,
 ) -> None:
     from types import SimpleNamespace
 
@@ -496,6 +509,8 @@ def test_a_slurm_case_s_failed_attempt_leaves_a_report_of_the_case(
             return [0]
 
     cfg = OmegaConf.create({"seed": 4, "map": {}})
+    if launcher is not None:
+        cfg.launcher = {"type": launcher}
     monkeypatch.setattr(worker_env, "acquire_slot", lambda *_a, **_k: _slot())
     monkeypatch.setattr(worker_env, "worker_overrides", lambda *_a: {})
     monkeypatch.setattr(worker_env, "_check_same_config", lambda *_a: None)
@@ -526,9 +541,7 @@ def test_a_slurm_case_s_failed_attempt_leaves_a_report_of_the_case(
     assert "the CARLA client went away" in (report / "traceback.txt").read_text()
     assert "seed: 4" in (report / "config.yaml").read_text()
     # The case alone, here, without the batch's launcher.
-    assert (report / "repro.sh").read_text().splitlines()[-1] == (
-        'exec scenario scenario=cut_in seed=4 "$@"'
-    )
+    assert (report / "repro.sh").read_text().splitlines()[-1] == repro
 
 
 # -- settings -----------------------------------------------------------------
@@ -581,6 +594,9 @@ def test_the_settings_read_from_the_environment() -> None:
         ("SCENARIO_CRASH_REPORT_ITEMS", "locals,secrets"),
         ("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "a lot"),
         ("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "1 parsec"),
+        # #2616: under a byte is not "no limit", which only 0 is.
+        ("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "0.5"),
+        ("SCENARIO_CRASH_REPORT_MAX_FILE_SIZE", "0.0001KB"),
         ("SCENARIO_CRASH_REPORT_MAX_REPORTS", "-1"),
         ("SCENARIO_CRASH_REPORT_LOG_LINES", "0"),
     ],
@@ -759,9 +775,12 @@ def test_crash_report_re_exports_the_checked_settings() -> None:
         "_safe_name",
     ):
         assert getattr(crash_report, name) is getattr(crash_report_settings, name), name
-    # Zero is no limit, as `or None` read it.
+    # Zero is no limit, as `or None` read it; but only zero: a size under a
+    # byte, which `or None` read as no limit too, is refused (#2616).
     assert crash_report_settings._parse_size("N", "0") is None
-    assert crash_report_settings._parse_size("N", "0.0001k") is None
+    assert crash_report_settings._parse_size("N", "0.0k") is None
+    with pytest.raises(ValueError, match="less than a byte"):
+        crash_report_settings._parse_size("N", "0.0001k")
     assert crash_report_settings._parse_size("N", "1k") == 1000
     assert crash_report_settings._parse_count("N", "0", zero_is_none=True) is None
     assert crash_report_settings._parse_count("N", "3", zero_is_none=True) == 3
@@ -860,7 +879,7 @@ def test_the_reporter_s_repro_script_is_as_before(
     reporter.context.overrides = overrides
     kept = env if "environment" in items else {}
     assert reporter.repro_command() == _old_repro_command(reporter.argv, overrides)
-    assert reporter.repro_script() == _old_repro_script(
+    assert reporter.context_files()["repro.sh"] == _old_repro_script(
         reporter.argv, reporter.cwd, kept, overrides
     )
 
@@ -1496,3 +1515,152 @@ def test_the_native_report_names_the_map_once_noted(reporter: Path) -> None:
             json.loads((native / "context.json").read_text())["map"]["commit"] == commit
         )
         assert f"@{commit}#T" in (native / "repro.sh").read_text()
+
+
+# ---------------------------------------------------------------------------
+# #2616
+# ---------------------------------------------------------------------------
+
+
+def _raise_with_secrets() -> None:
+    password = "hunter2-password"  # noqa: F841, S105 - the report filters it
+    token = "hunter2-token"  # noqa: F841, S105
+    secret = "hunter2-secret"  # noqa: F841, S105
+    api_key = "hunter2-api-key"  # noqa: F841
+    plain = 7  # noqa: F841 - the report keeps it
+    raise ValueError("boom")
+
+
+class _NoDataCollection:
+    """A ClientConstructor of a sentry-sdk that takes no ``data_collection``
+    (before 2.70): the ``include_local_variables`` path."""
+
+    def __init__(self, include_local_variables: bool = True) -> None:
+        pass
+
+
+@pytest.mark.parametrize("path", ["data_collection", "include_local_variables"])
+def test_a_local_named_like_a_secret_is_filtered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    if path == "include_local_variables":
+        monkeypatch.setattr(crash_report, "ClientConstructor", _NoDataCollection)
+    if path not in crash_report._locals_option(True):
+        pytest.skip(f"the installed sentry-sdk takes no {path}")
+    with _installed(tmp_path, monkeypatch):
+        try:
+            _raise_with_secrets()
+        except ValueError as exc:
+            report = crash_report.capture(exc)
+    assert report is not None
+    event = json.loads((report / "event.json").read_text())
+    frames = event["exception"]["values"][0]["stacktrace"]["frames"]
+    # In no frame's variables (the source lines around a frame show them).
+    assert "hunter2" not in json.dumps([f.get("vars") for f in frames])
+    frame = frames[-1]
+    assert frame["function"] == "_raise_with_secrets"
+    for name in ("password", "token", "secret", "api_key"):
+        assert "Filtered" in frame["vars"][name]
+    assert frame["vars"]["plain"] == "7"
+
+
+@pytest.mark.parametrize("path", ["data_collection", "include_local_variables"])
+def test_without_locals_a_frame_has_no_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    if path == "include_local_variables":
+        monkeypatch.setattr(crash_report, "ClientConstructor", _NoDataCollection)
+    monkeypatch.setenv(crash_report.ITEMS_ENV, "-locals")
+    with _installed(tmp_path, monkeypatch):
+        try:
+            _raise_with_secrets()
+        except ValueError as exc:
+            report = crash_report.capture(exc)
+    assert report is not None
+    event = json.loads((report / "event.json").read_text())
+    for frame in event["exception"]["values"][0]["stacktrace"]["frames"]:
+        assert "vars" not in frame
+    # -locals is all but locals.
+    assert (report / "repro.sh").exists()
+
+
+def test_a_removal_first_starts_from_all() -> None:
+    every = frozenset(crash_report.ITEMS)
+    for text, want in (
+        ("-locals", every - {"locals"}),
+        ("-locals,-log", every - {"locals", "log"}),
+        ("log,-locals", frozenset({"log"})),
+        ("none,-locals", frozenset()),
+    ):
+        settings = crash_report.read_settings({crash_report.ITEMS_ENV: text})
+        assert settings.items == want, text
+
+
+def test_a_normal_end_keeps_the_crash_report_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    monkeypatch.setenv(crash_report.CRASH_REPORT_ENV, "1")
+    monkeypatch.delenv(crash_report.DSN_ENV, raising=False)
+    monkeypatch.setenv(crash_report.CRASH_REPORT_DIR_ENV, str(mine))
+    monkeypatch.chdir(tmp_path)
+    assert crash_report.install(["scenario"])
+    try:
+        (native,) = mine.iterdir()
+        assert native.name.startswith("native-")
+    finally:
+        crash_report.uninstall()
+    assert mine.is_dir() and list(mine.iterdir()) == []
+    # One the reporter made is removed with its report.
+    made = tmp_path / "made"
+    monkeypatch.setenv(crash_report.CRASH_REPORT_DIR_ENV, str(made))
+    assert crash_report.install(["scenario"])
+    crash_report.uninstall()
+    assert not made.exists()
+
+
+def test_the_native_report_s_files_are_written_in_one_rename(
+    reporter: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    written: list[str] = []
+
+    def atomically(path: Path, data: bytes) -> None:
+        written.append(path.name)
+        path.write_bytes(data)
+
+    monkeypatch.setattr(crash_report, "write_bytes_atomically", atomically)
+    run_dir = reporter / "run"
+    with crash_report.run_context(
+        run_dir, overrides=["scenario=demo"], config_yaml="seed: 3\n"
+    ):
+        assert sorted(written) == ["config.yaml", "context.json", "repro.sh"]
+        (native,) = (run_dir / "crash_reports").iterdir()
+        assert os.access(native / "repro.sh", os.X_OK)
+
+
+def test_a_case_whose_config_selects_slurm_is_run_again_here() -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.crash_report_settings import (
+        repro_overrides as settings_repro_overrides,
+    )
+    from autoware_carla_scenario.slurm.worker import repro_overrides
+
+    case = {"scenario": "cut_in", "overrides": ["seed=4"]}
+    slurm = OmegaConf.create({"seed": 4, "launcher": {"type": "slurm"}})
+    local = OmegaConf.create({"seed": 4, "launcher": {"type": "local"}})
+    assert repro_overrides(case, slurm) == [
+        "scenario=cut_in",
+        "seed=4",
+        "launcher=local",
+    ]
+    assert repro_overrides(case, local) == ["scenario=cut_in", "seed=4"]
+    assert repro_overrides(case, OmegaConf.create({"seed": 4})) == [
+        "scenario=cut_in",
+        "seed=4",
+    ]
+    assert settings_repro_overrides("s", ["launcher=slurm"], "slurm") == [
+        "scenario=s",
+        "launcher=local",
+    ]
