@@ -103,6 +103,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.modules import ModulesIntegration
 from sentry_sdk.transport import HttpTransport, Transport
 
+from .atomic_file import write_bytes_atomically
 from .config_flags import FALSE_TEXT
 
 # The settings, their environment variables and parsers, the size cut and a
@@ -250,10 +251,82 @@ def _redacted(value: Any) -> Any:
     return value
 
 
+# sentry-sdk 2.x's ``sentry_sdk.scrubber.DEFAULT_DENYLIST`` and
+# ``DEFAULT_PII_DENYLIST`` (user identity being off), as 2.75 has them; kept
+# here because 3.x has no ``sentry_sdk.scrubber`` at all (#2616).
+_DENYLIST = frozenset(
+    name.lower()
+    for name in (
+        "password", "passwd", "secret", "api_key", "apikey", "auth",
+        "credentials", "mysql_pwd", "privatekey", "private_key", "token",
+        "session", "csrftoken", "sessionid", "x_csrftoken", "x_forwarded_for",
+        "set_cookie", "cookie", "authorization", "proxy-authorization",
+        "x_api_key", "aiohttp_session", "connect.sid", "csrf_token", "csrf",
+        "_csrf", "_csrf_token", "PHPSESSID", "_session", "symfony",
+        "user_session", "_xsrf", "XSRF-TOKEN",
+        "x_real_ip", "ip_address", "remote_addr",
+    )
+)  # fmt: skip
+
+
+def _scrub_dict(d: object) -> None:
+    """Filter *d*'s values whose key is named like a secret, as sentry-sdk's
+    ``EventScrubber.scrub_dict`` does: on an event already serialized, so a
+    filtered value is the text ``[Filtered]``, as the SDK's own writes it."""
+    if not isinstance(d, dict):
+        return
+    for k in list(d):
+        if isinstance(k, str) and k.lower() in _DENYLIST:
+            d[k] = "[Filtered]"
+
+
+def _scrub_frames(stacktrace: object) -> None:
+    if isinstance(stacktrace, dict):
+        for frame in stacktrace.get("frames") or ():
+            if isinstance(frame, dict):
+                _scrub_dict(frame.get("vars"))
+
+
+def _scrub_event(event: Any) -> None:
+    """What sentry-sdk's default ``EventScrubber.scrub_event`` filters: the
+    request (and its headers, cookies, data), the extra data, the user, the
+    breadcrumbs' data, the frames' local variables and the spans' data."""
+    if not isinstance(event, dict):
+        return
+    request = event.get("request")
+    _scrub_dict(request)
+    if isinstance(request, dict):
+        for part in ("headers", "cookies", "data"):
+            _scrub_dict(request.get(part))
+    _scrub_dict(event.get("extra"))
+    _scrub_dict(event.get("user"))
+    crumbs = event.get("breadcrumbs")
+    if isinstance(crumbs, dict):
+        crumbs = crumbs.get("values")
+    for crumb in crumbs or ():
+        if isinstance(crumb, dict):
+            _scrub_dict(crumb.get("data"))
+    for section in ("exception", "threads"):
+        found: Any = event.get(section)
+        values: Any = found.get("values") if isinstance(found, dict) else None
+        for value in values or ():
+            if isinstance(value, dict):
+                _scrub_frames(value.get("stacktrace"))
+    _scrub_frames(event.get("stacktrace"))
+    for span in event.get("spans") or ():
+        if isinstance(span, dict):
+            _scrub_dict(span.get("data"))
+
+
 def _redact_event(event: Any, _hint: Any) -> Any:
     """``before_send``: the event, as written and sent, with every URL's
     credentials redacted -- the frames' local variables, the command line
-    (``ArgvIntegration``), the run's context, the breadcrumbs."""
+    (``ArgvIntegration``), the run's context, the breadcrumbs -- and what is
+    named like a secret filtered (:func:`_scrub_event`): the frames' local
+    variables, the breadcrumbs' data, the extra data, the user.  The SDK
+    scrubs those itself only when not given ``data_collection``
+    (:func:`_locals_option`), and refuses a scrubber of its own with it."""
+    _scrub_event(event)
     return _redacted(event)
 
 
@@ -512,6 +585,10 @@ class _NativeReport:
 
     directory: Path
     log: IO[str]
+    #: Whether arming it made the directory that holds it: only then is that
+    #: removed with it, never one the user named
+    #: (:data:`CRASH_REPORT_DIR_ENV`) nor one another process made (#2616).
+    made_parent: bool = False
     pid: int = field(default_factory=os.getpid)
 
 
@@ -593,14 +670,6 @@ class _Reporter:
                 else {}
             ),
         }
-
-    def repro_script(self) -> bytes:
-        """``repro.sh``: credentials redacted, as in ``context.json``, and
-        only the user's environment exported (:func:`repro_environment`)."""
-        context = self.context_dict()
-        return _repro_script_of(
-            context, repro_environment(context.get("environment") or {})
-        )
 
     def context_files(self) -> dict[str, bytes]:
         """The files of a report that say how to run it again.
@@ -694,6 +763,7 @@ class _Reporter:
         directory = (
             self.context.report_dir / f"native-{_timestamp()}-{host}-{os.getpid()}"
         )
+        made_parent = not directory.parent.exists()
         try:
             directory.mkdir(parents=True, exist_ok=True)
             self._write_native_files(directory)
@@ -703,7 +773,7 @@ class _Reporter:
             faulthandler.enable(all_threads=True)
             return
         faulthandler.enable(file=log, all_threads=True)
-        self.native = _NativeReport(directory, log)
+        self.native = _NativeReport(directory, log, made_parent)
 
     def refresh_native(self) -> None:
         """Write the files of the native-crash report prepared for this
@@ -724,8 +794,10 @@ class _Reporter:
         for name in ("config.yaml", "repro.sh"):
             if name not in files:
                 (directory / name).unlink(missing_ok=True)
+        # In one rename each: a fatal signal while one is rewritten (each
+        # case of a batch) leaves the old file or the new one, whole (#2616).
         for name, data in files.items():
-            _write(directory / name, data)
+            _write(directory / name, data, atomic=True)
 
     def disarm_native(self) -> None:
         """Remove the report :meth:`arm_native` prepared, unless a fatal
@@ -746,7 +818,8 @@ class _Reporter:
             if log_path.exists() and log_path.stat().st_size > 0:
                 return
             shutil.rmtree(native.directory, ignore_errors=True)
-            native.directory.parent.rmdir()  # crash_reports/, when empty
+            if native.made_parent:
+                native.directory.parent.rmdir()  # crash_reports/, when empty
         except OSError:
             pass
 
@@ -768,6 +841,16 @@ def _locals_option(include: bool) -> dict[str, Any]:
     takes ``data_collection={"stack_frame_variables": ...}`` instead.  3.x
     also collects user identity by default, which 2.x leaves off
     (``send_default_pii``): it is turned off here, as before.
+
+    A local whose name looks like a secret (``password``, ``token``,
+    ``api_key``, ...) is ``[Filtered]`` either way (#2616).  With
+    ``include_local_variables`` the SDK's default ``EventScrubber`` filters
+    it.  Given ``data_collection`` (2.70 and later take it), the SDK
+    installs no scrubber, and ignores one given: ``before_send`` runs the
+    same scrubber (:func:`_redact_event`), on the breadcrumbs' data and the
+    extra data too.  Not ``stack_frame_variables``' ``denylist`` mode,
+    which filters the locals alone, and every one whose name holds ``key``,
+    ``sid`` or ``auth`` (``inside``, ``lane_key``, ``author``).
     """
     if "data_collection" in inspect.signature(ClientConstructor.__init__).parameters:
         return {
@@ -1074,9 +1157,12 @@ def capture(exc: BaseException, *, message: str | None = None) -> Path | None:
     return reporter.written.get(event_id)
 
 
-def _write(path: Path, data: str | bytes) -> None:
+def _write(path: Path, data: str | bytes, *, atomic: bool = False) -> None:
     if isinstance(data, str):
         data = data.encode("utf-8", "replace")
-    path.write_bytes(data)
+    if atomic:
+        write_bytes_atomically(path, data)
+    else:
+        path.write_bytes(data)
     if path.name.endswith(".sh"):
         path.chmod(0o755)

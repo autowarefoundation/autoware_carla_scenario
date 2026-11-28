@@ -54,14 +54,16 @@ DSN_ENV = "SCENARIO_CRASH_REPORT_DSN"
 #: ``repro.sh`` itself (``repro``).
 ITEMS: tuple[str, ...] = ("locals", "log", "config", "environment", "packages", "repro")
 #: What reports hold (:data:`ITEMS`): a comma-separated list, ``all``,
-#: ``none``, or ``all,-locals`` (all but those named with ``-``).
+#: ``none``, or ``all,-locals`` (all but those named with ``-``; a list
+#: that starts with one, ``-locals``, starts from ``all``).
 ITEMS_ENV = "SCENARIO_CRASH_REPORT_ITEMS"
 #: What of a report is sent, with a DSN: the same form; only what reports
 #: hold can be sent.  What :data:`ITEMS_ENV` says when unset.
 SEND_ITEMS_ENV = "SCENARIO_CRASH_REPORT_SEND_ITEMS"
-#: The largest file of a report other than ``event.json`` (``1MiB``,
-#: ``512KB``, a number of bytes; ``0``: no limit): a longer one is cut,
-#: ``log.txt`` keeping its end.
+#: The largest ``log.txt``, ``traceback.txt`` and ``config.yaml`` of a
+#: report (``1MiB``, ``512KB``, a number of bytes; ``0``: no limit): a
+#: longer one is cut, ``log.txt`` and ``traceback.txt`` keeping their end.
+#: ``context.json`` and ``repro.sh`` are never cut (:class:`Settings`).
 MAX_FILE_SIZE_ENV = "SCENARIO_CRASH_REPORT_MAX_FILE_SIZE"
 #: How many reports a process writes at most (``0``: no limit).
 MAX_REPORTS_ENV = "SCENARIO_CRASH_REPORT_MAX_REPORTS"
@@ -111,9 +113,14 @@ class Settings:
 
 def _parse_items(name: str, text: str) -> frozenset[str]:
     chosen: set[str] = set()
+    first = True
     for word in (w.strip().lower() for w in text.split(",")):
         if not word:
             continue
+        if first and word.startswith("-"):
+            # ``-locals`` is ``all,-locals``, not a removal from nothing.
+            chosen.update(ITEMS)
+        first = False
         if word == "all":
             chosen.update(ITEMS)
         elif word == "none":
@@ -134,8 +141,12 @@ def _parse_size(name: str, text: str) -> int | None:
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([a-z]*)\s*", text.lower())
     if match is None or match.group(2) not in _SIZE_UNITS:
         raise ValueError(f"{name}: {text!r} is not a size (1MiB, 512KB, 1048576)")
-    size = int(float(match.group(1)) * _SIZE_UNITS[match.group(2)])
+    number = float(match.group(1))
+    size = int(number * _SIZE_UNITS[match.group(2)])
     if size == 0:
+        if number != 0:
+            # Only a literal 0 is no limit: 0.5 (bytes) is not.
+            raise ValueError(f"{name}: {text!r} is less than a byte (0: no limit)")
         return None
     return size
 
@@ -264,15 +275,24 @@ def pin_map_source(command: list[str], uri: str) -> list[str]:
     return kept
 
 
-def repro_overrides(scenario: str, overrides: list[str]) -> list[str]:
+def repro_overrides(
+    scenario: str, overrides: list[str], launcher: str = "local"
+) -> list[str]:
     """What ``repro.sh`` of a crash report of a batch's case runs
     ``scenario`` with: its *scenario* and *overrides*, without the batch's
     launcher (``launcher=``, ``launcher.*``), so that it runs again here, as
-    a single run (``slurm.worker.repro_overrides()``, #2386)."""
+    a single run (``slurm.worker.repro_overrides()``, #2386).
+
+    *launcher* is ``launcher.type`` of the case's composed config: when it
+    is not ``local``, ``launcher=local`` is added, since a launcher the
+    scenario's config selects is not on the command line to leave out, and
+    a single run refuses it (#2612, #2616)."""
     kept = [f"scenario={scenario}"]
     for o in overrides:
         if not o.lstrip("+~").startswith("launcher"):
             kept.append(o)
+    if launcher != "local":
+        kept.append("launcher=local")
     return kept
 
 

@@ -37,7 +37,9 @@ environment variables that affect a run (`CARLA*`, `SCENARIO*`, `ROS_*`, ...;
 anything whose name looks like a secret is left out), and runs `scenario` with
 the case's own overrides. Run again, the case writes to an output directory of
 its own. A SLURM case's runs locally, without the batch's `launcher=` and
-`launcher.*` overrides; a report of a SLURM task that failed outside any case
+`launcher.*` overrides, and with `launcher=local` when the case's config
+selects SLURM (a launcher its scenario's config sets, which a single run
+refuses); a report of a SLURM task that failed outside any case
 runs the task's worker again. A report written outside any case (a batch's,
 before its cases are known) runs the command line again, without its
 `hydra.run.dir=` and `hydra.sweep.dir=`: the batch's directory is no longer
@@ -125,7 +127,10 @@ prepares a report there in advance, `crash_reports/native-<time>-<host>-<pid>/`
 signal, Python's `faulthandler` writes the stack of every thread to that
 directory's `faulthandler.log`.
 
-When the run ends normally, the directory is removed. If one is left with an
+When the run ends normally, the directory is removed, and `crash_reports/`
+with it when preparing the report made it and nothing else is in it: a
+directory that was there before, such as one `SCENARIO_CRASH_REPORT_DIR`
+names or another task of a batch made, is never removed. If one is left with an
 empty `faulthandler.log`, the process was killed without a chance to write
 anything (`SIGKILL`, the OOM killer). Hydra's own log of the run, in the run's
 output directory, has the log records that came before.
@@ -168,7 +173,7 @@ under the Functional Source License, which is not an open-source license.
 | `SCENARIO_CRASH_REPORT_DSN` | Also send each report to this project (a Sentry DSN, such as GlitchTip's); nothing is sent without it |
 | `SCENARIO_CRASH_REPORT_ITEMS` | What a report holds ([items](#choosing-what-a-report-holds)); default `all` |
 | `SCENARIO_CRASH_REPORT_SEND_ITEMS` | What of a report is sent with a DSN; default: what it holds |
-| `SCENARIO_CRASH_REPORT_MAX_FILE_SIZE` | The largest `log.txt`, `traceback.txt` and `config.yaml` of a report (`1MiB`, `512KB`, `1048576`; `0` for no limit); default `1MiB` |
+| `SCENARIO_CRASH_REPORT_MAX_FILE_SIZE` | The largest `log.txt`, `traceback.txt` and `config.yaml` of a report (`1MiB`, `512KB`, `1048576`; `0` for no limit, a size under a byte is refused); default `1MiB` |
 | `SCENARIO_CRASH_REPORT_MAX_REPORTS` | How many reports one process writes at most (`0` for no limit); default `20` |
 | `SCENARIO_CRASH_REPORT_LOG_LINES` | How many log records `log.txt` keeps; default `5000` |
 
@@ -183,7 +188,7 @@ Every report holds the exception with its stack, `traceback.txt` and
 
 | Item | What it adds |
 |---|---|
-| `locals` | the local variables of every frame, in `event.json` |
+| `locals` | the local variables of every frame, in `event.json`; one whose name looks like a secret (`password`, `token`, `api_key`, ...) shows as `[Filtered]`, as does such a field of a breadcrumb's data |
 | `log` | `log.txt`, and the log records as the event's breadcrumbs |
 | `config` | `config.yaml`, the run's composed config |
 | `environment` | the environment variables that affect a run, in `context.json` and as `export` lines in `repro.sh` |
@@ -191,7 +196,8 @@ Every report holds the exception with its stack, `traceback.txt` and
 | `repro` | `repro.sh` |
 
 The value is a comma-separated list of items, `all`, `none`, or `all` with
-some items removed by a leading `-`:
+some items removed by a leading `-` (a list that starts with a removal, such
+as `-locals`, starts from `all`):
 
 ```bash
 export SCENARIO_CRASH_REPORT_ITEMS=all,-locals          # everything but local variables
