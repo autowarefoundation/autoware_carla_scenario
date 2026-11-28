@@ -332,11 +332,22 @@ class SensorRecorder:
         self._stream: Any = self._rr.RecordingStream(
             APPLICATION_ID, recording_id=recording_id
         )
-        # The converter's chunks are on `frame` and `sim_time` alone: the
-        # SDK's wall-clock `log_time` would put the sensors alone on a
-        # timeline of their own.
-        self._stream.set_log_time_enabled(False)
-        self._stream.save(str(self.path))
+        try:
+            # The converter's chunks are on `frame` and `sim_time` alone: the
+            # SDK's wall-clock `log_time` would put the sensors alone on a
+            # timeline of their own.
+            self._stream.set_log_time_enabled(False)
+            self._stream.save(str(self.path))
+        except BaseException:
+            # A recorder that cannot start leaves no stream running (#2485,
+            # #2617): nothing else would ever close it.
+            stream, self._stream = self._stream, None
+            try:
+                stream.disconnect()
+            finally:
+                del stream
+                _cleanup_orphaned_recordings(self._rr)
+            raise
 
     def start(self) -> "SensorRecorder":
         """Make this the recorder :func:`active_recorder` returns."""

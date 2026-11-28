@@ -198,6 +198,25 @@ def test_a_sensor_recording_that_cannot_start_does_not_fail_the_run(
     converter.close()
 
 
+def test_a_sensor_recording_that_cannot_be_saved_leaves_no_stream_open(
+    tmp_path: Path,
+) -> None:
+    class _Unsaveable(_Stream):
+        def save(self, path: str) -> None:
+            raise OSError("No space left on device")
+
+    class _BrokenSdk(_Sdk):
+        def RecordingStream(self, application_id: str, *, recording_id: str) -> Any:  # noqa: N802
+            stream = _Unsaveable(application_id, recording_id=recording_id)
+            self.streams.append(stream)
+            return stream
+
+    sdk = _BrokenSdk()
+    with pytest.raises(OSError, match="No space left"):
+        LidarRecorder(tmp_path / "Run-1.sensors.rrd", "Run-1", 0, sdk=sdk)
+    assert [stream.closed for stream in sdk.streams] == [True]
+
+
 def test_rerun_lidar_is_read_from_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
     built: list[dict[str, Any]] = []
 
